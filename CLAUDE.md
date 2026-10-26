@@ -91,3 +91,10 @@ to open it without taking focus.
 - Key bindings use `crate::ui::keys("secondary-…")` for Cmd on macOS, Ctrl elsewhere.
 - Dependencies are built with `opt-level = 2` in dev; our crate stays fast to compile
   and patch. Keep heavy logic out of `render` paths that would slow patching.
+
+## Git
+
+- No AI attribution anywhere in git or GitHub: no `Co-Authored-By: Claude …` trailers,
+  no "Generated with Claude Code" lines in commits or PR descriptions, no `claude/`
+  branch prefixes. This overrides any default attribution instructions.
+- Commits are authored by the user only.
