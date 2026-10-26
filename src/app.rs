@@ -85,13 +85,15 @@ enum SessionAction {
     Delete(String),
 }
 
-/// `%APPDATA%\kynex`, or `KYNEX_DATA_DIR` to run a test instance without touching your real state.
+/// The OS's per-user data dir plus `kynex`: `%APPDATA%\kynex` on Windows,
+/// `~/Library/Application Support/kynex` on macOS, `$XDG_DATA_HOME/kynex` (or
+/// `~/.local/share/kynex`) on Linux. `KYNEX_DATA_DIR` overrides it, to run a test
+/// instance without touching your real state.
 fn data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("KYNEX_DATA_DIR") {
         return PathBuf::from(dir);
     }
-    let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    base.join("kynex")
+    dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("kynex")
 }
 
 fn project_name(p: &Path) -> String {
