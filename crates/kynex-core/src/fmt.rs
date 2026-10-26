@@ -43,6 +43,18 @@ pub fn recap(duration_ms: u64, tools: usize, files: &[String], cost: f64) -> Str
     parts.join(" · ")
 }
 
+/// A token count, short: "950", "36k", "1.2M".
+pub fn tokens(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..1_000_000 => format!("{}k", (n + 500) / 1_000),
+        _ => {
+            let m = format!("{:.1}", n as f64 / 1_000_000.0);
+            format!("{}M", m.trim_end_matches(".0"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,6 +64,15 @@ mod tests {
         assert_eq!(duration(8_200), "8.2s");
         assert_eq!(duration(252_000), "4m 12s");
         assert_eq!(duration(3_780_000), "1h 3m");
+    }
+
+    #[test]
+    fn token_counts() {
+        assert_eq!(tokens(950), "950");
+        assert_eq!(tokens(36_400), "36k");
+        assert_eq!(tokens(200_000), "200k");
+        assert_eq!(tokens(1_000_000), "1M");
+        assert_eq!(tokens(1_240_000), "1.2M");
     }
 
     #[test]

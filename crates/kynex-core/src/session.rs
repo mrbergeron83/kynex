@@ -105,6 +105,33 @@ enum Event {
     Exited,
 }
 
+/// How full a session's context window is, as of Claude's last reply.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ContextUse {
+    /// Tokens the last request sent: input plus cache reads and writes.
+    pub tokens: u64,
+    /// The model's window, once the CLI has reported it (at the end of a turn).
+    pub window: Option<u64>,
+}
+
+impl ContextUse {
+    /// The share of the window in use, 0.0–1.0, when the window is known.
+    pub fn fraction(&self) -> Option<f64> {
+        self.window.filter(|&w| w > 0).map(|w| (self.tokens as f64 / w as f64).min(1.0))
+    }
+}
+
+/// Context windows the CLI has reported this run, by model id, so a resumed
+/// session (whose transcript has no `result` lines) knows its window too.
+fn windows() -> &'static Mutex<HashMap<String, u64>> {
+    static WINDOWS: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+    WINDOWS.get_or_init(Default::default)
+}
+
+fn known_window(model: &str) -> Option<u64> {
+    windows().lock().ok()?.get(model).copied()
+}
+
 pub struct Session {
     /// Unique among this run's sessions, so the UI can tell them apart before
     /// (and regardless of) the CLI assigning a `session_id`.
@@ -118,6 +145,7 @@ pub struct Session {
     /// A turn ended and the user hasn't looked at it yet; the UI clears it.
     pub finished: bool,
     pub total_cost: f64,
+    pub context: ContextUse,
     /// The live permission mode: starts at the project's default, follows the
     /// CLI's reports, and is switched from the composer without a restart.
     pub mode: project::Mode,
@@ -128,6 +156,8 @@ pub struct Session {
     rx: Option<Receiver<Event>>,
     streaming_text: bool,
     next_request: u64,
+    /// The model that wrote the last reply, whose window `context` is measured against.
+    reply_model: String,
 }
 
 impl Session {
@@ -147,6 +177,7 @@ impl Session {
             busy: false,
             finished: false,
             total_cost: 0.0,
+            context: ContextUse::default(),
             mode,
             wake: Arc::new(|| {}),
             child: None,
@@ -154,6 +185,7 @@ impl Session {
             rx: None,
             streaming_text: false,
             next_request: 0,
+            reply_model: String::new(),
         }
     }
 
@@ -453,7 +485,25 @@ impl Session {
         }
         match v["type"].as_str().unwrap_or("") {
             "stream_event" => self.handle_stream(&v["event"]),
+            // `/compact` finished: the context is down to its summary.
+            // Without a size after it, the meter waits for the next reply.
+            "system" if v["subtype"] == "compact_boundary" => {
+                self.context.tokens = v["compact_metadata"]["post_tokens"].as_u64().unwrap_or(0);
+            }
             "assistant" => {
+                // Subagents' replies have their own context; only the main thread's counts.
+                // Synthetic ones (a slash command's answer, an error) carry no real usage.
+                let usage = &v["message"]["usage"];
+                if v["parent_tool_use_id"].is_null() && usage.is_object() && v["message"]["model"] != "<synthetic>" {
+                    let n = |k: &str| usage[k].as_u64().unwrap_or(0);
+                    if let Some(model) = v["message"]["model"].as_str() {
+                        self.reply_model = model.to_string();
+                    }
+                    self.context = ContextUse {
+                        tokens: n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens"),
+                        window: known_window(&self.reply_model).or(self.context.window),
+                    };
+                }
                 for block in v["message"]["content"].as_array().into_iter().flatten() {
                     match block["type"].as_str() {
                         // Already rendered live from the stream deltas.
@@ -500,6 +550,21 @@ impl Session {
                 });
             }
             "result" => {
+                if let Some(models) = v["modelUsage"].as_object()
+                    && let Ok(mut known) = windows().lock()
+                {
+                    for (model, u) in models {
+                        if let Some(w) = u["contextWindow"].as_u64() {
+                            known.insert(model.clone(), w);
+                        }
+                    }
+                }
+                // The reply's model, else the biggest window reported (side models like
+                // Haiku are smaller, and a `[1m]` id may not match the reply's model).
+                let biggest = v["modelUsage"]
+                    .as_object()
+                    .and_then(|m| m.values().filter_map(|u| u["contextWindow"].as_u64()).max());
+                self.context.window = known_window(&self.reply_model).or(biggest).or(self.context.window);
                 let cost = v["total_cost_usd"].as_f64().unwrap_or(0.0);
                 self.total_cost = cost.max(self.total_cost);
                 let (tools, files) = self.turn_recap();
@@ -877,6 +942,43 @@ mod tests {
             state: PermState::Pending,
         });
         assert!(s.wants_you());
+    }
+
+    #[test]
+    fn context_use_follows_main_thread_replies() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        let reply = |parent: Value, input: u64| {
+            json!({ "type": "assistant", "parent_tool_use_id": parent, "message": {
+                "model": "test-model-ctx", "content": [],
+                "usage": { "input_tokens": input, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": 9000 }
+            } })
+        };
+        s.handle(reply(Value::Null, 0));
+        assert_eq!(s.context, ContextUse { tokens: 10_000, window: None });
+        // A subagent's reply doesn't move the meter.
+        s.handle(reply(json!("toolu_1"), 500_000));
+        assert_eq!(s.context.tokens, 10_000);
+        s.handle(json!({ "type": "result", "modelUsage": { "test-model-ctx": { "contextWindow": 200_000 } } }));
+        assert_eq!(s.context.window, Some(200_000));
+        assert_eq!(s.context.fraction(), Some(0.05));
+        // Another session on the same model knows the window from its first reply.
+        let mut other = Session::new(Kind::Chat, std::env::temp_dir());
+        other.handle(reply(Value::Null, 10_000));
+        assert_eq!(other.context, ContextUse { tokens: 20_000, window: Some(200_000) });
+        other.handle(json!({ "type": "system", "subtype": "compact_boundary",
+            "compact_metadata": { "pre_tokens": 20_000, "post_tokens": 3_000 } }));
+        assert_eq!(other.context.tokens, 3_000);
+        // A synthetic reply leaves the meter alone; a compaction without a size blanks it.
+        other.handle(json!({ "type": "assistant", "parent_tool_use_id": null, "message": {
+            "model": "<synthetic>", "content": [], "usage": { "input_tokens": 0 } } }));
+        assert_eq!(other.context, ContextUse { tokens: 3_000, window: Some(200_000) });
+        other.handle(json!({ "type": "system", "subtype": "compact_boundary" }));
+        assert_eq!(other.context.tokens, 0);
+        // An unknown reply model takes the biggest window the turn reported.
+        let mut third = Session::new(Kind::Chat, std::env::temp_dir());
+        third.handle(json!({ "type": "result", "modelUsage": {
+            "side-model-ctx": { "contextWindow": 100_000 }, "main-model-ctx[1m]": { "contextWindow": 1_000_000 } } }));
+        assert_eq!(third.context.window, Some(1_000_000));
     }
 
     #[test]

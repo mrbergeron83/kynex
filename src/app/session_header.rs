@@ -1,8 +1,9 @@
 //! The strip above the transcript: what this session is (its first message),
 //! where it runs (branch, and whether that's a separate worktree), how many
-//! turns it has taken and what it has cost.
+//! turns it has taken, what it has cost and how full its context is.
 
 use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
+use kynex_core::fmt;
 use kynex_core::session::{Item, Kind};
 
 use super::KynexApp;
@@ -23,7 +24,7 @@ impl KynexApp {
             })
         });
         let turns = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
-        let (cost, kind, cwd) = (s.total_cost, s.kind, s.cwd.clone());
+        let (cost, kind, cwd, context, busy) = (s.total_cost, s.kind, s.cwd.clone(), s.context, s.busy);
 
         // Where a project session runs: its branch, flagged when it's a linked worktree.
         let place = if kind == Kind::Code { self.worktrees(&cwd, cx).read(cx).at(&cwd).cloned() } else { None };
@@ -83,6 +84,64 @@ impl KynexApp {
                 .on_click(cx.listener(move |this, _, _, cx| this.open_worktree_changes(path.clone(), cx)))
         });
 
+        // How full the context is; past half, a click compacts it.
+        let meter = (context.tokens > 0).then(|| {
+            let fraction = context.fraction();
+            let color = match fraction {
+                Some(f) if f >= 0.9 => t.error,
+                Some(f) if f >= 0.7 => t.warning,
+                _ => t.text_placeholder,
+            };
+            let label = match context.window {
+                Some(w) => format!("{} / {}", fmt::tokens(context.tokens), fmt::tokens(w)),
+                None => format!("{} tokens", fmt::tokens(context.tokens)),
+            };
+            let can_compact = !busy && fraction.is_some_and(|f| f >= 0.5);
+            let hover = t.hover;
+            div()
+                .id("context-meter")
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_1p5()
+                .px_1p5()
+                .h(px(20.))
+                .rounded_md()
+                .text_xs()
+                .font_family(mono())
+                .text_color(color)
+                .when_some(fraction, |d, f| {
+                    d.child(
+                        div()
+                            .w(px(36.))
+                            .h(px(4.))
+                            .rounded_full()
+                            .bg(t.border_variant)
+                            .child(div().h_full().rounded_full().bg(color).w(px((36. * f) as f32).max(px(2.)))),
+                    )
+                })
+                .child(label)
+                .map(|d| {
+                    let what = match fraction {
+                        Some(f) => format!("Context {:.0}% full", f * 100.0),
+                        None => "Context in use".to_string(),
+                    };
+                    if can_compact {
+                        d.tooltip(Tooltip::with_meta(
+                            what,
+                            "Click to compact: Claude summarizes the conversation so far",
+                        ))
+                    } else {
+                        d.tooltip(Tooltip::text(what))
+                    }
+                })
+                .when(can_compact, |d| {
+                    d.cursor_pointer()
+                        .hover(move |s| s.bg(hover))
+                        .on_click(cx.listener(|this, _, _, cx| this.compact(cx)))
+                })
+        });
+
         let mut stats = Vec::new();
         if turns > 0 {
             stats.push(format!("{turns} turn{}", if turns == 1 { "" } else { "s" }));
@@ -112,6 +171,7 @@ impl KynexApp {
                 )
                 .children(place)
                 .children(working)
+                .children(meter)
                 .when(!stats.is_empty(), |d| {
                     d.child(
                         div()

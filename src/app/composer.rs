@@ -40,6 +40,19 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// Has Claude summarize the conversation so far, freeing up its context.
+    pub(super) fn compact(&mut self, cx: &mut Context<Self>) {
+        let model = self.saved.model.clone();
+        if let Some(s) = self.session_mut().filter(|s| !s.busy) {
+            if !s.is_running() {
+                s.model = model;
+            }
+            s.send("/compact".into(), Vec::new());
+        }
+        self.follow_tail();
+        cx.notify();
+    }
+
     pub(super) fn interrupt(&mut self, cx: &mut Context<Self>) {
         if let Some(s) = self.session_mut() {
             s.interrupt();
