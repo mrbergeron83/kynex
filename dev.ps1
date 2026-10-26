@@ -15,6 +15,8 @@ $dxArgs = @('serve', '--hot-patch', '--features', 'hotpatch', '--interactive', '
 while ($true) {
     $psi = [System.Diagnostics.ProcessStartInfo]::new('dx')
     foreach ($a in $dxArgs) { $psi.ArgumentList.Add($a) }
+    # Set-Location doesn't change the process cwd that child processes inherit.
+    $psi.WorkingDirectory = $PSScriptRoot
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $dx = [System.Diagnostics.Process]::Start($psi)
