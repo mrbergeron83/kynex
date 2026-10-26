@@ -23,6 +23,11 @@ pub fn ago(t: SystemTime) -> String {
     }
 }
 
+/// [`ago`] for a Unix timestamp in seconds, as git reports them.
+pub fn ago_unix(secs: i64) -> String {
+    ago(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs.max(0) as u64))
+}
+
 /// The one-line recap after a turn: "12.3s · 4 tool calls · edited a.rs, b.rs · $0.05".
 pub fn recap(duration_ms: u64, tools: usize, files: &[String], cost: f64) -> String {
     let mut parts = vec![duration(duration_ms)];

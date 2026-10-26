@@ -70,7 +70,9 @@ A cargo workspace with two crates:
   - `project.rs` — per-project settings folders (`<data dir>/projects/<name>-<hash>/`, one
     JSON file per section); rules go to each session via `claude --settings`, mode / effort /
     extra dirs via `--permission-mode`, `--effort`, `--add-dir`; the mode switches live
-  - `git.rs` — git status, log, diffs and worktrees; `open.rs` — open a folder in VS Code / file
+  - `git/` — everything git, parsed from machine formats: `status`, `diff` (hunks with line
+    numbers), `log` and commit details, `branch` (list / switch / create), `ops` (stage, discard,
+    commit, fetch / pull / push), `worktree`; `open.rs` — open a folder in VS Code / file
     manager / terminal; `attach.rs` — image attachments; `fmt.rs` — times and turn recaps;
     `paths.rs` — `data_dir()` and friends; `wsl.rs` — WSL paths (out of scope for now)
 - **`kynex`** (`src/`) — the gpui app.
@@ -81,7 +83,9 @@ A cargo workspace with two crates:
     composer, prompts, menus, settings modal, setup screen…)
   - `prompt.rs` — `PromptView`: permission / plan / question prompts in the composer's place
   - `markdown.rs` — markdown to gpui elements (pulldown-cmark), re-parsed per render
-  - `git.rs` — the Git view (data from `kynex_core::git`)
+  - `git/` — the Git view (`GitView` entity): top bar with branch picker and fetch / pull / push,
+    Changes tab (commit box, staged / unstaged files), History tab, diff viewer; the table at the
+    top of `git/mod.rs` lists the files
   - `ui/` — our small component kit, Zed `ui`-crate style: buttons, tooltips, menus, icons
     (inline SVGs served as assets), spinner; `ui/input.rs` is the multi-line text field (IME,
     selection, clipboard, image paste) built on gpui's input example; `ui/selectable.rs` is
