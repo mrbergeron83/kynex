@@ -13,9 +13,14 @@ impl KynexApp {
     pub(super) fn render_session_header(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
         let s = self.active_session()?;
-        let title = s.items.iter().find_map(|i| match i {
-            Item::User { text, .. } if !text.is_empty() => Some(text.split_whitespace().collect::<Vec<_>>().join(" ")),
-            _ => None,
+        let name = s.session_id.as_deref().and_then(|id| self.session_name(id));
+        let title = name.or_else(|| {
+            s.items.iter().find_map(|i| match i {
+                Item::User { text, .. } if !text.is_empty() => {
+                    Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
+                }
+                _ => None,
+            })
         });
         let turns = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
         let (cost, kind, cwd) = (s.total_cost, s.kind, s.cwd.clone());

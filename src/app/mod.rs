@@ -12,6 +12,7 @@
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `terminal_dock.rs`  | the project's terminal panel under the conversation  |
+//! | `titles.rs`         | naming sessions Claude Code didn't name              |
 //! | `transcript.rs`     | the conversation list and how each item draws        |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
@@ -33,6 +34,7 @@ mod setup;
 mod state;
 mod terminal_dock;
 mod title_bar;
+mod titles;
 mod toolbar;
 mod transcript;
 mod workspace;
@@ -88,6 +90,9 @@ pub struct KynexApp {
     sessions: Option<SessionList>,
     /// Session id whose delete button was clicked once and is awaiting confirmation.
     confirm_delete: Option<String>,
+    /// The session being named right now, and every one tried this run.
+    naming: Option<String>,
+    naming_tried: HashSet<String>,
     /// The project settings being edited; the modal is open while this is set.
     settings: Option<SettingsView>,
     /// Projects whose rules changed mid-reply; their process restarts once it's idle.
@@ -195,6 +200,8 @@ impl KynexApp {
             notice: None,
             sessions: None,
             confirm_delete: None,
+            naming: None,
+            naming_tried: HashSet::new(),
             settings: None,
             restart_when_idle: HashSet::new(),
             prompt: None,

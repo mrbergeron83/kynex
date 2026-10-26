@@ -21,7 +21,7 @@ pub struct SessionList {
     /// The folder's open sessions and whether each is busy: titles and times
     /// move when a reply starts or finishes.
     live: Vec<(Option<String>, bool)>,
-    items: Vec<SessionInfo>,
+    pub items: Vec<SessionInfo>,
 }
 
 /// An open session as the sessions panel shows it.
@@ -106,7 +106,9 @@ impl KynexApp {
                 live: live_sig,
             });
         }
-        let items = &self.sessions.as_ref().unwrap().items;
+        let all = self.sessions.as_ref().unwrap().items.clone();
+        self.name_sessions(&all, cx);
+        let items = &all;
         let open_state = |id: &str| {
             open.iter()
                 .find(|o| o.id.as_deref() == Some(id))

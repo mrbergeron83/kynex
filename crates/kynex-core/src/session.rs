@@ -4,11 +4,12 @@
 //! loop and the tools. Kynex only renders events and answers permission
 //! prompts, which arrive as `control_request` messages on stdout.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::SystemTime;
 
@@ -580,10 +581,16 @@ fn spawn_reader(stream: impl std::io::Read + Send + 'static, tx: Sender<Event>, 
 }
 
 /// A past Claude Code conversation in some directory.
+#[derive(Clone)]
 pub struct SessionInfo {
     pub id: String,
-    /// The first thing the user said.
+    /// Its name: a rename (`custom-title`), else Claude's own (`ai-title`), else
+    /// the one Kynex made, else the first thing the user said.
     pub title: String,
+    /// The first thing the user said.
+    pub first: String,
+    /// `title` is a real name, not just the first message.
+    pub named: bool,
     pub modified: SystemTime,
 }
 
@@ -699,10 +706,17 @@ pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
             if path.extension()? != "jsonl" {
                 return None;
             }
+            let meta = e.metadata().ok();
+            let modified = meta.as_ref().and_then(|m| m.modified().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
+            let id = path.file_stem()?.to_string_lossy().into_owned();
+            let names = transcript_names(&path, modified, meta.map_or(0, |m| m.len()))?;
+            let name = names.title.or_else(|| crate::titles::stored(&id));
             Some(SessionInfo {
-                id: path.file_stem()?.to_string_lossy().into_owned(),
-                title: transcript_title(&path)?,
-                modified: e.metadata().and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH),
+                title: name.clone().unwrap_or_else(|| names.first.clone()),
+                named: name.is_some(),
+                first: names.first,
+                id,
+                modified,
             })
         })
         .collect();
@@ -710,31 +724,68 @@ pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
     sessions
 }
 
-/// The first real user message, or `None` for a transcript with no conversation in it.
-fn transcript_title(path: &Path) -> Option<String> {
+#[derive(Clone)]
+struct Names {
+    /// The latest `custom-title`, else the latest `ai-title`.
+    title: Option<String>,
+    first: String,
+}
+
+/// A transcript's names, or `None` for one with no conversation in it. Titles
+/// can be anywhere in the file, so it's read whole, once per change.
+fn transcript_names(path: &Path, modified: SystemTime, len: u64) -> Option<Names> {
+    type Cache = HashMap<PathBuf, (SystemTime, u64, Option<Names>)>;
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some((m, l, names)) = cache.lock().ok()?.get(path)
+        && *m == modified
+        && *l == len
+    {
+        return names.clone();
+    }
+    let names = read_names(path);
+    cache.lock().ok()?.insert(path.to_path_buf(), (modified, len, names.clone()));
+    names
+}
+
+fn read_names(path: &Path) -> Option<Names> {
     let file = std::fs::File::open(path).ok()?;
-    for line in BufReader::new(file).lines().take(500) {
-        let line = line.ok()?;
-        if !line.contains(r#""type":"user""#) {
-            continue;
+    let (mut first, mut custom, mut ai) = (None, None, None);
+    for line in BufReader::new(file).lines() {
+        let Ok(line) = line else { break };
+        if line.contains(r#""type":"custom-title""#) {
+            let v: Value = serde_json::from_str(&line).unwrap_or_default();
+            custom = v["customTitle"].as_str().map(str::to_string).filter(|t| !t.trim().is_empty()).or(custom);
+        } else if line.contains(r#""type":"ai-title""#) {
+            let v: Value = serde_json::from_str(&line).unwrap_or_default();
+            ai = v["aiTitle"].as_str().map(str::to_string).filter(|t| !t.trim().is_empty()).or(ai);
+        } else if first.is_none() && line.contains(r#""type":"user""#) {
+            first = first_message(&line);
         }
-        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+    }
+    Some(Names { title: custom.or(ai), first: first? })
+}
+
+/// The text of a transcript line if it's a real user message (not a tool
+/// result, a meta line or a slash-command wrapper).
+fn first_message(line: &str) -> Option<String> {
+    {
+        let Ok(v) = serde_json::from_str::<Value>(line) else { return None };
         if v["type"] != "user" || v["isMeta"] == true || v["isSidechain"] == true {
-            continue;
+            return None;
         }
         let text = match &v["message"]["content"] {
             Value::String(t) => t.clone(),
             Value::Array(blocks) => blocks.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join(" "),
-            _ => continue,
+            _ => return None,
         };
         let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
         // Skip slash-command and system wrappers like `<command-name>`.
         if text.is_empty() || text.starts_with('<') {
-            continue;
+            return None;
         }
-        return Some(text);
+        Some(text)
     }
-    None
 }
 
 /// Deletes a session's transcript, and the folder Claude Code keeps beside it if there is one.
@@ -813,9 +864,29 @@ mod tests {
             r#"{"type":"user","message":{"role":"user","content":"second message"}}"#,
         ];
         std::fs::write(&path, lines.join("\n")).unwrap();
-        assert_eq!(transcript_title(&path).as_deref(), Some("fix the build"));
+        let names = read_names(&path).unwrap();
+        assert_eq!(names.first, "fix the build");
+        assert_eq!(names.title, None);
         std::fs::write(&path, lines[..3].join("\n")).unwrap();
-        assert_eq!(transcript_title(&path), None);
+        assert!(read_names(&path).is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn titles_from_claude_and_renames() {
+        let path = std::env::temp_dir().join(format!("kynex-names-{}.jsonl", std::process::id()));
+        let mut lines = vec![
+            r#"{"type":"user","message":{"role":"user","content":"clean up the worktrees please"}}"#,
+            r#"{"type":"ai-title","aiTitle":"Git worktree cleanup","sessionId":"x"}"#,
+        ];
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        let names = read_names(&path).unwrap();
+        assert_eq!(names.title.as_deref(), Some("Git worktree cleanup"));
+        assert_eq!(names.first, "clean up the worktrees please");
+        // A rename wins over Claude's own title, wherever it sits.
+        lines.insert(1, r#"{"type":"custom-title","customTitle":"Worktrees","sessionId":"x"}"#);
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        assert_eq!(read_names(&path).unwrap().title.as_deref(), Some("Worktrees"));
         let _ = std::fs::remove_file(path);
     }
 
