@@ -27,12 +27,15 @@ Edit UI code and see it live without restarting, via [subsecond](https://crates.
 
 ```sh
 cargo install dioxus-cli@0.7.10 --locked   # once
-dx serve --hot-patch --features hotpatch
+./dev.ps1                                  # dx serve --hot-patch, with auto-restart
 ```
 
-Everything reached from `KynexApp::render` is patched on save. Changing a struct's fields
-(adding state) still needs a restart; dependencies aren't patched.
+Everything reached from `KynexApp::render` is patched on save; dependencies aren't patched.
+A compile error leaves the running app alone. Changing a struct's fields (adding state)
+can't be hot-patched and crashes the app, so `dev.ps1` restarts dx, which relaunches the
+app once a full build succeeds. Tabs and Claude sessions are restored on relaunch.
 
 `cargo test -- --ignored` runs a live round-trip against the real CLI (uses a little quota).
 
-State is saved to `%APPDATA%\kynex\state.json`.
+State is saved to `state.json` in the per-user data dir: `%APPDATA%\kynex` on Windows,
+`~/Library/Application Support/kynex` on macOS, `~/.local/share/kynex` on Linux.
