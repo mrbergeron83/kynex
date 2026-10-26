@@ -4,6 +4,7 @@
 //! <data dir>/projects/<name>-<hash>/
 //!     project.json        which folder this is (lets a moved repo be re-linked later)
 //!     permissions.json    allow / deny rules Kynex hands to every Claude session
+//!     claude.json         how sessions start: permission mode, effort, extra directories
 //! ```
 //!
 //! Each section is its own file, read and written on its own, so a new kind of
@@ -122,6 +123,96 @@ impl Permissions {
     }
 }
 
+/// Claude Code's permission modes, as the CLI names them (`--permission-mode`).
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Mode {
+    /// Ask before anything not covered by an allow rule.
+    Manual,
+    /// Edit files without asking; still ask for other tools.
+    AcceptEdits,
+    /// A classifier approves safe actions and only asks about risky ones, like the CLI's auto mode.
+    #[default]
+    Auto,
+    /// Read-only research, then propose a plan for approval.
+    Plan,
+}
+
+impl Mode {
+    pub const ALL: [Mode; 4] = [Mode::Manual, Mode::AcceptEdits, Mode::Auto, Mode::Plan];
+
+    pub fn cli(self) -> &'static str {
+        match self {
+            Mode::Manual => "manual",
+            Mode::AcceptEdits => "acceptEdits",
+            Mode::Auto => "auto",
+            Mode::Plan => "plan",
+        }
+    }
+
+    pub fn from_cli(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.cli() == s).or((s == "default").then_some(Mode::Manual))
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Mode::Manual => "Ask first",
+            Mode::AcceptEdits => "Accept edits",
+            Mode::Auto => "Auto",
+            Mode::Plan => "Plan",
+        }
+    }
+
+    pub fn help(self) -> &'static str {
+        match self {
+            Mode::Manual => "Ask before anything not covered by an allow rule",
+            Mode::AcceptEdits => "Edit files without asking; ask for other tools",
+            Mode::Auto => "Approve safe actions automatically; ask about risky ones",
+            Mode::Plan => "Research read-only, then propose a plan for you to approve",
+        }
+    }
+}
+
+/// Effort levels for `--effort`; empty means "whatever your Claude settings say".
+pub const EFFORTS: [(&str, &str); 6] =
+    [("", "Default"), ("low", "Low"), ("medium", "Medium"), ("high", "High"), ("xhigh", "Extra high"), ("max", "Max")];
+
+/// How a project's Claude sessions start. Anything left empty falls back to the
+/// user's own Claude settings, exactly as in the CLI.
+#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClaudeSettings {
+    /// The mode new sessions start in; the composer switches a live session.
+    pub mode: Mode,
+    pub effort: String,
+    /// Extra folders Claude may read and edit, like `--add-dir`.
+    pub add_dirs: Vec<PathBuf>,
+}
+
+impl ClaudeSettings {
+    const FILE: &str = "claude.json";
+
+    pub fn load(project: &Path) -> Self {
+        load(project, Self::FILE)
+    }
+
+    pub fn save(&self, project: &Path) -> Result<(), String> {
+        save(project, Self::FILE, self)
+    }
+
+    /// CLI flags for everything but the mode, which each session tracks itself.
+    pub fn cli_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
+        if !self.effort.is_empty() {
+            args.extend(["--effort".to_string(), self.effort.clone()]);
+        }
+        for d in &self.add_dirs {
+            args.extend(["--add-dir".to_string(), d.display().to_string()]);
+        }
+        args
+    }
+}
+
 /// The allow rules in a `can_use_tool` request's `permission_suggestions`, as
 /// rule strings. Other suggestion kinds (mode switches, extra directories)
 /// aren't project rules, so they're left out.
@@ -173,6 +264,23 @@ mod tests {
         ]);
         assert_eq!(suggested_rules(&s), ["Bash(cargo check:*)", "Edit"]);
         assert!(suggested_rules(&Value::Null).is_empty());
+    }
+
+    #[test]
+    fn modes_round_trip_cli_names() {
+        for m in Mode::ALL {
+            assert_eq!(Mode::from_cli(m.cli()), Some(m));
+            assert_eq!(serde_json::to_value(m).unwrap(), m.cli());
+        }
+        assert_eq!(Mode::from_cli("default"), Some(Mode::Manual));
+        assert_eq!(ClaudeSettings::default().mode, Mode::Auto);
+    }
+
+    #[test]
+    fn claude_settings_args() {
+        assert!(ClaudeSettings::default().cli_args().is_empty());
+        let s = ClaudeSettings { mode: Mode::Plan, effort: "high".into(), add_dirs: vec![PathBuf::from("/srv/shared")] };
+        assert_eq!(s.cli_args(), ["--effort", "high", "--add-dir", "/srv/shared"]);
     }
 
     #[test]

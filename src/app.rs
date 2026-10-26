@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::chrome;
 use crate::git::GitView;
-use crate::project::{self, Permissions};
+use crate::project::{self, ClaudeSettings, Mode, Permissions};
 use crate::session::{self, Answer, Attachment, Item, Kind, PermState, Session, SessionInfo};
 use crate::theme::{self, THEMES, Theme};
 use crate::wsl;
@@ -84,6 +84,7 @@ pub struct KynexApp {
 struct SettingsView {
     path: PathBuf,
     perms: Permissions,
+    claude: ClaudeSettings,
     new_rule: String,
 }
 
@@ -527,6 +528,7 @@ impl KynexApp {
                 send = true;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.mode_picker(ui);
                 if ui.button("Attach image").clicked() {
                     if let Some(files) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"]).pick_files() {
                         for f in files {
@@ -547,6 +549,29 @@ impl KynexApp {
                 }
                 s.send(&ctx, text, atts);
             }
+        }
+    }
+
+    /// The live permission mode of the active project session, like Shift+Tab in
+    /// the CLI. Applies right away; the project's default lives in Claude settings.
+    fn mode_picker(&mut self, ui: &mut egui::Ui) {
+        let Some(s) = self.session_mut().filter(|s| s.kind == Kind::Code) else { return };
+        let mut mode = s.mode;
+        egui::ComboBox::from_id_salt("permission-mode")
+            .selected_text(mode.label())
+            .show_ui(ui, |ui| {
+                for m in Mode::ALL {
+                    ui.selectable_value(&mut mode, m, m.label()).on_hover_text(m.help());
+                }
+            })
+            .response
+            .on_hover_text(format!("{}  (Shift+Tab to cycle)", mode.help()));
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab)) {
+            let next = Mode::ALL.iter().position(|m| *m == mode).map_or(0, |i| (i + 1) % Mode::ALL.len());
+            mode = Mode::ALL[next];
+        }
+        if mode != s.mode {
+            s.set_mode(mode);
         }
     }
 
@@ -773,18 +798,18 @@ impl KynexApp {
     }
 
     /// The ⚙ Claude settings modal for a project, open while egui's temp memory
-    /// holds its path. Sections down the left; Permissions is the first.
+    /// holds its path. Sections down the left.
     fn claude_settings_modal(&mut self, ctx: &egui::Context) {
         let id = egui::Id::unique(SETTINGS_MODAL);
         let Some(path) = ctx.data(|d| d.get_temp::<Option<PathBuf>>(id)).flatten() else { return };
-        const SECTIONS: [&str; 1] = ["Permissions"];
+        const SECTIONS: [&str; 2] = ["Permissions", "Model"];
         let section_id = id.with("section");
         let mut section = ctx.data(|d| d.get_temp::<usize>(section_id)).unwrap_or(0).min(SECTIONS.len() - 1);
         let mut close = false;
 
         let modal = egui::Modal::new(id).show(ctx, |ui| {
             ui.set_width(760.0_f32.min(ctx.content_rect().width() - 80.0));
-            ui.set_height(520.0_f32.min(ctx.content_rect().height() - 120.0));
+            ui.set_height(560.0_f32.min(ctx.content_rect().height() - 120.0));
             ui.horizontal(|ui| {
                 ui.heading("⚙  Claude settings");
                 ui.label(RichText::new(project_name(&path)).weak());
@@ -804,8 +829,10 @@ impl KynexApp {
                 });
                 ui.separator();
                 ui.vertical(|ui| {
-                    egui::ScrollArea::vertical().id_salt("claude-settings-scroll").auto_shrink(false).show(ui, |ui| match section {
-                        _ => self.permissions_section(ui, &path),
+                    egui::ScrollArea::vertical().id_salt("claude-settings-scroll").auto_shrink(false).show(ui, |ui| {
+                        self.settings_section(ui, &path, SECTIONS[section]);
+                        ui.add_space(16.0);
+                        ui.label(RichText::new(format!("Stored in {}", project::dir(&path).display())).small().weak());
                     });
                 });
             });
@@ -817,82 +844,140 @@ impl KynexApp {
         }
     }
 
-    fn permissions_section(&mut self, ui: &mut egui::Ui, path: &Path) {
-        ui.label(
-            RichText::new(
-                "Rules Kynex gives every Claude session in this project, in Claude Code's syntax:                  Bash(cargo test:*), Edit, WebFetch(domain:docs.rs). They add to your own Claude                  settings; a deny anywhere wins.",
-            )
-            .weak(),
-        );
-        ui.add_space(8.0);
-        self.permissions_editor(ui, path, false);
-        ui.add_space(12.0);
-        ui.label(RichText::new(format!("Stored in {}", project::dir(path).display())).small().weak());
-    }
-
-    /// Lists, adds and removes a project's permission rules, saving on every change.
-    /// `compact` stacks the add controls for the narrow sessions panel.
-    fn permissions_editor(&mut self, ui: &mut egui::Ui, path: &Path, compact: bool) {
+    /// One section of the Claude settings modal. Edits save immediately: the mode
+    /// applies to the live session, everything else from the next process start.
+    fn settings_section(&mut self, ui: &mut egui::Ui, path: &Path, section: &str) {
         if self.settings.as_ref().is_none_or(|s| s.path != path) {
-            self.settings = Some(SettingsView { path: path.to_path_buf(), perms: Permissions::load(path), new_rule: String::new() });
+            self.settings = Some(SettingsView {
+                path: path.to_path_buf(),
+                perms: Permissions::load(path),
+                claude: ClaudeSettings::load(path),
+                new_rule: String::new(),
+            });
         }
         let Some(view) = &mut self.settings else { return };
-        let before = view.perms.clone();
+        let (perms_before, claude_before) = (view.perms.clone(), view.claude.clone());
 
-        for (title, rules) in [("Allow", &mut view.perms.allow), ("Deny", &mut view.perms.deny)] {
-            ui.label(RichText::new(title).strong());
-            if rules.is_empty() {
-                ui.label(RichText::new("  none").weak());
-            }
-            let mut remove = None;
-            for (i, rule) in rules.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    if ui.small_button("✖").on_hover_text("Remove this rule").clicked() {
-                        remove = Some(i);
+        match section {
+            "Permissions" => {
+                ui.label(RichText::new("Default mode").strong());
+                ui.label(RichText::new("What new sessions start in. Switch a running session from the composer.").weak());
+                for m in Mode::ALL {
+                    ui.radio_value(&mut view.claude.mode, m, m.label()).on_hover_text(m.help());
+                }
+                ui.add_space(12.0);
+
+                ui.label(RichText::new("Rules").strong());
+                ui.label(
+                    RichText::new(
+                        "In Claude Code's syntax: Bash(cargo test:*), Edit, WebFetch(domain:docs.rs). \
+                         They add to your own Claude settings; a deny anywhere wins.",
+                    )
+                    .weak(),
+                );
+                ui.add_space(4.0);
+                rules_editor(ui, &mut view.perms, &mut view.new_rule);
+                ui.add_space(12.0);
+
+                ui.label(RichText::new("Additional directories").strong());
+                ui.label(RichText::new("Folders outside the project Claude may read and edit (--add-dir).").weak());
+                let mut remove = None;
+                for (i, dir) in view.claude.add_dirs.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui.small_button("✖").on_hover_text("Remove").clicked() {
+                            remove = Some(i);
+                        }
+                        ui.label(RichText::new(dir.display().to_string()).monospace());
+                    });
+                }
+                if let Some(i) = remove {
+                    view.claude.add_dirs.remove(i);
+                }
+                if ui.button("Add folder…").clicked() {
+                    if let Some(dir) = rfd::FileDialog::new().set_directory(path).pick_folder() {
+                        if !view.claude.add_dirs.contains(&dir) {
+                            view.claude.add_dirs.push(dir);
+                        }
                     }
-                    let text = RichText::new(rule).monospace();
-                    ui.add(egui::Label::new(if compact { text.small() } else { text }).truncate()).on_hover_text(rule);
+                }
+            }
+            _ => {
+                ui.label(RichText::new("Effort").strong());
+                ui.label(RichText::new("How hard Claude thinks (--effort). Default uses your Claude settings.").weak());
+                let current = project::EFFORTS.iter().find(|e| e.0 == view.claude.effort).map_or("Default", |e| e.1);
+                egui::ComboBox::from_id_salt("effort").selected_text(current).show_ui(ui, |ui| {
+                    for (id, name) in project::EFFORTS {
+                        ui.selectable_value(&mut view.claude.effort, id.to_string(), name);
+                    }
                 });
+                ui.add_space(12.0);
+                ui.label(RichText::new("The model is picked in the top bar and applies to every tab.").weak());
             }
-            if let Some(i) = remove {
-                rules.remove(i);
-            }
-            ui.add_space(if compact { 4.0 } else { 8.0 });
         }
 
-        let add = |ui: &mut egui::Ui, new_rule: &mut String| {
-            let width = if compact { ui.available_width() } else { 320.0 };
-            let field = ui.add(egui::TextEdit::singleline(new_rule).hint_text("Bash(npm test:*)").desired_width(width));
-            field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
-        };
-        let buttons = |ui: &mut egui::Ui, enabled: bool| {
-            let allow = ui.add_enabled(enabled, egui::Button::new("Allow")).clicked();
-            let deny = ui.add_enabled(enabled, egui::Button::new("Deny")).clicked();
-            (allow, deny)
-        };
-        let rule = view.new_rule.trim().to_string();
-        let (enter, (add_allow, add_deny)) = if compact {
-            let enter = add(ui, &mut view.new_rule);
-            (enter, ui.horizontal(|ui| buttons(ui, !rule.is_empty())).inner)
-        } else {
-            ui.horizontal(|ui| (add(ui, &mut view.new_rule), buttons(ui, !rule.is_empty()))).inner
-        };
-        let list = if add_deny { Some(&mut view.perms.deny) } else if add_allow || enter { Some(&mut view.perms.allow) } else { None };
-        if let Some(list) = list.filter(|_| !rule.is_empty()) {
-            if !list.contains(&rule) {
-                list.push(rule);
-            }
-            view.new_rule.clear();
-        }
-
-        if view.perms != before {
-            if let Err(e) = view.perms.save(path) {
+        let path = path.to_path_buf();
+        if view.perms != perms_before {
+            if let Err(e) = view.perms.save(&path) {
                 self.notice = Some(e);
             }
-            // The CLI reads rules at startup: restart the project's process so it picks them up.
-            // `--resume` keeps the conversation going; rules allowed "this session" are dropped.
-            self.restart_when_idle.insert(path.to_path_buf());
         }
+        if view.claude != claude_before {
+            if let Err(e) = view.claude.save(&path) {
+                self.notice = Some(e);
+            }
+            if view.claude.mode != claude_before.mode {
+                if let Some(s) = self.code.get_mut(&path) {
+                    s.set_mode(view.claude.mode);
+                }
+            }
+        }
+        let claude_restart = view.claude.effort != claude_before.effort || view.claude.add_dirs != claude_before.add_dirs;
+        if view.perms != perms_before || claude_restart {
+            // The CLI reads these at startup: restart the project's process so it picks them up.
+            // `--resume` keeps the conversation going; rules allowed "this session" are dropped.
+            self.restart_when_idle.insert(path);
+        }
+    }
+}
+
+/// Allow and deny lists with remove buttons, and a field to add a rule.
+fn rules_editor(ui: &mut egui::Ui, perms: &mut Permissions, new_rule: &mut String) {
+    for (title, rules) in [("Allow", &mut perms.allow), ("Deny", &mut perms.deny)] {
+        ui.label(title);
+        if rules.is_empty() {
+            ui.label(RichText::new("  none").weak());
+        }
+        let mut remove = None;
+        for (i, rule) in rules.iter().enumerate() {
+            ui.horizontal(|ui| {
+                if ui.small_button("✖").on_hover_text("Remove this rule").clicked() {
+                    remove = Some(i);
+                }
+                ui.add(egui::Label::new(RichText::new(rule).monospace()).truncate()).on_hover_text(rule);
+            });
+        }
+        if let Some(i) = remove {
+            rules.remove(i);
+        }
+        ui.add_space(4.0);
+    }
+
+    let rule = new_rule.trim().to_string();
+    let (enter, allow, deny) = ui
+        .horizontal(|ui| {
+            let field = ui.add(egui::TextEdit::singleline(new_rule).hint_text("Bash(npm test:*)").desired_width(320.0));
+            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let allow = ui.add_enabled(!rule.is_empty(), egui::Button::new("Allow")).clicked();
+            let deny = ui.add_enabled(!rule.is_empty(), egui::Button::new("Deny")).clicked();
+            (enter, allow, deny)
+        })
+        .inner;
+    let list = if deny { Some(&mut perms.deny) } else if allow || enter { Some(&mut perms.allow) } else { None };
+    if let Some(list) = list.filter(|_| !rule.is_empty()) {
+        if !list.contains(&rule) {
+            list.push(rule);
+        }
+        new_rule.clear();
     }
 }
 
@@ -1034,6 +1119,7 @@ fn tool_preview(tool: &str, input: &serde_json::Value) -> String {
         "Bash" | "PowerShell" => input["command"].as_str().map(str::to_string),
         "Write" => input["file_path"].as_str().map(|p| format!("write {p}")),
         "Edit" => input["file_path"].as_str().map(|p| format!("edit {p}")),
+        "ExitPlanMode" => input["plan"].as_str().map(str::to_string),
         _ => None,
     };
     s.unwrap_or_else(|| serde_json::to_string_pretty(input).unwrap_or_default())

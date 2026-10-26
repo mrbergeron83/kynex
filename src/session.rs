@@ -73,6 +73,9 @@ pub struct Session {
     pub session_id: Option<String>,
     pub busy: bool,
     pub total_cost: f64,
+    /// The live permission mode: starts at the project's default, follows the
+    /// CLI's reports, and is switched from the composer without a restart.
+    pub mode: project::Mode,
     child: Option<Child>,
     stdin: Option<Arc<Mutex<ChildStdin>>>,
     rx: Option<Receiver<Event>>,
@@ -82,6 +85,10 @@ pub struct Session {
 
 impl Session {
     pub fn new(kind: Kind, cwd: PathBuf) -> Self {
+        let mode = match kind {
+            Kind::Code => project::ClaudeSettings::load(&cwd).mode,
+            Kind::Chat => project::Mode::default(),
+        };
         Self {
             kind,
             cwd,
@@ -90,6 +97,7 @@ impl Session {
             session_id: None,
             busy: false,
             total_cost: 0.0,
+            mode,
             child: None,
             stdin: None,
             rx: None,
@@ -167,11 +175,13 @@ impl Session {
             Kind::Chat => {
                 cmd.args(["--tools", ""]);
             }
-            // Read fresh on every start, so edits in the Settings view apply to the next process.
+            // Read fresh on every start, so edits in Claude settings apply to the next process.
             Kind::Code => {
                 if let Some(settings) = project::Permissions::load(&self.cwd).as_cli_settings() {
                     cmd.args(["--settings", &settings]);
                 }
+                cmd.args(["--permission-mode", self.mode.cli()]);
+                cmd.args(project::ClaudeSettings::load(&self.cwd).cli_args());
             }
         }
         if !self.model.is_empty() {
@@ -241,18 +251,32 @@ impl Session {
     }
 
     pub fn interrupt(&mut self) {
+        self.control(json!({ "subtype": "interrupt" }));
+    }
+
+    /// Switches the permission mode, live if the process is running (like
+    /// Shift+Tab in the CLI), otherwise from the next start.
+    pub fn set_mode(&mut self, mode: project::Mode) {
+        self.mode = mode;
+        if self.child.is_some() {
+            self.control(json!({ "subtype": "set_permission_mode", "mode": mode.cli() }));
+        }
+    }
+
+    fn control(&mut self, request: Value) {
         self.next_request += 1;
         let id = format!("kynex-{}", self.next_request);
-        self.write(json!({ "type": "control_request", "request_id": id, "request": { "subtype": "interrupt" } }));
+        self.write(json!({ "type": "control_request", "request_id": id, "request": request }));
     }
 
     /// Answers a permission prompt. For [`Answer::Project`] it returns the rules
     /// to save in the project's settings; the live process gets them right away
     /// as session rules, and later processes get them from the saved settings.
     pub fn answer_permission(&mut self, index: usize, answer: Answer) -> Vec<String> {
-        let Some(Item::Permission { request_id, input, suggestions, state, .. }) = self.items.get_mut(index) else {
+        let Some(Item::Permission { request_id, tool, input, suggestions, state }) = self.items.get_mut(index) else {
             return Vec::new();
         };
+        let approves_plan = answer != Answer::Deny && tool.replace(' ', "").eq_ignore_ascii_case("ExitPlanMode");
         *state = if answer == Answer::Deny { PermState::Denied } else { PermState::Allowed };
         let response = match answer {
             Answer::Deny => json!({ "behavior": "deny", "message": "The user denied this action in Kynex." }),
@@ -272,6 +296,15 @@ impl Session {
             "response": { "subtype": "success", "request_id": request_id.clone(), "response": response }
         });
         self.write(msg);
+        // An approved plan means "go build it": leave plan mode for the project's
+        // default, or Auto if the default is Plan itself.
+        if approves_plan && self.mode == project::Mode::Plan {
+            let default = match self.kind {
+                Kind::Code => project::ClaudeSettings::load(&self.cwd).mode,
+                Kind::Chat => project::Mode::default(),
+            };
+            self.set_mode(if default == project::Mode::Plan { project::Mode::Auto } else { default });
+        }
         rules
     }
 
@@ -311,6 +344,12 @@ impl Session {
     fn handle(&mut self, v: Value) {
         if let Some(id) = v["session_id"].as_str() {
             self.session_id = Some(id.to_string());
+        }
+        // `system` init and status messages report the mode, e.g. after a plan is approved.
+        if let Some(mode) = v["permissionMode"].as_str().and_then(project::Mode::from_cli) {
+            if self.child.is_some() {
+                self.mode = mode;
+            }
         }
         match v["type"].as_str().unwrap_or("") {
             "stream_event" => self.handle_stream(&v["event"]),
@@ -604,5 +643,47 @@ mod tests {
         assert!(text.to_lowercase().contains("pong"), "got: {text:?}");
         assert!(s.items.iter().any(|i| matches!(i, Item::Result { is_error: false, .. })));
         assert!(s.session_id.is_some());
+    }
+
+    /// A project session starts in Auto (no prompt for a harmless mkdir), then a
+    /// live switch to Manual makes the next one ask. Run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn permission_modes_live() {
+        let root = std::env::temp_dir().join(format!("kynex-modes-{}", std::process::id()));
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        // Keep the project's Kynex settings out of the real data dir.
+        unsafe { std::env::set_var("KYNEX_DATA_DIR", root.join("data")) };
+
+        let ctx = egui::Context::default();
+        let mut s = Session::new(Kind::Code, project.clone());
+        assert_eq!(s.mode, project::Mode::Auto);
+        s.model = "haiku".into();
+        let run = |s: &mut Session, dir: &str| {
+            s.send(&ctx, format!("Run this exact command with the Bash tool: mkdir {dir} . Then reply OK."), Vec::new());
+            let start = Instant::now();
+            while s.busy && start.elapsed() < Duration::from_secs(120) {
+                s.poll();
+                if let Some(i) = s.items.iter().position(|i| matches!(i, Item::Permission { state: PermState::Pending, .. })) {
+                    s.answer_permission(i, Answer::Deny);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let asked = |s: &Session| s.items.iter().filter(|i| matches!(i, Item::Permission { .. })).count();
+
+        run(&mut s, "made1");
+        assert!(project.join("made1").is_dir(), "auto mode should run mkdir");
+        assert_eq!(asked(&s), 0, "auto mode shouldn't ask");
+
+        s.set_mode(project::Mode::Manual);
+        run(&mut s, "made2");
+        assert_eq!(s.mode, project::Mode::Manual);
+        assert!(asked(&s) > 0, "manual mode should ask");
+        assert!(!project.join("made2").exists(), "denied mkdir shouldn't run");
+
+        s.kill();
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
