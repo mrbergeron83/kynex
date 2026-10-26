@@ -43,7 +43,7 @@ workspace = true
 [features]
 # Hot-patch Rust code while the app runs: `dx serve --hot-patch --features hotpatch`.
 # gpui re-renders every view through subsecond, so edits to `render` paths apply live.
-# Only this crate is patched; edits in crates/kynex-core need a rebuild.
+# dx patches workspace crates (crates/kynex-core) as well as this one.
 hotpatch = ["gpui/hot-reload"]
 
 # Optimize dependencies even in dev builds: gpui, text shaping and image decoding

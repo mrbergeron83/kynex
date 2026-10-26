@@ -30,12 +30,19 @@ cargo install dioxus-cli@0.7.10 --locked   # once
 ./dev.ps1                                  # dx serve --hot-patch, with auto-restart
 ```
 
-Everything reached from `KynexApp::render` is patched on save; dependencies aren't patched.
+Everything reached from `KynexApp::render` is patched on save, in both workspace crates;
+third-party dependencies aren't patched.
 A compile error leaves the running app alone. Changing a struct's fields (adding state)
 can't be hot-patched and crashes the app, so `dev.ps1` restarts dx, which relaunches the
 app once a full build succeeds. Tabs and Claude sessions are restored on relaunch.
 
-`cargo test -- --ignored` runs a live round-trip against the real CLI (uses a little quota).
+`./check.ps1` runs formatting, clippy and every test. `cargo test -p kynex-core -- --ignored`
+runs a live round-trip against the real CLI (uses a little quota).
+
+## Layout
+
+A cargo workspace: `crates/kynex-core` is the logic with no UI (the `claude` protocol,
+sessions, project settings, git), and `src/` is the gpui app. See `CLAUDE.md` for a map.
 
 State is saved to `state.json` in the per-user data dir: `%APPDATA%\kynex` on Windows,
 `~/Library/Application Support/kynex` on macOS, `~/.local/share/kynex` on Linux.
