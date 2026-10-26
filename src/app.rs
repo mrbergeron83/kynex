@@ -27,21 +27,67 @@ use crate::ui::{
 };
 use crate::wsl;
 
-const MODELS: [(&str, &str); 4] = [("", "Default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")];
+/// Until the CLI's own list arrives (or if it can't be had).
+const MODELS: [(&str, &str); 5] =
+    [("", "Default"), ("opus", "Opus"), ("fable", "Fable"), ("sonnet", "Sonnet"), ("haiku", "Haiku")];
 const MAX_IMAGE_EDGE: u32 = 1568;
 const THREAD_WIDTH: Pixels = px(780.);
 
-actions!(kynex, [OpenProject, NextTab, PrevTab, ToggleSessions, CycleMode]);
+actions!(kynex, [OpenProject, NextTab, PrevTab, ToggleSessions, CycleMode, Interrupt]);
+
+/// Workspace shortcuts and their defaults. `<data dir>/keymap.json` overrides
+/// them by name, e.g. `{ "interrupt": "ctrl-c" }`; an empty string unbinds one.
+const SHORTCUTS: [(&str, &str); 6] = [
+    ("open_project", "secondary-o"),
+    ("next_tab", "ctrl-tab"),
+    ("prev_tab", "ctrl-shift-tab"),
+    ("toggle_sessions", "secondary-b"),
+    ("cycle_mode", "shift-tab"),
+    ("interrupt", "escape"),
+];
 
 pub fn bind_keys(cx: &mut App) {
+    let path = data_dir().join("keymap.json");
+    let user: HashMap<String, String> = match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
+            eprintln!("kynex: ignoring {}: {e}", path.display());
+            HashMap::new()
+        }),
+        Err(_) => {
+            // Write the defaults out so there's something to edit.
+            let defaults: std::collections::BTreeMap<_, _> = SHORTCUTS.iter().copied().collect();
+            if let Ok(s) = serde_json::to_string_pretty(&defaults) {
+                let _ = std::fs::create_dir_all(data_dir());
+                let _ = std::fs::write(&path, s);
+            }
+            HashMap::new()
+        }
+    };
     let c = Some("Workspace");
-    cx.bind_keys([
-        KeyBinding::new(crate::ui::keys("secondary-o"), OpenProject, c),
-        KeyBinding::new("ctrl-tab", NextTab, c),
-        KeyBinding::new("ctrl-shift-tab", PrevTab, c),
-        KeyBinding::new(crate::ui::keys("secondary-b"), ToggleSessions, c),
-        KeyBinding::new("shift-tab", CycleMode, c),
-    ]);
+    let mut bindings = Vec::new();
+    for (name, default) in SHORTCUTS {
+        let keys = crate::ui::keys(user.get(name).map_or(default, String::as_str));
+        if keys.trim().is_empty() {
+            continue;
+        }
+        if let Some(bad) = keys.split_whitespace().find(|k| gpui::Keystroke::parse(k).is_err()) {
+            eprintln!("kynex: keymap.json: `{bad}` isn't a key for {name}; using {default}");
+        }
+        let keys = if keys.split_whitespace().all(|k| gpui::Keystroke::parse(k).is_ok()) {
+            keys
+        } else {
+            crate::ui::keys(default)
+        };
+        bindings.push(match name {
+            "open_project" => KeyBinding::new(keys, OpenProject, c),
+            "next_tab" => KeyBinding::new(keys, NextTab, c),
+            "prev_tab" => KeyBinding::new(keys, PrevTab, c),
+            "toggle_sessions" => KeyBinding::new(keys, ToggleSessions, c),
+            "cycle_mode" => KeyBinding::new(keys, CycleMode, c),
+            _ => KeyBinding::new(keys, Interrupt, c),
+        });
+    }
+    cx.bind_keys(bindings);
 }
 
 /// Which top-level tab is showing. Projects sit at the top of the hierarchy,
@@ -514,6 +560,19 @@ impl KynexApp {
     }
 
     /// Like Shift+Tab in the CLI: the next permission mode, live.
+    /// Esc by default: closes an open menu or the settings modal first, then
+    /// stops a running reply. Otherwise the key goes on to whoever else wants it.
+    fn interrupt_action(&mut self, _: &Interrupt, _: &mut Window, cx: &mut Context<Self>) {
+        if self.menu.take().is_some() || self.settings.take().is_some() {
+            return cx.notify();
+        }
+        if self.active_session().is_some_and(|s| s.busy) {
+            self.interrupt(cx);
+        } else {
+            cx.propagate();
+        }
+    }
+
     fn cycle_mode(&mut self, _: &CycleMode, _: &mut Window, cx: &mut Context<Self>) {
         let Some(s) = self.session_mut().filter(|s| s.kind == Kind::Code) else { return };
         let next = Mode::ALL.iter().position(|m| *m == s.mode).map_or(0, |i| (i + 1) % Mode::ALL.len());
@@ -830,7 +889,6 @@ impl KynexApp {
             let tooltip = p.path.display().to_string();
             tabs.push(self.render_tab(i + 1, project_name(&p.path).into(), Icon::Folder, Some(tooltip), busy, waiting, cx));
         }
-        let model = MODELS.iter().find(|m| m.0 == self.saved.model).map_or("Default", |m| m.1);
 
         div()
             .id("title-bar")
@@ -863,18 +921,7 @@ impl KynexApp {
             // The empty middle of the bar is the window's title bar.
             .child(chrome::drag_area(div().id("drag").flex_1().h_full()))
             .child(
-                ghost_button("model", cx)
-                    .text_color(t.text_muted)
-                    .child(model)
-                    .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
-                    .tooltip(Tooltip::text("Model for every tab"))
-                    .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
-                        this.open_menu(Menu::Model, ev.position(), Anchor::TopRight, cx)
-                    })),
-            )
-            .child(
                 ghost_button("theme", cx)
-                    .ml_1()
                     .mr_2()
                     .text_color(t.text_muted)
                     .child(THEMES.iter().find(|x| x.0 == self.saved.theme).map_or("", |x| x.1))
@@ -1212,10 +1259,20 @@ impl KynexApp {
             }
             Item::Thinking => div().text_sm().italic().text_color(t.text_placeholder).child("Thinking…").into_any_element(),
             Item::ToolUse { name, summary, input } => {
+                // Claude's description of the call reads as prose; a bare command or path stays mono.
+                let described = serde_json::from_str::<serde_json::Value>(input)
+                    .ok()
+                    .is_some_and(|v| v["description"].as_str().is_some_and(|d| !d.trim().is_empty()));
+                let summary_el = div().flex_1().min_w_0().truncate().child(summary.clone());
+                let summary_el = if described {
+                    summary_el.text_sm().text_color(t.text)
+                } else {
+                    summary_el.font_family(mono()).text_xs().text_color(t.text_muted)
+                };
                 let head = disclosure_row(("tool", ix), expanded, &t)
                     .child(icon(Icon::Terminal, t.text_muted).size_3())
                     .child(div().flex_none().text_xs().font_weight(FontWeight::MEDIUM).text_color(t.text_muted).child(name.clone()))
-                    .child(div().flex_1().min_w_0().truncate().font_family(mono()).text_xs().text_color(t.text_muted).child(summary.clone()))
+                    .child(summary_el)
                     .on_click(toggle);
                 div()
                     .flex()
@@ -1324,18 +1381,23 @@ impl KynexApp {
 
     fn render_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
+        // At a glance: is Claude working, waiting on you, or idle?
+        let waiting = self.prompt.is_some();
+        let working = !waiting && self.active_session().is_some_and(|s| s.busy);
+        let status = (working || waiting).then(|| working_bar(working, &t));
         let shell = |child: AnyElement, focused: bool| {
             div().w_full().flex().justify_center().px_6().pb_4().pt_1().child(
-                div()
-                    .w_full()
-                    .max_w(THREAD_WIDTH)
-                    .p_3()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(if focused { t.border_focused } else { t.border })
-                    .bg(t.panel)
-                    .shadow_sm()
-                    .child(child),
+                div().w_full().max_w(THREAD_WIDTH).flex().flex_col().gap_1p5().children(status).child(
+                    div()
+                        .w_full()
+                        .p_3()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(if focused { t.border_focused } else { t.border })
+                        .bg(t.panel)
+                        .shadow_sm()
+                        .child(child),
+                ),
             )
         };
         if let Some(p) = &self.prompt {
@@ -1346,6 +1408,25 @@ impl KynexApp {
         let session = self.active_session();
         let busy = session.is_some_and(|s| s.busy);
         let mode = session.filter(|s| s.kind == Kind::Code).map(|s| s.mode);
+        fetch_models(cx);
+        // The default shows what it resolves to, e.g. "Default (Opus 5.5)": the CLI's
+        // description of it starts with the model's name.
+        let model_label = match current_model(&self.saved.model) {
+            Some(m) if self.saved.model.is_empty() => match m.description.split(" · ").next().filter(|s| !s.is_empty()) {
+                Some(resolved) if m.description.contains(" · ") => format!("Default ({resolved})"),
+                _ => "Default".to_string(),
+            },
+            Some(m) => m.name,
+            None => MODELS.iter().find(|m| m.0 == self.saved.model).map_or(self.saved.model.clone(), |m| m.1.to_string()),
+        };
+        // Effort lives in the project's Claude settings (a tiny file); chat has none.
+        let effort_label = self.active_project().filter(|_| mode.is_some()).map(|p| {
+            let effort = ClaudeSettings::load(&p.path).effort;
+            match project::EFFORTS.iter().find(|e| e.0 == effort) {
+                Some((id, name)) if !id.is_empty() => format!("{name} effort"),
+                _ => "Default effort".to_string(),
+            }
+        });
         let in_project = matches!(self.saved.active, Active::Project(_));
         let placeholder = if in_project {
             "Ask Claude Code to do something in this project…"
@@ -1391,7 +1472,7 @@ impl KynexApp {
                 .child(spinner("busy", t.accent, px(14.)))
                 .child(icon(Icon::Stop, t.text).size_3())
                 .child("Stop")
-                .tooltip(Tooltip::text("Interrupt Claude"))
+                .tooltip(Tooltip::with_meta("Interrupt Claude", "Esc · change it in keymap.json"))
                 .on_click(cx.listener(|this, _, _, cx| this.interrupt(cx)))
         } else {
             div()
@@ -1424,6 +1505,28 @@ impl KynexApp {
                             .tooltip(Tooltip::with_meta("Attach images or files", "or paste / drop them"))
                             .on_click(cx.listener(|this, _, _, cx| this.attach_files(cx))),
                     )
+                    .child(
+                        ghost_button("model", cx)
+                            .text_color(t.text_muted)
+                            .child(model_label)
+                            .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
+                            .tooltip(Tooltip::text("Model, for every tab; applies from the next session start"))
+                            .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                                this.open_menu(Menu::Model, ev.position(), Anchor::BottomLeft, cx)
+                            })),
+                    )
+                    .when_some(effort_label, |d, effort| {
+                        d.child(
+                            ghost_button("effort", cx)
+                                .text_color(t.text_muted)
+                                .child(effort)
+                                .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
+                                .tooltip(Tooltip::text("How hard Claude thinks in this project (--effort)"))
+                                .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                                    this.open_menu(Menu::Effort, ev.position(), Anchor::BottomLeft, cx)
+                                })),
+                        )
+                    })
                     .when_some(mode, |d, mode| {
                         d.child(
                             ghost_button("mode", cx)
@@ -1449,10 +1552,45 @@ impl KynexApp {
         let mut items: Vec<AnyElement> = Vec::new();
         match &which {
             Menu::Model => {
-                for (n, (id, name)) in MODELS.iter().enumerate() {
-                    let id = id.to_string();
+                // The account's own list from the CLI; the short built-in one until it arrives.
+                let list = model_list().unwrap_or_else(|| {
+                    MODELS
+                        .iter()
+                        .map(|(id, name)| session::ModelInfo {
+                            value: if id.is_empty() { "default".into() } else { id.to_string() },
+                            name: name.to_string(),
+                            description: String::new(),
+                            efforts: Vec::new(),
+                        })
+                        .collect()
+                });
+                for (n, m) in list.into_iter().enumerate() {
+                    let id = if m.value == "default" { String::new() } else { m.value.clone() };
+                    let selected = self.saved.model == id;
+                    let hover = t.hover;
                     items.push(
-                        menu_item(("model", n), *name, self.saved.model == id, cx)
+                        div()
+                            .id(("model", n))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(hover))
+                            .when(selected, |d| d.bg(t.active))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .flex()
+                                    .flex_col()
+                                    .child(div().text_sm().text_color(t.text).child(m.name.clone()))
+                                    .when(!m.description.is_empty(), |d| {
+                                        d.child(div().text_xs().text_color(t.text_muted).child(m.description.clone()))
+                                    }),
+                            )
+                            .when(selected, |d| d.child(icon(Icon::Check, t.text_muted)))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.saved.model = id.clone();
                                 this.menu = None;
@@ -1500,15 +1638,41 @@ impl KynexApp {
                 }
             }
             Menu::Effort => {
-                let current = self.settings.as_ref().map(|s| s.claude.effort.clone()).unwrap_or_default();
-                for (n, (id, name)) in project::EFFORTS.iter().enumerate() {
+                // From the settings modal, or from the composer for the active project.
+                let path = self.settings.as_ref().map(|s| s.path.clone()).or_else(|| self.active_key());
+                let current = match (&self.settings, &path) {
+                    (Some(s), _) => s.claude.effort.clone(),
+                    (None, Some(p)) => ClaudeSettings::load(p).effort,
+                    _ => String::new(),
+                };
+                // Only the levels the selected model takes, once the CLI has said which.
+                let allowed = current_model(&self.saved.model).map(|m| m.efforts);
+                let levels = project::EFFORTS
+                    .iter()
+                    .filter(|(id, _)| id.is_empty() || allowed.as_ref().is_none_or(|a| a.iter().any(|e| e == id)));
+                for (n, (id, name)) in levels.enumerate() {
                     let id = id.to_string();
+                    let path = path.clone();
                     items.push(
                         menu_item(("effort", n), *name, current == id, cx)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 let id = id.clone();
                                 this.menu = None;
-                                this.edit_settings(cx, |v| v.claude.effort = id);
+                                if this.settings.is_some() {
+                                    return this.edit_settings(cx, |v| v.claude.effort = id);
+                                }
+                                let Some(path) = path.clone() else { return };
+                                let mut claude = ClaudeSettings::load(&path);
+                                if claude.effort != id {
+                                    claude.effort = id;
+                                    if let Err(e) = claude.save(&path) {
+                                        this.notice = Some(e);
+                                    }
+                                    // The CLI reads it at startup: restart once idle; `--resume` keeps the conversation.
+                                    this.restart_when_idle.insert(path);
+                                    this.restart_idle();
+                                }
+                                cx.notify();
                             }))
                             .into_any_element(),
                     );
@@ -1731,7 +1895,7 @@ impl KynexApp {
                             })),
                     ),
                 )
-                .child(div().pt_2().text_xs().text_color(t.text_muted).child("The model is picked in the title bar and applies to every tab."))
+                .child(div().pt_2().text_xs().text_color(t.text_muted).child("The model and effort are also in the composer. The model applies to every tab."))
             }
         };
 
@@ -1855,6 +2019,11 @@ impl Render for KynexApp {
             let _ = self.session_mut();
         }
         self.sync_prompt(window, cx);
+        // Shortcuts (Esc, Ctrl+B…) only reach the workspace through the focused
+        // element, so never leave the window with nothing focused.
+        if window.focused(cx).is_none() {
+            self.focus.focus(window, cx);
+        }
 
         let main = if view == Some(View::Git) {
             let path = self.active_project().map(|p| p.path.clone()).unwrap();
@@ -1938,6 +2107,7 @@ impl Render for KynexApp {
             .on_action(cx.listener(Self::prev_tab))
             .on_action(cx.listener(Self::toggle_sessions))
             .on_action(cx.listener(Self::cycle_mode))
+            .on_action(cx.listener(Self::interrupt_action))
             .on_key_down(cx.listener(Self::key_down))
             .on_drop(cx.listener(Self::on_drop))
             .when(self.resizing_sessions, |d| {
@@ -1969,6 +2139,75 @@ fn spinner(id: impl Into<gpui::ElementId>, color: gpui::Hsla, size: Pixels) -> g
         Animation::new(Duration::from_millis(900)).repeat(),
         |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
     )
+}
+
+/// The models the account can use, fetched once from the CLI. Kept in a static
+/// rather than on `KynexApp` so it doesn't change the app's layout.
+static MODEL_LIST: std::sync::OnceLock<Vec<session::ModelInfo>> = std::sync::OnceLock::new();
+static MODELS_FETCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn model_list() -> Option<Vec<session::ModelInfo>> {
+    MODEL_LIST.get().cloned()
+}
+
+/// The entry for a saved model choice (`""` is the CLI's default).
+fn current_model(saved: &str) -> Option<session::ModelInfo> {
+    let value = if saved.is_empty() { "default" } else { saved };
+    MODEL_LIST.get()?.iter().find(|m| m.value == value).cloned()
+}
+
+/// Starts the one background fetch of the model list; repaints when it lands.
+/// If it fails the built-in short list stays.
+fn fetch_models(cx: &mut Context<KynexApp>) {
+    if MODELS_FETCHING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    cx.spawn(async move |this, cx| {
+        let result = cx.background_spawn(async { session::list_models() }).await;
+        match result {
+            Ok(list) if !list.is_empty() => {
+                let _ = MODEL_LIST.set(list);
+            }
+            Ok(_) => eprintln!("kynex: claude reported no models"),
+            Err(e) => eprintln!("kynex: couldn't list models: {e}"),
+        }
+        this.update(cx, |_, cx| cx.notify()).ok();
+    })
+    .detach();
+}
+
+/// The strip above the composer: a label and a track with a sliding accent
+/// while Claude works, or a steady warning-coloured one while it waits for you.
+fn working_bar(working: bool, t: &theme::Palette) -> AnyElement {
+    let color = if working { t.accent } else { t.warning };
+    let label = div()
+        .flex()
+        .items_center()
+        .gap_1p5()
+        .text_xs()
+        .text_color(color)
+        .child(if working { spinner("working-spin", color, px(12.)).into_any_element() } else { icon(Icon::Dot, color).size_2().into_any_element() })
+        .child(if working { "Working…" } else { "Waiting for you" });
+    let track = div().relative().w_full().h(px(2.)).rounded_full().overflow_hidden().bg(t.border_variant);
+    let track = if working {
+        track.child(
+            div()
+                .absolute()
+                .top_0()
+                .h_full()
+                .w(gpui::relative(0.3))
+                .rounded_full()
+                .bg(color)
+                .with_animation(
+                    "working-slide",
+                    Animation::new(Duration::from_millis(1400)).repeat().with_easing(gpui::ease_in_out),
+                    |bar, delta| bar.left(gpui::relative(delta * 1.3 - 0.3)),
+                ),
+        )
+    } else {
+        track.child(div().size_full().bg(color.opacity(0.6)))
+    };
+    div().flex().flex_col().gap_1().px_1().child(label).child(track).into_any_element()
 }
 
 fn cost_label(cost: f64, t: &theme::Palette) -> impl IntoElement + use<> {

@@ -546,6 +546,68 @@ fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// A model the logged-in account can use, as the CLI reports it.
+#[derive(Clone)]
+pub struct ModelInfo {
+    /// What to pass to `--model`: an alias (`opus`), a full name, or `default`.
+    pub value: String,
+    pub name: String,
+    pub description: String,
+    /// `--effort` levels it takes; empty if it has no effort setting.
+    pub efforts: Vec<String>,
+}
+
+/// Asks the CLI which models this account can use, through the stream-json
+/// `initialize` handshake. Sends no message, so it costs nothing. Blocks for
+/// a second or two; call it off the UI thread.
+pub fn list_models() -> Result<Vec<ModelInfo>, String> {
+    let mut cmd = Command::new("claude");
+    cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
+        .current_dir(std::env::temp_dir())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("failed to start `claude`: {e}"))?;
+    let request = json!({ "type": "control_request", "request_id": "kynex-models", "request": { "subtype": "initialize" } });
+    let sent = child.stdin.as_mut().is_some_and(|s| writeln!(s, "{request}").and_then(|_| s.flush()).is_ok());
+    let mut response = None;
+    if sent {
+        for line in BufReader::new(child.stdout.take().unwrap()).lines() {
+            let Ok(line) = line else { break };
+            let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+            if v["type"] == "control_response" {
+                response = Some(v);
+                break;
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let v = response.ok_or("claude didn't answer the initialize request")?;
+    let models = v["response"]["response"]["models"].as_array().ok_or("no models in the initialize response")?;
+    Ok(models
+        .iter()
+        .filter_map(|m| {
+            Some(ModelInfo {
+                value: m["value"].as_str()?.to_string(),
+                name: m["displayName"].as_str().unwrap_or("").to_string(),
+                description: m["description"].as_str().unwrap_or("").to_string(),
+                efforts: m["supportedEffortLevels"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| e.as_str().map(str::to_string))
+                    .collect(),
+            })
+        })
+        .collect())
+}
+
 /// Past sessions in `cwd`, newest first.
 pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
     let Some(entries) = transcripts_dir(cwd).and_then(|d| std::fs::read_dir(d).ok()) else { return Vec::new() };
@@ -602,8 +664,11 @@ pub fn delete_session(cwd: &Path, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// One line for a tool call: Claude's own `description` of it when there is one
+/// (Bash, PowerShell, Agent…), else the most telling argument.
 fn tool_summary(name: &str, input: &Value) -> String {
     let field = match name {
+        _ if input["description"].as_str().is_some_and(|d| !d.trim().is_empty()) => "description",
         "Bash" | "PowerShell" => "command",
         "Read" | "Write" | "Edit" | "NotebookEdit" => "file_path",
         "Glob" | "Grep" => "pattern",
