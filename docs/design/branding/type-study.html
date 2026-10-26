@@ -1,0 +1,145 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Kynex — Petrol, type study</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hubot+Sans:wdth,wght@75..125,200..900&family=Mona+Sans:wdth,wght@75..125,200..900&family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&family=IBM+Plex+Sans+Condensed:wght@400;600;700&family=IBM+Plex+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;700&display=block">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/monaspace-neon/index.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/monaspace-neon/700.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/monaspace-krypton/index.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/monaspace-krypton/700.css">
+<style>
+  :root {
+    --l-title: oklch(.925 .005 75); --l-panel: oklch(.948 .005 75); --l-editor: oklch(.978 .004 75); --l-elev: oklch(.992 .003 75);
+    --l-border: oklch(.865 .005 75); --l-text: oklch(.27 .008 75); --l-muted: oklch(.47 .008 75); --l-acc: oklch(.47 .085 222);
+    --d-title: oklch(.165 .004 75); --d-panel: oklch(.192 .004 75); --d-editor: oklch(.215 .004 75); --d-elev: oklch(.245 .005 75);
+    --d-border: oklch(.315 .006 75); --d-bv: oklch(.27 .005 75); --d-text: oklch(.915 .006 75); --d-muted: oklch(.72 .007 75); --d-ph: oklch(.56 .006 75);
+    --d-acc: oklch(.76 .075 215); --d-accbg: oklch(.30 .035 222);
+    --amber: oklch(.80 .14 75); --green: oklch(.74 .12 150); --red: oklch(.70 .14 28);
+    --add: oklch(.29 .045 150); --del: oklch(.29 .045 28);
+  }
+  body { margin: 0; padding: 40px; background: oklch(.14 .004 75); color: var(--d-text); font: 14px/1.5 "Mona Sans", sans-serif; }
+  .top { display: flex; justify-content: space-between; align-items: end; margin-bottom: 8px; }
+  .lede { color: var(--d-muted); max-width: 1000px; margin: 8px 0 30px; }
+  .sys { display: grid; grid-template-columns: 560px 1fr; gap: 28px; padding: 30px; background: var(--d-panel); border: 1px solid var(--d-bv); border-radius: 6px; margin-bottom: 24px; }
+  .tag { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--d-acc); }
+  .sysname { font-size: 13px; color: var(--d-muted); margin: 2px 0 18px; }
+  .word { font-size: 64px; line-height: 1; margin: 6px 0 18px; display: flex; align-items: center; gap: 18px; }
+  .labels { display: flex; gap: 18px; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--d-muted); margin-bottom: 14px; }
+  .labels span { display: flex; align-items: center; gap: 6px; }
+  .lamp { width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex: none; }
+  .bodytext { color: var(--d-text); margin-bottom: 14px; }
+  .code { font-size: 12.5px; line-height: 1.6; background: var(--d-editor); border: 1px solid var(--d-bv); border-radius: 4px; padding: 10px 12px; white-space: pre; }
+  .why { color: var(--d-muted); font-size: 13px; margin-top: 16px; border-top: 1px solid var(--d-bv); padding-top: 12px; }
+  .why b { color: var(--d-text); font-weight: 600; }
+  /* mock */
+  .app { overflow: hidden; font-size: 12.5px; border: 1px solid var(--d-border); border-radius: 6px; background: var(--d-editor); }
+  .tb { height: 34px; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--d-title); border-bottom: 1px solid var(--d-bv); }
+  .bd { display: grid; grid-template-columns: 170px 1fr; height: 380px; }
+  .side { padding: 10px 8px; background: var(--d-panel); border-right: 1px solid var(--d-bv); }
+  .sh { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--d-ph); padding: 2px 8px 8px; }
+  .sess { padding: 6px 8px; border-radius: 3px; display: flex; align-items: center; gap: 8px; color: var(--d-muted); }
+  .main { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .you { align-self: flex-end; background: var(--d-elev); border: 1px solid var(--d-bv); border-radius: 6px; padding: 6px 10px; }
+  .diff { font-size: 11.5px; border: 1px solid var(--d-bv); border-radius: 4px; overflow: hidden; background: var(--d-panel); }
+  .diff div { padding: 1px 10px; white-space: pre; }
+  .prompt { border: 1px solid var(--amber); border-radius: 5px; padding: 9px 11px; background: var(--d-elev); margin-top: auto; }
+  .btn { display: inline-block; padding: 4px 13px; border-radius: 3px; margin-right: 6px; border: 1px solid transparent; }
+  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+  .pulse { animation: pulse 1.6s ease-in-out infinite; }
+</style>
+</head>
+<body>
+<div class="top"><div class="tag" style="font-family:'Hubot Sans';font-stretch:125%;font-weight:800;font-size:13px">Kynex · Petrol · type study</div></div>
+<div class="lede">Every type system needs to do three jobs: a <b>display</b> face for the wordmark and panel labels (the "engraved on the instrument" voice), a <b>UI</b> face for reading transcripts, and a <b>mono</b> face for code, diffs and the terminal. All the fonts below are OFL-licensed, so they can be bundled into the binary through gpui's <code>add_fonts</code>, with no system fonts needed.</div>
+<div id="root"></div>
+
+<script>
+const knob = (size) => `<svg width="${size}" height="${size}" viewBox="0 0 100 100">
+  <rect width="100" height="100" rx="20" fill="var(--d-title)"/><rect x=".75" y=".75" width="98.5" height="98.5" rx="19.25" fill="none" stroke="var(--d-border)" stroke-width="1.5"/>
+  <circle cx="50" cy="54" r="31" fill="var(--d-acc)"/><g transform="rotate(38 50 54)"><rect x="47" y="27" width="6" height="21" rx="3" fill="var(--d-elev)"/></g>
+  <circle cx="21" cy="20" r="6" fill="var(--amber)"/></svg>`;
+
+const systems = [
+  { tag: "A · Recommended", name: "GitHub's open type family: Hubot Sans · Mona Sans · Monaspace",
+    display: "font-family:'Hubot Sans';font-stretch:125%;font-weight:850;letter-spacing:.04em",
+    label: "font-family:'Hubot Sans';font-stretch:112%;font-weight:600",
+    ui: "font-family:'Mona Sans';font-stretch:100%",
+    uiBold: "font-weight:650",
+    mono: "font-family:'Monaspace Neon'",
+    monoLabel: "font-family:'Monaspace Krypton'",
+    why: `<b>Hubot Sans</b> is Mona Sans's mechanical sibling: squared-off curves and an extra-wide setting that reads like labels engraved on a control panel, the Braun idea in type. <b>Mona Sans</b> carries the long reading. <b>Monaspace</b> handles code; it's the family developers already know from GitHub, and all three were designed to share metrics and work together. They're new (2023–24), heavy, and every developer has seen them on github.com without them being the default anywhere else. One risk: they're GitHub's brand fonts, but Hubot's extra-wide black weight is a look GitHub doesn't use.` },
+  { tag: "B", name: "Geist · Geist Mono",
+    display: "font-family:'Geist';font-weight:900;letter-spacing:-.04em",
+    label: "font-family:'Geist Mono';font-weight:500",
+    ui: "font-family:'Geist'",
+    uiBold: "font-weight:600",
+    mono: "font-family:'Geist Mono'",
+    monoLabel: "font-family:'Geist Mono'",
+    why: `Swiss-influenced, very current, and loved by developers. It's clean and confident, but it's <b>Vercel's identity</b>, and every Next.js template and AI startup landing page uses it now. It would make Kynex look like one of the crowd, which is the "AI slop" problem again in typographic form.` },
+  { tag: "C", name: "IBM Plex Sans Condensed · Plex Sans · Plex Mono",
+    display: "font-family:'IBM Plex Sans Condensed';font-weight:700;letter-spacing:.06em",
+    label: "font-family:'IBM Plex Mono';font-weight:500",
+    ui: "font-family:'IBM Plex Sans'",
+    uiBold: "font-weight:500",
+    mono: "font-family:'IBM Plex Mono'",
+    monoLabel: "font-family:'IBM Plex Mono'",
+    why: `The historical match: IBM's industrial design program was Braun's American counterpart, and Plex has that engineering seriousness. But it's from 2017, it never goes very bold, and <b>Zed ships Plex as its UI font</b>. Kynex is built on Zed's framework, so it would look like a Zed reskin.` },
+];
+
+document.getElementById("root").innerHTML = systems.map(s => `
+  <div class="sys">
+    <div>
+      <div class="tag" style="${s.label}">${s.tag}</div>
+      <div class="sysname" style="${s.ui}">${s.name}</div>
+      <div class="word" style="${s.display}">${knob(64)}KYNEX</div>
+      <div class="labels" style="${s.label}">
+        <span><i class="lamp pulse" style="background:var(--d-acc)"></i>Working</span>
+        <span><i class="lamp" style="background:var(--amber)"></i>Needs you</span>
+        <span><i class="lamp" style="background:var(--green)"></i>Done</span>
+        <span><i class="lamp" style="background:var(--red)"></i>Failed</span>
+      </div>
+      <div class="bodytext" style="${s.ui}">I moved the neutrals to near-zero chroma and set body text to <span style="${s.uiBold}">13.6:1</span>.
+        The accent is now petrol, the complement of Claude's terracotta, so your controls never compete with the agent.</div>
+      <div class="code" style="${s.mono}"><span style="color:var(--d-acc)">pub fn</span> palette(self) -&gt; Palette {
+    editor: <span style="color:var(--amber)">c(0x1b1917)</span>,  <span style="color:var(--d-ph)">// oklch(.215 .004 75)</span>
+    accent: <span style="color:var(--amber)">c(0x77becf)</span>,  <span style="color:var(--d-ph)">// petrol, h 215°</span>
+}  <span style="color:var(--d-ph)">-&gt; != === 0O1lI {}</span></div>
+      <div class="why" style="${s.ui}">${s.why}</div>
+    </div>
+    <div class="app" style="${s.ui}">
+      <div class="tb">${knob(18)}<span style="${s.display};font-size:13px">KYNEX</span>
+        <span style="padding:2px 9px;border-radius:3px;background:var(--d-elev);border:1px solid var(--d-border)">kynex</span>
+        <span style="color:var(--d-muted)">website</span>
+        <span style="margin-left:auto;color:var(--d-muted);${s.monoLabel};font-size:11.5px">main ↑2</span></div>
+      <div class="bd">
+        <div class="side">
+          <div class="sh" style="${s.label}">Sessions</div>
+          <div class="sess" style="background:var(--d-accbg);color:var(--d-text)"><i class="lamp pulse" style="background:var(--d-acc)"></i>Type study</div>
+          <div class="sess" style="color:var(--d-text)"><i class="lamp" style="background:var(--amber)"></i>Diff viewer</div>
+          <div class="sess"><i class="lamp" style="background:var(--green)"></i>Terminal tabs</div>
+          <div class="sess"><i class="lamp" style="background:var(--red)"></i>CI fix</div>
+          <div class="sh" style="${s.label};margin-top:14px">Git</div>
+          <div class="sess" style="${s.monoLabel};font-size:11.5px">M src/theme.rs</div>
+          <div class="sess" style="${s.monoLabel};font-size:11.5px">A assets/kynex.svg</div>
+        </div>
+        <div class="main">
+          <div class="you">the type should be bold but known to developers</div>
+          <div>Three systems, each with a display, UI and mono face. <span style="color:var(--d-acc);text-decoration:underline;text-underline-offset:2px">Open the sheet</span> to compare.</div>
+          <div class="diff" style="${s.mono}">
+            <div style="color:var(--d-ph)">@@ -149,3 +149,3 @@ pub fn mono()</div>
+            <div style="background:var(--del)">-    "Cascadia Code".into()</div>
+            <div style="background:var(--add)">+    "Monaspace Neon".into()</div>
+          </div>
+          <div class="prompt">
+            <div style="margin-bottom:8px"><i class="lamp" style="background:var(--amber);margin-right:7px"></i><span style="${s.uiBold}">Allow edit</span> <span style="color:var(--d-muted);${s.monoLabel};font-size:11.5px">src/theme.rs</span></div>
+            <span class="btn" style="background:var(--d-acc);color:var(--d-title);${s.uiBold}">Allow</span>
+            <span class="btn" style="border-color:var(--d-border)">Deny</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`).join("");
+</script>
+</body>
+</html>

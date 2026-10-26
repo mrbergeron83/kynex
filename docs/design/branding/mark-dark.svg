@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100">
+  <!-- Kynex mark, dark. Housing = title_bar, rim = border, knob = accent, pointer = elevated, lamp = state. -->
+  <rect width="100" height="100" rx="20" fill="#0f0e0c"/>
+  <rect x=".75" y=".75" width="98.5" height="98.5" rx="19.25" fill="none" stroke="#33312e" stroke-width="1.5"/>
+  <circle cx="50" cy="54" r="31" fill="#77becf"/>
+  <rect x="47" y="27" width="6" height="21" rx="3" fill="#22201e" transform="rotate(38 50 54)"/>
+  <circle cx="21" cy="20" r="6" fill="#f2af48"/>
+</svg>

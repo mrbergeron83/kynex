@@ -1,0 +1,180 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Kynex — Instrument, colour study</title>
+<style>
+  body { margin: 0; padding: 40px; background: #1b1a19; color: #ddd; font: 13px/1.5 Bahnschrift, "Segoe UI", sans-serif; }
+  h1 { font-weight: 600; font-size: 24px; letter-spacing: .02em; margin: 0 0 4px; }
+  h2 { font-weight: 600; font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: #8d8a85; margin: 36px 0 14px; }
+  .lede { color: #9c9891; max-width: 980px; margin-bottom: 8px; }
+  .principles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }
+  .pr { background: #242321; border: 1px solid #312f2c; padding: 14px 16px; }
+  .pr b { display: block; color: #eee; margin-bottom: 4px; }
+  .pr span { color: #a29e97; }
+  .states { display: flex; gap: 22px; margin-top: 10px; flex-wrap: wrap; }
+  .st { display: flex; align-items: center; gap: 8px; color: #bbb; }
+  .board { display: grid; grid-template-columns: 290px 1fr 1fr; gap: 28px; padding: 28px; background: #232220; border: 1px solid #312f2c; margin-bottom: 22px; }
+  .name { font-size: 24px; font-weight: 600; }
+  .why { color: #a8a49d; margin: 6px 0 16px; }
+  .marks { display: flex; gap: 10px; align-items: end; margin-bottom: 10px; }
+  .ramp { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; margin: 10px 0 4px; }
+  .ramp div { height: 22px; }
+  table { border-collapse: collapse; font-size: 11px; width: 100%; margin-top: 12px; color: #aaa; }
+  td { padding: 2px 0; } td:last-child { text-align: right; font-family: "Cascadia Mono", Consolas, monospace; }
+  .ok { color: #8fc79a } .meh { color: #d9b45e }
+  /* mock */
+  .app { overflow: hidden; font-size: 11.5px; border: 1px solid; border-radius: 6px; font-family: Bahnschrift, "Segoe UI", sans-serif; }
+  .tb { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid; }
+  .body { display: grid; grid-template-columns: 138px 1fr; height: 236px; }
+  .side { padding: 8px; border-right: 1px solid; }
+  .sess { padding: 5px 7px; margin-bottom: 1px; display: flex; align-items: center; gap: 7px; border-radius: 3px; }
+  .lamp { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .main { display: flex; flex-direction: column; padding: 10px 12px; gap: 8px; min-width: 0; }
+  .diff { font: 10.5px "Cascadia Mono", Consolas, monospace; border: 1px solid; border-radius: 4px; overflow: hidden; }
+  .diff div { padding: 1px 8px; white-space: pre; }
+  .prompt { border: 1px solid; border-radius: 5px; padding: 8px 10px; }
+  .btn { display: inline-block; padding: 3px 11px; border-radius: 3px; margin-right: 6px; font-weight: 600; border: 1px solid transparent; }
+  .link { text-decoration: underline; text-underline-offset: 2px; }
+  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+  .pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes sweep { from { transform: rotate(-40deg) } to { transform: rotate(40deg) } }
+</style>
+</head>
+<body>
+<h1>KYNEX · Instrument — colour study</h1>
+<div class="lede">
+  Kynex is a control panel for an agent that works on its own: you spend most of the time <i>reading</i>
+  (transcripts, diffs), and every so often you have to <i>act</i> (approve, answer, send). Control panels have
+  solved this colour problem already, so the palette follows the same rules they do.
+</div>
+<div class="principles">
+  <div class="pr"><b>1 · The housing is almost colourless</b><span>Neutrals at OKLCH chroma ≤ 0.006, with a faint warm tint like Braun's off-white plastic. Round 2 looked "weird" because the whole UI sat on a mid-tone, yellow-green-tinted grey (L≈0.86, chroma 0.012): too dim to read on, too tinted to look neutral.</span></div>
+  <div class="pr"><b>2 · Colour means state, never decoration</b><span>Indicator colours follow IEC 60073, the standard for machine lamps: <b style="display:inline;color:#7fc28e">green</b> normal, <b style="display:inline;color:#e0ad4a">amber</b> needs attention, <b style="display:inline;color:#e0705f">red</b> fault. Every colour on screen means something.</span></div>
+  <div class="pr"><b>3 · Agent and user get opposite hues</b><span>Claude's identity is warm (terracotta, h≈40°). The operator's colour, used for your controls, focus and selection, is its complement, so the chrome never competes with the agent. It also lets warm alerts stand out against cool controls.</span></div>
+  <div class="pr"><b>4 · Contrast is set, not guessed</b><span>Body text ≈ 13:1, not 21:1: pure black on white causes glare during long reading. Muted text ≥ 5:1. In dark mode accents drop chroma and gain lightness so they don't bloom (halation).</span></div>
+</div>
+<h2>Lamp states (shared by every option, equal lightness so only "needs you" stands out)</h2>
+<div class="states" id="states"></div>
+<div id="root"></div>
+
+<script>
+// ---- colour plumbing: author in OKLCH, export sRGB hex for theme.rs ----
+const cv = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+function hex(css) { cv.clearRect(0,0,1,1); cv.fillStyle = "#000"; cv.fillStyle = css; cv.fillRect(0,0,1,1);
+  const d = cv.getImageData(0,0,1,1).data; return "#" + [d[0],d[1],d[2]].map(v => v.toString(16).padStart(2,"0")).join(""); }
+const ok = (l, c, h) => hex(`oklch(${l} ${c} ${h})`);
+function lum(h) { const v = [1,3,5].map(i => parseInt(h.slice(i,i+2),16)/255).map(u => u <= .04045 ? u/12.92 : ((u+.055)/1.055)**2.4);
+  return .2126*v[0] + .7152*v[1] + .0722*v[2]; }
+const cr = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((p,q) => q-p); return (x+.05)/(y+.05); };
+
+// Neutral ramps (warm, near-zero chroma).
+const NH = 75, NC = .005;
+const N = {
+  light: { title_bar: ok(.925,NC,NH), panel: ok(.948,NC,NH), editor: ok(.978,.004,NH), elevated: ok(.992,.003,NH),
+           border: ok(.865,NC,NH), border_variant: ok(.905,NC,NH), text: ok(.27,.008,NH), text_muted: ok(.47,.008,NH),
+           text_placeholder: ok(.62,.006,NH), hover: ok(.925,NC,NH), active: ok(.895,NC,NH), knob: ok(.27,.008,NH) },
+  dark:  { title_bar: ok(.165,.004,NH), panel: ok(.192,.004,NH), editor: ok(.215,.004,NH), elevated: ok(.245,.005,NH),
+           border: ok(.315,.006,NH), border_variant: ok(.27,.005,NH), text: ok(.915,.006,NH), text_muted: ok(.72,.007,NH),
+           text_placeholder: ok(.56,.006,NH), hover: ok(.26,.005,NH), active: ok(.295,.006,NH), knob: ok(.13,.004,NH) },
+};
+// IEC 60073 indicator set, equal lightness per mode; amber gets a chroma boost because it must win attention.
+const S = {
+  light: { normal: ok(.58,.13,150), attention: ok(.70,.15,72), fault: ok(.57,.17,28) },
+  dark:  { normal: ok(.74,.12,150), attention: ok(.80,.14,75), fault: ok(.70,.14,28) },
+};
+
+const options = [
+  { name: "Petrol", hue: 222, why: "The complement of Claude's terracotta (40° + 180°). A deep blue-green like enamelled lab equipment: calm enough to look at all day, and clearly not a 'tech blue'. The knob in the icon is petrol, so the brand colour is literally the control you turn.",
+    acc: { light: ok(.47,.085,222), dark: ok(.76,.075,215) } },
+  { name: "Cobalt", hue: 258, why: "In IEC 60073, blue means 'operator action required', which is exactly what your controls are. It's a more conventional UI blue, but desaturated and darkened so it reads as ink rather than as a link. The safest choice for readability and colour-blind users.",
+    acc: { light: ok(.46,.13,262), dark: ok(.74,.10,258) } },
+  { name: "Graphite", hue: null, why: "The purest Rams option: controls are black (light) or white (dark), and the only colours on screen are the lamps and diff colours. Every colour means a state, so the brand <i>is</i> the absence of decoration. This is the strongest identity, but focus and selection must rely on weight and contrast instead of colour.",
+    acc: { light: ok(.27,.008,NH), dark: ok(.915,.006,NH) } },
+];
+
+function mark(size, n, accent, lampColor, live, lampPulse) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="20" fill="${n.title_bar}"/>
+    <rect x=".75" y=".75" width="98.5" height="98.5" rx="19.25" fill="none" stroke="${n.border}" stroke-width="1.5"/>
+    <circle cx="50" cy="54" r="31" fill="${accent}"/>
+    <g style="transform-origin:50px 54px;${live ? "animation:sweep 2.4s ease-in-out infinite alternate" : "transform:rotate(38deg)"}">
+      <rect x="47" y="27" width="6" height="21" rx="3" fill="${n.elevated}"/></g>
+    <circle cx="21" cy="20" r="6" fill="${lampColor}" class="${lampPulse ? "pulse" : ""}"/>
+  </svg>`;
+}
+
+function mock(o, mode) {
+  const n = N[mode], s = S[mode], a = o.acc[mode];
+  const onA = cr(a, "#ffffff") > cr(a, "#111111") ? "#ffffff" : n.title_bar;
+  const add = mode === "light" ? ok(.94,.04,150) : ok(.29,.045,150), del = mode === "light" ? ok(.94,.035,28) : ok(.29,.045,28);
+  const sel = o.hue === null ? n.active : (mode === "light" ? ok(.93,.025,o.hue) : ok(.30,.035,o.hue));
+  return `<div class="app" style="background:${n.editor};border-color:${n.border};color:${n.text}">
+    <div class="tb" style="background:${n.title_bar};border-color:${n.border_variant}">
+      ${mark(16, n, a, a, true, true)}<b style="letter-spacing:.18em">KYNEX</b>
+      <span style="padding:2px 8px;border-radius:3px;background:${n.elevated};border:1px solid ${n.border}">kynex</span>
+      <span style="color:${n.text_muted}">website</span>
+      <span style="margin-left:auto;color:${n.text_muted}">main ↑2</span>
+    </div>
+    <div class="body">
+      <div class="side" style="background:${n.panel};border-color:${n.border_variant}">
+        <div class="sess" style="background:${sel}"><span class="lamp pulse" style="background:${a}"></span>Colour study</div>
+        <div class="sess"><span class="lamp" style="background:${s.attention}"></span>Diff viewer</div>
+        <div class="sess" style="color:${n.text_muted}"><span class="lamp" style="background:${s.normal}"></span>Terminal tabs</div>
+        <div class="sess" style="color:${n.text_muted}"><span class="lamp" style="background:${s.fault}"></span>CI fix</div>
+        <div class="sess" style="color:${n.text_placeholder}"><span class="lamp" style="border:1px solid ${n.text_placeholder}"></span>Old idea</div>
+      </div>
+      <div class="main">
+        <div>Moved the neutrals to near-zero chroma; see <span class="link" style="color:${a}">theme.rs</span>.</div>
+        <div class="diff" style="border-color:${n.border_variant};background:${n.panel}">
+          <div style="color:${n.text_muted}">@@ -64,3 +64,3 @@</div>
+          <div style="background:${del}">-    editor: c(0xd9d5cc),</div>
+          <div style="background:${add}">+    editor: c(${hex(n.editor).replace("#","0x")}),</div>
+          <div>     text: c(${hex(n.text).replace("#","0x")}),</div>
+        </div>
+        <div class="prompt" style="border-color:${s.attention};background:${n.elevated}">
+          <div style="margin-bottom:6px"><span class="lamp" style="display:inline-block;background:${s.attention};margin-right:6px"></span><b>Allow edit</b> <span style="color:${n.text_muted}">src/theme.rs</span></div>
+          <span class="btn" style="background:${a};color:${onA}">Allow</span>
+          <span class="btn" style="border-color:${n.border};color:${n.text}">Deny</span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function report(o) {
+  const rows = [];
+  for (const m of ["light", "dark"]) {
+    const n = N[m], a = o.acc[m];
+    rows.push([`${m}: text / editor`, cr(n.text, n.editor)], [`${m}: muted / editor`, cr(n.text_muted, n.editor)],
+              [`${m}: accent / editor`, cr(a, n.editor)]);
+  }
+  return `<table>${rows.map(([k, v]) => `<tr><td>${k}</td><td class="${v >= 4.5 ? "ok" : "meh"}">${v.toFixed(1)}:1</td></tr>`).join("")}</table>`;
+}
+
+document.getElementById("states").innerHTML = [
+  ["accent", "working (pulses)"], ["attention", "needs you"], ["normal", "done"], ["fault", "failed"], ["idle", "idle"],
+].map(([k, label]) => {
+  const c = k === "accent" ? options[0].acc.dark : k === "idle" ? "transparent" : S.dark[k];
+  return `<span class="st">${mark(56, N.dark, options[0].acc.dark, c, false, k === "accent")}${label}</span>`;
+}).join("");
+
+document.getElementById("root").innerHTML = options.map(o => `
+  <div class="board">
+    <div>
+      <div class="marks">${mark(120, N.light, o.acc.light, S.light.attention, true)}${mark(120, N.dark, o.acc.dark, S.dark.attention, false)}</div>
+      <div class="marks">${[48, 32, 16].map(z => mark(z, N.light, o.acc.light, S.light.attention)).join("")}
+        <span style="width:8px"></span>${[48, 32, 16].map(z => mark(z, N.dark, o.acc.dark, S.dark.attention)).join("")}</div>
+      <div class="name">${o.name}</div>
+      <div style="color:#8d8a85;font-size:11px">${o.hue === null ? "no hue" : "operator hue " + o.hue + "°"} · light ${o.acc.light} · dark ${o.acc.dark}</div>
+      <div class="why">${o.why}</div>
+      <div class="ramp">${["title_bar","panel","editor","border","text_muted","text"].map(k => `<div style="background:${N.light[k]}" title="${k} ${N.light[k]}"></div>`).join("")}</div>
+      <div class="ramp">${["title_bar","panel","editor","border","text_muted","text"].map(k => `<div style="background:${N.dark[k]}" title="${k} ${N.dark[k]}"></div>`).join("")}</div>
+      ${report(o)}
+    </div>
+    ${mock(o, "light")}
+    ${mock(o, "dark")}
+  </div>`).join("");
+</script>
+</body>
+</html>
