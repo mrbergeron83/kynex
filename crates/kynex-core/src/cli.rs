@@ -187,6 +187,7 @@ fn command(program: impl AsRef<OsStr>) -> Command {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
+    crate::process::dies_with_parent(&mut cmd);
     cmd
 }
 

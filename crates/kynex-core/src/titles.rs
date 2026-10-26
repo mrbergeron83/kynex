@@ -59,7 +59,8 @@ pub fn generate(first_message: &str) -> Result<String, String> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
-    let mut child = cmd.spawn().map_err(|e| format!("couldn't run claude: {e}"))?;
+    let mut child =
+        crate::process::dies_with_parent(&mut cmd).spawn().map_err(|e| format!("couldn't run claude: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(prompt.as_bytes());
     }

@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::process::Command;
 
+use crate::process::detach;
 use crate::wsl;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -44,10 +45,11 @@ pub fn open_project(opener: Opener, path: &Path) -> Result<(), String> {
 
 fn open_with(program: &str, args: &[&OsStr]) -> Result<(), String> {
     // `code` is a .cmd shim on Windows, so go through cmd to resolve it.
+    // These apps are the user's, not Kynex's: they stay open when Kynex closes.
     let result = if cfg!(windows) && program == "code" {
-        Command::new("cmd").arg("/c").arg(program).args(args).spawn()
+        detach(Command::new("cmd").arg("/c").arg(program).args(args))
     } else {
-        Command::new(program).args(args).spawn()
+        detach(Command::new(program).args(args))
     };
     result.map(drop).map_err(|e| format!("Couldn't launch {program}: {e}"))
 }

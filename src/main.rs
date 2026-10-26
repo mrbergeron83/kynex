@@ -17,6 +17,10 @@ use gpui::{
 };
 
 fn main() {
+    // Sessions, shells and helpers end with Kynex, even if it crashes or is killed.
+    if let Err(e) = kynex_core::process::tie_children_to_kynex() {
+        eprintln!("kynex: {e}; child processes may outlive Kynex");
+    }
     gpui_platform::application().with_assets(ui::Assets).run(|cx: &mut App| {
         let saved = app::Saved::load();
         theme::set(saved.theme, cx);

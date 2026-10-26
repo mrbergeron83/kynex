@@ -74,7 +74,8 @@ A cargo workspace with two crates:
     numbers), `log` and commit details, `branch` (list / switch / create), `ops` (stage, discard,
     commit, fetch / pull / push), `worktree`; `open.rs` — open a folder in VS Code / file
     manager / terminal; `attach.rs` — image attachments; `fmt.rs` — times and turn recaps;
-    `paths.rs` — `data_dir()` and friends; `wsl.rs` — WSL paths (out of scope for now)
+    `paths.rs` — `data_dir()` and friends; `process.rs` — child processes die with Kynex (a
+    job object on Windows, `PR_SET_PDEATHSIG` on Linux) unless `detach`ed, like editors it opens; `wsl.rs` — WSL paths (out of scope for now)
   - `terminal/` — interactive terminals on `alacritty_terminal` (ConPTY on Windows): spawning
     PowerShell / Git Bash, keys to bytes, render snapshots with resolved colours, selection;
     shells inherit Kynex's rights (`elevated()` says if that's administrator)

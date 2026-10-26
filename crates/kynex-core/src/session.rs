@@ -259,7 +259,8 @@ impl Session {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        let mut child = cmd.spawn().map_err(|e| format!("failed to start `claude`: {e}"))?;
+        let mut child =
+            crate::process::dies_with_parent(&mut cmd).spawn().map_err(|e| format!("failed to start `claude`: {e}"))?;
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let stdin = child.stdin.take().unwrap();
@@ -664,7 +665,8 @@ pub fn list_models() -> Result<Vec<ModelInfo>, String> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000);
     }
-    let mut child = cmd.spawn().map_err(|e| format!("failed to start `claude`: {e}"))?;
+    let mut child =
+        crate::process::dies_with_parent(&mut cmd).spawn().map_err(|e| format!("failed to start `claude`: {e}"))?;
     let request =
         json!({ "type": "control_request", "request_id": "kynex-models", "request": { "subtype": "initialize" } });
     let sent = child.stdin.as_mut().is_some_and(|s| writeln!(s, "{request}").and_then(|_| s.flush()).is_ok());

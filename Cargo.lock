@@ -2661,9 +2661,11 @@ dependencies = [
  "base64 0.23.1",
  "dirs 7.0.0",
  "image",
+ "libc",
  "serde",
  "serde_json",
  "sha2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
