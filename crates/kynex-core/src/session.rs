@@ -24,17 +24,21 @@ pub enum Kind {
     Chat,
 }
 
+/// The UI's own handle to an image (Kynex puts an `Arc<gpui::Image>` here), kept
+/// opaque so this crate needn't depend on the UI toolkit.
+pub type Preview = Arc<dyn std::any::Any + Send + Sync>;
+
 pub struct Attachment {
     pub media_type: String,
     pub base64: String,
-    pub image: Arc<gpui::Image>,
+    pub preview: Preview,
 }
 
 /// Called from the reader threads whenever the process has news, so the UI drains it.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
 pub enum Item {
-    User { text: String, images: Vec<Arc<gpui::Image>> },
+    User { text: String, images: Vec<Preview> },
     Assistant(String),
     Thinking,
     ToolUse { name: String, summary: String, input: String },
@@ -255,12 +259,11 @@ impl Session {
     }
 
     pub fn send(&mut self, text: String, attachments: Vec<Attachment>) {
-        if self.child.is_none() {
-            if let Err(e) = self.spawn() {
+        if self.child.is_none()
+            && let Err(e) = self.spawn() {
                 self.items.push(Item::Error(e));
                 return;
             }
-        }
         let mut content = Vec::new();
         let mut images = Vec::new();
         for a in attachments {
@@ -268,7 +271,7 @@ impl Session {
                 "type": "image",
                 "source": { "type": "base64", "media_type": a.media_type, "data": a.base64 }
             }));
-            images.push(a.image);
+            images.push(a.preview);
         }
         if !text.is_empty() {
             content.push(json!({ "type": "text", "text": text }));
@@ -402,11 +405,10 @@ impl Session {
             self.session_id = Some(id.to_string());
         }
         // `system` init and status messages report the mode, e.g. after a plan is approved.
-        if let Some(mode) = v["permissionMode"].as_str().and_then(project::Mode::from_cli) {
-            if self.child.is_some() {
+        if let Some(mode) = v["permissionMode"].as_str().and_then(project::Mode::from_cli)
+            && self.child.is_some() {
                 self.mode = mode;
             }
-        }
         match v["type"].as_str().unwrap_or("") {
             "stream_event" => self.handle_stream(&v["event"]),
             "assistant" => {
@@ -497,11 +499,10 @@ impl Session {
                 self.streaming_text = true;
             }
             Some("content_block_delta") => {
-                if let Some(t) = ev["delta"]["text"].as_str() {
-                    if let Some(Item::Assistant(s)) = self.items.last_mut() {
+                if let Some(t) = ev["delta"]["text"].as_str()
+                    && let Some(Item::Assistant(s)) = self.items.last_mut() {
                         s.push_str(t);
                     }
-                }
             }
             _ => {}
         }
@@ -664,7 +665,7 @@ pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
             })
         })
         .collect();
-    sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.modified));
     sessions
 }
 

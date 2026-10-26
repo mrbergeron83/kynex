@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::app::data_dir;
+use crate::paths::data_dir;
 
 /// The settings folder for a project, e.g. `projects/kynex-3f9a1c0d`.
 pub fn dir(project: &Path) -> PathBuf {

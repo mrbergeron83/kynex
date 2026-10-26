@@ -1,16 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+//! Kynex: a desktop workspace for Claude Code. This crate is the gpui app;
+//! logic without UI lives in `kynex-core` (crates/kynex-core).
+
 mod app;
 mod chrome;
-mod cli;
 mod git;
 mod markdown;
-mod project;
 mod prompt;
-mod session;
 mod theme;
 mod ui;
-mod wsl;
 
 use gpui::{
     App, Bounds, TitlebarOptions, WindowBackgroundAppearance, WindowBounds, WindowOptions, point, prelude::*, px, size,
@@ -19,7 +18,7 @@ use gpui::{
 fn main() {
     gpui_platform::application().with_assets(ui::Assets).run(|cx: &mut App| {
         let saved = app::Saved::load();
-        theme::set(saved.theme(), cx);
+        theme::set(saved.theme, cx);
         theme::init_fonts(cx);
         ui::input::bind_keys(cx);
         prompt::bind_keys(cx);

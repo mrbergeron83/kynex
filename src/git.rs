@@ -1,14 +1,15 @@
+//! The Git view: branch, changed files, history and a diff, for one project.
+
 use std::path::PathBuf;
-use std::process::Command;
 
 use gpui::{Context, FontWeight, SharedString, Window, div, prelude::*, px, uniform_list};
 
+use kynex_core::git::{self, Status};
+
 use crate::theme::{mono, theme};
 use crate::ui::{Icon, Tooltip, icon, icon_button};
-use crate::wsl;
 
-/// Branch, changed files, history and a diff, for one project. Git runs on the
-/// background executor so the UI never waits on it.
+/// Git runs on the background executor so the UI never waits on it.
 pub struct GitView {
     root: PathBuf,
     status: Status,
@@ -17,64 +18,8 @@ pub struct GitView {
     loading: bool,
 }
 
-#[derive(Default)]
-struct Status {
-    branch: String,
-    files: Vec<(String, String)>,
-    log: Vec<String>,
-    error: Option<String>,
-}
-
-fn git(root: &PathBuf, args: &[&str]) -> Result<String, String> {
-    let mut cmd = match wsl::parse(root) {
-        // Linux git in the distro: fast, and agrees with Claude about line endings and file modes.
-        Some(w) => w.command("git"),
-        None => {
-            let mut c = Command::new("git");
-            c.arg("-C").arg(root);
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                c.creation_flags(0x0800_0000);
-            }
-            c
-        }
-    };
-    cmd.args(args);
-    let out = cmd.output().map_err(|e| format!("git: {e}"))?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
-    }
-}
-
-fn read_status(root: &PathBuf) -> Status {
-    match git(root, &["status", "--porcelain=v1", "-b", "-uall"]) {
-        Ok(s) => {
-            let mut lines = s.lines();
-            let branch = lines.next().unwrap_or("").trim_start_matches("## ").to_string();
-            let files = lines.filter(|l| l.len() > 3).map(|l| (l[..2].to_string(), l[3..].to_string())).collect();
-            let log = git(root, &["log", "--oneline", "--decorate", "-n", "50"])
-                .map(|s| s.lines().map(str::to_string).collect())
-                .unwrap_or_default();
-            Status { branch, files, log, error: None }
-        }
-        Err(e) => Status { error: Some(e), ..Default::default() },
-    }
-}
-
-fn read_diff(root: &PathBuf, file: &str) -> Vec<SharedString> {
-    let path = file.rsplit(" -> ").next().unwrap_or(file);
-    let diff = git(root, &["diff", "HEAD", "--", path]).unwrap_or_default();
-    if !diff.is_empty() {
-        return diff.lines().map(|l| SharedString::from(l.to_string())).collect();
-    }
-    // Untracked: show the file contents as an all-added diff.
-    match std::fs::read_to_string(root.join(path)) {
-        Ok(c) => c.lines().map(|l| SharedString::from(format!("+{l}"))).collect(),
-        Err(_) => vec!["(binary or unreadable file)".into()],
-    }
+fn lines(diff: Vec<String>) -> Vec<SharedString> {
+    diff.into_iter().map(SharedString::from).collect()
 }
 
 impl GitView {
@@ -91,8 +36,8 @@ impl GitView {
         cx.spawn(async move |this, cx| {
             let (status, diff) = cx
                 .background_spawn(async move {
-                    let status = read_status(&root);
-                    let diff = selected.map(|f| read_diff(&root, &f));
+                    let status = git::read_status(&root);
+                    let diff = selected.map(|f| lines(git::read_diff(&root, &f)));
                     (status, diff)
                 })
                 .await;
@@ -114,7 +59,7 @@ impl GitView {
         self.selected = Some(file.clone());
         let root = self.root.clone();
         cx.spawn(async move |this, cx| {
-            let diff = cx.background_spawn(async move { read_diff(&root, &file) }).await;
+            let diff = cx.background_spawn(async move { lines(git::read_diff(&root, &file)) }).await;
             this.update(cx, |this, cx| {
                 this.diff = diff;
                 cx.notify();

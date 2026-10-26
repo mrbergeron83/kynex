@@ -1,0 +1,19 @@
+[package]
+name = "kynex-core"
+version = "0.1.0"
+edition.workspace = true
+
+# Everything Kynex does that isn't drawing: the claude CLI and its stream-json
+# protocol, project settings, git, paths. No gpui here, so it builds and tests
+# in seconds. The app hot-patches only the `kynex` crate; edits here need a
+# rebuild (dev.ps1 restarts on its own when the patch can't apply).
+
+[dependencies]
+base64.workspace = true
+dirs.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

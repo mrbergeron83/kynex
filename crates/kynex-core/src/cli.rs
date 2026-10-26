@@ -16,11 +16,10 @@ pub fn program() -> PathBuf {
     let exe = if cfg!(windows) { "claude.exe" } else { "claude" };
     let on_path = std::env::var_os("PATH")
         .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(exe).is_file()));
-    if !on_path {
-        if let Some(local) = dirs::home_dir().map(|h| h.join(".local").join("bin").join(exe)).filter(|p| p.is_file()) {
+    if !on_path
+        && let Some(local) = dirs::home_dir().map(|h| h.join(".local").join("bin").join(exe)).filter(|p| p.is_file()) {
             return local;
         }
-    }
     PathBuf::from("claude")
 }
 

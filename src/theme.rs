@@ -3,7 +3,7 @@
 
 use std::sync::OnceLock;
 
-use gpui::{App, Global, Hsla, Rgba, SharedString, rgb};
+use gpui::{App, Global, Hsla, SharedString, rgb};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ pub struct Palette {
 }
 
 fn c(hex: u32) -> Hsla {
-    Rgba::from(rgb(hex)).into()
+    rgb(hex).into()
 }
 
 fn ca(hex: u32, alpha: f32) -> Hsla {

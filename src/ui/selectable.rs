@@ -269,13 +269,12 @@ impl Element for Selectable {
                     cx.default_global::<Selection>().dragging = false;
                 }
                 // A click that didn't drag follows a link under it.
-                if clicked && hitbox.is_hovered(window) {
-                    if let Ok(ix) = layout.index_for_position(e.position)
+                if clicked && hitbox.is_hovered(window)
+                    && let Ok(ix) = layout.index_for_position(e.position)
                         && let Some((_, url)) = links.iter().find(|(r, _)| r.contains(&ix))
                     {
                         cx.open_url(url);
                     }
-                }
             }
         });
     }

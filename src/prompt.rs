@@ -9,9 +9,10 @@ use gpui::{
 };
 use serde_json::Value;
 
+use kynex_core::project::{self, Mode};
+use kynex_core::session::{Answer, Kind};
+
 use crate::markdown;
-use crate::project::{self, Mode};
-use crate::session::{Answer, Kind};
 use crate::theme::{Palette, mono, theme};
 use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::{Tooltip, outline_button, primary_button};

@@ -2600,15 +2600,24 @@ name = "kynex"
 version = "0.1.0"
 dependencies = [
  "async-channel",
- "base64 0.23.1",
- "dirs 7.0.0",
  "gpui-pre",
  "gpui-pre-platform",
- "image",
+ "kynex-core",
  "pulldown-cmark",
  "serde",
  "serde_json",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "kynex-core"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "dirs 7.0.0",
+ "image",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

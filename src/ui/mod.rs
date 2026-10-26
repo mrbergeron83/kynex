@@ -7,10 +7,11 @@ pub mod selectable;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use gpui::{
-    AnyView, App, AssetSource, Context, ElementId, Hsla, IntoElement, SharedString, Stateful, Window, div,
-    prelude::*, px, svg,
+    Animation, AnimationExt, AnyView, App, AssetSource, Context, ElementId, Hsla, IntoElement, Pixels, SharedString,
+    Stateful, Transformation, Window, div, percentage, prelude::*, px, svg,
 };
 
 use crate::theme::theme;
@@ -129,6 +130,15 @@ impl AssetSource for Assets {
 
 pub fn icon(icon: Icon, color: Hsla) -> gpui::Svg {
     svg().path(icon.path()).size_4().flex_none().text_color(color)
+}
+
+/// A spinning loader icon.
+pub fn spinner(id: impl Into<ElementId>, color: Hsla, size: Pixels) -> gpui::AnimationElement<gpui::Svg> {
+    icon(Icon::Loader, color).size(size).with_animation(
+        id,
+        Animation::new(Duration::from_millis(900)).repeat(),
+        |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
+    )
 }
 
 /// A borderless button: text and/or icon, a hover wash, rounded.

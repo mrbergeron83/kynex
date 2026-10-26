@@ -1,27 +1,53 @@
-[package]
-name = "kynex"
-version = "0.1.0"
+[workspace]
+members = ["crates/*"]
+
+[workspace.package]
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
 async-channel = "2"
 base64 = "0.23.1"
 dirs = "7.0.0"
 gpui = { package = "gpui-pre", version = "=0.3.10" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10" }
 image = "0.25.10"
+kynex-core = { path = "crates/kynex-core" }
 pulldown-cmark = { version = "0.13", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 unicode-segmentation = "1"
 
+[workspace.lints.clippy]
+# Render helpers take a lot of small values; a struct per call site reads worse.
+too_many_arguments = "allow"
+
+# The app: everything gpui. Logic without UI lives in crates/kynex-core.
+[package]
+name = "kynex"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+async-channel.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+kynex-core.workspace = true
+pulldown-cmark.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+unicode-segmentation.workspace = true
+
+[lints]
+workspace = true
+
 [features]
 # Hot-patch Rust code while the app runs: `dx serve --hot-patch --features hotpatch`.
 # gpui re-renders every view through subsecond, so edits to `render` paths apply live.
+# Only this crate is patched; edits in crates/kynex-core need a rebuild.
 hotpatch = ["gpui/hot-reload"]
 
 # Optimize dependencies even in dev builds: gpui, text shaping and image decoding
-# are much snappier, while our own crate still compiles (and hot-patches) fast.
+# are much snappier, while our own crates still compile (and hot-patch) fast.
 [profile.dev.package."*"]
 opt-level = 2
 
