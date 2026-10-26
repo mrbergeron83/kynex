@@ -24,7 +24,7 @@ use crate::session::{self, Attachment, Item, Kind, PermState, Session, SessionIn
 use crate::theme::{self, THEMES, Theme, mono, theme};
 use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::{
-    Icon, Tooltip, divider, ghost_button, icon, icon_button, menu_item, outline_button, popover,
+    Icon, Tooltip, divider, ghost_button, icon, icon_button, menu_item, outline_button, popover, primary_button,
 };
 use crate::wsl;
 
@@ -220,6 +220,16 @@ struct SessionList {
     items: Vec<SessionInfo>,
 }
 
+/// Getting the `claude` CLI ready to run sessions, without leaving Kynex.
+enum Setup {
+    Checking,
+    Ready,
+    Missing { error: Option<String> },
+    Installing,
+    LoggedOut { error: Option<String> },
+    SigningIn(cli::Login),
+}
+
 struct ActivePrompt {
     key: Key,
     id: String,
@@ -251,6 +261,11 @@ pub struct KynexApp {
     resizing_sessions: bool,
     /// Whether a newer Claude Code is out, or being installed.
     cli_update: UpdateState,
+    /// Whether the CLI is installed and signed in; until it is, a setup screen
+    /// takes the workspace's place.
+    setup: Setup,
+    /// Where to paste the code the sign-in page shows.
+    login_code: Entity<TextInput>,
     focus: FocusHandle,
     wake: session::Wake,
 }
@@ -319,6 +334,14 @@ impl KynexApp {
             InputEvent::Changed => {}
         })
         .detach();
+        let login_code = cx.new(|cx| TextInput::new(cx).mono().placeholder("Paste the code here"));
+        cx.subscribe(&login_code, |this, _, ev, cx| {
+            if let InputEvent::Submit = ev {
+                this.submit_login_code(cx);
+            }
+        })
+        .detach();
+        cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.check_setup(cx))).detach();
         let new_rule = cx.new(|cx| TextInput::new(cx).mono().placeholder("Bash(npm test:*)"));
         cx.subscribe(&new_rule, |this, _, ev, cx| {
             if let InputEvent::Submit = ev {
@@ -365,6 +388,8 @@ impl KynexApp {
             menu: None,
             resizing_sessions: false,
             cli_update: UpdateState::Idle,
+            setup: Setup::Checking,
+            login_code,
             focus: cx.focus_handle(),
             wake,
         }
@@ -447,6 +472,96 @@ impl KynexApp {
             .ok();
         })
         .detach();
+    }
+
+    /// Asks the CLI whether it's installed and signed in, and shows the setup
+    /// screen if it isn't.
+    fn check_setup(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let status = cx.background_spawn(async { cli::status() }).await;
+            this.update(cx, |this, cx| {
+                this.setup = match status {
+                    cli::Status::Ready => {
+                        // A model list that failed while the CLI was missing gets another try.
+                        if MODEL_LIST.get().is_none() {
+                            MODELS_FETCHING.store(false, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        Setup::Ready
+                    }
+                    cli::Status::Missing => Setup::Missing { error: None },
+                    cli::Status::LoggedOut => Setup::LoggedOut { error: None },
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn install_cli(&mut self, cx: &mut Context<Self>) {
+        self.setup = Setup::Installing;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_spawn(async { cli::install() }).await;
+            this.update(cx, |this, cx| match result {
+                Ok(()) => this.check_setup(cx),
+                Err(e) => {
+                    this.setup = Setup::Missing { error: Some(e) };
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Starts `claude auth login` (which opens the browser) and watches it until
+    /// it finishes or the user cancels.
+    fn sign_in(&mut self, console: bool, cx: &mut Context<Self>) {
+        match cli::Login::start(console) {
+            Ok(login) => self.setup = Setup::SigningIn(login),
+            Err(e) => self.setup = Setup::LoggedOut { error: Some(e) },
+        }
+        self.login_code.update(cx, |input, cx| input.set_text("", cx));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(300)).await;
+                let done = this.update(cx, |this, cx| {
+                    let Setup::SigningIn(login) = &mut this.setup else { return true };
+                    // Repaint while waiting, so the sign-in URL shows once printed.
+                    cx.notify();
+                    match login.finished() {
+                        None => false,
+                        Some(Ok(())) => {
+                            this.check_setup(cx);
+                            true
+                        }
+                        Some(Err(e)) => {
+                            this.setup = Setup::LoggedOut { error: Some(e) };
+                            true
+                        }
+                    }
+                });
+                if done.unwrap_or(true) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn submit_login_code(&mut self, cx: &mut Context<Self>) {
+        let code = self.login_code.read(cx).text().trim().to_string();
+        let Setup::SigningIn(login) = &mut self.setup else { return };
+        if code.is_empty() {
+            return;
+        }
+        if let Err(e) = login.send_code(&code) {
+            self.setup = Setup::LoggedOut { error: Some(e) };
+        }
+        self.login_code.update(cx, |input, cx| input.set_text("", cx));
+        cx.notify();
     }
 
     fn skip_cli_version(&mut self, cx: &mut Context<Self>) {
@@ -2057,6 +2172,156 @@ impl KynexApp {
         )
     }
 
+    /// Installing Claude Code or signing in, in the workspace's place, until the CLI is ready.
+    fn render_setup(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let t = theme(cx).clone();
+        let busy = |label: &'static str| {
+            div().flex().items_center().gap_2().text_sm().text_color(t.text_muted).child(spinner("setup-spin", t.accent, px(14.))).child(label)
+        };
+        let error = |e: &Option<String>| e.clone().map(|e| div().text_xs().text_color(t.error).child(e));
+        let (title, body, content): (&str, &str, AnyElement) = match &self.setup {
+            Setup::Checking | Setup::Ready => return None,
+            Setup::Missing { error: e } => (
+                "Set up Claude Code",
+                "Kynex runs on Claude Code, which isn't installed on this computer yet. Kynex can install it for you; it takes about a minute.",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .children(error(e))
+                    .child(
+                        div().flex().child(
+                            primary_button("setup-install", "Install Claude Code", cx)
+                                .on_click(cx.listener(|this, _, _, cx| this.install_cli(cx))),
+                        ),
+                    )
+                    .into_any_element(),
+            ),
+            Setup::Installing => (
+                "Set up Claude Code",
+                "Downloading and installing the latest Claude Code.",
+                busy("Installing Claude Code…").into_any_element(),
+            ),
+            Setup::LoggedOut { error: e } => (
+                "Sign in to Claude",
+                "Sign in with your Claude account (Pro, Max, Team or Enterprise). Your browser opens to finish.",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .children(error(e))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(primary_button("setup-sign-in", "Sign in", cx).on_click(cx.listener(|this, _, _, cx| this.sign_in(false, cx))))
+                            .child(
+                                ghost_button("setup-console", cx)
+                                    .text_color(t.text_muted)
+                                    .child("Use an Anthropic Console account")
+                                    .tooltip(Tooltip::text("Pay per use with API billing instead of a subscription"))
+                                    .on_click(cx.listener(|this, _, _, cx| this.sign_in(true, cx))),
+                            ),
+                    )
+                    .into_any_element(),
+            ),
+            Setup::SigningIn(login) => {
+                let url = login.url();
+                (
+                    "Sign in to Claude",
+                    "Finish signing in in your browser. Kynex continues on its own when you're done.",
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(busy("Waiting for the browser…"))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1p5()
+                                .child(div().text_xs().text_color(t.text_muted).child("If the page shows a code, paste it here:"))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .px_2()
+                                                .py_1()
+                                                .rounded_md()
+                                                .border_1()
+                                                .border_color(t.border)
+                                                .bg(t.editor)
+                                                .text_sm()
+                                                .child(self.login_code.clone()),
+                                        )
+                                        .child(
+                                            outline_button("setup-code", "Continue", cx)
+                                                .on_click(cx.listener(|this, _, _, cx| this.submit_login_code(cx))),
+                                        ),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .when_some(url, |d, url| {
+                                    d.child(
+                                        ghost_button("setup-open", cx)
+                                            .text_color(t.text_muted)
+                                            .child("Open the sign-in page again")
+                                            .on_click(move |_, _, cx| cx.open_url(&url)),
+                                    )
+                                })
+                                .child(ghost_button("setup-cancel", cx).text_color(t.text_muted).child("Cancel").on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.setup = Setup::LoggedOut { error: None };
+                                        cx.notify();
+                                    }),
+                                )),
+                        )
+                        .into_any_element(),
+                )
+            }
+        };
+        Some(
+            div()
+                .flex()
+                .flex_1()
+                .min_h_0()
+                .items_center()
+                .justify_center()
+                .bg(t.editor)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_4()
+                        .w(px(460.))
+                        .p_6()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(t.border)
+                        .bg(t.panel)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1p5()
+                                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
+                                .child(div().text_sm().text_color(t.text_muted).child(body)),
+                        )
+                        .child(content),
+                )
+                .into_any_element(),
+        )
+    }
+
     /// The Claude Code update strip above the composer: an offer, progress, or the outcome.
     fn render_cli_update(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
@@ -2174,7 +2439,9 @@ impl Render for KynexApp {
             self.focus.focus(window, cx);
         }
 
-        let main = if view == Some(View::Git) {
+        let main = if let Some(setup) = self.render_setup(cx) {
+            setup
+        } else if view == Some(View::Git) {
             let path = self.active_project().map(|p| p.path.clone()).unwrap();
             let git = self.git.entry(path.clone()).or_insert_with(|| cx.new(|cx| GitView::new(path, cx))).clone();
             div()

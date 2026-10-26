@@ -169,7 +169,7 @@ impl Session {
         let mut cmd = match wsl::parse(&self.cwd) {
             Some(w) => w.command("claude"),
             None => {
-                let mut c = Command::new("claude");
+                let mut c = Command::new(crate::cli::program());
                 c.current_dir(&self.cwd);
                 c
             }
@@ -561,7 +561,7 @@ pub struct ModelInfo {
 /// `initialize` handshake. Sends no message, so it costs nothing. Blocks for
 /// a second or two; call it off the UI thread.
 pub fn list_models() -> Result<Vec<ModelInfo>, String> {
-    let mut cmd = Command::new("claude");
+    let mut cmd = Command::new(crate::cli::program());
     cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
         .current_dir(std::env::temp_dir())
         .stdin(Stdio::piped())

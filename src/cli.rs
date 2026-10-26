@@ -1,8 +1,165 @@
-//! Keeping the `claude` CLI current from inside Kynex: compare the installed
-//! version with the newest release on the user's channel, and run the CLI's own
-//! `claude update` when they accept. Everything here blocks; call it off the UI thread.
+//! Managing the `claude` CLI from inside Kynex, so users never need a terminal:
+//! find it, install it with the official installer, sign in, and keep it current
+//! (compare the installed version with the newest release on the user's channel,
+//! and run the CLI's own `claude update` when they accept). Everything here blocks;
+//! call it off the UI thread.
 
-use std::process::{Command, Stdio};
+use std::ffi::OsStr;
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::{Arc, Mutex};
+
+/// The `claude` to run: the one on PATH, else the native installer's location
+/// (`~/.local/bin`), which a fresh install puts it in before Kynex's PATH knows.
+pub fn program() -> PathBuf {
+    let exe = if cfg!(windows) { "claude.exe" } else { "claude" };
+    let on_path = std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(exe).is_file()));
+    if !on_path {
+        if let Some(local) = dirs::home_dir().map(|h| h.join(".local").join("bin").join(exe)).filter(|p| p.is_file()) {
+            return local;
+        }
+    }
+    PathBuf::from("claude")
+}
+
+/// Whether the CLI can run sessions yet.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Status {
+    Ready,
+    Missing,
+    LoggedOut,
+}
+
+/// Asks `claude auth status`. Anything unexpected (an older CLI without `auth`,
+/// odd output) counts as ready, so this never locks out a working setup.
+pub fn status() -> Status {
+    let out = match command(program()).args(["auth", "status", "--json"]).output() {
+        Ok(out) => out,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Status::Missing,
+        Err(_) => return Status::Ready,
+    };
+    match serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+        Ok(v) if v["loggedIn"] == false && v["apiProvider"] == "firstParty" => Status::LoggedOut,
+        _ => Status::Ready,
+    }
+}
+
+/// Installs the native build with the official installer script.
+pub fn install() -> Result<(), String> {
+    let mut cmd = if cfg!(windows) {
+        let mut c = command("powershell");
+        c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://claude.ai/install.ps1 | iex"]);
+        c
+    } else {
+        let mut c = command("bash");
+        c.args(["-c", "curl -fsSL https://claude.ai/install.sh | bash"]);
+        c
+    };
+    let out = cmd.output().map_err(|e| format!("couldn't start the installer: {e}"))?;
+    if !out.status.success() || status() == Status::Missing {
+        return Err(format!("The Claude Code installer failed: {}", last_line(&out.stderr).or(last_line(&out.stdout)).unwrap_or_default()));
+    }
+    Ok(())
+}
+
+/// A running `claude auth login`: it opens the browser itself, prints the sign-in
+/// URL, and takes the code that page shows if the browser can't hand it back.
+pub struct Login {
+    child: Child,
+    stdin: Option<ChildStdin>,
+    output: Arc<Mutex<Vec<String>>>,
+}
+
+impl Login {
+    /// `console` signs in with an Anthropic Console (API billing) account instead
+    /// of a Claude subscription.
+    pub fn start(console: bool) -> Result<Self, String> {
+        let mut cmd = command(program());
+        cmd.args(["auth", "login"]).stdin(Stdio::piped());
+        if console {
+            cmd.arg("--console");
+        }
+        let mut child = cmd.spawn().map_err(|e| format!("couldn't start `claude auth login`: {e}"))?;
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let collect = |stream: Box<dyn std::io::Read + Send>| {
+            let lines = output.clone();
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream);
+                let mut buf = Vec::new();
+                while reader.read_until(b'\n', &mut buf).is_ok_and(|n| n > 0) {
+                    lines.lock().unwrap().push(strip_escapes(&String::from_utf8_lossy(&buf)));
+                    buf.clear();
+                }
+            });
+        };
+        collect(Box::new(child.stdout.take().unwrap()));
+        collect(Box::new(child.stderr.take().unwrap()));
+        Ok(Self { stdin: child.stdin.take(), child, output })
+    }
+
+    /// The sign-in page, once the CLI has printed it.
+    pub fn url(&self) -> Option<String> {
+        self.output.lock().unwrap().iter().find_map(|l| {
+            let start = l.find("https://")?;
+            Some(l[start..].split_whitespace().next()?.to_string())
+        })
+    }
+
+    pub fn send_code(&mut self, code: &str) -> Result<(), String> {
+        let stdin = self.stdin.as_mut().ok_or("sign-in already finished")?;
+        writeln!(stdin, "{}", code.trim()).and_then(|_| stdin.flush()).map_err(|e| format!("couldn't send the code: {e}"))
+    }
+
+    /// `None` while it runs; then whether it signed in, or what it said last.
+    pub fn finished(&mut self) -> Option<Result<(), String>> {
+        let exit = self.child.try_wait().ok()??;
+        if exit.success() {
+            return Some(Ok(()));
+        }
+        let said = self.output.lock().unwrap().iter().rev().find(|l| !l.trim().is_empty()).cloned();
+        Some(Err(said.map_or("Sign-in didn't complete.".into(), |s| s.trim().to_string())))
+    }
+}
+
+impl Drop for Login {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Drops terminal escapes (colours, OSC 8 hyperlinks, which also repeat the URL).
+fn strip_escapes(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            // CSI: up to a final byte in @..~
+            Some('[') => while chars.next().is_some_and(|c| !('@'..='~').contains(&c)) {},
+            // OSC: up to BEL or ESC \, dropping the payload (the hyperlink target).
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\x07' || c == '\x1b' && chars.next_if_eq(&'\\').is_some() {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn last_line(bytes: &[u8]) -> Option<String> {
+    let text = strip_escapes(&String::from_utf8_lossy(bytes));
+    text.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string())
+}
 
 /// Where the update check stands; the composer shows a strip for every state but `Idle`.
 #[derive(Clone, PartialEq)]
@@ -17,7 +174,7 @@ pub enum UpdateState {
 /// npm publishes the CLI's release channels (`latest`, `stable`) as dist-tags.
 const DIST_TAGS: &str = "https://registry.npmjs.org/-/package/@anthropic-ai/claude-code/dist-tags";
 
-fn command(program: &str) -> Command {
+fn command(program: impl AsRef<OsStr>) -> Command {
     let mut cmd = Command::new(program);
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]
@@ -30,7 +187,7 @@ fn command(program: &str) -> Command {
 
 /// The installed CLI's version, from `claude --version` ("2.1.310 (Claude Code)").
 pub fn installed_version() -> Result<String, String> {
-    let out = command("claude").arg("--version").output().map_err(|e| format!("failed to start `claude`: {e}"))?;
+    let out = command(program()).arg("--version").output().map_err(|e| format!("failed to start `claude`: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout);
     text.split_whitespace()
         .next()
@@ -74,7 +231,7 @@ pub fn check() -> Result<Option<(String, String)>, String> {
 /// Runs `claude update` (which also handles package-manager installs) and
 /// returns the version installed afterwards.
 pub fn update() -> Result<String, String> {
-    let out = command("claude").arg("update").output().map_err(|e| format!("failed to start `claude update`: {e}"))?;
+    let out = command(program()).arg("update").output().map_err(|e| format!("failed to start `claude update`: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         let msg = if err.trim().is_empty() { String::from_utf8_lossy(&out.stdout) } else { err };
@@ -113,6 +270,15 @@ mod tests {
         assert!(is_newer("2.1.311-beta.1", "2.1.310"));
         assert_eq!(parse("2.1"), None);
         assert_eq!(parse("2.1.3.4"), None);
+    }
+
+    #[test]
+    fn strips_escapes() {
+        let url = "https://claude.com/cai/oauth/authorize?code=true";
+        let line = format!("If the browser didn't open, visit: \x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\\n");
+        assert_eq!(strip_escapes(&line), format!("If the browser didn't open, visit: {url}\n"));
+        assert_eq!(strip_escapes("\x1b[1;32mok\x1b[0m"), "ok");
+        assert_eq!(strip_escapes("\x1b]8;;x\x07y\x1b]8;;\x07"), "y");
     }
 
     #[test]
