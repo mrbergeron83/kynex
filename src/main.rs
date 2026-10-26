@@ -3,6 +3,7 @@
 mod app;
 mod chrome;
 mod git;
+mod project;
 mod session;
 mod theme;
 mod wsl;

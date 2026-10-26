@@ -54,6 +54,8 @@ One-time setup: `cargo install dioxus-cli@0.7.10 --locked`, and `claude` logged 
 - `src/main.rs` — window setup (frameless, transparent), subsecond hookup
 - `src/app.rs` — `KynexApp`: projects sidebar, tabs, persisted state, `render` (hot-patch entry)
 - `src/session.rs` — Claude CLI session process and stream-json protocol, session listing
+- `src/project.rs` — per-project settings folders (`<data dir>/projects/<name>-<hash>/`, one
+  JSON file per section); permissions are passed to each session via `claude --settings`
 - `src/git.rs` — Git view (branch, changes, diffs, history)
 - `src/chrome.rs` — custom Hyprland-style window frame
 - `src/theme.rs` — palettes and fonts

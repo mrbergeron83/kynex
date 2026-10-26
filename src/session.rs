@@ -15,7 +15,7 @@ use std::time::SystemTime;
 use eframe::egui;
 use serde_json::{Value, json};
 
-use crate::wsl;
+use crate::{project, wsl};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -47,6 +47,16 @@ pub enum PermState {
     Pending,
     Allowed,
     Denied,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Answer {
+    Once,
+    /// Allow, and stop asking for the same thing until this process ends.
+    Session,
+    /// Allow, and save the rule in the project's Kynex settings.
+    Project,
+    Deny,
 }
 
 enum Event {
@@ -153,8 +163,16 @@ impl Session {
             "--permission-prompt-tool",
             "stdio",
         ]);
-        if self.kind == Kind::Chat {
-            cmd.args(["--tools", ""]);
+        match self.kind {
+            Kind::Chat => {
+                cmd.args(["--tools", ""]);
+            }
+            // Read fresh on every start, so edits in the Settings view apply to the next process.
+            Kind::Code => {
+                if let Some(settings) = project::Permissions::load(&self.cwd).as_cli_settings() {
+                    cmd.args(["--settings", &settings]);
+                }
+            }
         }
         if !self.model.is_empty() {
             cmd.args(["--model", &self.model]);
@@ -228,25 +246,33 @@ impl Session {
         self.write(json!({ "type": "control_request", "request_id": id, "request": { "subtype": "interrupt" } }));
     }
 
-    pub fn answer_permission(&mut self, index: usize, allow: bool, remember: bool) {
+    /// Answers a permission prompt. For [`Answer::Project`] it returns the rules
+    /// to save in the project's settings; the live process gets them right away
+    /// as session rules, and later processes get them from the saved settings.
+    pub fn answer_permission(&mut self, index: usize, answer: Answer) -> Vec<String> {
         let Some(Item::Permission { request_id, input, suggestions, state, .. }) = self.items.get_mut(index) else {
-            return;
+            return Vec::new();
         };
-        *state = if allow { PermState::Allowed } else { PermState::Denied };
-        let response = if allow {
-            let mut r = json!({ "behavior": "allow", "updatedInput": input });
-            if remember && suggestions.is_array() {
-                r["updatedPermissions"] = suggestions.clone();
+        *state = if answer == Answer::Deny { PermState::Denied } else { PermState::Allowed };
+        let response = match answer {
+            Answer::Deny => json!({ "behavior": "deny", "message": "The user denied this action in Kynex." }),
+            Answer::Once => json!({ "behavior": "allow", "updatedInput": input }),
+            Answer::Session | Answer::Project => {
+                // Kynex keeps project rules itself, so the CLI never writes them to its settings files.
+                let mut updates = suggestions.clone();
+                for u in updates.as_array_mut().into_iter().flatten() {
+                    u["destination"] = json!("session");
+                }
+                json!({ "behavior": "allow", "updatedInput": input, "updatedPermissions": updates })
             }
-            r
-        } else {
-            json!({ "behavior": "deny", "message": "The user denied this action in Kynex." })
         };
+        let rules = if answer == Answer::Project { project::suggested_rules(suggestions) } else { Vec::new() };
         let msg = json!({
             "type": "control_response",
             "response": { "subtype": "success", "request_id": request_id.clone(), "response": response }
         });
         self.write(msg);
+        rules
     }
 
     pub fn kill(&mut self) {

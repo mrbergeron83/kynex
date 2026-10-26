@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::chrome;
 use crate::git::GitView;
-use crate::session::{self, Attachment, Item, Kind, PermState, Session, SessionInfo};
+use crate::project::{self, Permissions};
+use crate::session::{self, Answer, Attachment, Item, Kind, PermState, Session, SessionInfo};
 use crate::theme::{self, THEMES, Theme};
 use crate::wsl;
 
@@ -33,6 +34,7 @@ enum View {
     #[default]
     Code,
     Git,
+    Settings,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -69,6 +71,16 @@ pub struct KynexApp {
     sessions: Option<SessionList>,
     /// Session id whose delete button was clicked once and is awaiting confirmation.
     confirm_delete: Option<String>,
+    /// The project settings being edited, loaded when the Settings view opens.
+    settings: Option<SettingsView>,
+    /// Projects whose rules changed mid-reply; their process restarts once it's idle.
+    restart_when_idle: HashSet<PathBuf>,
+}
+
+struct SettingsView {
+    path: PathBuf,
+    perms: Permissions,
+    new_rule: String,
 }
 
 /// Past sessions for the active conversation's folder, re-read when the folder
@@ -89,7 +101,7 @@ enum SessionAction {
 /// `~/Library/Application Support/kynex` on macOS, `$XDG_DATA_HOME/kynex` (or
 /// `~/.local/share/kynex`) on Linux. `KYNEX_DATA_DIR` overrides it, to run a test
 /// instance without touching your real state.
-fn data_dir() -> PathBuf {
+pub fn data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("KYNEX_DATA_DIR") {
         return PathBuf::from(dir);
     }
@@ -130,6 +142,8 @@ impl KynexApp {
             switched_at: f64::NEG_INFINITY,
             sessions: None,
             confirm_delete: None,
+            settings: None,
+            restart_when_idle: HashSet::new(),
         }
     }
 
@@ -432,6 +446,7 @@ impl KynexApp {
         ui.horizontal(|ui| {
             changed |= ui.selectable_value(&mut p.view, View::Code, "Code").changed();
             changed |= ui.selectable_value(&mut p.view, View::Git, "Git").changed();
+            changed |= ui.selectable_value(&mut p.view, View::Settings, "Settings").changed();
             ui.add_space(8.0);
             ui.label(RichText::new(path.display().to_string()).weak().small());
 
@@ -561,8 +576,8 @@ impl KynexApp {
             self.save();
         }
 
-        let in_git = self.active_project().is_some_and(|p| p.view == View::Git);
-        if pasted && !in_git {
+        let in_code = self.active_project().is_none_or(|p| p.view == View::Code);
+        if pasted && in_code {
             if let Ok(img) = arboard::Clipboard::new().and_then(|mut c| c.get_image()) {
                 if let Some(rgba) = image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned()) {
                     self.attach_image(ctx, image::DynamicImage::ImageRgba8(rgba));
@@ -628,7 +643,8 @@ impl KynexApp {
             return;
         };
 
-        let mut answer: Option<(usize, bool, bool)> = None;
+        let kind = session.kind;
+        let mut answer: Option<(usize, Answer)> = None;
         egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink(false).show(ui, |ui| {
             ui.set_max_width(ui.available_width().min(900.0));
             for (i, item) in session.items.iter().enumerate() {
@@ -689,16 +705,26 @@ impl KynexApp {
                                 match state {
                                     PermState::Pending => {
                                         ui.horizontal(|ui| {
-                                            if ui.button("Allow").clicked() {
-                                                answer = Some((i, true, false));
+                                            if ui.button("Allow once").clicked() {
+                                                answer = Some((i, Answer::Once));
                                             }
                                             if suggestions.as_array().is_some_and(|a| !a.is_empty())
-                                                && ui.button("Allow & don't ask again this session").clicked()
+                                                && ui.button("Allow this session").clicked()
                                             {
-                                                answer = Some((i, true, true));
+                                                answer = Some((i, Answer::Session));
+                                            }
+                                            let rules = project::suggested_rules(suggestions);
+                                            if kind == Kind::Code
+                                                && !rules.is_empty()
+                                                && ui
+                                                    .button("Always allow in this project")
+                                                    .on_hover_text(format!("Saves {} to this project's Kynex settings", rules.join(", ")))
+                                                    .clicked()
+                                            {
+                                                answer = Some((i, Answer::Project));
                                             }
                                             if ui.button("Deny").clicked() {
-                                                answer = Some((i, false, false));
+                                                answer = Some((i, Answer::Deny));
                                             }
                                         });
                                     }
@@ -721,8 +747,90 @@ impl KynexApp {
                 }
             }
         });
-        if let Some((i, allow, remember)) = answer {
-            session.answer_permission(i, allow, remember);
+        if let Some((i, a)) = answer {
+            let rules = session.answer_permission(i, a);
+            if !rules.is_empty() {
+                let cwd = session.cwd.clone();
+                let mut perms = Permissions::load(&cwd);
+                if perms.allow(rules) {
+                    if let Err(e) = perms.save(&cwd) {
+                        self.notice = Some(e);
+                    }
+                    self.settings = None;
+                }
+            }
+        }
+    }
+
+    /// Per-project settings. Permissions are the first section.
+    fn settings_view(&mut self, ui: &mut egui::Ui, path: &Path) {
+        if self.settings.as_ref().is_none_or(|s| s.path != path) {
+            self.settings = Some(SettingsView { path: path.to_path_buf(), perms: Permissions::load(path), new_rule: String::new() });
+        }
+        let Some(view) = &mut self.settings else { return };
+        let before = view.perms.clone();
+
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            ui.set_max_width(ui.available_width().min(900.0));
+            ui.heading("Permissions");
+            ui.label(
+                RichText::new(
+                    "Rules Kynex gives every Claude session in this project, in Claude Code's syntax: \
+                     Bash(cargo test:*), Edit, WebFetch(domain:docs.rs). They add to your own Claude \
+                     settings; a deny anywhere wins.",
+                )
+                .weak(),
+            );
+            ui.add_space(8.0);
+
+            for (title, rules) in [("Allow", &mut view.perms.allow), ("Deny", &mut view.perms.deny)] {
+                ui.label(RichText::new(title).strong());
+                if rules.is_empty() {
+                    ui.label(RichText::new("  none").weak());
+                }
+                let mut remove = None;
+                for (i, rule) in rules.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui.small_button("✖").on_hover_text("Remove this rule").clicked() {
+                            remove = Some(i);
+                        }
+                        ui.label(RichText::new(rule).monospace());
+                    });
+                }
+                if let Some(i) = remove {
+                    rules.remove(i);
+                }
+                ui.add_space(8.0);
+            }
+
+            ui.horizontal(|ui| {
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut view.new_rule).hint_text("Bash(npm test:*)").desired_width(320.0),
+                );
+                let rule = view.new_rule.trim().to_string();
+                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let add_allow = ui.add_enabled(!rule.is_empty(), egui::Button::new("Allow")).clicked() || enter;
+                let add_deny = ui.add_enabled(!rule.is_empty(), egui::Button::new("Deny")).clicked();
+                let list = if add_deny { Some(&mut view.perms.deny) } else if add_allow { Some(&mut view.perms.allow) } else { None };
+                if let Some(list) = list.filter(|_| !rule.is_empty()) {
+                    if !list.contains(&rule) {
+                        list.push(rule);
+                    }
+                    view.new_rule.clear();
+                }
+            });
+
+            ui.add_space(12.0);
+            ui.label(RichText::new(format!("Stored in {}", project::dir(path).display())).small().weak());
+        });
+
+        if view.perms != before {
+            if let Err(e) = view.perms.save(path) {
+                self.notice = Some(e);
+            }
+            // The CLI reads rules at startup: restart the project's process so it picks them up.
+            // `--resume` keeps the conversation going; rules allowed "this session" are dropped.
+            self.restart_when_idle.insert(path.to_path_buf());
         }
     }
 }
@@ -748,6 +856,14 @@ impl KynexApp {
         for s in self.code.values_mut() {
             s.poll();
         }
+        self.restart_when_idle.retain(|path| match self.code.get_mut(path) {
+            Some(s) if s.busy => true,
+            Some(s) => {
+                s.kill();
+                false
+            }
+            None => false,
+        });
         self.sync_session_ids();
         self.handle_input_events(ctx);
 
@@ -795,6 +911,15 @@ impl KynexApp {
                     self.project_toolbar(ui);
                     ui.separator();
                     self.git.entry(path.clone()).or_insert_with(|| GitView::new(path)).ui(ui);
+                });
+                return;
+            }
+            if view == Some(View::Settings) {
+                let path = self.active_project().map(|p| p.path.clone()).unwrap();
+                theme::tile(ui, "main", "", true, true, |ui| {
+                    self.project_toolbar(ui);
+                    ui.separator();
+                    self.settings_view(ui, &path);
                 });
                 return;
             }
