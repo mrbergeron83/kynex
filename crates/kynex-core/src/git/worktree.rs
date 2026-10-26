@@ -29,31 +29,6 @@ impl Worktree {
     pub fn label(&self) -> &str {
         self.branch.as_deref().unwrap_or(&self.head)
     }
-
-    /// What's notable about it, e.g. `["merged", "3 changed"]`: "merged" means its
-    /// branch has nothing main lacks, so it's safe to remove once it's clean.
-    pub fn details(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        if self.main {
-            out.push("main worktree".into());
-        }
-        match self.ahead_behind {
-            Some((0, _)) => out.push("merged".into()),
-            Some((ahead, 0)) => out.push(format!("{ahead} ahead")),
-            Some((ahead, behind)) => out.push(format!("{ahead} ahead, {behind} behind")),
-            None => {}
-        }
-        if let Some(n) = self.changes.filter(|&n| n > 0) {
-            out.push(format!("{n} changed"));
-        }
-        if self.locked {
-            out.push("locked".into());
-        }
-        if self.prunable {
-            out.push("folder missing".into());
-        }
-        out
-    }
 }
 
 /// Every working tree of the repository `root` belongs to, main first, with
@@ -178,15 +153,6 @@ mod tests {
         let list = list_worktrees(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
         assert!(list[0].main);
         assert!(list.iter().all(|w| w.prunable || w.changes.is_some()));
-    }
-
-    #[test]
-    fn worktree_details() {
-        let w = |ahead_behind, changes| Worktree { ahead_behind, changes, ..Default::default() };
-        assert_eq!(w(Some((0, 5)), Some(0)).details(), ["merged"]);
-        assert_eq!(w(Some((2, 0)), Some(3)).details(), ["2 ahead", "3 changed"]);
-        assert_eq!(w(Some((2, 1)), None).details(), ["2 ahead, 1 behind"]);
-        assert_eq!(Worktree { main: true, ..Default::default() }.details(), ["main worktree"]);
     }
 
     #[test]

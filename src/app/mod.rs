@@ -13,7 +13,7 @@
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `terminal_dock.rs`  | the project's terminal panel under the conversation  |
 //! | `transcript.rs`     | the conversation list and how each item draws        |
-//! | `worktrees.rs`      | the project's git worktrees, in the sessions panel   |
+//! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
