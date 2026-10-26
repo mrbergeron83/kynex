@@ -84,10 +84,11 @@ struct SettingsView {
 }
 
 /// Past sessions for the active conversation's folder, re-read when the folder
-/// or the current session changes, or the menu is opened.
+/// or the current session changes, or a reply starts or finishes.
 struct SessionList {
     cwd: PathBuf,
     current: Option<String>,
+    busy: bool,
     items: Vec<SessionInfo>,
 }
 
@@ -214,80 +215,76 @@ impl KynexApp {
         }
     }
 
-    /// The current conversation's title, with a menu to switch to, start, or delete sessions.
-    fn session_bar(&mut self, ui: &mut egui::Ui) {
+    /// Left panel: past sessions for the active conversation's folder, to switch
+    /// to, start, or delete.
+    fn sessions_panel(&mut self, ui: &mut egui::Ui) {
         let Some(s) = self.session_mut() else { return };
         let (kind, cwd, current, busy) = (s.kind, s.cwd.clone(), s.session_id.clone(), s.busy);
-        if self.sessions.as_ref().is_none_or(|l| l.cwd != cwd || l.current != current) {
-            self.sessions = Some(SessionList { items: session::list_sessions(&cwd), cwd: cwd.clone(), current: current.clone() });
+        // Re-read when the folder or session changes, and when a reply finishes (titles and times move).
+        if self.sessions.as_ref().is_none_or(|l| l.cwd != cwd || l.current != current || l.busy != busy) {
+            self.sessions = Some(SessionList { items: session::list_sessions(&cwd), cwd: cwd.clone(), current: current.clone(), busy });
         }
         let Some(list) = &self.sessions else { return };
-        let title = current
-            .as_ref()
-            .and_then(|id| list.items.iter().find(|i| &i.id == id))
-            .map_or_else(|| "New session".to_string(), |i| truncate(&i.title, 70));
 
         let mut action = None;
-        let mut reload = false;
         let confirm_delete = &mut self.confirm_delete;
         ui.horizontal(|ui| {
-            let menu = ui.menu_button(format!("{title}  ▼"), |ui| {
-                ui.set_min_width(420.0);
-                if list.items.is_empty() {
-                    ui.label(RichText::new("No past sessions yet").weak());
-                }
-                egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
-                    for info in &list.items {
-                        let is_current = current.as_deref() == Some(info.id.as_str());
-                        let confirming = confirm_delete.as_deref() == Some(info.id.as_str());
-                        let (open, delete) = egui::Sides::new().show(
-                            ui,
-                            |ui| {
-                                ui.add_enabled(!busy || is_current, egui::Button::selectable(is_current, truncate(&info.title, 48)))
-                                    .on_hover_text(&info.title)
-                                    .on_disabled_hover_text("Stop the current reply first")
-                                    .clicked()
-                            },
-                            |ui| {
-                                let button = if confirming {
-                                    egui::Button::new(RichText::new("Delete?").color(theme::p().red))
-                                } else {
-                                    egui::Button::new("✖").small()
-                                };
-                                let clicked = ui
-                                    .add_enabled(!(busy && is_current), button)
-                                    .on_hover_text("Delete this session's transcript")
-                                    .on_disabled_hover_text("Stop the current reply first")
-                                    .clicked();
-                                ui.label(RichText::new(ago(info.modified)).small().weak());
-                                clicked
-                            },
-                        );
-                        if open && !is_current {
-                            action = Some(SessionAction::Switch(info.id.clone()));
-                            ui.close();
-                        }
-                        if delete && confirming {
-                            action = Some(SessionAction::Delete(info.id.clone()));
-                            *confirm_delete = None;
-                        } else if delete {
-                            *confirm_delete = Some(info.id.clone());
-                        }
-                    }
-                });
-            });
-            if menu.response.clicked() {
-                reload = true;
-                *confirm_delete = None;
-            }
+            ui.label(RichText::new("Sessions").strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let r = ui
-                    .add_enabled(!busy && current.is_some(), egui::Button::new("+ New session"))
+                    .add_enabled(!busy && current.is_some(), egui::Button::new("+ New"))
+                    .on_hover_text("Start a new session")
                     .on_disabled_hover_text(if busy { "Stop the current reply first" } else { "Already a new session" });
                 if r.clicked() {
                     action = Some(SessionAction::New);
                 }
             });
+        });
+        ui.separator();
+
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            if current.is_none() {
+                ui.add(egui::Button::selectable(true, "New session").min_size(egui::vec2(ui.available_width(), 0.0)));
+            }
+            if list.items.is_empty() {
+                ui.label(RichText::new("No past sessions yet").weak());
+            }
+            for info in &list.items {
+                let is_current = current.as_deref() == Some(info.id.as_str());
+                let confirming = confirm_delete.as_deref() == Some(info.id.as_str());
+                let (open, delete) = egui::Sides::new().shrink_left().show(
+                    ui,
+                    |ui| {
+                        let width = ui.available_width();
+                        ui.add_enabled(!busy || is_current, egui::Button::selectable(is_current, truncate(&info.title, 60)).truncate().min_size(egui::vec2(width, 0.0)))
+                            .on_hover_text(format!("{}\n{}", info.title, ago(info.modified)))
+                            .on_disabled_hover_text("Stop the current reply first")
+                            .clicked()
+                    },
+                    |ui| {
+                        let button = if confirming {
+                            egui::Button::new(RichText::new("Delete?").color(theme::p().red))
+                        } else {
+                            egui::Button::new("✖").small().frame(false)
+                        };
+                        ui.add_enabled(!(busy && is_current), button)
+                            .on_hover_text("Delete this session's transcript")
+                            .on_disabled_hover_text("Stop the current reply first")
+                            .clicked()
+                    },
+                );
+                if open && !is_current {
+                    action = Some(SessionAction::Switch(info.id.clone()));
+                }
+                if delete && confirming {
+                    action = Some(SessionAction::Delete(info.id.clone()));
+                    *confirm_delete = None;
+                } else if delete {
+                    *confirm_delete = Some(info.id.clone());
+                } else if open {
+                    *confirm_delete = None;
+                }
+            }
         });
 
         match action {
@@ -300,12 +297,9 @@ impl KynexApp {
                 if let Err(e) = session::delete_session(&cwd, &id) {
                     self.notice = Some(e);
                 }
-                reload = true;
+                self.sessions = None;
             }
             None => {}
-        }
-        if reload {
-            self.sessions = None;
         }
     }
 
@@ -928,6 +922,14 @@ impl KynexApp {
             // so a restored transcript is visible before the first message.
             let _ = self.session_mut();
 
+            egui::Panel::left("sessions")
+                .frame(egui::Frame::NONE.inner_margin(egui::Margin { right: gap as i8, ..Default::default() }))
+                .resizable(true)
+                .default_size(260.0)
+                .size_range(160.0..=480.0)
+                .show(ui, |ui| {
+                    theme::tile(ui, "sessions", "", false, true, |ui| self.sessions_panel(ui));
+                });
             egui::Panel::bottom("composer").frame(egui::Frame::NONE).show(ui, |ui| {
                 ui.add_space(gap);
                 theme::tile(ui, "composer", "", composer_focused, false, |ui| self.composer(ui));
@@ -937,8 +939,6 @@ impl KynexApp {
                     self.project_toolbar(ui);
                     ui.separator();
                 }
-                self.session_bar(ui);
-                ui.separator();
                 self.transcript(ui);
             });
         });
