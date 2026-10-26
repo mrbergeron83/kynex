@@ -9,6 +9,7 @@ use kynex_core::terminal::ShellKind;
 
 use super::KynexApp;
 use super::keys::ToggleTerminal;
+use super::state::{Active, View};
 use crate::terminal::{PanelEvent, TerminalPanel};
 use crate::theme::theme;
 
@@ -53,6 +54,19 @@ impl KynexApp {
             self.composer.read(cx).focus_handle(cx).focus(window, cx);
         }
         cx.notify();
+    }
+
+    /// The toolbar's terminal button: from the Git view it switches to Code and
+    /// shows the terminal; otherwise it toggles it like Ctrl+`.
+    pub(super) fn terminal_button(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Active::Project(i) = self.saved.active
+            && let Some(p) = self.saved.projects.get_mut(i)
+            && p.view != View::Code
+        {
+            p.view = View::Code;
+            self.saved.terminal_open = false;
+        }
+        self.toggle_terminal(&ToggleTerminal, window, cx);
     }
 
     /// Runs a command from a tool call in the project's terminal, opening it if needed.

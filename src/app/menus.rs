@@ -154,7 +154,7 @@ impl KynexApp {
                 for (n, (label, opener)) in [
                     ("Open in VS Code", Opener::Code),
                     ("Open in file manager", Opener::Explorer),
-                    ("Open terminal", Opener::Terminal),
+                    ("Open in an external terminal", Opener::Terminal),
                 ]
                 .into_iter()
                 .enumerate()

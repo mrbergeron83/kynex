@@ -92,7 +92,12 @@ impl KynexApp {
             )
             .child(open("open-code", Icon::Code, "Open in VS Code", Opener::Code, path.clone(), cx))
             .child(open("open-files", Icon::Folder, "Open in file manager", Opener::Explorer, path.clone(), cx))
-            .child(open("open-term", Icon::Terminal, "Open a terminal here", Opener::Terminal, path, cx))
+            .child(
+                icon_button("open-term", Icon::Terminal, cx)
+                    .when(self.saved.terminal_open && view == View::Code, |b| b.bg(t.active))
+                    .tooltip(Tooltip::with_meta("Terminal", "Ctrl+` · in Kynex, under the conversation"))
+                    .on_click(cx.listener(|this, _, window, cx| this.terminal_button(window, cx))),
+            )
     }
 
     /// Opens a project folder in another app; a failure shows as a notice.
