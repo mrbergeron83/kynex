@@ -12,7 +12,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::SystemTime;
 
-use eframe::egui;
 use serde_json::{Value, json};
 
 use crate::{project, wsl};
@@ -28,11 +27,14 @@ pub enum Kind {
 pub struct Attachment {
     pub media_type: String,
     pub base64: String,
-    pub texture: egui::TextureHandle,
+    pub image: Arc<gpui::Image>,
 }
 
+/// Called from the reader threads whenever the process has news, so the UI drains it.
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
 pub enum Item {
-    User { text: String, images: Vec<egui::TextureHandle> },
+    User { text: String, images: Vec<Arc<gpui::Image>> },
     Assistant(String),
     Thinking,
     ToolUse { name: String, summary: String, input: String },
@@ -85,6 +87,8 @@ pub struct Session {
     /// The live permission mode: starts at the project's default, follows the
     /// CLI's reports, and is switched from the composer without a restart.
     pub mode: project::Mode,
+    /// Set by the UI so it hears about new events; a no-op until then.
+    pub wake: Wake,
     child: Option<Child>,
     stdin: Option<Arc<Mutex<ChildStdin>>>,
     rx: Option<Receiver<Event>>,
@@ -107,6 +111,7 @@ impl Session {
             busy: false,
             total_cost: 0.0,
             mode,
+            wake: Arc::new(|| {}),
             child: None,
             stdin: None,
             rx: None,
@@ -160,7 +165,7 @@ impl Session {
         self.child.is_some()
     }
 
-    fn spawn(&mut self, ctx: &egui::Context) -> Result<(), String> {
+    fn spawn(&mut self) -> Result<(), String> {
         let mut cmd = match wsl::parse(&self.cwd) {
             Some(w) => w.command("claude"),
             None => {
@@ -215,8 +220,8 @@ impl Session {
         let stdin = child.stdin.take().unwrap();
         let (tx, rx) = channel();
 
-        spawn_reader(stdout, tx.clone(), ctx.clone(), true);
-        spawn_reader(stderr, tx, ctx.clone(), false);
+        spawn_reader(stdout, tx.clone(), self.wake.clone(), true);
+        spawn_reader(stderr, tx, self.wake.clone(), false);
 
         self.child = Some(child);
         self.stdin = Some(Arc::new(Mutex::new(stdin)));
@@ -235,9 +240,9 @@ impl Session {
         }
     }
 
-    pub fn send(&mut self, ctx: &egui::Context, text: String, attachments: Vec<Attachment>) {
+    pub fn send(&mut self, text: String, attachments: Vec<Attachment>) {
         if self.child.is_none() {
-            if let Err(e) = self.spawn(ctx) {
+            if let Err(e) = self.spawn() {
                 self.items.push(Item::Error(e));
                 return;
             }
@@ -249,7 +254,7 @@ impl Session {
                 "type": "image",
                 "source": { "type": "base64", "media_type": a.media_type, "data": a.base64 }
             }));
-            images.push(a.texture);
+            images.push(a.image);
         }
         if !text.is_empty() {
             content.push(json!({ "type": "text", "text": text }));
@@ -355,7 +360,7 @@ impl Session {
         self.busy = false;
     }
 
-    /// Drain pending events from the process. Call once per frame.
+    /// Drain pending events from the process. Call when woken.
     pub fn poll(&mut self) {
         let Some(rx) = &self.rx else { return };
         let events: Vec<Event> = rx.try_iter().collect();
@@ -470,7 +475,7 @@ impl Drop for Session {
     }
 }
 
-fn spawn_reader(stream: impl std::io::Read + Send + 'static, tx: Sender<Event>, ctx: egui::Context, stdout: bool) {
+fn spawn_reader(stream: impl std::io::Read + Send + 'static, tx: Sender<Event>, wake: Wake, stdout: bool) {
     thread::spawn(move || {
         for line in BufReader::new(stream).lines() {
             let Ok(line) = line else { break };
@@ -485,11 +490,11 @@ fn spawn_reader(stream: impl std::io::Read + Send + 'static, tx: Sender<Event>, 
             if tx.send(ev).is_err() {
                 return;
             }
-            ctx.request_repaint();
+            wake();
         }
         if stdout {
             let _ = tx.send(Event::Exited);
-            ctx.request_repaint();
+            wake();
         }
     });
 }
@@ -664,10 +669,9 @@ mod tests {
     #[test]
     #[ignore]
     fn chat_round_trip() {
-        let ctx = egui::Context::default();
         let mut s = Session::new(Kind::Chat, std::env::temp_dir());
         s.model = "haiku".into();
-        s.send(&ctx, "Reply with exactly: pong".into(), Vec::new());
+        s.send("Reply with exactly: pong".into(), Vec::new());
         let start = Instant::now();
         while s.busy && start.elapsed() < Duration::from_secs(90) {
             s.poll();
@@ -690,12 +694,11 @@ mod tests {
         // Keep the project's Kynex settings out of the real data dir.
         unsafe { std::env::set_var("KYNEX_DATA_DIR", root.join("data")) };
 
-        let ctx = egui::Context::default();
         let mut s = Session::new(Kind::Code, project.clone());
         assert_eq!(s.mode, project::Mode::Auto);
         s.model = "haiku".into();
         let run = |s: &mut Session, dir: &str| {
-            s.send(&ctx, format!("Run this exact command with the Bash tool: mkdir {dir} . Then reply OK."), Vec::new());
+            s.send(format!("Run this exact command with the Bash tool: mkdir {dir} . Then reply OK."), Vec::new());
             let start = Instant::now();
             while s.busy && start.elapsed() < Duration::from_secs(120) {
                 s.poll();
@@ -725,11 +728,9 @@ mod tests {
     #[test]
     #[ignore]
     fn answers_questions() {
-        let ctx = egui::Context::default();
         let mut s = Session::new(Kind::Code, std::env::temp_dir());
         s.model = "haiku".into();
         s.send(
-            &ctx,
             "Use the AskUserQuestion tool to ask me which color I like, with options Red and Blue. \
              Then reply with exactly the color I picked, in capitals."
                 .into(),

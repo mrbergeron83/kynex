@@ -2,24 +2,47 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
+use std::time::Duration;
 
 use base64::Engine;
-use eframe::egui::{self, RichText};
-use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
+use gpui::{
+    Anchor, Animation, AnimationExt, AnyElement, App, ClickEvent, Context, Entity, ExternalPaths, FocusHandle,
+    Focusable, FollowMode, FontWeight, Image, ImageFormat, KeyBinding, KeyDownEvent, ListAlignment, ListState,
+    MouseButton, MouseMoveEvent, PathPromptOptions, Pixels, Point, SharedString, Subscription, Transformation, Window,
+    WindowBounds, actions, anchored, deferred, div, img, list, percentage, prelude::*, px,
+};
 use serde::{Deserialize, Serialize};
 
-use crate::chrome;
+use crate::chrome::{self, TITLE_BAR_HEIGHT};
 use crate::git::GitView;
+use crate::markdown;
 use crate::project::{self, ClaudeSettings, Mode, Permissions};
-use crate::prompt;
+use crate::prompt::{self, PromptAnswer, PromptView, Request};
 use crate::session::{self, Attachment, Item, Kind, PermState, Session, SessionInfo};
-use crate::theme::{self, THEMES, Theme};
+use crate::theme::{self, THEMES, Theme, mono, theme};
+use crate::ui::input::{InputEvent, TextInput};
+use crate::ui::{
+    Icon, Tooltip, divider, ghost_button, icon, icon_button, menu_item, outline_button, popover,
+};
 use crate::wsl;
 
 const MODELS: [(&str, &str); 4] = [("", "Default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")];
 const MAX_IMAGE_EDGE: u32 = 1568;
-const COMPOSER_ID: &str = "composer-input";
-const SETTINGS_MODAL: &str = "claude-settings";
+const THREAD_WIDTH: Pixels = px(780.);
+
+actions!(kynex, [OpenProject, NextTab, PrevTab, ToggleSessions, CycleMode]);
+
+pub fn bind_keys(cx: &mut App) {
+    let c = Some("Workspace");
+    cx.bind_keys([
+        KeyBinding::new(crate::ui::keys("secondary-o"), OpenProject, c),
+        KeyBinding::new("ctrl-tab", NextTab, c),
+        KeyBinding::new("ctrl-shift-tab", PrevTab, c),
+        KeyBinding::new(crate::ui::keys("secondary-b"), ToggleSessions, c),
+        KeyBinding::new("shift-tab", CycleMode, c),
+    ]);
+}
 
 /// Which top-level tab is showing. Projects sit at the top of the hierarchy,
 /// with Chat pinned as the first tab.
@@ -36,7 +59,7 @@ enum View {
     #[default]
     Code,
     Git,
-    /// Old Settings tab, now the ⚙ Claude settings modal. Kept so saved state
+    /// Old Settings tab, now the Claude settings modal. Kept so saved state
     /// still loads; switched back to Code on sight.
     Settings,
 }
@@ -51,42 +74,90 @@ struct ProjectState {
     session_id: Option<String>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub struct WindowState {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub maximized: bool,
+}
+
+#[derive(Serialize, Deserialize)]
 #[serde(default)]
-struct Saved {
+pub struct Saved {
     projects: Vec<ProjectState>,
     active: Active,
     model: String,
     chat_session_id: Option<String>,
     theme: Theme,
     sessions_collapsed: bool,
+    sessions_width: f32,
+    pub window: Option<WindowState>,
 }
 
-pub struct KynexApp {
-    saved: Saved,
-    code: HashMap<PathBuf, Session>,
-    chat: Session,
-    git: HashMap<PathBuf, GitView>,
-    input: String,
-    attachments: Vec<Attachment>,
-    md: CommonMarkCache,
-    notice: Option<String>,
-    last_active: Active,
-    switched_at: f64,
-    sessions: Option<SessionList>,
-    /// Session id whose delete button was clicked once and is awaiting confirmation.
-    confirm_delete: Option<String>,
-    /// The project settings being edited, loaded when the settings modal opens.
-    settings: Option<SettingsView>,
-    /// Projects whose rules changed mid-reply; their process restarts once it's idle.
-    restart_when_idle: HashSet<PathBuf>,
+impl Default for Saved {
+    fn default() -> Self {
+        Self {
+            projects: Vec::new(),
+            active: Active::Chat,
+            model: String::new(),
+            chat_session_id: None,
+            theme: Theme::default(),
+            sessions_collapsed: false,
+            sessions_width: 260.,
+            window: None,
+        }
+    }
+}
+
+impl Saved {
+    pub fn load() -> Self {
+        let mut saved: Saved = std::fs::read_to_string(data_dir().join("state.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        if matches!(saved.active, Active::Project(i) if i >= saved.projects.len()) {
+            saved.active = Active::Chat;
+        }
+        saved.sessions_width = saved.sessions_width.clamp(180., 480.);
+        saved
+    }
+
+    pub fn theme(&self) -> Theme {
+        self.theme
+    }
+}
+
+/// Which conversation: Chat, or a project's by its folder.
+type Key = Option<PathBuf>;
+
+#[derive(Clone, PartialEq)]
+enum Menu {
+    Model,
+    Theme,
+    Mode,
+    Effort,
+    Tab(usize),
+}
+
+struct OpenMenu {
+    which: Menu,
+    at: Point<Pixels>,
+    anchor: Anchor,
+}
+
+/// The transcript list for one conversation, and how much of it it has seen.
+struct Thread {
+    list: ListState,
+    count: usize,
 }
 
 struct SettingsView {
     path: PathBuf,
     perms: Permissions,
     claude: ClaudeSettings,
-    new_rule: String,
+    section: usize,
 }
 
 /// Past sessions for the active conversation's folder, re-read when the folder
@@ -98,10 +169,37 @@ struct SessionList {
     items: Vec<SessionInfo>,
 }
 
-enum SessionAction {
-    Switch(String),
-    New,
-    Delete(String),
+struct ActivePrompt {
+    key: Key,
+    id: String,
+    view: Entity<PromptView>,
+    _sub: Subscription,
+}
+
+pub struct KynexApp {
+    saved: Saved,
+    code: HashMap<PathBuf, Session>,
+    chat: Session,
+    git: HashMap<PathBuf, Entity<GitView>>,
+    threads: HashMap<Key, Thread>,
+    /// Tool calls and results opened up in the transcript.
+    expanded: HashSet<(Key, usize)>,
+    composer: Entity<TextInput>,
+    new_rule: Entity<TextInput>,
+    attachments: Vec<Attachment>,
+    notice: Option<String>,
+    sessions: Option<SessionList>,
+    /// Session id whose delete button was clicked once and is awaiting confirmation.
+    confirm_delete: Option<String>,
+    /// The project settings being edited; the modal is open while this is set.
+    settings: Option<SettingsView>,
+    /// Projects whose rules changed mid-reply; their process restarts once it's idle.
+    restart_when_idle: HashSet<PathBuf>,
+    prompt: Option<ActivePrompt>,
+    menu: Option<OpenMenu>,
+    resizing_sessions: bool,
+    focus: FocusHandle,
+    wake: session::Wake,
 }
 
 /// The OS's per-user data dir plus `kynex`: `%APPDATA%\kynex` on Windows,
@@ -120,37 +218,89 @@ fn project_name(p: &Path) -> String {
 }
 
 impl KynexApp {
-    pub fn new(cc: &eframe::CreationContext) -> Self {
+    pub fn new(saved: Saved, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let dir = data_dir();
         let _ = std::fs::create_dir_all(dir.join("chat"));
-        let mut saved: Saved = std::fs::read_to_string(dir.join("state.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-        if matches!(saved.active, Active::Project(i) if i >= saved.projects.len()) {
-            saved.active = Active::Chat;
-        }
-        theme::apply(&cc.egui_ctx, saved.theme);
+
+        // Session reader threads ring this; one task drains every session and repaints.
+        let (tx, rx) = async_channel::bounded::<()>(1);
+        let wake: session::Wake = Arc::new(move || {
+            let _ = tx.try_send(());
+        });
+        cx.spawn(async move |this, cx| {
+            while rx.recv().await.is_ok() {
+                if this.update(cx, |this, cx| this.poll(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+
         let mut chat = match saved.chat_session_id.clone() {
             Some(id) => Session::resume(Kind::Chat, dir.join("chat"), id),
             None => Session::new(Kind::Chat, dir.join("chat")),
         };
         chat.model = saved.model.clone();
+        chat.wake = wake.clone();
+
+        let composer = cx.new(|cx| TextInput::new(cx).multiline());
+        cx.subscribe_in(&composer, window, |this, _, ev, window, cx| match ev {
+            InputEvent::Submit => this.send(window, cx),
+            InputEvent::PasteImages(images) => {
+                for i in images {
+                    this.attach_bytes(&i.bytes, cx);
+                }
+            }
+            InputEvent::Changed => {}
+        })
+        .detach();
+        let new_rule = cx.new(|cx| TextInput::new(cx).mono().placeholder("Bash(npm test:*)"));
+        cx.subscribe(&new_rule, |this, _, ev, cx| {
+            if let InputEvent::Submit = ev {
+                this.add_rule(false, cx);
+            }
+        })
+        .detach();
+
+        cx.observe_window_bounds(window, |this, window, _| {
+            let bounds = window.window_bounds();
+            let b = bounds.get_bounds();
+            this.saved.window = Some(WindowState {
+                x: b.origin.x.into(),
+                y: b.origin.y.into(),
+                width: b.size.width.into(),
+                height: b.size.height.into(),
+                maximized: matches!(bounds, WindowBounds::Maximized(_)),
+            });
+        })
+        .detach();
+        cx.on_app_quit(|this, _| {
+            this.save();
+            async {}
+        })
+        .detach();
+
+        composer.read(cx).focus_handle(cx).focus(window, cx);
         Self {
             saved,
             code: HashMap::new(),
             chat,
             git: HashMap::new(),
-            input: String::new(),
+            threads: HashMap::new(),
+            expanded: HashSet::new(),
+            composer,
+            new_rule,
             attachments: Vec::new(),
-            md: CommonMarkCache::default(),
             notice: None,
-            last_active: Active::Chat,
-            switched_at: f64::NEG_INFINITY,
             sessions: None,
             confirm_delete: None,
             settings: None,
             restart_when_idle: HashSet::new(),
+            prompt: None,
+            menu: None,
+            resizing_sessions: false,
+            focus: cx.focus_handle(),
+            wake,
         }
     }
 
@@ -158,6 +308,28 @@ impl KynexApp {
         if let Ok(s) = serde_json::to_string_pretty(&self.saved) {
             let _ = std::fs::write(data_dir().join("state.json"), s);
         }
+    }
+
+    fn poll(&mut self, cx: &mut Context<Self>) {
+        self.chat.poll();
+        for s in self.code.values_mut() {
+            s.poll();
+        }
+        self.restart_idle();
+        self.sync_session_ids();
+        cx.notify();
+    }
+
+    /// Restart the projects whose settings changed, once they're idle.
+    fn restart_idle(&mut self) {
+        self.restart_when_idle.retain(|path| match self.code.get_mut(path) {
+            Some(s) if s.busy => true,
+            Some(s) => {
+                s.kill();
+                false
+            }
+            None => false,
+        });
     }
 
     /// Copy live session ids into the saved state so they survive a restart.
@@ -187,6 +359,24 @@ impl KynexApp {
         }
     }
 
+    fn active_key(&self) -> Key {
+        self.active_project().map(|p| p.path.clone())
+    }
+
+    fn session_for(&mut self, key: &Key) -> Option<&mut Session> {
+        match key {
+            None => Some(&mut self.chat),
+            Some(p) => self.code.get_mut(p),
+        }
+    }
+
+    fn active_session(&self) -> Option<&Session> {
+        match self.saved.active {
+            Active::Chat => Some(&self.chat),
+            Active::Project(i) => self.saved.projects.get(i).and_then(|p| self.code.get(&p.path)),
+        }
+    }
+
     /// The session the composer talks to, created (or resumed) on first use.
     fn session_mut(&mut self) -> Option<&mut Session> {
         let Active::Project(i) = self.saved.active else {
@@ -197,13 +387,14 @@ impl KynexApp {
             return None;
         }
         let (path, resume) = (p.path.clone(), p.session_id.clone());
-        let model = self.saved.model.clone();
+        let (model, wake) = (self.saved.model.clone(), self.wake.clone());
         Some(self.code.entry(path.clone()).or_insert_with(|| {
             let mut s = match resume {
                 Some(id) => Session::resume(Kind::Code, path, id),
                 None => Session::new(Kind::Code, path),
             };
             s.model = model;
+            s.wake = wake;
             s
         }))
     }
@@ -211,6 +402,10 @@ impl KynexApp {
     /// Replaces the active conversation (the old process, if any, is stopped).
     fn set_session(&mut self, mut s: Session) {
         s.model = self.saved.model.clone();
+        s.wake = self.wake.clone();
+        let key = self.active_key();
+        self.threads.remove(&key);
+        self.expanded.retain(|(k, _)| *k != key);
         match self.saved.active {
             Active::Chat => self.chat = s,
             Active::Project(i) => {
@@ -221,105 +416,14 @@ impl KynexApp {
         }
     }
 
-    /// Left panel: past sessions for the active conversation's folder, to switch
-    /// to, start, or delete.
-    fn sessions_panel(&mut self, ui: &mut egui::Ui) {
-        let Some(s) = self.session_mut() else { return };
-        let (kind, cwd, current, busy) = (s.kind, s.cwd.clone(), s.session_id.clone(), s.busy);
-        // Re-read when the folder or session changes, and when a reply finishes (titles and times move).
-        if self.sessions.as_ref().is_none_or(|l| l.cwd != cwd || l.current != current || l.busy != busy) {
-            self.sessions = Some(SessionList { items: session::list_sessions(&cwd), cwd: cwd.clone(), current: current.clone(), busy });
+    fn select(&mut self, a: Active, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saved.active != a {
+            self.saved.active = a;
+            self.menu = None;
+            self.save();
+            self.composer.read(cx).focus_handle(cx).focus(window, cx);
         }
-        let mut action = None;
-        ui.horizontal(|ui| {
-            if ui.add(egui::Button::new("«").frame(false)).on_hover_text("Hide sessions (Ctrl+B)").clicked() {
-                self.saved.sessions_collapsed = true;
-            }
-            ui.label(RichText::new("Sessions").strong());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let r = ui
-                    .add_enabled(!busy && current.is_some(), egui::Button::new("+ New"))
-                    .on_hover_text("Start a new session")
-                    .on_disabled_hover_text(if busy { "Stop the current reply first" } else { "Already a new session" });
-                if r.clicked() {
-                    action = Some(SessionAction::New);
-                }
-            });
-        });
-        ui.separator();
-
-        // Project sessions have Claude settings (permissions so far); chat has no tools.
-        if kind == Kind::Code {
-            egui::Panel::bottom("sessions-footer").frame(egui::Frame::NONE).show(ui, |ui| {
-                ui.separator();
-                let r = ui.add(egui::Button::new("⚙  Claude settings").frame(false)).on_hover_text("Permissions for Claude in this project");
-                if r.clicked() {
-                    ui.data_mut(|d| d.insert_temp(egui::Id::unique(SETTINGS_MODAL), Some(cwd.clone())));
-                }
-            });
-        }
-
-        let Some(list) = &self.sessions else { return };
-        let confirm_delete = &mut self.confirm_delete;
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            if current.is_none() {
-                ui.add(egui::Button::selectable(true, "New session").min_size(egui::vec2(ui.available_width(), 0.0)));
-            }
-            if list.items.is_empty() {
-                ui.label(RichText::new("No past sessions yet").weak());
-            }
-            for info in &list.items {
-                let is_current = current.as_deref() == Some(info.id.as_str());
-                let confirming = confirm_delete.as_deref() == Some(info.id.as_str());
-                let (open, delete) = egui::Sides::new().shrink_left().show(
-                    ui,
-                    |ui| {
-                        let width = ui.available_width();
-                        ui.add_enabled(!busy || is_current, egui::Button::selectable(is_current, truncate(&info.title, 60)).truncate().min_size(egui::vec2(width, 0.0)))
-                            .on_hover_text(format!("{}\n{}", info.title, ago(info.modified)))
-                            .on_disabled_hover_text("Stop the current reply first")
-                            .clicked()
-                    },
-                    |ui| {
-                        let button = if confirming {
-                            egui::Button::new(RichText::new("Delete?").color(theme::p().red))
-                        } else {
-                            egui::Button::new("✖").small().frame(false)
-                        };
-                        ui.add_enabled(!(busy && is_current), button)
-                            .on_hover_text("Delete this session's transcript")
-                            .on_disabled_hover_text("Stop the current reply first")
-                            .clicked()
-                    },
-                );
-                if open && !is_current {
-                    action = Some(SessionAction::Switch(info.id.clone()));
-                }
-                if delete && confirming {
-                    action = Some(SessionAction::Delete(info.id.clone()));
-                    *confirm_delete = None;
-                } else if delete {
-                    *confirm_delete = Some(info.id.clone());
-                } else if open {
-                    *confirm_delete = None;
-                }
-            }
-        });
-
-        match action {
-            Some(SessionAction::Switch(id)) => self.set_session(Session::resume(kind, cwd, id)),
-            Some(SessionAction::New) => self.set_session(Session::new(kind, cwd)),
-            Some(SessionAction::Delete(id)) => {
-                if current.as_deref() == Some(id.as_str()) {
-                    self.set_session(Session::new(kind, cwd.clone()));
-                }
-                if let Err(e) = session::delete_session(&cwd, &id) {
-                    self.notice = Some(e);
-                }
-                self.sessions = None;
-            }
-            None => {}
-        }
+        cx.notify();
     }
 
     fn add_project(&mut self, path: PathBuf) {
@@ -338,6 +442,7 @@ impl KynexApp {
         let p = self.saved.projects.remove(i);
         self.code.remove(&p.path);
         self.git.remove(&p.path);
+        self.threads.remove(&Some(p.path.clone()));
         self.saved.active = match self.saved.active {
             Active::Project(a) if a > i => Active::Project(a - 1),
             Active::Project(a) if a == i && i > 0 => Active::Project(i - 1),
@@ -349,163 +454,200 @@ impl KynexApp {
         self.save();
     }
 
-    fn pick_project(&mut self) {
-        if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-            self.add_project(dir);
-        }
-    }
-
-    fn tab_bar(&mut self, ui: &mut egui::Ui) {
-        let mut close = None;
-        let mut select = None;
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("kynex").strong().color(theme::p().border_a));
-            ui.add_space(8.0);
-
-            let badge = self.chat.busy.then_some(theme::p().blue);
-            if theme::workspace_pill(ui, 1, "chat", self.saved.active == Active::Chat, badge).clicked() {
-                select = Some(Active::Chat);
-            }
-
-            for (i, p) in self.saved.projects.iter().enumerate() {
-                let session = self.code.get(&p.path);
-                let waiting = session.is_some_and(|s| {
-                    s.items.iter().any(|it| matches!(it, Item::Permission { state: PermState::Pending, .. }))
-                });
-                let badge = if waiting {
-                    Some(theme::p().peach)
-                } else {
-                    session.is_some_and(|s| s.busy).then_some(theme::p().blue)
-                };
-                let active = self.saved.active == Active::Project(i);
-                let r = theme::workspace_pill(ui, i + 2, &project_name(&p.path), active, badge)
-                    .on_hover_text(format!("{}\nMiddle-click or right-click to close", p.path.display()));
-                if r.clicked() {
-                    select = Some(Active::Project(i));
-                }
-                if r.middle_clicked() {
-                    close = Some(i);
-                }
-                r.context_menu(|ui| {
-                    if ui.button("Open in VS Code").clicked() {
-                        open_project(&mut self.notice, Opener::Code, &p.path);
-                        ui.close();
-                    }
-                    if ui.button("Open in Explorer").clicked() {
-                        open_project(&mut self.notice, Opener::Explorer, &p.path);
-                        ui.close();
-                    }
-                    if ui.button("Open terminal").clicked() {
-                        open_project(&mut self.notice, Opener::Terminal, &p.path);
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button("Close").clicked() {
-                        close = Some(i);
-                        ui.close();
-                    }
-                });
-            }
-
-            if ui.button("+").on_hover_text("Open a project folder (Ctrl+O)").clicked() {
-                self.pick_project();
-            }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                chrome::window_controls(ui);
-                ui.add_space(8.0);
-                let current = MODELS.iter().find(|m| m.0 == self.saved.model).map_or("Default", |m| m.1);
-                let before = self.saved.model.clone();
-                egui::ComboBox::from_id_salt("model").selected_text(current).show_ui(ui, |ui| {
-                    for (id, name) in MODELS {
-                        ui.selectable_value(&mut self.saved.model, id.to_string(), name);
-                    }
-                });
-                if before != self.saved.model {
-                    self.save();
-                }
-                ui.label(RichText::new("model").color(theme::p().overlay));
-                ui.add_space(8.0);
-                let current = THEMES.iter().find(|t| t.0 == self.saved.theme).map_or("Hyprland", |t| t.1);
-                let before = self.saved.theme;
-                egui::ComboBox::from_id_salt("theme").selected_text(current).show_ui(ui, |ui| {
-                    for (t, name) in THEMES {
-                        ui.selectable_value(&mut self.saved.theme, t, name);
-                    }
-                });
-                if before != self.saved.theme {
-                    theme::apply(ui.ctx(), self.saved.theme);
-                    self.save();
-                }
-                ui.label(RichText::new("theme").color(theme::p().overlay));
-                // The empty middle of the bar is the window's title bar.
-                chrome::drag_region(ui);
-            });
+    fn pick_project(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Open project".into()),
         });
-        if let Some(a) = select {
-            self.saved.active = a;
-            self.save();
-        }
-        if let Some(i) = close {
-            self.close_project(i);
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = paths.await {
+                if let Some(dir) = paths.into_iter().next() {
+                    this.update(cx, |this, cx| {
+                        this.add_project(dir);
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn open_project(&mut self, _: &OpenProject, _: &mut Window, cx: &mut Context<Self>) {
+        self.pick_project(cx);
+    }
+
+    fn tab_count(&self) -> usize {
+        self.saved.projects.len() + 1
+    }
+
+    fn tab_pos(&self) -> usize {
+        match self.saved.active {
+            Active::Chat => 0,
+            Active::Project(i) => i + 1,
         }
     }
 
-    fn project_toolbar(&mut self, ui: &mut egui::Ui) {
-        let Active::Project(i) = self.saved.active else { return };
-        let Some(p) = self.saved.projects.get_mut(i) else { return };
-        let path = p.path.clone();
-        let mut changed = false;
-        ui.horizontal(|ui| {
-            changed |= ui.selectable_value(&mut p.view, View::Code, "Code").changed();
-            changed |= ui.selectable_value(&mut p.view, View::Git, "Git").changed();
-            ui.add_space(8.0);
-            ui.label(RichText::new(path.display().to_string()).weak().small());
+    fn jump(&mut self, t: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if t < self.tab_count() {
+            self.select(if t == 0 { Active::Chat } else { Active::Project(t - 1) }, window, cx);
+        }
+    }
 
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Terminal").clicked() {
-                    open_project(&mut self.notice, Opener::Terminal, &path);
-                }
-                if ui.button("Explorer").clicked() {
-                    open_project(&mut self.notice, Opener::Explorer, &path);
-                }
-                if ui.button("VS Code").clicked() {
-                    open_project(&mut self.notice, Opener::Code, &path);
-                }
-                if let Some(s) = self.code.get(&path) {
-                    if s.total_cost > 0.0 {
-                        ui.label(RichText::new(format!("${:.3}", s.total_cost)).weak());
-                    }
-                }
-            });
+    fn next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
+        let t = (self.tab_pos() + 1) % self.tab_count();
+        self.jump(t, window, cx);
+    }
+
+    fn prev_tab(&mut self, _: &PrevTab, window: &mut Window, cx: &mut Context<Self>) {
+        let n = self.tab_count();
+        let t = (self.tab_pos() + n - 1) % n;
+        self.jump(t, window, cx);
+    }
+
+    fn toggle_sessions(&mut self, _: &ToggleSessions, _: &mut Window, cx: &mut Context<Self>) {
+        self.saved.sessions_collapsed = !self.saved.sessions_collapsed;
+        self.save();
+        cx.notify();
+    }
+
+    /// Like Shift+Tab in the CLI: the next permission mode, live.
+    fn cycle_mode(&mut self, _: &CycleMode, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(s) = self.session_mut().filter(|s| s.kind == Kind::Code) else { return };
+        let next = Mode::ALL.iter().position(|m| *m == s.mode).map_or(0, |i| (i + 1) % Mode::ALL.len());
+        s.set_mode(Mode::ALL[next]);
+        cx.notify();
+    }
+
+    fn key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let k = &ev.keystroke;
+        if k.key == "escape" && (self.menu.is_some() || self.settings.is_some()) {
+            if self.menu.take().is_none() {
+                self.settings = None;
+            }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        // Ctrl+1 is Chat, Ctrl+2 the first project, and so on.
+        if k.modifiers.secondary(cx) && !k.modifiers.shift && !k.modifiers.alt {
+            if let Some(n) = k.key.parse::<usize>().ok().filter(|n| (1..=9).contains(n)) {
+                self.jump(n - 1, window, cx);
+                cx.stop_propagation();
+            }
+        }
+    }
+
+    fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let busy = self.session_mut().is_some_and(|s| s.busy);
+        let text = self.composer.read(cx).text().trim().to_string();
+        if busy || (text.is_empty() && self.attachments.is_empty()) {
+            return;
+        }
+        let atts = std::mem::take(&mut self.attachments);
+        let model = self.saved.model.clone();
+        if let Some(s) = self.session_mut() {
+            if !s.is_running() {
+                s.model = model;
+            }
+            s.send(text, atts);
+        }
+        self.composer.update(cx, |c, cx| c.set_text("", cx));
+        if let Some(t) = self.threads.get(&self.active_key()) {
+            t.list.scroll_to_end();
+            t.list.set_follow_mode(FollowMode::Tail);
+        }
+        let _ = window;
+        cx.notify();
+    }
+
+    fn interrupt(&mut self, cx: &mut Context<Self>) {
+        if let Some(s) = self.session_mut() {
+            s.interrupt();
+        }
+        cx.notify();
+    }
+
+    fn attach_files(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Attach".into()),
         });
-        if changed {
-            self.save();
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = paths.await {
+                this.update(cx, |this, cx| {
+                    for p in paths {
+                        this.drop_path(p, cx);
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// A dropped (or picked) path: folders become projects, images attach,
+    /// anything else goes into the message as its path.
+    fn drop_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if path.is_dir() {
+            self.add_project(path);
+        } else if is_image(&path) {
+            match std::fs::read(&path) {
+                Ok(bytes) => self.attach_bytes(&bytes, cx),
+                Err(e) => self.notice = Some(format!("Couldn't read image {}: {e}", path.display())),
+            }
+        } else {
+            self.composer.update(cx, |c, cx| {
+                let mut text = c.text().to_string();
+                if !text.is_empty() && !text.ends_with(' ') {
+                    text.push(' ');
+                }
+                text.push_str(&path.display().to_string());
+                c.set_text(text, cx);
+            });
         }
     }
 
-    /// Claude's oldest unanswered prompt in the active session, shown in the
-    /// composer's place like the VS Code extension. Returns whether one is up.
-    fn permission_prompt(&mut self, ui: &mut egui::Ui) -> bool {
-        let session = match self.saved.active {
-            Active::Chat => Some(&mut self.chat),
-            Active::Project(i) => self.saved.projects.get(i).and_then(|p| self.code.get_mut(&p.path)),
+    fn on_drop(&mut self, paths: &ExternalPaths, _: &mut Window, cx: &mut Context<Self>) {
+        for p in paths.paths() {
+            self.drop_path(p.clone(), cx);
+        }
+        cx.notify();
+    }
+
+    fn attach_bytes(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        let in_code = self.active_project().is_none_or(|p| p.view == View::Code);
+        if !in_code {
+            return;
+        }
+        let img = match image::load_from_memory(bytes) {
+            Ok(i) => i,
+            Err(e) => {
+                self.notice = Some(format!("Couldn't read image: {e}"));
+                return cx.notify();
+            }
         };
-        let Some(session) = session else { return false };
-        let mut pending = session.items.iter().enumerate().filter_map(|(i, it)| match it {
-            Item::Permission { request_id, tool, input, suggestions, description, state: PermState::Pending } => {
-                Some((i, request_id, tool, input, suggestions, description))
-            }
-            _ => None,
-        });
-        let Some((i, id, tool, input, suggestions, description)) = pending.next() else { return false };
-        let req = prompt::Request { id, tool, input, suggestions, description, kind: session.kind, queued: pending.count() };
-        if let Some(answer) = prompt::show(ui, &mut self.md, &req) {
-            let rules = session.answer_permission(i, answer);
-            let cwd = session.cwd.clone();
-            self.save_rules(&cwd, rules);
+        let img = if img.width().max(img.height()) > MAX_IMAGE_EDGE {
+            img.resize(MAX_IMAGE_EDGE, MAX_IMAGE_EDGE, image::imageops::FilterType::Triangle)
+        } else {
+            img
+        };
+        let mut png = Vec::new();
+        if let Err(e) = img.to_rgba8().write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png) {
+            self.notice = Some(format!("Couldn't encode image: {e}"));
+            return cx.notify();
         }
-        true
+        self.attachments.push(Attachment {
+            media_type: "image/png".into(),
+            base64: base64::engine::general_purpose::STANDARD.encode(&png),
+            image: Arc::new(Image::from_bytes(ImageFormat::Png, png)),
+        });
+        cx.notify();
     }
 
     /// Adds "always allow in this project" rules to the project's Kynex settings.
@@ -518,410 +660,103 @@ impl KynexApp {
             if let Err(e) = perms.save(cwd) {
                 self.notice = Some(e);
             }
-            self.settings = None;
+            if let Some(s) = &mut self.settings {
+                s.perms = perms;
+            }
         }
     }
 
-    fn composer(&mut self, ui: &mut egui::Ui) {
-        if self.permission_prompt(ui) {
+    fn answer(&mut self, key: Key, request_id: String, answer: session::Answer, window: &mut Window, cx: &mut Context<Self>) {
+        let mut rules = Vec::new();
+        let mut cwd = None;
+        if let Some(s) = self.session_for(&key) {
+            let ix = s.items.iter().position(|i| matches!(i, Item::Permission { request_id: r, .. } if *r == request_id));
+            if let Some(ix) = ix {
+                rules = s.answer_permission(ix, answer);
+                cwd = Some(s.cwd.clone());
+            }
+        }
+        if let Some(cwd) = cwd {
+            self.save_rules(&cwd, rules);
+        }
+        self.prompt = None;
+        self.composer.read(cx).focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
+    /// Keeps the prompt view in step with the active session's oldest pending request.
+    fn sync_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let key = self.active_key();
+        let pending = self.active_session().and_then(|s| {
+            let mut it = s.items.iter().filter_map(|i| match i {
+                Item::Permission { request_id, tool, input, suggestions, description, state: PermState::Pending } => {
+                    Some(Request {
+                        id: request_id.clone(),
+                        tool: tool.clone(),
+                        input: input.clone(),
+                        suggestions: suggestions.clone(),
+                        description: description.clone(),
+                        kind: s.kind,
+                    })
+                }
+                _ => None,
+            });
+            let first = it.next()?;
+            Some((first, it.count()))
+        });
+        let Some((req, queued)) = pending else {
+            self.prompt = None;
             return;
-        }
-        let ctx = ui.ctx().clone();
-        let busy = self.session_mut().is_some_and(|s| s.busy);
-
-        if !self.attachments.is_empty() {
-            let mut remove = None;
-            ui.horizontal(|ui| {
-                for (i, a) in self.attachments.iter().enumerate() {
-                    let r = ui.add(egui::Image::new(&a.texture).max_height(64.0).corner_radius(4.0).sense(egui::Sense::click()));
-                    if r.on_hover_text("Click to remove").clicked() {
-                        remove = Some(i);
-                    }
-                }
-            });
-            if let Some(i) = remove {
-                self.attachments.remove(i);
-            }
-        }
-
-        let hint = match self.saved.active {
-            Active::Chat => "Message Claude…  (Enter to send, Shift+Enter for newline, Ctrl+V to paste images)",
-            Active::Project(_) => "Ask Claude Code to do something in this project…  (Ctrl+V or drop images)",
         };
-        let edit = egui::TextEdit::multiline(&mut self.input)
-            .id(egui::Id::unique(COMPOSER_ID))
-            .hint_text(hint)
-            .desired_rows(3)
-            .desired_width(f32::INFINITY)
-            .return_key(egui::KeyboardShortcut::new(egui::Modifiers::SHIFT, egui::Key::Enter))
-            .lock_focus(true);
-        let resp = ui.add(edit);
-
-        let mut send = resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
-        ui.horizontal(|ui| {
-            if busy {
-                if ui.button("Stop").clicked() {
-                    if let Some(s) = self.session_mut() {
-                        s.interrupt();
-                    }
-                }
-                ui.spinner();
-            } else if ui.button("Send").clicked() {
-                send = true;
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.mode_picker(ui);
-                if ui.button("Attach image").clicked() {
-                    if let Some(files) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"]).pick_files() {
-                        for f in files {
-                            self.attach_file(&ctx, &f);
-                        }
-                    }
-                }
+        if self.prompt.as_ref().is_none_or(|p| p.key != key || p.id != req.id) {
+            let id = req.id.clone();
+            let view = cx.new(|cx| PromptView::new(req, window, cx));
+            let sub = cx.subscribe_in(&view, window, {
+                let (key, id) = (key.clone(), id.clone());
+                move |this, _, PromptAnswer(answer), window, cx| this.answer(key.clone(), id.clone(), answer.clone(), window, cx)
             });
-        });
-
-        if send && !busy && (!self.input.trim().is_empty() || !self.attachments.is_empty()) {
-            let text = std::mem::take(&mut self.input).trim().to_string();
-            let atts = std::mem::take(&mut self.attachments);
-            let model = self.saved.model.clone();
-            if let Some(s) = self.session_mut() {
-                if !s.is_running() {
-                    s.model = model;
-                }
-                s.send(&ctx, text, atts);
-            }
+            self.prompt = Some(ActivePrompt { key, id, view, _sub: sub });
+        }
+        if let Some(p) = &self.prompt {
+            p.view.update(cx, |v, _| v.queued = queued);
         }
     }
 
-    /// The live permission mode of the active project session, like Shift+Tab in
-    /// the CLI. Applies right away; the project's default lives in Claude settings.
-    fn mode_picker(&mut self, ui: &mut egui::Ui) {
-        let Some(s) = self.session_mut().filter(|s| s.kind == Kind::Code) else { return };
-        let mut mode = s.mode;
-        egui::ComboBox::from_id_salt("permission-mode")
-            .selected_text(mode.label())
-            .show_ui(ui, |ui| {
-                for m in Mode::ALL {
-                    ui.selectable_value(&mut mode, m, m.label()).on_hover_text(m.help());
-                }
-            })
-            .response
-            .on_hover_text(format!("{}  (Shift+Tab to cycle)", mode.help()));
-        if ui.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab)) {
-            let next = Mode::ALL.iter().position(|m| *m == mode).map_or(0, |i| (i + 1) % Mode::ALL.len());
-            mode = Mode::ALL[next];
-        }
-        if mode != s.mode {
-            s.set_mode(mode);
-        }
-    }
-
-    fn handle_input_events(&mut self, ctx: &egui::Context) {
-        let (pasted, dropped, open, cycle, jump) = ctx.input(|i| {
-            let pasted = i.events.iter().any(|e| {
-                matches!(e, egui::Event::Paste(_))
-                    || matches!(e, egui::Event::Key { key: egui::Key::V, pressed: true, modifiers, .. } if modifiers.command)
-            });
-            let dropped: Vec<PathBuf> = i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect();
-            let open = i.modifiers.command && i.key_pressed(egui::Key::O);
-            let cycle = (i.modifiers.ctrl && i.key_pressed(egui::Key::Tab)).then_some(i.modifiers.shift);
-            const DIGITS: [egui::Key; 9] = [
-                egui::Key::Num1, egui::Key::Num2, egui::Key::Num3, egui::Key::Num4, egui::Key::Num5,
-                egui::Key::Num6, egui::Key::Num7, egui::Key::Num8, egui::Key::Num9,
-            ];
-            let jump = if i.modifiers.command { DIGITS.iter().position(|k| i.key_pressed(*k)) } else { None };
-            (pasted, dropped, open, cycle, jump)
-        });
-
-        if open {
-            self.pick_project();
-        }
-        // Tab order: Chat, then each project. Ctrl+Tab / Ctrl+Shift+Tab cycle, Ctrl+1 is Chat.
-        let count = self.saved.projects.len() + 1;
-        let pos = match self.saved.active {
-            Active::Chat => 0,
-            Active::Project(i) => i + 1,
-        };
-        let target = match (cycle, jump) {
-            (Some(back), _) => Some(if back { (pos + count - 1) % count } else { (pos + 1) % count }),
-            (_, Some(n)) if n < count => Some(n),
-            _ => None,
-        };
-        if let Some(t) = target {
-            self.saved.active = if t == 0 { Active::Chat } else { Active::Project(t - 1) };
-            self.save();
-        }
-
-        let in_code = self.active_project().is_none_or(|p| p.view == View::Code);
-        if pasted && in_code {
-            if let Ok(img) = arboard::Clipboard::new().and_then(|mut c| c.get_image()) {
-                if let Some(rgba) = image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned()) {
-                    self.attach_image(ctx, image::DynamicImage::ImageRgba8(rgba));
-                }
-            }
-        }
-
-        for path in dropped {
-            if path.is_dir() {
-                self.add_project(path);
-            } else if is_image(&path) {
-                self.attach_file(ctx, &path);
-            } else {
-                if !self.input.is_empty() && !self.input.ends_with(' ') {
-                    self.input.push(' ');
-                }
-                self.input.push_str(&path.display().to_string());
-            }
-        }
-    }
-
-    fn attach_file(&mut self, ctx: &egui::Context, path: &Path) {
-        match image::open(path) {
-            Ok(img) => self.attach_image(ctx, img),
-            Err(e) => self.notice = Some(format!("Couldn't read image {}: {e}", path.display())),
-        }
-    }
-
-    fn attach_image(&mut self, ctx: &egui::Context, img: image::DynamicImage) {
-        let img = if img.width().max(img.height()) > MAX_IMAGE_EDGE {
-            img.resize(MAX_IMAGE_EDGE, MAX_IMAGE_EDGE, image::imageops::FilterType::Triangle)
+    fn open_menu(&mut self, which: Menu, at: Point<Pixels>, anchor: Anchor, cx: &mut Context<Self>) {
+        self.menu = if self.menu.as_ref().is_some_and(|m| m.which == which) {
+            None
         } else {
-            img
+            Some(OpenMenu { which, at, anchor })
         };
-        let rgba = img.to_rgba8();
-        let mut png = Vec::new();
-        if let Err(e) = rgba.write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png) {
-            self.notice = Some(format!("Couldn't encode image: {e}"));
-            return;
-        }
-        let size = [rgba.width() as usize, rgba.height() as usize];
-        let color = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-        let n = self.attachments.len();
-        let texture = ctx.load_texture(format!("attachment-{n}-{}", png.len()), color, Default::default());
-        self.attachments.push(Attachment {
-            media_type: "image/png".into(),
-            base64: base64::engine::general_purpose::STANDARD.encode(&png),
-            texture,
-        });
+        cx.notify();
     }
 
-    fn transcript(&mut self, ui: &mut egui::Ui) {
-        let session = match self.saved.active {
-            Active::Chat => Some(&mut self.chat),
-            Active::Project(i) => self.saved.projects.get(i).and_then(|p| self.code.get_mut(&p.path)),
-        };
-        let Some(session) = session.filter(|s| !s.items.is_empty()) else {
-            let msg = match self.saved.active {
-                Active::Chat => "Start a conversation. Uses your Claude Code login, no API key needed.",
-                Active::Project(_) => "Ask Claude Code to work on this project.",
-            };
-            ui.centered_and_justified(|ui| ui.label(RichText::new(msg).weak()));
-            return;
-        };
-
-        egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink(false).show(ui, |ui| {
-            ui.set_max_width(ui.available_width().min(900.0));
-            for (i, item) in session.items.iter().enumerate() {
-                ui.add_space(6.0);
-                match item {
-                    Item::User { text, images } => {
-                        egui::Frame::new()
-                            .fill(ui.visuals().faint_bg_color)
-                            .corner_radius(6.0)
-                            .inner_margin(8.0)
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                if !images.is_empty() {
-                                    ui.horizontal(|ui| {
-                                        for t in images {
-                                            ui.add(egui::Image::new(t).max_height(120.0).corner_radius(4.0));
-                                        }
-                                    });
-                                }
-                                if !text.is_empty() {
-                                    ui.label(text);
-                                }
-                            });
-                    }
-                    Item::Assistant(text) => {
-                        CommonMarkViewer::new().show(ui, &mut self.md, text);
-                    }
-                    Item::Thinking => {
-                        ui.label(RichText::new("thinking…").italics().weak());
-                    }
-                    Item::ToolUse { name, summary, input } => {
-                        egui::CollapsingHeader::new(RichText::new(format!("⚙ {name}  {summary}")).monospace())
-                            .id_salt(("tool", i))
-                            .show(ui, |ui| {
-                                ui.label(RichText::new(input).monospace().small());
-                            });
-                    }
-                    Item::ToolResult { content, is_error } => {
-                        let first = content.lines().next().unwrap_or("").chars().take(140).collect::<String>();
-                        let color = if *is_error { theme::p().red } else { ui.visuals().weak_text_color() };
-                        egui::CollapsingHeader::new(RichText::new(format!("  {first}")).monospace().small().color(color))
-                            .id_salt(("result", i))
-                            .show(ui, |ui| {
-                                egui::ScrollArea::vertical().max_height(300.0).id_salt(("result-scroll", i)).show(ui, |ui| {
-                                    ui.label(RichText::new(content).monospace().small());
-                                });
-                            });
-                    }
-                    // Answered in the prompt that takes the composer's place; the
-                    // transcript keeps a one-line record.
-                    Item::Permission { tool, input, state, .. } => {
-                        let p = theme::p();
-                        let (mark, note, color) = match state {
-                            PermState::Pending => ("●", "waiting for you below", p.peach),
-                            PermState::Allowed(n) => ("✔", n.as_str(), p.green),
-                            PermState::Denied(n) => ("✖", n.as_str(), p.red),
-                        };
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new(mark).color(color));
-                            ui.label(RichText::new(prompt::title(tool, input)).small());
-                            ui.label(RichText::new(note).small().color(color));
-                        });
-                    }
-                    Item::Result { cost, duration_ms, is_error } => {
-                        let text = format!("— done in {:.1}s · ${cost:.4}{}", *duration_ms as f64 / 1000.0, if *is_error { " · error" } else { "" });
-                        ui.label(RichText::new(text).small().weak());
-                    }
-                    Item::Error(e) => {
-                        ui.label(RichText::new(e).color(theme::p().red).small());
-                    }
-                }
-            }
+    fn open_settings(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.settings = Some(SettingsView {
+            perms: Permissions::load(&path),
+            claude: ClaudeSettings::load(&path),
+            path,
+            section: 0,
         });
+        cx.notify();
     }
 
-    /// The ⚙ Claude settings modal for a project, open while egui's temp memory
-    /// holds its path. Sections down the left.
-    fn claude_settings_modal(&mut self, ctx: &egui::Context) {
-        let id = egui::Id::unique(SETTINGS_MODAL);
-        let Some(path) = ctx.data(|d| d.get_temp::<Option<PathBuf>>(id)).flatten() else { return };
-        const SECTIONS: [&str; 2] = ["Permissions", "Model"];
-        let section_id = id.with("section");
-        let mut section = ctx.data(|d| d.get_temp::<usize>(section_id)).unwrap_or(0).min(SECTIONS.len() - 1);
-        let mut close = false;
-
-        let modal = egui::Modal::new(id).show(ctx, |ui| {
-            ui.set_width(760.0_f32.min(ctx.content_rect().width() - 80.0));
-            ui.set_height(560.0_f32.min(ctx.content_rect().height() - 120.0));
-            ui.horizontal(|ui| {
-                ui.heading("⚙  Claude settings");
-                ui.label(RichText::new(project_name(&path)).weak());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    close |= ui.add(egui::Button::new("✖").frame(false)).on_hover_text("Close (Esc)").clicked();
-                });
-            });
-            ui.separator();
-            ui.horizontal_top(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(150.0);
-                    for (i, name) in SECTIONS.iter().enumerate() {
-                        if ui.add(egui::Button::selectable(section == i, *name).min_size(egui::vec2(150.0, 0.0))).clicked() {
-                            section = i;
-                        }
-                    }
-                });
-                ui.separator();
-                ui.vertical(|ui| {
-                    egui::ScrollArea::vertical().id_salt("claude-settings-scroll").auto_shrink(false).show(ui, |ui| {
-                        self.settings_section(ui, &path, SECTIONS[section]);
-                        ui.add_space(16.0);
-                        ui.label(RichText::new(format!("Stored in {}", project::dir(&path).display())).small().weak());
-                    });
-                });
-            });
-        });
-
-        ctx.data_mut(|d| d.insert_temp(section_id, section));
-        if close || modal.should_close() {
-            ctx.data_mut(|d| d.remove::<Option<PathBuf>>(id));
-        }
-    }
-
-    /// One section of the Claude settings modal. Edits save immediately: the mode
+    /// Applies an edit in the settings modal. Edits save immediately: the mode
     /// applies to the live session, everything else from the next process start.
-    fn settings_section(&mut self, ui: &mut egui::Ui, path: &Path, section: &str) {
-        if self.settings.as_ref().is_none_or(|s| s.path != path) {
-            self.settings = Some(SettingsView {
-                path: path.to_path_buf(),
-                perms: Permissions::load(path),
-                claude: ClaudeSettings::load(path),
-                new_rule: String::new(),
-            });
-        }
+    fn edit_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut SettingsView)) {
         let Some(view) = &mut self.settings else { return };
         let (perms_before, claude_before) = (view.perms.clone(), view.claude.clone());
-
-        match section {
-            "Permissions" => {
-                ui.label(RichText::new("Default mode").strong());
-                ui.label(RichText::new("What new sessions start in. Switch a running session from the composer.").weak());
-                for m in Mode::ALL {
-                    ui.radio_value(&mut view.claude.mode, m, m.label()).on_hover_text(m.help());
-                }
-                ui.add_space(12.0);
-
-                ui.label(RichText::new("Rules").strong());
-                ui.label(
-                    RichText::new(
-                        "In Claude Code's syntax: Bash(cargo test:*), Edit, WebFetch(domain:docs.rs). \
-                         They add to your own Claude settings; a deny anywhere wins.",
-                    )
-                    .weak(),
-                );
-                ui.add_space(4.0);
-                rules_editor(ui, &mut view.perms, &mut view.new_rule);
-                ui.add_space(12.0);
-
-                ui.label(RichText::new("Additional directories").strong());
-                ui.label(RichText::new("Folders outside the project Claude may read and edit (--add-dir).").weak());
-                let mut remove = None;
-                for (i, dir) in view.claude.add_dirs.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        if ui.small_button("✖").on_hover_text("Remove").clicked() {
-                            remove = Some(i);
-                        }
-                        ui.label(RichText::new(dir.display().to_string()).monospace());
-                    });
-                }
-                if let Some(i) = remove {
-                    view.claude.add_dirs.remove(i);
-                }
-                if ui.button("Add folder…").clicked() {
-                    if let Some(dir) = rfd::FileDialog::new().set_directory(path).pick_folder() {
-                        if !view.claude.add_dirs.contains(&dir) {
-                            view.claude.add_dirs.push(dir);
-                        }
-                    }
-                }
-            }
-            _ => {
-                ui.label(RichText::new("Effort").strong());
-                ui.label(RichText::new("How hard Claude thinks (--effort). Default uses your Claude settings.").weak());
-                let current = project::EFFORTS.iter().find(|e| e.0 == view.claude.effort).map_or("Default", |e| e.1);
-                egui::ComboBox::from_id_salt("effort").selected_text(current).show_ui(ui, |ui| {
-                    for (id, name) in project::EFFORTS {
-                        ui.selectable_value(&mut view.claude.effort, id.to_string(), name);
-                    }
-                });
-                ui.add_space(12.0);
-                ui.label(RichText::new("The model is picked in the top bar and applies to every tab.").weak());
-            }
-        }
-
-        let path = path.to_path_buf();
+        f(view);
+        let path = view.path.clone();
+        let mut errors = Vec::new();
         if view.perms != perms_before {
             if let Err(e) = view.perms.save(&path) {
-                self.notice = Some(e);
+                errors.push(e);
             }
         }
         if view.claude != claude_before {
             if let Err(e) = view.claude.save(&path) {
-                self.notice = Some(e);
+                errors.push(e);
             }
             if view.claude.mode != claude_before.mode {
                 if let Some(s) = self.code.get_mut(&path) {
@@ -929,191 +764,1298 @@ impl KynexApp {
                 }
             }
         }
-        let claude_restart = view.claude.effort != claude_before.effort || view.claude.add_dirs != claude_before.add_dirs;
-        if view.perms != perms_before || claude_restart {
+        let restart = view.perms != perms_before
+            || view.claude.effort != claude_before.effort
+            || view.claude.add_dirs != claude_before.add_dirs;
+        if restart {
             // The CLI reads these at startup: restart the project's process so it picks them up.
             // `--resume` keeps the conversation going; rules allowed "this session" are dropped.
             self.restart_when_idle.insert(path);
+            self.restart_idle();
         }
-    }
-}
-
-/// Allow and deny lists with remove buttons, and a field to add a rule.
-fn rules_editor(ui: &mut egui::Ui, perms: &mut Permissions, new_rule: &mut String) {
-    for (title, rules) in [("Allow", &mut perms.allow), ("Deny", &mut perms.deny)] {
-        ui.label(title);
-        if rules.is_empty() {
-            ui.label(RichText::new("  none").weak());
+        if let Some(e) = errors.pop() {
+            self.notice = Some(e);
         }
-        let mut remove = None;
-        for (i, rule) in rules.iter().enumerate() {
-            ui.horizontal(|ui| {
-                if ui.small_button("✖").on_hover_text("Remove this rule").clicked() {
-                    remove = Some(i);
-                }
-                ui.add(egui::Label::new(RichText::new(rule).monospace()).truncate()).on_hover_text(rule);
-            });
-        }
-        if let Some(i) = remove {
-            rules.remove(i);
-        }
-        ui.add_space(4.0);
+        cx.notify();
     }
 
-    let rule = new_rule.trim().to_string();
-    let (enter, allow, deny) = ui
-        .horizontal(|ui| {
-            let field = ui.add(egui::TextEdit::singleline(new_rule).hint_text("Bash(npm test:*)").desired_width(320.0));
-            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let allow = ui.add_enabled(!rule.is_empty(), egui::Button::new("Allow")).clicked();
-            let deny = ui.add_enabled(!rule.is_empty(), egui::Button::new("Deny")).clicked();
-            (enter, allow, deny)
-        })
-        .inner;
-    let list = if deny { Some(&mut perms.deny) } else if allow || enter { Some(&mut perms.allow) } else { None };
-    if let Some(list) = list.filter(|_| !rule.is_empty()) {
-        if !list.contains(&rule) {
-            list.push(rule);
+    fn add_rule(&mut self, deny: bool, cx: &mut Context<Self>) {
+        let rule = self.new_rule.read(cx).text().trim().to_string();
+        if rule.is_empty() {
+            return;
         }
-        new_rule.clear();
-    }
-}
-
-impl eframe::App for KynexApp {
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        chrome::CLEAR
-    }
-
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // With `--features hotpatch`, `dx serve --hot-patch` swaps in edited code for `render` live.
-        #[cfg(feature = "hotpatch")]
-        subsecond::call(|| self.render(ui));
-        #[cfg(not(feature = "hotpatch"))]
-        self.render(ui);
-    }
-}
-
-impl KynexApp {
-    fn render(&mut self, ui: &mut egui::Ui) {
-        let ctx = &ui.ctx().clone();
-        self.chat.poll();
-        for s in self.code.values_mut() {
-            s.poll();
-        }
-        self.restart_when_idle.retain(|path| match self.code.get_mut(path) {
-            Some(s) if s.busy => true,
-            Some(s) => {
-                s.kill();
-                false
+        self.edit_settings(cx, |v| {
+            let list = if deny { &mut v.perms.deny } else { &mut v.perms.allow };
+            if !list.contains(&rule) {
+                list.push(rule);
             }
-            None => false,
         });
-        self.sync_session_ids();
-        self.handle_input_events(ctx);
+        self.new_rule.update(cx, |i, cx| i.set_text("", cx));
+    }
 
-        // Like Hyprland, one tile always has focus: the composer while typing, otherwise the main view.
-        let composer_focused = ctx.memory(|m| m.has_focus(egui::Id::unique(COMPOSER_ID)));
+    fn add_dir(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Add folder".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = paths.await {
+                this.update(cx, |this, cx| {
+                    for dir in paths {
+                        this.edit_settings(cx, |v| {
+                            if !v.claude.add_dirs.contains(&dir) {
+                                v.claude.add_dirs.push(dir);
+                            }
+                        });
+                    }
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    // ---------------------------------------------------------------- rendering
+
+    fn render_title_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let t = theme(cx).clone();
+        let mut tabs = vec![self.render_tab(0, "Chat".into(), Icon::Message, None, self.chat.busy, false, cx)];
+        for (i, p) in self.saved.projects.iter().enumerate() {
+            let session = self.code.get(&p.path);
+            let waiting =
+                session.is_some_and(|s| s.items.iter().any(|it| matches!(it, Item::Permission { state: PermState::Pending, .. })));
+            let busy = session.is_some_and(|s| s.busy);
+            let tooltip = p.path.display().to_string();
+            tabs.push(self.render_tab(i + 1, project_name(&p.path).into(), Icon::Folder, Some(tooltip), busy, waiting, cx));
+        }
+        let model = MODELS.iter().find(|m| m.0 == self.saved.model).map_or("Default", |m| m.1);
+
+        div()
+            .id("title-bar")
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(TITLE_BAR_HEIGHT)
+            .bg(t.title_bar)
+            .border_b_1()
+            .border_color(t.border)
+            .pl(chrome::leading_inset() + px(10.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .pr_3()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(t.text_muted)
+                    .child("kynex"),
+            )
+            .child(div().flex().items_center().gap_0p5().children(tabs))
+            .child(
+                icon_button("add-project", Icon::Plus, cx)
+                    .ml_1()
+                    .tooltip(Tooltip::with_meta("Open project folder", "Ctrl+O"))
+                    .on_click(cx.listener(|this, _, _, cx| this.pick_project(cx))),
+            )
+            // The empty middle of the bar is the window's title bar.
+            .child(chrome::drag_area(div().id("drag").flex_1().h_full()))
+            .child(
+                ghost_button("model", cx)
+                    .text_color(t.text_muted)
+                    .child(model)
+                    .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
+                    .tooltip(Tooltip::text("Model for every tab"))
+                    .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                        this.open_menu(Menu::Model, ev.position(), Anchor::TopRight, cx)
+                    })),
+            )
+            .child(
+                ghost_button("theme", cx)
+                    .ml_1()
+                    .mr_2()
+                    .text_color(t.text_muted)
+                    .child(THEMES.iter().find(|x| x.0 == self.saved.theme).map_or("", |x| x.1))
+                    .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
+                    .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                        this.open_menu(Menu::Theme, ev.position(), Anchor::TopRight, cx)
+                    })),
+            )
+            .child(chrome::window_controls(window, cx))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_tab(
+        &self,
+        pos: usize,
+        label: SharedString,
+        which: Icon,
+        tooltip: Option<String>,
+        busy: bool,
+        waiting: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = theme(cx).clone();
+        let active = self.tab_pos() == pos;
+        let hover = t.hover;
+        let fg = if active { t.text } else { t.text_muted };
+        div()
+            .id(("tab", pos))
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .h(px(26.))
+            .px_2p5()
+            .rounded_md()
+            .text_sm()
+            .text_color(fg)
+            .cursor_pointer()
+            .when(active, |d| d.bg(t.active))
+            .when(!active, |d| d.hover(move |s| s.bg(hover)))
+            .child(icon(which, fg).size_3p5())
+            .child(label)
+            .when(waiting, |d| d.child(icon(Icon::Dot, t.warning).size_2()))
+            .when(busy && !waiting, |d| d.child(spinner(("tab-spin", pos), t.accent, px(12.))))
+            .when_some(tooltip, |d, tip| d.tooltip(Tooltip::with_meta(tip, "Middle-click to close · right-click for more")))
+            .on_click(cx.listener(move |this, _, window, cx| this.jump(pos, window, cx)))
+            .when(pos > 0, |d| {
+                d.on_mouse_down(
+                    MouseButton::Middle,
+                    cx.listener(move |this, _, _, cx| {
+                        this.close_project(pos - 1);
+                        cx.notify();
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
+                        this.open_menu(Menu::Tab(pos - 1), ev.position, Anchor::TopLeft, cx)
+                    }),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn render_sessions_panel(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let t = theme(cx).clone();
+        let Some(s) = self.session_mut() else { return div() };
+        let (kind, cwd, current, busy) = (s.kind, s.cwd.clone(), s.session_id.clone(), s.busy);
+        // Re-read when the folder or session changes, and when a reply finishes (titles and times move).
+        if self.sessions.as_ref().is_none_or(|l| l.cwd != cwd || l.current != current || l.busy != busy) {
+            self.sessions = Some(SessionList { items: session::list_sessions(&cwd), cwd: cwd.clone(), current: current.clone(), busy });
+        }
+        let items = &self.sessions.as_ref().unwrap().items;
+
+        let header = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(36.))
+            .pl_3()
+            .pr_1p5()
+            .gap_1()
+            .child(div().flex_1().text_sm().font_weight(FontWeight::MEDIUM).child("Sessions"))
+            .child(
+                icon_button("new-session", Icon::Plus, cx)
+                    .when(busy || current.is_none(), |b| b.opacity(0.4))
+                    .tooltip(Tooltip::text(if busy {
+                        "Stop the current reply first"
+                    } else if current.is_none() {
+                        "Already a new session"
+                    } else {
+                        "New session"
+                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let Some(s) = this.session_mut() else { return };
+                        if s.busy || s.session_id.is_none() {
+                            return;
+                        }
+                        let (kind, cwd) = (s.kind, s.cwd.clone());
+                        this.set_session(Session::new(kind, cwd));
+                        cx.notify();
+                    })),
+            )
+            .child(
+                icon_button("hide-sessions", Icon::PanelLeft, cx)
+                    .tooltip(Tooltip::with_meta("Hide sessions", "Ctrl+B"))
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_sessions(&ToggleSessions, window, cx))),
+            );
+
+        let mut rows: Vec<AnyElement> = Vec::new();
+        if current.is_none() {
+            rows.push(session_row("new", "New session".into(), None, true, &t).into_any_element());
+        }
+        if items.is_empty() {
+            rows.push(div().px_3().py_2().text_sm().text_color(t.text_placeholder).child("No past sessions yet").into_any_element());
+        }
+        for (n, info) in items.iter().enumerate() {
+            let is_current = current.as_deref() == Some(info.id.as_str());
+            let confirming = self.confirm_delete.as_deref() == Some(info.id.as_str());
+            let id = info.id.clone();
+            let (open_id, del_id) = (id.clone(), id.clone());
+            let (kind2, cwd2, cwd3) = (kind, cwd.clone(), cwd.clone());
+            let current2 = current.clone();
+            let delete = if confirming {
+                div()
+                    .id(("confirm-delete", n))
+                    .px_1p5()
+                    .h(px(20.))
+                    .flex()
+                    .items_center()
+                    .rounded_sm()
+                    .text_xs()
+                    .text_color(t.error)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.hover))
+                    .child("Delete?")
+            } else {
+                icon_button(("delete", n), Icon::Trash, cx).invisible().group_hover("session-row", |s| s.visible())
+            };
+            let row = session_row(("session", n), info.title.clone().into(), Some(ago(info.modified)), is_current, &t)
+                .group("session-row")
+                .tooltip(Tooltip::with_meta(info.title.clone(), ago(info.modified)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.confirm_delete = None;
+                    if is_current || busy {
+                        return;
+                    }
+                    this.set_session(Session::resume(kind2, cwd2.clone(), open_id.clone()));
+                    cx.notify();
+                }))
+                .child(
+                    delete
+                        .when(busy && is_current, |d| d.opacity(0.4))
+                        .tooltip(Tooltip::text("Delete this session's transcript"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if busy && is_current {
+                                return;
+                            }
+                            if this.confirm_delete.as_deref() != Some(del_id.as_str()) {
+                                this.confirm_delete = Some(del_id.clone());
+                                return cx.notify();
+                            }
+                            this.confirm_delete = None;
+                            if current2.as_deref() == Some(del_id.as_str()) {
+                                this.set_session(Session::new(kind2, cwd3.clone()));
+                            }
+                            if let Err(e) = session::delete_session(&cwd3, &del_id) {
+                                this.notice = Some(e);
+                            }
+                            this.sessions = None;
+                            cx.notify();
+                        })),
+                );
+            rows.push(row.into_any_element());
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(header)
+            .child(div().id("session-list").flex_1().min_h_0().overflow_y_scroll().px_1p5().pb_1().children(rows))
+            // Project sessions have Claude settings; chat has no tools.
+            .when(kind == Kind::Code, |d| {
+                d.child(divider(cx)).child(
+                    div().p_1p5().child(
+                        ghost_button("claude-settings", cx)
+                            .w_full()
+                            .text_color(t.text_muted)
+                            .child(icon(Icon::Settings, t.text_muted))
+                            .child("Claude settings")
+                            .tooltip(Tooltip::text("Permissions, mode and effort for this project"))
+                            .on_click(cx.listener(move |this, _, _, cx| this.open_settings(cwd.clone(), cx))),
+                    ),
+                )
+            })
+    }
+
+    fn render_toolbar(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let t = theme(cx).clone();
+        let project = self.active_project().map(|p| (p.path.clone(), p.view));
+        let cost = self.active_session().map_or(0.0, |s| s.total_cost);
+        let collapsed = self.saved.sessions_collapsed;
+        let bar = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_1()
+            .h(px(36.))
+            .px_2()
+            .border_b_1()
+            .border_color(t.border_variant)
+            .when(collapsed, |d| {
+                d.child(
+                    icon_button("show-sessions", Icon::PanelLeft, cx)
+                        .tooltip(Tooltip::with_meta("Show sessions", "Ctrl+B"))
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle_sessions(&ToggleSessions, window, cx))),
+                )
+            });
+        let Some((path, view)) = project else {
+            return bar
+                .child(div().px_1().text_sm().font_weight(FontWeight::MEDIUM).child("Chat"))
+                .child(div().flex_1())
+                .when(cost > 0.0, |d| d.child(cost_label(cost, &t)));
+        };
+        let segment = |id: &'static str, label: &'static str, which: Icon, v: View, cx: &mut Context<Self>| {
+            let selected = view == v;
+            let hover = t.hover;
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .gap_1p5()
+                .h(px(24.))
+                .px_2()
+                .rounded_md()
+                .text_sm()
+                .cursor_pointer()
+                .text_color(if selected { t.text } else { t.text_muted })
+                .when(selected, |d| d.bg(t.active))
+                .when(!selected, |d| d.hover(move |s| s.bg(hover)))
+                .child(icon(which, if selected { t.text } else { t.text_muted }).size_3p5())
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if let Active::Project(i) = this.saved.active {
+                        if let Some(p) = this.saved.projects.get_mut(i) {
+                            p.view = v;
+                        }
+                    }
+                    this.save();
+                    cx.notify();
+                }))
+        };
+        let open = |id: &'static str, which: Icon, tip: &'static str, opener: Opener, path: PathBuf, cx: &mut Context<Self>| {
+            icon_button(id, which, cx).tooltip(Tooltip::text(tip)).on_click(cx.listener(move |this, _, _, cx| {
+                open_project(&mut this.notice, opener, &path);
+                cx.notify();
+            }))
+        };
+        bar.child(segment("view-code", "Code", Icon::Message, View::Code, cx))
+            .child(segment("view-git", "Git", Icon::GitBranch, View::Git, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .px_2()
+                    .truncate()
+                    .text_xs()
+                    .text_color(t.text_placeholder)
+                    .child(path.display().to_string()),
+            )
+            .when(cost > 0.0, |d| d.child(cost_label(cost, &t)))
+            .child(open("open-code", Icon::Code, "Open in VS Code", Opener::Code, path.clone(), cx))
+            .child(open("open-files", Icon::Folder, "Open in file manager", Opener::Explorer, path.clone(), cx))
+            .child(open("open-term", Icon::Terminal, "Open a terminal here", Opener::Terminal, path, cx))
+    }
+
+    fn render_item(&mut self, ix: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme(cx).clone();
+        let key = self.active_key();
+        let Some(session) = self.active_session() else { return div().into_any_element() };
+        let Some(item) = session.items.get(ix) else { return div().into_any_element() };
+        let expanded = self.expanded.contains(&(key.clone(), ix));
+        // Tool traffic sits tight together; messages get room to breathe.
+        let compact = matches!(item, Item::ToolUse { .. } | Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking);
+        let toggle = {
+            let key = key.clone();
+            cx.listener(move |this, _, _, cx| {
+                let k = (key.clone(), ix);
+                if !this.expanded.remove(&k) {
+                    this.expanded.insert(k);
+                }
+                if let Some(th) = this.threads.get(&key) {
+                    th.list.remeasure_items(ix..ix + 1);
+                }
+                cx.notify();
+            })
+        };
+
+        let body: AnyElement = match item {
+            Item::User { text, images } => div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .rounded_lg()
+                .border_1()
+                .border_color(t.border_variant)
+                .bg(t.element)
+                .when(!images.is_empty(), |d| {
+                    d.child(div().flex().flex_wrap().gap_2().children(images.iter().map(|i| {
+                        img(i.clone()).max_h(px(120.)).max_w(px(240.)).rounded_md()
+                    })))
+                })
+                .when(!text.is_empty(), |d| d.child(div().text_sm().child(text.clone())))
+                .into_any_element(),
+            Item::Assistant(text) => {
+                let to_copy = text.clone();
+                div()
+                    .group("assistant")
+                    .relative()
+                    .text_sm()
+                    .child(markdown::render(("md", ix), text, cx))
+                    .child(
+                        div().absolute().top_0().right(px(-30.)).invisible().group_hover("assistant", |s| s.visible()).child(
+                            crate::ui::icon_button(("copy-msg", ix), Icon::Copy, cx)
+                                .tooltip(Tooltip::text("Copy message"))
+                                .on_click(move |_, _, cx| {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(to_copy.clone()))
+                                }),
+                        ),
+                    )
+                    .into_any_element()
+            }
+            Item::Thinking => div().text_sm().italic().text_color(t.text_placeholder).child("Thinking…").into_any_element(),
+            Item::ToolUse { name, summary, input } => {
+                let head = disclosure_row(("tool", ix), expanded, &t)
+                    .child(icon(Icon::Terminal, t.text_muted).size_3())
+                    .child(div().flex_none().text_xs().font_weight(FontWeight::MEDIUM).text_color(t.text_muted).child(name.clone()))
+                    .child(div().flex_1().min_w_0().truncate().font_family(mono()).text_xs().text_color(t.text_muted).child(summary.clone()))
+                    .on_click(toggle);
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(head)
+                    .when(expanded, |d| d.child(code_box(("tool-body", ix).into(), input.clone(), &t)))
+                    .into_any_element()
+            }
+            Item::ToolResult { content, is_error } => {
+                let first: String = content.lines().next().unwrap_or("").chars().take(160).collect();
+                let color = if *is_error { t.error } else { t.text_placeholder };
+                let head = disclosure_row(("result", ix), expanded, &t)
+                    .pl_6()
+                    .child(div().flex_1().min_w_0().truncate().font_family(mono()).text_xs().text_color(color).child(first))
+                    .on_click(toggle);
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(head)
+                    .when(expanded, |d| d.child(code_box(("result-body", ix).into(), content.clone(), &t)))
+                    .into_any_element()
+            }
+            // Answered in the prompt that takes the composer's place; the
+            // transcript keeps a one-line record.
+            Item::Permission { tool, input, state, .. } => {
+                let (which, note, color) = match state {
+                    PermState::Pending => (Icon::Dot, "waiting for you below".to_string(), t.warning),
+                    PermState::Allowed(n) => (Icon::Check, n.clone(), t.success),
+                    PermState::Denied(n) => (Icon::Close, n.clone(), t.error),
+                };
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_1()
+                    .text_xs()
+                    .child(icon(which, color).size_3p5())
+                    .child(div().text_color(t.text_muted).child(prompt::title(tool, input)))
+                    .child(div().text_color(color).child(note))
+                    .into_any_element()
+            }
+            Item::Result { cost, duration_ms, is_error } => div()
+                .px_1()
+                .text_xs()
+                .text_color(t.text_placeholder)
+                .child(format!(
+                    "Done in {:.1}s · ${cost:.4}{}",
+                    *duration_ms as f64 / 1000.0,
+                    if *is_error { " · error" } else { "" }
+                ))
+                .into_any_element(),
+            Item::Error(e) => div().px_1().text_sm().text_color(t.error).child(e.clone()).into_any_element(),
+        };
+        div()
+            .w_full()
+            .flex()
+            .justify_center()
+            .px_6()
+            .map(|d| if compact { d.py_0p5() } else { d.py_2() })
+            .child(div().w_full().max_w(THREAD_WIDTH).child(body))
+            .into_any_element()
+    }
+
+    fn render_thread(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme(cx).clone();
+        let key = self.active_key();
+        let count = self.active_session().map_or(0, |s| s.items.len());
+        let busy = self.active_session().is_some_and(|s| s.busy);
+        if count == 0 {
+            let msg = match self.saved.active {
+                Active::Chat => "Start a conversation. Uses your Claude Code login, no API key needed.",
+                Active::Project(_) => "Ask Claude Code to work on this project.",
+            };
+            return div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(t.text_placeholder)
+                .child(msg)
+                .into_any_element();
+        }
+        let thread = self.threads.entry(key).or_insert_with(|| {
+            let list = ListState::new(0, ListAlignment::Top, px(1000.));
+            list.set_follow_mode(FollowMode::Tail);
+            Thread { list, count: 0 }
+        });
+        if count < thread.count {
+            thread.list.reset(count);
+        } else if count > thread.count {
+            thread.list.splice(thread.count..thread.count, count - thread.count);
+        }
+        // The last item grows while a reply streams in.
+        if busy && count > 0 {
+            thread.list.remeasure_items(count - 1..count);
+        }
+        thread.count = count;
+        let state = thread.list.clone();
+        list(state, cx.processor(|this, ix, window, cx| this.render_item(ix, window, cx)))
+            .flex_1()
+            .size_full()
+            .py_2()
+            .into_any_element()
+    }
+
+    fn render_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let t = theme(cx).clone();
+        let shell = |child: AnyElement, focused: bool| {
+            div().w_full().flex().justify_center().px_6().pb_4().pt_1().child(
+                div()
+                    .w_full()
+                    .max_w(THREAD_WIDTH)
+                    .p_3()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(if focused { t.border_focused } else { t.border })
+                    .bg(t.panel)
+                    .shadow_sm()
+                    .child(child),
+            )
+        };
+        if let Some(p) = &self.prompt {
+            let focused = p.view.read(cx).focus_handle(cx).contains_focused(window, cx);
+            return shell(p.view.clone().into_any_element(), focused);
+        }
+
+        let session = self.active_session();
+        let busy = session.is_some_and(|s| s.busy);
+        let mode = session.filter(|s| s.kind == Kind::Code).map(|s| s.mode);
+        let in_project = matches!(self.saved.active, Active::Project(_));
+        let placeholder = if in_project {
+            "Ask Claude Code to do something in this project…"
+        } else {
+            "Message Claude…"
+        };
+        self.composer.update(cx, |c, _| c.set_placeholder(placeholder));
+        let focused = self.composer.read(cx).is_focused(window);
+        let can_send = !busy && (!self.composer.read(cx).text().trim().is_empty() || !self.attachments.is_empty());
+        let max_h = window.viewport_size().height * 0.4;
+
+        let attachments = div().flex().flex_wrap().gap_2().children(self.attachments.iter().enumerate().map(|(i, a)| {
+            div()
+                .id(("attachment", i))
+                .rounded_md()
+                .border_1()
+                .border_color(t.border)
+                .overflow_hidden()
+                .cursor_pointer()
+                .hover(|s| s.opacity(0.7))
+                .child(img(a.image.clone()).h(px(56.)).max_w(px(120.)))
+                .tooltip(Tooltip::text("Click to remove"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.attachments.remove(i);
+                    cx.notify();
+                }))
+        }));
+
+        let send = if busy {
+            div()
+                .id("stop")
+                .flex()
+                .items_center()
+                .gap_1p5()
+                .h(px(26.))
+                .px_2()
+                .rounded_md()
+                .border_1()
+                .border_color(t.border)
+                .text_sm()
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .child(spinner("busy", t.accent, px(14.)))
+                .child(icon(Icon::Stop, t.text).size_3())
+                .child("Stop")
+                .tooltip(Tooltip::text("Interrupt Claude"))
+                .on_click(cx.listener(|this, _, _, cx| this.interrupt(cx)))
+        } else {
+            div()
+                .id("send")
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(26.))
+                .rounded_md()
+                .bg(if can_send { t.accent } else { t.active })
+                .when(can_send, |d| d.cursor_pointer().hover(|s| s.opacity(0.9)))
+                .child(icon(Icon::ArrowUp, if can_send { t.editor } else { t.text_placeholder }))
+                .tooltip(Tooltip::with_meta("Send", "Enter · Shift+Enter for a new line"))
+                .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
+        };
+
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .when(!self.attachments.is_empty(), |d| d.child(attachments))
+            .child(div().id("composer-scroll").max_h(max_h).overflow_y_scroll().text_sm().child(self.composer.clone()))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        icon_button("attach", Icon::Paperclip, cx)
+                            .tooltip(Tooltip::with_meta("Attach images or files", "or paste / drop them"))
+                            .on_click(cx.listener(|this, _, _, cx| this.attach_files(cx))),
+                    )
+                    .when_some(mode, |d, mode| {
+                        d.child(
+                            ghost_button("mode", cx)
+                                .text_color(if mode == Mode::Plan { t.info } else { t.text_muted })
+                                .child(mode.label())
+                                .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
+                                .tooltip(Tooltip::with_meta(mode.help(), "Shift+Tab to cycle"))
+                                .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                                    this.open_menu(Menu::Mode, ev.position(), Anchor::BottomLeft, cx)
+                                })),
+                        )
+                    })
+                    .child(div().flex_1())
+                    .child(send),
+            );
+        shell(body.into_any_element(), focused)
+    }
+
+    fn render_menu(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let open = self.menu.as_ref()?;
+        let (which, at, anchor) = (open.which.clone(), open.at, open.anchor);
+        let t = theme(cx).clone();
+        let mut items: Vec<AnyElement> = Vec::new();
+        match &which {
+            Menu::Model => {
+                for (n, (id, name)) in MODELS.iter().enumerate() {
+                    let id = id.to_string();
+                    items.push(
+                        menu_item(("model", n), *name, self.saved.model == id, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.saved.model = id.clone();
+                                this.menu = None;
+                                this.save();
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
+            Menu::Theme => {
+                for (n, (th, name)) in THEMES.iter().enumerate() {
+                    let th = *th;
+                    items.push(
+                        menu_item(("theme", n), *name, self.saved.theme == th, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.saved.theme = th;
+                                this.menu = None;
+                                this.save();
+                                theme::set(th, cx);
+                                cx.refresh_windows();
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
+            Menu::Mode => {
+                let current = self.active_session().map(|s| s.mode);
+                for (n, m) in Mode::ALL.into_iter().enumerate() {
+                    items.push(
+                        menu_item(("mode", n), m.label(), current == Some(m), cx)
+                            .h_auto()
+                            .py_1()
+                            .child(div())
+                            .tooltip(Tooltip::text(m.help()))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(s) = this.session_mut() {
+                                    s.set_mode(m);
+                                }
+                                this.menu = None;
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
+            Menu::Effort => {
+                let current = self.settings.as_ref().map(|s| s.claude.effort.clone()).unwrap_or_default();
+                for (n, (id, name)) in project::EFFORTS.iter().enumerate() {
+                    let id = id.to_string();
+                    items.push(
+                        menu_item(("effort", n), *name, current == id, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let id = id.clone();
+                                this.menu = None;
+                                this.edit_settings(cx, |v| v.claude.effort = id);
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
+            Menu::Tab(i) => {
+                let i = *i;
+                let path = self.saved.projects.get(i).map(|p| p.path.clone()).unwrap_or_default();
+                for (n, (label, opener)) in [
+                    ("Open in VS Code", Opener::Code),
+                    ("Open in file manager", Opener::Explorer),
+                    ("Open terminal", Opener::Terminal),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let path = path.clone();
+                    items.push(
+                        menu_item(("tab-menu", n), label, false, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                open_project(&mut this.notice, opener, &path);
+                                this.menu = None;
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    );
+                }
+                items.push(div().my_1().child(divider(cx)).into_any_element());
+                items.push(
+                    menu_item("tab-close", "Close", false, cx)
+                        .text_color(t.error)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = None;
+                            this.close_project(i);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                );
+            }
+        }
+        Some(deferred(
+            anchored().position(at).anchor(anchor).snap_to_window_with_margin(px(8.)).child(
+                popover(cx)
+                    .min_w(px(200.))
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        this.menu = None;
+                        cx.notify();
+                    }))
+                    .children(items),
+            ),
+        ))
+    }
+
+    fn render_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let view = self.settings.as_ref()?;
+        let t = theme(cx).clone();
+        const SECTIONS: [&str; 2] = ["Permissions", "Model"];
+        let section = view.section.min(SECTIONS.len() - 1);
+        let path = view.path.clone();
+        let vp = window.viewport_size();
+
+        let nav = div().flex().flex_col().gap_0p5().w(px(170.)).flex_none().p_2().border_r_1().border_color(t.border_variant).children(
+            SECTIONS.iter().enumerate().map(|(i, name)| {
+                menu_item(("settings-section", i), *name, false, cx)
+                    .when(i == section, |d| d.bg(t.active))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(s) = &mut this.settings {
+                            s.section = i;
+                        }
+                        cx.notify();
+                    }))
+            }),
+        );
+
+        let content = match section {
+            0 => {
+                let modes = Mode::ALL.into_iter().enumerate().map(|(n, m)| {
+                    let selected = view.claude.mode == m;
+                    let hover = t.hover;
+                    div()
+                        .id(("default-mode", n))
+                        .flex()
+                        .items_start()
+                        .gap_2()
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(hover))
+                        .child(radio(selected, &t))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(div().text_sm().child(m.label()))
+                                .child(div().text_xs().text_color(t.text_muted).child(m.help())),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| this.edit_settings(cx, |v| v.claude.mode = m)))
+                });
+                let rule_list = |deny: bool, rules: &[String], cx: &mut Context<Self>| {
+                    let title = if deny { "Deny" } else { "Allow" };
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(div().text_xs().text_color(t.text_muted).child(title))
+                        .when(rules.is_empty(), |d| d.child(div().pl_2().text_sm().text_color(t.text_placeholder).child("None")))
+                        .children(rules.iter().enumerate().map(|(i, rule)| {
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .pl_2()
+                                .rounded_md()
+                                .hover(|s| s.bg(t.hover))
+                                .child(div().flex_1().min_w_0().truncate().font_family(mono()).text_sm().child(rule.clone()))
+                                .child(
+                                    icon_button(SharedString::from(format!("rm-{title}-{i}")), Icon::Close, cx)
+                                        .tooltip(Tooltip::text("Remove this rule"))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.edit_settings(cx, |v| {
+                                                let list = if deny { &mut v.perms.deny } else { &mut v.perms.allow };
+                                                if i < list.len() {
+                                                    list.remove(i);
+                                                }
+                                            })
+                                        })),
+                                )
+                        }))
+                };
+                let (allow, deny, dirs) = (view.perms.allow.clone(), view.perms.deny.clone(), view.claude.add_dirs.clone());
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_5()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(heading("Default mode", "What new sessions start in. Switch a running session from the composer.", &t))
+                            .children(modes),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(heading(
+                                "Rules",
+                                "In Claude Code's syntax: Bash(cargo test:*), Edit, WebFetch(domain:docs.rs). They add to your own Claude settings; a deny anywhere wins.",
+                                &t,
+                            ))
+                            .child(rule_list(false, &allow, cx))
+                            .child(rule_list(true, &deny, cx))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(t.border)
+                                            .bg(t.editor)
+                                            .text_sm()
+                                            .child(self.new_rule.clone()),
+                                    )
+                                    .child(outline_button("add-allow", "Allow", cx).on_click(cx.listener(|this, _, _, cx| this.add_rule(false, cx))))
+                                    .child(outline_button("add-deny", "Deny", cx).on_click(cx.listener(|this, _, _, cx| this.add_rule(true, cx)))),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(heading("Additional directories", "Folders outside the project Claude may read and edit (--add-dir).", &t))
+                            .children(dirs.iter().enumerate().map(|(i, d)| {
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .pl_2()
+                                    .rounded_md()
+                                    .hover(|s| s.bg(t.hover))
+                                    .child(div().flex_1().min_w_0().truncate().font_family(mono()).text_sm().child(d.display().to_string()))
+                                    .child(
+                                        icon_button(("rm-dir", i), Icon::Close, cx).tooltip(Tooltip::text("Remove")).on_click(cx.listener(
+                                            move |this, _, _, cx| {
+                                                this.edit_settings(cx, |v| {
+                                                    if i < v.claude.add_dirs.len() {
+                                                        v.claude.add_dirs.remove(i);
+                                                    }
+                                                })
+                                            },
+                                        )),
+                                    )
+                            }))
+                            .child(
+                                div().pt_1().child(
+                                    outline_button("add-dir", "Add folder…", cx).on_click(cx.listener(|this, _, _, cx| this.add_dir(cx))),
+                                ),
+                            ),
+                    )
+            }
+            _ => {
+                let effort = project::EFFORTS.iter().find(|e| e.0 == view.claude.effort).map_or("Default", |e| e.1);
+                div().flex().flex_col().gap_2().child(heading("Effort", "How hard Claude thinks (--effort). Default uses your Claude settings.", &t)).child(
+                    div().flex().child(
+                        outline_button("effort", effort, cx)
+                            .gap_1()
+                            .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
+                            .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                                this.open_menu(Menu::Effort, ev.position(), Anchor::TopLeft, cx)
+                            })),
+                    ),
+                )
+                .child(div().pt_2().text_xs().text_color(t.text_muted).child("The model is picked in the title bar and applies to every tab."))
+            }
+        };
+
+        let card = div()
+            .id("settings-card")
+            .occlude()
+            .flex()
+            .flex_col()
+            .w(px(760.).min(vp.width - px(80.)))
+            .h(px(560.).min(vp.height - px(100.)))
+            .rounded_lg()
+            .border_1()
+            .border_color(t.border)
+            .bg(t.elevated)
+            .shadow_lg()
+            .overflow_hidden()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap_2()
+                    .h(px(44.))
+                    .pl_4()
+                    .pr_2()
+                    .border_b_1()
+                    .border_color(t.border_variant)
+                    .child(icon(Icon::Settings, t.text_muted))
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Claude settings"))
+                    .child(div().text_sm().text_color(t.text_muted).child(project_name(&path)))
+                    .child(div().flex_1())
+                    .child(
+                        icon_button("close-settings", Icon::Close, cx)
+                            .tooltip(Tooltip::with_meta("Close", "Esc"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.settings = None;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                div().flex().flex_1().min_h_0().child(nav).child(
+                    div()
+                        .id("settings-body")
+                        .flex_1()
+                        .overflow_y_scroll()
+                        .p_5()
+                        .child(content)
+                        .child(
+                            div()
+                                .pt_6()
+                                .text_xs()
+                                .text_color(t.text_placeholder)
+                                .child(format!("Stored in {}", project::dir(&path).display())),
+                        ),
+                ),
+            );
+
+        Some(
+            div()
+                .id("modal-backdrop")
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::black().opacity(0.45))
+                .occlude()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.settings = None;
+                        cx.notify();
+                    }),
+                )
+                .child(card),
+        )
+    }
+
+    fn render_notice(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let n = self.notice.clone()?;
+        let t = theme(cx).clone();
+        Some(
+            div().absolute().bottom_4().right_4().max_w(px(480.)).child(
+                popover(cx)
+                    .flex_row()
+                    .items_start()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .child(icon(Icon::Dot, t.warning).mt_0p5())
+                    .child(div().flex_1().text_sm().child(n))
+                    .child(icon_button("dismiss-notice", Icon::Close, cx).on_click(cx.listener(|this, _, _, cx| {
+                        this.notice = None;
+                        cx.notify();
+                    }))),
+            ),
+        )
+    }
+}
+
+impl Focusable for KynexApp {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl Render for KynexApp {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme(cx).clone();
         if let Active::Project(i) = self.saved.active {
             if let Some(p) = self.saved.projects.get_mut(i).filter(|p| p.view == View::Settings) {
                 p.view = View::Code;
             }
         }
         let view = self.active_project().map(|p| p.view);
-
-        // Switching workspace fades the content in, like Hyprland's workspace animation.
-        if self.last_active != self.saved.active {
-            self.last_active = self.saved.active;
-            self.switched_at = ctx.input(|i| i.time);
-        }
-        let fade = ((ctx.input(|i| i.time) - self.switched_at) / 0.12).clamp(0.0, 1.0) as f32;
-        if fade < 1.0 {
-            ctx.request_repaint();
-        }
-
-        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::B)) {
-            self.saved.sessions_collapsed = !self.saved.sessions_collapsed;
-            self.save();
-        }
-        let sessions_collapsed = self.saved.sessions_collapsed;
-
-        chrome::background(ui);
-        let gap = theme::p().gap;
-        let gaps = egui::Frame::new().inner_margin(gap);
-        egui::CentralPanel::default().frame(gaps).show(ui, |ui| {
-            egui::Panel::top("bar").frame(egui::Frame::NONE).show(ui, |ui| {
-                theme::tile(ui, "bar", "", false, false, |ui| self.tab_bar(ui));
-                ui.add_space(gap);
-            });
-            ui.multiply_opacity(1.0 - (1.0 - fade).powi(3));
-
-            if let Some(n) = self.notice.clone() {
-                egui::Panel::bottom("notice").frame(egui::Frame::NONE).show(ui, |ui| {
-                    ui.add_space(gap);
-                    theme::tile(ui, "notice", "", false, false, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(n).color(theme::p().yellow));
-                            if ui.small_button("x").clicked() {
-                                self.notice = None;
-                            }
-                        });
-                    });
-                });
-            }
-
-            if view == Some(View::Git) {
-                let path = self.active_project().map(|p| p.path.clone()).unwrap();
-                theme::tile(ui, "main", "", true, true, |ui| {
-                    self.project_toolbar(ui);
-                    ui.separator();
-                    self.git.entry(path.clone()).or_insert_with(|| GitView::new(path)).ui(ui);
-                });
-                return;
-            }
-            // Create (or resume) the project's session as soon as its tab is shown,
-            // so a restored transcript is visible before the first message.
+        // Create (or resume) the project's session as soon as its tab is shown,
+        // so a restored transcript is visible before the first message.
+        if view != Some(View::Git) {
             let _ = self.session_mut();
+        }
+        self.sync_prompt(window, cx);
 
-            let side = egui::Frame::NONE.inner_margin(egui::Margin { right: gap as i8, ..Default::default() });
-            if self.saved.sessions_collapsed {
-                egui::Panel::left("sessions-collapsed").frame(side).resizable(false).show(ui, |ui| {
-                    theme::tile(ui, "sessions-collapsed", "", false, true, |ui| {
-                        if ui.add(egui::Button::new("»").frame(false)).on_hover_text("Show sessions (Ctrl+B)").clicked() {
-                            self.saved.sessions_collapsed = false;
-                        }
-                    });
-                });
-            } else {
-                egui::Panel::left("sessions")
-                    .frame(side)
-                    .resizable(true)
-                    .default_size(260.0)
-                    .size_range(160.0..=480.0)
-                    .show(ui, |ui| {
-                        theme::tile(ui, "sessions", "", false, true, |ui| self.sessions_panel(ui));
-                    });
-            }
-            if self.saved.sessions_collapsed != sessions_collapsed {
-                self.save();
-            }
-            egui::Panel::bottom("composer").frame(egui::Frame::NONE).show(ui, |ui| {
-                ui.add_space(gap);
-                theme::tile(ui, "composer", "", composer_focused, false, |ui| self.composer(ui));
+        let main = if view == Some(View::Git) {
+            let path = self.active_project().map(|p| p.path.clone()).unwrap();
+            let git = self.git.entry(path.clone()).or_insert_with(|| cx.new(|cx| GitView::new(path, cx))).clone();
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .bg(t.editor)
+                .child(self.render_toolbar(cx))
+                .child(div().flex_1().min_h_0().child(git))
+                .into_any_element()
+        } else {
+            let width = px(self.saved.sessions_width);
+            let panel = (!self.saved.sessions_collapsed).then(|| {
+                div()
+                    .relative()
+                    .flex_none()
+                    .w(width)
+                    .h_full()
+                    .bg(t.panel)
+                    .border_r_1()
+                    .border_color(t.border)
+                    .child(self.render_sessions_panel(cx))
+                    .child(
+                        // Drag the panel's right edge to resize it.
+                        div()
+                            .id("sessions-resize")
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .right(px(-3.))
+                            .w(px(6.))
+                            .cursor_col_resize()
+                            .hover(|s| s.bg(t.border_focused.opacity(0.6)))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.resizing_sessions = true;
+                                    cx.stop_propagation();
+                                }),
+                            ),
+                    )
             });
-            theme::tile(ui, "main", "", !composer_focused, true, |ui| {
-                if view.is_some() {
-                    self.project_toolbar(ui);
-                    ui.separator();
-                }
-                self.transcript(ui);
-            });
-        });
-        self.claude_settings_modal(ctx);
-        chrome::resize_edges(ui);
+            div()
+                .flex()
+                .flex_1()
+                .min_h_0()
+                .children(panel)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .bg(t.editor)
+                        .child(self.render_toolbar(cx))
+                        .child(self.render_thread(cx))
+                        .child(self.render_composer(window, cx)),
+                )
+                .into_any_element()
+        };
+
+        let menu = self.render_menu(cx);
+        let settings = self.render_settings(window, cx);
+        let notice = self.render_notice(cx);
+        div()
+            .id("workspace")
+            .key_context("Workspace")
+            .track_focus(&self.focus)
+            .relative()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(t.editor)
+            .text_color(t.text)
+            .text_sm()
+            .on_action(cx.listener(Self::open_project))
+            .on_action(cx.listener(Self::next_tab))
+            .on_action(cx.listener(Self::prev_tab))
+            .on_action(cx.listener(Self::toggle_sessions))
+            .on_action(cx.listener(Self::cycle_mode))
+            .on_key_down(cx.listener(Self::key_down))
+            .on_drop(cx.listener(Self::on_drop))
+            .when(self.resizing_sessions, |d| {
+                d.cursor_col_resize()
+                    .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
+                        this.saved.sessions_width = f32::from(ev.position.x).clamp(180., 480.);
+                        cx.notify();
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.resizing_sessions = false;
+                            this.save();
+                            cx.notify();
+                        }),
+                    )
+            })
+            .child(self.render_title_bar(window, cx))
+            .child(main)
+            .children(notice)
+            .children(settings)
+            .children(menu)
     }
 }
 
-fn truncate(s: &str, max: usize) -> String {
-    if s.chars().count() > max { format!("{}…", s.chars().take(max).collect::<String>()) } else { s.to_string() }
+fn spinner(id: impl Into<gpui::ElementId>, color: gpui::Hsla, size: Pixels) -> gpui::AnimationElement<gpui::Svg> {
+    icon(Icon::Loader, color).size(size).with_animation(
+        id,
+        Animation::new(Duration::from_millis(900)).repeat(),
+        |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
+    )
+}
+
+fn cost_label(cost: f64, t: &theme::Palette) -> impl IntoElement + use<> {
+    div().px_1().text_xs().font_family(mono()).text_color(t.text_placeholder).child(format!("${cost:.3}"))
+}
+
+fn session_row(
+    id: impl Into<gpui::ElementId>,
+    title: SharedString,
+    when: Option<String>,
+    current: bool,
+    t: &theme::Palette,
+) -> gpui::Stateful<gpui::Div> {
+    let hover = t.hover;
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap_1()
+        .h(px(30.))
+        .pl_2()
+        .pr_1()
+        .rounded_md()
+        .cursor_pointer()
+        .text_sm()
+        .when(current, |d| d.bg(t.active))
+        .when(!current, |d| d.hover(move |s| s.bg(hover)))
+        .child(div().flex_1().min_w_0().truncate().text_color(if current { t.text } else { t.text_muted }).child(title))
+        .when_some(when, |d, w| d.child(div().flex_none().text_xs().text_color(t.text_placeholder).child(w)))
+}
+
+fn disclosure_row(id: impl Into<gpui::ElementId>, expanded: bool, t: &theme::Palette) -> gpui::Stateful<gpui::Div> {
+    let hover = t.hover;
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap_1p5()
+        .h(px(22.))
+        .px_1()
+        .rounded_md()
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .child(icon(if expanded { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_placeholder).size_3())
+}
+
+fn code_box(id: gpui::ElementId, text: String, t: &theme::Palette) -> impl IntoElement + use<> {
+    div()
+        .id(id)
+        .ml_6()
+        .mt_1()
+        .max_h(px(320.))
+        .overflow_y_scroll()
+        .rounded_md()
+        .border_1()
+        .border_color(t.border_variant)
+        .bg(t.panel)
+        .px_3()
+        .py_2()
+        .font_family(mono())
+        .text_xs()
+        .text_color(t.text_muted)
+        .child(text)
+}
+
+fn heading(title: &'static str, help: &'static str, t: &theme::Palette) -> impl IntoElement + use<> {
+    div()
+        .flex()
+        .flex_col()
+        .gap_0p5()
+        .pb_1()
+        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(title))
+        .child(div().text_xs().text_color(t.text_muted).child(help))
+}
+
+fn radio(selected: bool, t: &theme::Palette) -> impl IntoElement + use<> {
+    div()
+        .mt_0p5()
+        .size(px(14.))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .border_1()
+        .border_color(if selected { t.accent } else { t.border })
+        .when(selected, |d| d.child(div().size(px(6.)).rounded_full().bg(t.accent)))
 }
 
 /// "just now", "5m ago", "3h ago", "2d ago".
@@ -1143,23 +2085,29 @@ enum Opener {
 /// Opens a project folder in another app. WSL projects open VS Code over
 /// Remote - WSL and the terminal inside the distro.
 fn open_project(notice: &mut Option<String>, opener: Opener, path: &Path) {
-    let Some(w) = wsl::parse(path) else {
+    if let Some(w) = wsl::parse(path) {
         match opener {
-            Opener::Code => open_with(notice, "code", &[path.as_os_str()]),
+            Opener::Code => {
+                let remote = format!("wsl+{}", w.distro);
+                open_with(notice, "code", &["--remote".as_ref(), remote.as_ref(), w.path.as_ref()]);
+            }
             Opener::Explorer => open_with(notice, "explorer", &[path.as_os_str()]),
-            Opener::Terminal => open_with(notice, "wt", &["-d".as_ref(), path.as_os_str()]),
+            Opener::Terminal => {
+                open_with(notice, "wt", &["wsl.exe".as_ref(), "-d".as_ref(), w.distro.as_ref(), "--cd".as_ref(), w.path.as_ref()]);
+            }
         }
         return;
-    };
+    }
     match opener {
-        Opener::Code => {
-            let remote = format!("wsl+{}", w.distro);
-            open_with(notice, "code", &["--remote".as_ref(), remote.as_ref(), w.path.as_ref()]);
+        Opener::Code => open_with(notice, "code", &[path.as_os_str()]),
+        Opener::Explorer if cfg!(target_os = "windows") => open_with(notice, "explorer", &[path.as_os_str()]),
+        Opener::Explorer if cfg!(target_os = "macos") => open_with(notice, "open", &[path.as_os_str()]),
+        Opener::Explorer => open_with(notice, "xdg-open", &[path.as_os_str()]),
+        Opener::Terminal if cfg!(target_os = "windows") => open_with(notice, "wt", &["-d".as_ref(), path.as_os_str()]),
+        Opener::Terminal if cfg!(target_os = "macos") => {
+            open_with(notice, "open", &["-a".as_ref(), "Terminal".as_ref(), path.as_os_str()])
         }
-        Opener::Explorer => open_with(notice, "explorer", &[path.as_os_str()]),
-        Opener::Terminal => {
-            open_with(notice, "wt", &["wsl.exe".as_ref(), "-d".as_ref(), w.distro.as_ref(), "--cd".as_ref(), w.path.as_ref()]);
-        }
+        Opener::Terminal => open_with(notice, "x-terminal-emulator", &["--working-directory".as_ref(), path.as_os_str()]),
     }
 }
 
