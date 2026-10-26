@@ -5,6 +5,7 @@ mod chrome;
 mod git;
 mod session;
 mod theme;
+mod wsl;
 
 fn main() -> eframe::Result {
     #[cfg(feature = "hotpatch")]

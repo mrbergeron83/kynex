@@ -12,6 +12,7 @@ use crate::chrome;
 use crate::git::GitView;
 use crate::session::{Attachment, Item, Kind, PermState, Session};
 use crate::theme::{self, THEMES, Theme};
+use crate::wsl;
 
 const MODELS: [(&str, &str); 4] = [("", "Default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")];
 const MAX_IMAGE_EDGE: u32 = 1568;
@@ -227,15 +228,15 @@ impl KynexApp {
                 }
                 r.context_menu(|ui| {
                     if ui.button("Open in VS Code").clicked() {
-                        open_with(&mut self.notice, "code", &[p.path.as_os_str()]);
+                        open_project(&mut self.notice, Opener::Code, &p.path);
                         ui.close();
                     }
                     if ui.button("Open in Explorer").clicked() {
-                        open_with(&mut self.notice, "explorer", &[p.path.as_os_str()]);
+                        open_project(&mut self.notice, Opener::Explorer, &p.path);
                         ui.close();
                     }
                     if ui.button("Open terminal").clicked() {
-                        open_with(&mut self.notice, "wt", &["-d".as_ref(), p.path.as_os_str()]);
+                        open_project(&mut self.notice, Opener::Terminal, &p.path);
                         ui.close();
                     }
                     ui.separator();
@@ -303,13 +304,13 @@ impl KynexApp {
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Terminal").clicked() {
-                    open_with(&mut self.notice, "wt", &["-d".as_ref(), path.as_os_str()]);
+                    open_project(&mut self.notice, Opener::Terminal, &path);
                 }
                 if ui.button("Explorer").clicked() {
-                    open_with(&mut self.notice, "explorer", &[path.as_os_str()]);
+                    open_project(&mut self.notice, Opener::Explorer, &path);
                 }
                 if ui.button("VS Code").clicked() {
-                    open_with(&mut self.notice, "code", &[path.as_os_str()]);
+                    open_project(&mut self.notice, Opener::Code, &path);
                 }
                 if let Some(s) = self.code.get(&path) {
                     if s.total_cost > 0.0 {
@@ -706,6 +707,36 @@ fn is_image(p: &Path) -> bool {
     p.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"))
+}
+
+#[derive(Clone, Copy)]
+enum Opener {
+    Code,
+    Explorer,
+    Terminal,
+}
+
+/// Opens a project folder in another app. WSL projects open VS Code over
+/// Remote - WSL and the terminal inside the distro.
+fn open_project(notice: &mut Option<String>, opener: Opener, path: &Path) {
+    let Some(w) = wsl::parse(path) else {
+        match opener {
+            Opener::Code => open_with(notice, "code", &[path.as_os_str()]),
+            Opener::Explorer => open_with(notice, "explorer", &[path.as_os_str()]),
+            Opener::Terminal => open_with(notice, "wt", &["-d".as_ref(), path.as_os_str()]),
+        }
+        return;
+    };
+    match opener {
+        Opener::Code => {
+            let remote = format!("wsl+{}", w.distro);
+            open_with(notice, "code", &["--remote".as_ref(), remote.as_ref(), w.path.as_ref()]);
+        }
+        Opener::Explorer => open_with(notice, "explorer", &[path.as_os_str()]),
+        Opener::Terminal => {
+            open_with(notice, "wt", &["wsl.exe".as_ref(), "-d".as_ref(), w.distro.as_ref(), "--cd".as_ref(), w.path.as_ref()]);
+        }
+    }
 }
 
 fn open_with(notice: &mut Option<String>, program: &str, args: &[&std::ffi::OsStr]) {

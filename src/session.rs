@@ -5,7 +5,7 @@
 //! prompts, which arrive as `control_request` messages on stdout.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -13,6 +13,8 @@ use std::thread;
 
 use eframe::egui;
 use serde_json::{Value, json};
+
+use crate::wsl;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -88,8 +90,9 @@ impl Session {
     /// Reopen a previous conversation: replay its transcript from Claude Code's
     /// own session log, and `--resume` it on the next message.
     pub fn resume(kind: Kind, cwd: PathBuf, id: String) -> Self {
+        let transcript = find_transcript(&cwd, &id);
         let mut s = Self::new(kind, cwd);
-        match find_transcript(&id).and_then(|p| std::fs::read_to_string(p).ok()) {
+        match transcript.and_then(|p| std::fs::read_to_string(p).ok()) {
             Some(log) => {
                 for line in log.lines() {
                     let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
@@ -130,7 +133,14 @@ impl Session {
     }
 
     fn spawn(&mut self, ctx: &egui::Context) -> Result<(), String> {
-        let mut cmd = Command::new("claude");
+        let mut cmd = match wsl::parse(&self.cwd) {
+            Some(w) => w.command("claude"),
+            None => {
+                let mut c = Command::new("claude");
+                c.current_dir(&self.cwd);
+                c
+            }
+        };
         cmd.args([
             "-p",
             "--input-format",
@@ -151,8 +161,7 @@ impl Session {
         if let Some(id) = &self.session_id {
             cmd.args(["--resume", id]);
         }
-        cmd.current_dir(&self.cwd)
-            .stdin(Stdio::piped())
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         #[cfg(windows)]
@@ -385,10 +394,14 @@ fn spawn_reader(stream: impl std::io::Read + Send + 'static, tx: Sender<Event>, 
     });
 }
 
-/// Claude Code stores each session as `~/.claude/projects/<encoded cwd>/<id>.jsonl`.
-fn find_transcript(id: &str) -> Option<PathBuf> {
-    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?;
-    let projects = PathBuf::from(home).join(".claude").join("projects");
+/// Claude Code stores each session as `~/.claude/projects/<encoded cwd>/<id>.jsonl`,
+/// under the WSL user's home for projects that live in WSL.
+fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
+    let home = match wsl::parse(cwd) {
+        Some(w) => w.home()?,
+        None => PathBuf::from(std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?),
+    };
+    let projects = home.join(".claude").join("projects");
     std::fs::read_dir(projects)
         .ok()?
         .filter_map(Result::ok)

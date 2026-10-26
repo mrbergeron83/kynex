@@ -3,7 +3,7 @@ use std::process::Command;
 
 use eframe::egui::{self, RichText};
 
-use crate::theme;
+use crate::{theme, wsl};
 
 pub struct GitView {
     root: PathBuf,
@@ -31,13 +31,21 @@ impl GitView {
     }
 
     fn git(&self, args: &[&str]) -> Result<String, String> {
-        let mut cmd = Command::new("git");
-        cmd.arg("-C").arg(&self.root).args(args);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000);
-        }
+        let mut cmd = match wsl::parse(&self.root) {
+            // Linux git in the distro: fast, and agrees with Claude about line endings and file modes.
+            Some(w) => w.command("git"),
+            None => {
+                let mut c = Command::new("git");
+                c.arg("-C").arg(&self.root);
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    c.creation_flags(0x0800_0000);
+                }
+                c
+            }
+        };
+        cmd.args(args);
         let out = cmd.output().map_err(|e| format!("git: {e}"))?;
         if out.status.success() {
             Ok(String::from_utf8_lossy(&out.stdout).into_owned())
