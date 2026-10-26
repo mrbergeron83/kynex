@@ -21,7 +21,7 @@ pub use diff::{DiffLine, FileDiff, Hunk, LineKind, commit_diff, file_diff};
 pub use log::{Commit, CommitDetail, Ref, RefKind, commit_detail, log};
 pub use ops::{Sync, commit, discard, last_message, stage, stage_all, sync, unstage, unstage_all};
 pub use status::{Change, FileStatus, Head, Status, status};
-pub use worktree::{Worktree, list_worktrees};
+pub use worktree::{Worktree, list_worktrees, worktree_in};
 
 use crate::wsl;
 

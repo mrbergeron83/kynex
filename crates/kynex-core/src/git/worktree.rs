@@ -79,6 +79,36 @@ pub fn list_worktrees(root: &Path) -> Result<Vec<Worktree>, String> {
     Ok(list)
 }
 
+/// The linked worktree (never the main one) that `text` points into, by its
+/// full path (`C:\repos\kynex-terminal\src\a.rs`) or by its folder name after a
+/// separator (`cd ../kynex-terminal`). For telling which worktree a session is
+/// really working in from its tool calls, JSON-escaped or not.
+pub fn worktree_in<'a>(text: &str, worktrees: &'a [Worktree]) -> Option<&'a Worktree> {
+    let norm = |s: &str| {
+        let mut out = s.to_lowercase().replace('\\', "/");
+        while out.contains("//") {
+            out = out.replace("//", "/");
+        }
+        out
+    };
+    let text = norm(text);
+    let ends_path =
+        |rest: &str| rest.chars().next().is_none_or(|c| matches!(c, '/' | '"' | '\'' | ' ' | ';' | ')' | '`' | '\n'));
+    let linked = || worktrees.iter().filter(|w| !w.main && !w.prunable);
+    let by_path = linked().find(|w| {
+        let path = norm(&w.path.to_string_lossy());
+        text.match_indices(&path).any(|(i, m)| ends_path(&text[i + m.len()..]))
+    });
+    by_path.or_else(|| {
+        linked().find(|w| {
+            let Some(name) = w.path.file_name().map(|n| format!("/{}", n.to_string_lossy().to_lowercase())) else {
+                return false;
+            };
+            text.match_indices(&name).any(|(i, m)| ends_path(&text[i + m.len()..]))
+        })
+    })
+}
+
 /// Parses `git worktree list --porcelain`; bare entries are skipped.
 fn parse_worktrees(s: &str) -> Vec<Worktree> {
     let mut list = Vec::new();
@@ -88,7 +118,10 @@ fn parse_worktrees(s: &str) -> Vec<Worktree> {
         for line in block.lines() {
             let (key, value) = line.split_once(' ').unwrap_or((line, ""));
             match key {
-                "worktree" => w.path = PathBuf::from(value),
+                // git prints `/` everywhere; keep paths the way the OS writes them.
+                "worktree" => {
+                    w.path = PathBuf::from(if cfg!(windows) { value.replace('/', "\\") } else { value.to_string() })
+                }
                 "HEAD" => w.head = value.chars().take(7).collect(),
                 "branch" => w.branch = Some(value.trim_start_matches("refs/heads/").to_string()),
                 "bare" => bare = true,
@@ -154,6 +187,23 @@ mod tests {
         assert_eq!(w(Some((2, 0)), Some(3)).details(), ["2 ahead", "3 changed"]);
         assert_eq!(w(Some((2, 1)), None).details(), ["2 ahead, 1 behind"]);
         assert_eq!(Worktree { main: true, ..Default::default() }.details(), ["main worktree"]);
+    }
+
+    #[test]
+    fn finds_the_worktree_a_tool_call_touches() {
+        let wt = |path: &str, main| Worktree { path: PathBuf::from(path), main, ..Default::default() };
+        let list = [wt("C:/repos/kynex", true), wt("C:/repos/kynex-terminal", false), wt("C:/repos/kynex-git", false)];
+        let found = |text: &str| worktree_in(text, &list).map(|w| w.path.clone());
+        let terminal = Some(PathBuf::from("C:/repos/kynex-terminal"));
+        // A JSON-escaped Windows path in an Edit call.
+        assert_eq!(found(r#"{"file_path":"C:\\Repos\\kynex-terminal\\src\\main.rs"}"#), terminal);
+        // A relative cd in a shell command.
+        assert_eq!(found(r#"{"command":"Set-Location ..\\kynex-terminal; cargo check"}"#), terminal);
+        assert_eq!(found("cd ../kynex-terminal && git status"), terminal);
+        // The main worktree, and names that only share a prefix, don't count.
+        assert_eq!(found(r#"{"file_path":"C:\\repos\\kynex\\src\\main.rs"}"#), None);
+        assert_eq!(found("cd ../kynex-terminally"), None);
+        assert_eq!(found("ls"), None);
     }
 
     #[test]

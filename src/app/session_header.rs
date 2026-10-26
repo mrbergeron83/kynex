@@ -46,6 +46,38 @@ impl KynexApp {
                 .tooltip(Tooltip::text(format!("{where_} at {}", w.path.display())))
         });
 
+        // Where Claude is actually working, when that's another worktree: one
+        // click opens its changes.
+        let working = self.working_worktree(cx).map(|w| {
+            let path = w.path.clone();
+            let accent = t.accent;
+            div()
+                .id("session-working-in")
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_1()
+                .px_1p5()
+                .h(px(20.))
+                .rounded_md()
+                .border_1()
+                .border_color(accent.opacity(0.5))
+                .bg(accent.opacity(0.1))
+                .text_xs()
+                .text_color(accent)
+                .cursor_pointer()
+                .hover(move |s| s.bg(accent.opacity(0.2)))
+                .child("working in")
+                .child(icon(Icon::GitBranch, accent).size_3())
+                .child(w.label().to_string())
+                .when_some(w.changes.filter(|&n| n > 0), |d, n| d.child(format!("· {n} changed")))
+                .tooltip(Tooltip::with_meta(
+                    format!("Claude is editing the worktree at {}", w.path.display()),
+                    "Click to see its changes",
+                ))
+                .on_click(cx.listener(move |this, _, _, cx| this.open_worktree_changes(path.clone(), cx)))
+        });
+
         let mut stats = Vec::new();
         if turns > 0 {
             stats.push(format!("{turns} turn{}", if turns == 1 { "" } else { "s" }));
@@ -74,6 +106,7 @@ impl KynexApp {
                         .child(title.unwrap_or_else(|| "New session".into())),
                 )
                 .children(place)
+                .children(working)
                 .when(!stats.is_empty(), |d| {
                     d.child(
                         div()
