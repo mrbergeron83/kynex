@@ -37,7 +37,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent, Window, WindowBounds, div, prelude::*, px,
+    App, Context, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent, Window, WindowBounds, div, prelude::*,
+    px,
 };
 use kynex_core::cli::UpdateState;
 use kynex_core::live::{Key, Live};
@@ -248,17 +249,19 @@ impl Render for KynexApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
         if let Active::Project(i) = self.saved.active
-            && let Some(p) = self.saved.projects.get_mut(i).filter(|p| p.view == View::Settings) {
-                p.view = View::Code;
-            }
+            && let Some(p) = self.saved.projects.get_mut(i).filter(|p| p.view == View::Settings)
+        {
+            p.view = View::Code;
+        }
         let view = self.active_project().map(|p| p.view);
         // Create (or resume) the project's session as soon as its tab is shown,
         // so a restored transcript is visible before the first message.
         // Showing it counts as seeing it finish.
         if view != Some(View::Git)
-            && let Some(s) = self.session_mut() {
-                s.finished = false;
-            }
+            && let Some(s) = self.session_mut()
+        {
+            s.finished = false;
+        }
         self.sync_prompt(window, cx);
         // Shortcuts (Esc, Ctrl+B…) only reach the workspace through the focused
         // element, so never leave the window with nothing focused.

@@ -98,7 +98,9 @@ impl KynexApp {
             .when(waiting, |d| d.child(icon(Icon::Dot, t.warning).size_2()))
             .when(busy && !waiting, |d| d.child(spinner(("tab-spin", pos), t.accent, px(12.))))
             .when(finished && !busy && !waiting, |d| d.child(icon(Icon::Check, t.success).size_3()))
-            .when_some(tooltip, |d, tip| d.tooltip(Tooltip::with_meta(tip, "Middle-click to close · right-click for more")))
+            .when_some(tooltip, |d, tip| {
+                d.tooltip(Tooltip::with_meta(tip, "Middle-click to close · right-click for more"))
+            })
             .on_click(cx.listener(move |this, _, window, cx| this.jump(pos, window, cx)))
             .when(pos > 0, |d| {
                 d.on_mouse_down(

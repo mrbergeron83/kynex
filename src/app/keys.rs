@@ -151,10 +151,13 @@ impl KynexApp {
             return;
         }
         // Ctrl+1 is Chat, Ctrl+2 the first project, and so on.
-        if k.modifiers.secondary(cx) && !k.modifiers.shift && !k.modifiers.alt
-            && let Some(n) = k.key.parse::<usize>().ok().filter(|n| (1..=9).contains(n)) {
-                self.jump(n - 1, window, cx);
-                cx.stop_propagation();
-            }
+        if k.modifiers.secondary(cx)
+            && !k.modifiers.shift
+            && !k.modifiers.alt
+            && let Some(n) = k.key.parse::<usize>().ok().filter(|n| (1..=9).contains(n))
+        {
+            self.jump(n - 1, window, cx);
+            cx.stop_propagation();
+        }
     }
 }

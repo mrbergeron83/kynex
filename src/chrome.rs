@@ -61,18 +61,14 @@ pub fn window_controls(window: &Window, cx: &App) -> impl IntoElement {
                 })
             })
     };
-    div()
-        .flex()
-        .h_full()
-        .flex_none()
-        .when(!cfg!(target_os = "macos"), |d| {
-            d.child(button("win-min", Icon::Minimize, WindowControlArea::Min, false))
-                .child(button(
-                    "win-max",
-                    if maximized { Icon::Restore } else { Icon::Maximize },
-                    WindowControlArea::Max,
-                    false,
-                ))
-                .child(button("win-close", Icon::Close, WindowControlArea::Close, true))
-        })
+    div().flex().h_full().flex_none().when(!cfg!(target_os = "macos"), |d| {
+        d.child(button("win-min", Icon::Minimize, WindowControlArea::Min, false))
+            .child(button(
+                "win-max",
+                if maximized { Icon::Restore } else { Icon::Maximize },
+                WindowControlArea::Max,
+                false,
+            ))
+            .child(button("win-close", Icon::Close, WindowControlArea::Close, true))
+    })
 }

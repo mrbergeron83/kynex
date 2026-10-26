@@ -36,11 +36,19 @@ impl KynexApp {
         }
     }
 
-    fn answer(&mut self, key: Key, request_id: String, answer: session::Answer, window: &mut Window, cx: &mut Context<Self>) {
+    fn answer(
+        &mut self,
+        key: Key,
+        request_id: String,
+        answer: session::Answer,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut rules = Vec::new();
         let mut cwd = None;
         if let Some(s) = self.session_for(key) {
-            let ix = s.items.iter().position(|i| matches!(i, Item::Permission { request_id: r, .. } if *r == request_id));
+            let ix =
+                s.items.iter().position(|i| matches!(i, Item::Permission { request_id: r, .. } if *r == request_id));
             if let Some(ix) = ix {
                 rules = s.answer_permission(ix, answer);
                 cwd = Some(s.cwd.clone());
@@ -82,7 +90,9 @@ impl KynexApp {
             let view = cx.new(|cx| PromptView::new(req, window, cx));
             let sub = cx.subscribe_in(&view, window, {
                 let id = id.clone();
-                move |this, _, PromptAnswer(answer), window, cx| this.answer(key, id.clone(), answer.clone(), window, cx)
+                move |this, _, PromptAnswer(answer), window, cx| {
+                    this.answer(key, id.clone(), answer.clone(), window, cx)
+                }
             });
             self.prompt = Some(ActivePrompt { key, id, view, _sub: sub });
         }

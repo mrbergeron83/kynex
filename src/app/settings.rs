@@ -42,9 +42,10 @@ impl KynexApp {
         let path = view.path.clone();
         let mut errors = Vec::new();
         if view.perms != perms_before
-            && let Err(e) = view.perms.save(&path) {
-                errors.push(e);
-            }
+            && let Err(e) = view.perms.save(&path)
+        {
+            errors.push(e);
+        }
         if view.claude != claude_before {
             if let Err(e) = view.claude.save(&path) {
                 errors.push(e);
@@ -125,7 +126,11 @@ impl KynexApp {
         .detach();
     }
 
-    pub(super) fn render_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+    pub(super) fn render_settings(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
         let view = self.settings.as_ref()?;
         let t = theme(cx).clone();
         const SECTIONS: [&str; 2] = ["Permissions", "Model"];
@@ -133,18 +138,25 @@ impl KynexApp {
         let path = view.path.clone();
         let vp = window.viewport_size();
 
-        let nav = div().flex().flex_col().gap_0p5().w(px(170.)).flex_none().p_2().border_r_1().border_color(t.border_variant).children(
-            SECTIONS.iter().enumerate().map(|(i, name)| {
-                menu_item(("settings-section", i), *name, false, cx)
-                    .when(i == section, |d| d.bg(t.active))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+        let nav = div()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .w(px(170.))
+            .flex_none()
+            .p_2()
+            .border_r_1()
+            .border_color(t.border_variant)
+            .children(SECTIONS.iter().enumerate().map(|(i, name)| {
+                menu_item(("settings-section", i), *name, false, cx).when(i == section, |d| d.bg(t.active)).on_click(
+                    cx.listener(move |this, _, _, cx| {
                         if let Some(s) = &mut this.settings {
                             s.section = i;
                         }
                         cx.notify();
-                    }))
-            }),
-        );
+                    }),
+                )
+            }));
 
         let content = match section {
             0 => {
@@ -178,7 +190,9 @@ impl KynexApp {
                         .flex_col()
                         .gap_0p5()
                         .child(div().text_xs().text_color(t.text_muted).child(title))
-                        .when(rules.is_empty(), |d| d.child(div().pl_2().text_sm().text_color(t.text_placeholder).child("None")))
+                        .when(rules.is_empty(), |d| {
+                            d.child(div().pl_2().text_sm().text_color(t.text_placeholder).child("None"))
+                        })
                         .children(rules.iter().enumerate().map(|(i, rule)| {
                             div()
                                 .flex()
@@ -187,7 +201,15 @@ impl KynexApp {
                                 .pl_2()
                                 .rounded_md()
                                 .hover(|s| s.bg(t.hover))
-                                .child(div().flex_1().min_w_0().truncate().font_family(mono()).text_sm().child(rule.clone()))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .truncate()
+                                        .font_family(mono())
+                                        .text_sm()
+                                        .child(rule.clone()),
+                                )
                                 .child(
                                     icon_button(SharedString::from(format!("rm-{title}-{i}")), Icon::Close, cx)
                                         .tooltip(Tooltip::text("Remove this rule"))
@@ -202,7 +224,8 @@ impl KynexApp {
                                 )
                         }))
                 };
-                let (allow, deny, dirs) = (view.perms.allow.clone(), view.perms.deny.clone(), view.claude.add_dirs.clone());
+                let (allow, deny, dirs) =
+                    (view.perms.allow.clone(), view.perms.deny.clone(), view.claude.add_dirs.clone());
                 div()
                     .flex()
                     .flex_col()
@@ -284,17 +307,32 @@ impl KynexApp {
             }
             _ => {
                 let effort = project::EFFORTS.iter().find(|e| e.0 == view.claude.effort).map_or("Default", |e| e.1);
-                div().flex().flex_col().gap_2().child(heading("Effort", "How hard Claude thinks (--effort). Default uses your Claude settings.", &t)).child(
-                    div().flex().child(
-                        outline_button("effort", effort, cx)
-                            .gap_1()
-                            .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
-                            .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
-                                this.open_menu(Menu::Effort, ev.position(), Anchor::TopLeft, cx)
-                            })),
-                    ),
-                )
-                .child(div().pt_2().text_xs().text_color(t.text_muted).child("The model and effort are also in the composer. The model applies to every tab."))
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(heading(
+                        "Effort",
+                        "How hard Claude thinks (--effort). Default uses your Claude settings.",
+                        &t,
+                    ))
+                    .child(
+                        div().flex().child(
+                            outline_button("effort", effort, cx)
+                                .gap_1()
+                                .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
+                                .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                                    this.open_menu(Menu::Effort, ev.position(), Anchor::TopLeft, cx)
+                                })),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .pt_2()
+                            .text_xs()
+                            .text_color(t.text_muted)
+                            .child("The model and effort are also in the composer. The model applies to every tab."),
+                    )
             }
         };
 
@@ -338,19 +376,13 @@ impl KynexApp {
             )
             .child(
                 div().flex().flex_1().min_h_0().child(nav).child(
-                    div()
-                        .id("settings-body")
-                        .flex_1()
-                        .overflow_y_scroll()
-                        .p_5()
-                        .child(content)
-                        .child(
-                            div()
-                                .pt_6()
-                                .text_xs()
-                                .text_color(t.text_placeholder)
-                                .child(format!("Stored in {}", project::dir(&path).display())),
-                        ),
+                    div().id("settings-body").flex_1().overflow_y_scroll().p_5().child(content).child(
+                        div()
+                            .pt_6()
+                            .text_xs()
+                            .text_color(t.text_placeholder)
+                            .child(format!("Stored in {}", project::dir(&path).display())),
+                    ),
                 ),
             );
 

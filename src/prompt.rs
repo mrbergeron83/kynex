@@ -126,7 +126,10 @@ impl PromptView {
                 }
                 let rules = project::suggested_rules(&req.suggestions);
                 if req.kind == Kind::Code && !rules.is_empty() {
-                    choices.push((format!("Yes, and always allow {} in this project", rules_label(&rules)), Answer::Project));
+                    choices.push((
+                        format!("Yes, and always allow {} in this project", rules_label(&rules)),
+                        Answer::Project,
+                    ));
                 }
                 choices
             }
@@ -274,13 +277,16 @@ impl PromptView {
                     .text_color(t.warning)
                     .child(title(&self.req.tool, &self.req.input)),
             )
-            .when(self.queued > 0, |d| d.child(div().text_xs().text_color(t.text_muted).child(format!("+{} more", self.queued))))
+            .when(self.queued > 0, |d| {
+                d.child(div().text_xs().text_color(t.text_muted).child(format!("+{} more", self.queued)))
+            })
     }
 
     fn render_permission(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let t = theme(cx).clone();
         let max_h = window.viewport_size().height * 0.35;
-        let show_desc = !self.req.description.is_empty() && !matches!(self.req.tool.as_str(), "Write" | "Edit" | "MultiEdit" | "Read");
+        let show_desc = !self.req.description.is_empty()
+            && !matches!(self.req.tool.as_str(), "Write" | "Edit" | "MultiEdit" | "Read");
         div()
             .flex()
             .flex_col()
@@ -370,13 +376,7 @@ impl PromptView {
                         .gap_2()
                         .pb_1()
                         .children(question["header"].as_str().map(|h| {
-                            div()
-                                .px_1p5()
-                                .rounded_sm()
-                                .bg(t.element)
-                                .text_xs()
-                                .text_color(t.info)
-                                .child(h.to_string())
+                            div().px_1p5().rounded_sm().bg(t.element).text_xs().text_color(t.info).child(h.to_string())
                         }))
                         .child(
                             div()
@@ -393,9 +393,12 @@ impl PromptView {
                                 .flex()
                                 .flex_col()
                                 .child(div().text_sm().child(option["label"].as_str().unwrap_or("").to_string()))
-                                .children(option["description"].as_str().filter(|d| !d.is_empty()).map(|d| {
-                                    div().text_xs().text_color(t.text_muted).child(d.to_string())
-                                })),
+                                .children(
+                                    option["description"]
+                                        .as_str()
+                                        .filter(|d| !d.is_empty())
+                                        .map(|d| div().text_xs().text_color(t.text_muted).child(d.to_string())),
+                                ),
                         )
                         .on_click(cx.listener(move |this, _, _, cx| this.toggle(q, n, cx)))
                 }))
@@ -473,7 +476,15 @@ fn choice_row(id: impl Into<gpui::ElementId>, n: usize, selected: bool, t: &Pale
         .when(selected, |d| d.bg(t.hover))
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
-        .child(div().flex_none().w(px(12.)).font_family(mono()).text_sm().text_color(t.text_placeholder).child(format!("{}", n + 1)))
+        .child(
+            div()
+                .flex_none()
+                .w(px(12.))
+                .font_family(mono())
+                .text_sm()
+                .text_color(t.text_placeholder)
+                .child(format!("{}", n + 1)),
+        )
 }
 
 fn hint(text: &'static str, cx: &App) -> impl IntoElement + use<> {
@@ -489,7 +500,9 @@ pub fn title(tool: &str, input: &Value) -> String {
         "Write" => format!("Allow Claude to write {}?", file()),
         "Read" => format!("Allow Claude to read {}?", file()),
         "WebFetch" => format!("Allow Claude to fetch {}?", input["url"].as_str().unwrap_or("this page")),
-        "WebSearch" => format!("Allow Claude to search the web for \u{201c}{}\u{201d}?", input["query"].as_str().unwrap_or("")),
+        "WebSearch" => {
+            format!("Allow Claude to search the web for \u{201c}{}\u{201d}?", input["query"].as_str().unwrap_or(""))
+        }
         "ExitPlanMode" => "Ready to code? Here is Claude's plan:".into(),
         "AskUserQuestion" => "Claude has a question".into(),
         _ => match tool.strip_prefix("mcp__").and_then(|t| t.split_once("__")) {
@@ -517,7 +530,8 @@ fn session_label(suggestions: &Value) -> Option<String> {
                 }
             }
             Some("addDirectories") => {
-                let dirs: Vec<&str> = s["directories"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                let dirs: Vec<&str> =
+                    s["directories"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
                 if !dirs.is_empty() {
                     parts.push(format!("access to {}", dirs.join(", ")));
                 }
@@ -550,9 +564,10 @@ fn rules_label(rules: &[String]) -> String {
 fn preview(tool: &str, input: &Value, t: &Palette) -> impl IntoElement + use<> {
     let code = |s: &str| div().font_family(mono()).text_size(px(13.)).child(s.to_string());
     let path_line = |input: &Value| {
-        input["file_path"].as_str().or(input["notebook_path"].as_str()).map(|p| {
-            div().font_family(mono()).text_xs().text_color(t.text_muted).pb_1().child(p.to_string())
-        })
+        input["file_path"]
+            .as_str()
+            .or(input["notebook_path"].as_str())
+            .map(|p| div().font_family(mono()).text_xs().text_color(t.text_muted).pb_1().child(p.to_string()))
     };
     let el = div().flex().flex_col();
     match tool {
@@ -562,19 +577,23 @@ fn preview(tool: &str, input: &Value, t: &Palette) -> impl IntoElement + use<> {
             input["new_string"].as_str().unwrap_or(""),
             t,
         )),
-        "MultiEdit" => el.children(path_line(input)).children(input["edits"].as_array().into_iter().flatten().enumerate().map(
-            |(n, e)| {
-                div()
-                    .when(n > 0, |d| d.mt_2().pt_2().border_t_1().border_color(t.border_variant))
-                    .child(diff_lines(e["old_string"].as_str().unwrap_or(""), e["new_string"].as_str().unwrap_or(""), t))
-            },
-        )),
+        "MultiEdit" => {
+            el.children(path_line(input)).children(input["edits"].as_array().into_iter().flatten().enumerate().map(
+                |(n, e)| {
+                    div().when(n > 0, |d| d.mt_2().pt_2().border_t_1().border_color(t.border_variant)).child(
+                        diff_lines(e["old_string"].as_str().unwrap_or(""), e["new_string"].as_str().unwrap_or(""), t),
+                    )
+                },
+            ))
+        }
         "Write" => el.children(path_line(input)).child(diff_lines("", input["content"].as_str().unwrap_or(""), t)),
-        "NotebookEdit" => el.children(path_line(input)).child(diff_lines("", input["new_source"].as_str().unwrap_or(""), t)),
+        "NotebookEdit" => {
+            el.children(path_line(input)).child(diff_lines("", input["new_source"].as_str().unwrap_or(""), t))
+        }
         "Read" => el.children(path_line(input)),
-        "WebFetch" => el
-            .child(code(input["url"].as_str().unwrap_or("")))
-            .children(input["prompt"].as_str().map(|p| div().pt_1().text_sm().text_color(t.text_muted).child(p.to_string()))),
+        "WebFetch" => el.child(code(input["url"].as_str().unwrap_or(""))).children(
+            input["prompt"].as_str().map(|p| div().pt_1().text_sm().text_color(t.text_muted).child(p.to_string())),
+        ),
         _ => el.child(code(&serde_json::to_string_pretty(input).unwrap_or_default())),
     }
 }
@@ -613,7 +632,9 @@ fn diff_lines(old: &str, new: &str, t: &Palette) -> impl IntoElement + use<> {
                 _ => row.text_color(t.text_muted),
             }
         }))
-        .when(more > 0, |d| d.child(div().pt_1().text_xs().text_color(t.text_muted).child(format!("… {more} more lines"))))
+        .when(more > 0, |d| {
+            d.child(div().pt_1().text_xs().text_color(t.text_muted).child(format!("… {more} more lines")))
+        })
 }
 
 #[cfg(test)]

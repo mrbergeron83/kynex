@@ -6,11 +6,10 @@
 use std::ops::Range;
 
 use gpui::{
-    App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
-    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, Image, KeyBinding,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
-    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div,
-    fill, point, prelude::*, px, relative, size,
+    App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
+    EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, Image, KeyBinding, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, SharedString, Style, TextRun,
+    UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, point, prelude::*, px, relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -596,7 +595,8 @@ impl EntityInputHandler for TextInput {
             .map(|range_utf16| self.range_from_utf16(range_utf16))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
-        let new_text = if self.multiline { new_text.replace("\r\n", "\n") } else { new_text.replace(['\r', '\n'], " ") };
+        let new_text =
+            if self.multiline { new_text.replace("\r\n", "\n") } else { new_text.replace(['\r', '\n'], " ") };
 
         self.content.replace_range(range.clone(), &new_text);
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
@@ -695,7 +695,14 @@ fn display_runs(input: &TextInput, window: &Window, cx: &App) -> (SharedString, 
     } else {
         (input.content.clone().into(), style.color)
     };
-    let run = TextRun { len: text.len(), font: style.font(), color, background_color: None, underline: None, strikethrough: None };
+    let run = TextRun {
+        len: text.len(),
+        font: style.font(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
     let runs = match input.marked_range.as_ref().filter(|_| !input.content.is_empty()) {
         Some(marked) => [
             TextRun { len: marked.start, ..run.clone() },
@@ -718,8 +725,11 @@ fn shape(text: SharedString, runs: &[TextRun], width: Option<Pixels>, window: &W
     let style = window.text_style();
     let font_size = style.font_size.to_pixels(window.rem_size());
     let line_height = window.line_height();
-    let lines: Vec<WrappedLine> =
-        window.text_system().shape_text(text.clone(), font_size, runs, width, None).map(|l| l.into_vec()).unwrap_or_default();
+    let lines: Vec<WrappedLine> = window
+        .text_system()
+        .shape_text(text.clone(), font_size, runs, width, None)
+        .map(|l| l.into_vec())
+        .unwrap_or_default();
     let mut starts = Vec::with_capacity(lines.len());
     let mut at = 0;
     for line in &lines {
@@ -833,7 +843,14 @@ impl Element for TextElement {
         let layout = prepaint.layout.take().unwrap();
         let mut y = px(0.);
         for line in &layout.lines {
-            let _ = line.paint(bounds.origin + point(px(0.), y), layout.line_height, gpui::TextAlign::Left, None, window, cx);
+            let _ = line.paint(
+                bounds.origin + point(px(0.), y),
+                layout.line_height,
+                gpui::TextAlign::Left,
+                None,
+                window,
+                cx,
+            );
             y += line.size(layout.line_height).height;
         }
         if focus_handle.is_focused(window)

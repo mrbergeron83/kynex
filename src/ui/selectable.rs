@@ -264,17 +264,19 @@ impl Element for Selectable {
                     return;
                 }
                 let Some(sel) = cx.try_global::<Selection>() else { return };
-                let clicked = sel.group == group && sel.anchor == sel.head && sel.anchor.is_some_and(|(s, _)| s == spot);
+                let clicked =
+                    sel.group == group && sel.anchor == sel.head && sel.anchor.is_some_and(|(s, _)| s == spot);
                 if sel.dragging {
                     cx.default_global::<Selection>().dragging = false;
                 }
                 // A click that didn't drag follows a link under it.
-                if clicked && hitbox.is_hovered(window)
+                if clicked
+                    && hitbox.is_hovered(window)
                     && let Ok(ix) = layout.index_for_position(e.position)
-                        && let Some((_, url)) = links.iter().find(|(r, _)| r.contains(&ix))
-                    {
-                        cx.open_url(url);
-                    }
+                    && let Some((_, url)) = links.iter().find(|(r, _)| r.contains(&ix))
+                {
+                    cx.open_url(url);
+                }
             }
         });
     }

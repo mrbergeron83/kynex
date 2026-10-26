@@ -23,9 +23,10 @@ pub fn open_project(opener: Opener, path: &Path) -> Result<(), String> {
                 open_with("code", &["--remote".as_ref(), remote.as_ref(), w.path.as_ref()])
             }
             Opener::Explorer => open_with("explorer", &[path.as_os_str()]),
-            Opener::Terminal => {
-                open_with("wt", &["wsl.exe".as_ref(), "-d".as_ref(), w.distro.as_ref(), "--cd".as_ref(), w.path.as_ref()])
-            }
+            Opener::Terminal => open_with(
+                "wt",
+                &["wsl.exe".as_ref(), "-d".as_ref(), w.distro.as_ref(), "--cd".as_ref(), w.path.as_ref()],
+            ),
         };
     }
     match opener {

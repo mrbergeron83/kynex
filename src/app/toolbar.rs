@@ -60,14 +60,20 @@ impl KynexApp {
                 .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if let Active::Project(i) = this.saved.active
-                        && let Some(p) = this.saved.projects.get_mut(i) {
-                            p.view = v;
-                        }
+                        && let Some(p) = this.saved.projects.get_mut(i)
+                    {
+                        p.view = v;
+                    }
                     this.save();
                     cx.notify();
                 }))
         };
-        let open = |id: &'static str, which: Icon, tip: &'static str, opener: Opener, path: PathBuf, cx: &mut Context<Self>| {
+        let open = |id: &'static str,
+                    which: Icon,
+                    tip: &'static str,
+                    opener: Opener,
+                    path: PathBuf,
+                    cx: &mut Context<Self>| {
             icon_button(id, which, cx).tooltip(Tooltip::text(tip)).on_click(cx.listener(move |this, _, _, cx| {
                 this.open_in(opener, &path);
                 cx.notify();

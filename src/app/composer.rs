@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, Anchor, AnyElement, ClickEvent, Context, ExternalPaths, Focusable, Image, ImageFormat,
+    Anchor, Animation, AnimationExt, AnyElement, ClickEvent, Context, ExternalPaths, Focusable, Image, ImageFormat,
     PathPromptOptions, Window, div, img, prelude::*, px,
 };
 use kynex_core::attach::{is_image, prepare_image};
@@ -154,33 +154,31 @@ impl KynexApp {
             }
         });
         let in_project = matches!(self.saved.active, Active::Project(_));
-        let placeholder = if in_project {
-            "Ask Claude Code to do something in this project…"
-        } else {
-            "Message Claude…"
-        };
+        let placeholder =
+            if in_project { "Ask Claude Code to do something in this project…" } else { "Message Claude…" };
         self.composer.update(cx, |c, _| c.set_placeholder(placeholder));
         let focused = self.composer.read(cx).is_focused(window);
         let can_send = !busy && (!self.composer.read(cx).text().trim().is_empty() || !self.attachments.is_empty());
         let max_h = window.viewport_size().height * 0.4;
 
-        let attachments = div().flex().flex_wrap().gap_2().children(self.attachments.iter().enumerate().map(|(i, a)| {
-            let preview = a.preview.clone().downcast::<Image>().ok();
-            div()
-                .id(("attachment", i))
-                .rounded_md()
-                .border_1()
-                .border_color(t.border)
-                .overflow_hidden()
-                .cursor_pointer()
-                .hover(|s| s.opacity(0.7))
-                .children(preview.map(|p| img(p).h(px(56.)).max_w(px(120.))))
-                .tooltip(Tooltip::text("Click to remove"))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.attachments.remove(i);
-                    cx.notify();
-                }))
-        }));
+        let attachments =
+            div().flex().flex_wrap().gap_2().children(self.attachments.iter().enumerate().map(|(i, a)| {
+                let preview = a.preview.clone().downcast::<Image>().ok();
+                div()
+                    .id(("attachment", i))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(t.border)
+                    .overflow_hidden()
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.7))
+                    .children(preview.map(|p| img(p).h(px(56.)).max_w(px(120.))))
+                    .tooltip(Tooltip::text("Click to remove"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.attachments.remove(i);
+                        cx.notify();
+                    }))
+            }));
 
         let send = if busy {
             div()
@@ -283,24 +281,19 @@ fn working_bar(working: bool, t: &Palette) -> AnyElement {
         .gap_1p5()
         .text_xs()
         .text_color(color)
-        .child(if working { spinner("working-spin", color, px(12.)).into_any_element() } else { icon(Icon::Dot, color).size_2().into_any_element() })
+        .child(if working {
+            spinner("working-spin", color, px(12.)).into_any_element()
+        } else {
+            icon(Icon::Dot, color).size_2().into_any_element()
+        })
         .child(if working { "Working…" } else { "Waiting for you" });
     let track = div().relative().w_full().h(px(2.)).rounded_full().overflow_hidden().bg(t.border_variant);
     let track = if working {
-        track.child(
-            div()
-                .absolute()
-                .top_0()
-                .h_full()
-                .w(gpui::relative(0.3))
-                .rounded_full()
-                .bg(color)
-                .with_animation(
-                    "working-slide",
-                    Animation::new(Duration::from_millis(1400)).repeat().with_easing(gpui::ease_in_out),
-                    |bar, delta| bar.left(gpui::relative(delta * 1.3 - 0.3)),
-                ),
-        )
+        track.child(div().absolute().top_0().h_full().w(gpui::relative(0.3)).rounded_full().bg(color).with_animation(
+            "working-slide",
+            Animation::new(Duration::from_millis(1400)).repeat().with_easing(gpui::ease_in_out),
+            |bar, delta| bar.left(gpui::relative(delta * 1.3 - 0.3)),
+        ))
     } else {
         track.child(div().size_full().bg(color.opacity(0.6)))
     };

@@ -14,12 +14,13 @@ use std::sync::{Arc, Mutex};
 /// (`~/.local/bin`), which a fresh install puts it in before Kynex's PATH knows.
 pub fn program() -> PathBuf {
     let exe = if cfg!(windows) { "claude.exe" } else { "claude" };
-    let on_path = std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(exe).is_file()));
+    let on_path =
+        std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(exe).is_file()));
     if !on_path
-        && let Some(local) = dirs::home_dir().map(|h| h.join(".local").join("bin").join(exe)).filter(|p| p.is_file()) {
-            return local;
-        }
+        && let Some(local) = dirs::home_dir().map(|h| h.join(".local").join("bin").join(exe)).filter(|p| p.is_file())
+    {
+        return local;
+    }
     PathBuf::from("claude")
 }
 
@@ -58,7 +59,10 @@ pub fn install() -> Result<(), String> {
     };
     let out = cmd.output().map_err(|e| format!("couldn't start the installer: {e}"))?;
     if !out.status.success() || status() == Status::Missing {
-        return Err(format!("The Claude Code installer failed: {}", last_line(&out.stderr).or(last_line(&out.stdout)).unwrap_or_default()));
+        return Err(format!(
+            "The Claude Code installer failed: {}",
+            last_line(&out.stderr).or(last_line(&out.stdout)).unwrap_or_default()
+        ));
     }
     Ok(())
 }
@@ -108,7 +112,9 @@ impl Login {
 
     pub fn send_code(&mut self, code: &str) -> Result<(), String> {
         let stdin = self.stdin.as_mut().ok_or("sign-in already finished")?;
-        writeln!(stdin, "{}", code.trim()).and_then(|_| stdin.flush()).map_err(|e| format!("couldn't send the code: {e}"))
+        writeln!(stdin, "{}", code.trim())
+            .and_then(|_| stdin.flush())
+            .map_err(|e| format!("couldn't send the code: {e}"))
     }
 
     /// `None` while it runs; then whether it signed in, or what it said last.

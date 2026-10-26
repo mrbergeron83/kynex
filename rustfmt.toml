@@ -1,0 +1,4 @@
+edition = "2024"
+max_width = 120
+# gpui builder chains read best one call per line only when they're long.
+use_small_heuristics = "Max"

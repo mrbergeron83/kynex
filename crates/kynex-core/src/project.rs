@@ -27,11 +27,13 @@ pub fn dir(project: &Path) -> PathBuf {
 /// repos that are both called `api` don't share settings.
 fn folder_name(project: &Path) -> String {
     let name = project.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let mut slug: String = name
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c.to_ascii_lowercase() } else { '-' })
-        .take(40)
-        .collect();
+    let mut slug: String =
+        name.chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c.to_ascii_lowercase() } else { '-' }
+            })
+            .take(40)
+            .collect();
     if slug.trim_matches(['-', '.']).is_empty() {
         slug = "project".into();
     }
@@ -58,7 +60,10 @@ struct ProjectInfo {
 }
 
 fn load<T: DeserializeOwned + Default>(project: &Path, file: &str) -> T {
-    std::fs::read_to_string(dir(project).join(file)).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    std::fs::read_to_string(dir(project).join(file))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 /// Writes one section, creating the project's folder (and `project.json`) on first use.
@@ -279,7 +284,8 @@ mod tests {
     #[test]
     fn claude_settings_args() {
         assert!(ClaudeSettings::default().cli_args().is_empty());
-        let s = ClaudeSettings { mode: Mode::Plan, effort: "high".into(), add_dirs: vec![PathBuf::from("/srv/shared")] };
+        let s =
+            ClaudeSettings { mode: Mode::Plan, effort: "high".into(), add_dirs: vec![PathBuf::from("/srv/shared")] };
         assert_eq!(s.cli_args(), ["--effort", "high", "--add-dir", "/srv/shared"]);
     }
 

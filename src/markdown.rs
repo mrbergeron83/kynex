@@ -5,8 +5,8 @@
 use std::ops::Range;
 
 use gpui::{
-    AnyElement, App, ClipboardItem, ElementId, FontStyle, FontWeight, HighlightStyle, SharedString,
-    StrikethroughStyle, UnderlineStyle, div, prelude::*, px,
+    AnyElement, App, ClipboardItem, ElementId, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
+    UnderlineStyle, div, prelude::*, px,
 };
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
@@ -356,9 +356,9 @@ impl<'a> Builder<'a> {
                     .group_hover("code", |s| s.visible())
                     .when(!lang.is_empty(), |d| d.child(div().text_xs().text_color(p.text_placeholder).child(lang)))
                     .child(
-                        icon_button(copy_id, Icon::Copy, self.cx)
-                            .tooltip(Tooltip::text("Copy"))
-                            .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(to_copy.clone()))),
+                        icon_button(copy_id, Icon::Copy, self.cx).tooltip(Tooltip::text("Copy")).on_click(
+                            move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(to_copy.clone())),
+                        ),
                     ),
             )
             .into_any_element()
@@ -371,23 +371,20 @@ impl<'a> Builder<'a> {
         div()
             .id(id)
             .overflow_x_scroll()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(p.border_variant)
-                    .children(rows.into_iter().enumerate().map(|(i, (head, cells))| {
-                        div()
-                            .flex()
-                            .when(i > 0, |d| d.border_t_1().border_color(p.border_variant))
-                            .when(head, |d| d.bg(p.element).font_weight(FontWeight::SEMIBOLD))
-                            .children(cells.into_iter().take(columns).map(|c| {
-                                div().flex_1().min_w(px(80.)).px_2().py_1().child(c)
-                            }))
-                    })),
-            )
+            .child(div().flex().flex_col().rounded_md().border_1().border_color(p.border_variant).children(
+                rows.into_iter().enumerate().map(|(i, (head, cells))| {
+                    div()
+                        .flex()
+                        .when(i > 0, |d| d.border_t_1().border_color(p.border_variant))
+                        .when(head, |d| d.bg(p.element).font_weight(FontWeight::SEMIBOLD))
+                        .children(
+                            cells
+                                .into_iter()
+                                .take(columns)
+                                .map(|c| div().flex_1().min_w(px(80.)).px_2().py_1().child(c)),
+                        )
+                }),
+            ))
             .into_any_element()
     }
 

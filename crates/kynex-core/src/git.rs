@@ -85,7 +85,8 @@ mod tests {
         assert_eq!(s.branch, "main...origin/main");
         assert_eq!(
             s.files,
-            [(" M", "src/app.rs"), ("??", "new.rs"), ("R ", "a.rs -> b.rs")].map(|(a, b)| (a.to_string(), b.to_string()))
+            [(" M", "src/app.rs"), ("??", "new.rs"), ("R ", "a.rs -> b.rs")]
+                .map(|(a, b)| (a.to_string(), b.to_string()))
         );
     }
 }

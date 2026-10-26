@@ -78,25 +78,40 @@ const ICONS: [(&str, &str); 23] = [
     ("close", r#"<path d="M18 6 6 18M6 6l12 12"/>"#),
     ("minimize", r#"<path d="M5 12h14"/>"#),
     ("maximize", r#"<rect x="5" y="5" width="14" height="14" rx="1.5"/>"#),
-    ("restore", r#"<rect x="4" y="8" width="12" height="12" rx="1.5"/><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H16"/>"#),
+    (
+        "restore",
+        r#"<rect x="4" y="8" width="12" height="12" rx="1.5"/><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4h9A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H16"/>"#,
+    ),
     ("plus", r#"<path d="M12 5v14M5 12h14"/>"#),
     ("settings", r#"<path d="M20 7h-9M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>"#),
     ("panel-left", r#"<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>"#),
-    ("git-branch", r#"<path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>"#),
+    (
+        "git-branch",
+        r#"<path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>"#,
+    ),
     ("message", r#"<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>"#),
-    ("folder", r#"<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>"#),
+    (
+        "folder",
+        r#"<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>"#,
+    ),
     ("terminal", r#"<path d="m4 17 6-6-6-6M12 19h8"/>"#),
     ("code", r#"<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>"#),
     ("trash", r#"<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>"#),
     ("chevron-down", r#"<path d="m6 9 6 6 6-6"/>"#),
     ("chevron-right", r#"<path d="m9 18 6-6-6-6"/>"#),
-    ("paperclip", r#"<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>"#),
+    (
+        "paperclip",
+        r#"<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>"#,
+    ),
     ("arrow-up", r#"<path d="m5 12 7-7 7 7M12 19V5"/>"#),
     ("stop", r#"<rect x="6" y="6" width="12" height="12" rx="1.5" fill="black"/>"#),
     ("loader", r#"<path d="M21 12a9 9 0 1 1-6.22-8.56"/>"#),
     ("check", r#"<path d="M20 6 9 17l-5-5"/>"#),
     ("refresh", r#"<path d="M3 12a9 9 0 0 1 15.74-6.26L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.74 6.26L3 16M8 16H3v5"/>"#),
-    ("copy", r#"<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/>"#),
+    (
+        "copy",
+        r#"<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/>"#,
+    ),
     ("dot", r#"<circle cx="12" cy="12" r="5" fill="black" stroke="none"/>"#),
 ];
 
@@ -283,7 +298,12 @@ pub fn popover(cx: &App) -> gpui::Div {
 }
 
 /// One row in a menu or picker.
-pub fn menu_item(id: impl Into<ElementId>, label: impl Into<SharedString>, selected: bool, cx: &App) -> Stateful<gpui::Div> {
+pub fn menu_item(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    selected: bool,
+    cx: &App,
+) -> Stateful<gpui::Div> {
     let t = theme(cx);
     let hover = t.hover;
     div()

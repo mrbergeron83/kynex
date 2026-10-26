@@ -27,10 +27,11 @@ impl KynexApp {
         }
         for p in &mut self.saved.projects {
             if let Some(s) = self.code.get(&p.path).and_then(Live::current)
-                && p.session_id != s.session_id {
-                    p.session_id = s.session_id.clone();
-                    changed = true;
-                }
+                && p.session_id != s.session_id
+            {
+                p.session_id = s.session_id.clone();
+                changed = true;
+            }
         }
         if changed {
             self.save();
@@ -170,7 +171,11 @@ impl KynexApp {
             Active::Project(a) if a > i => Active::Project(a - 1),
             Active::Project(a) if a == i && i > 0 => Active::Project(i - 1),
             Active::Project(a) if a == i => {
-                if self.saved.projects.is_empty() { Active::Chat } else { Active::Project(0) }
+                if self.saved.projects.is_empty() {
+                    Active::Chat
+                } else {
+                    Active::Project(0)
+                }
             }
             other => other,
         };
@@ -186,13 +191,14 @@ impl KynexApp {
         });
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(paths))) = paths.await
-                && let Some(dir) = paths.into_iter().next() {
-                    this.update(cx, |this, cx| {
-                        this.add_project(dir);
-                        cx.notify();
-                    })
-                    .ok();
-                }
+                && let Some(dir) = paths.into_iter().next()
+            {
+                this.update(cx, |this, cx| {
+                    this.add_project(dir);
+                    cx.notify();
+                })
+                .ok();
+            }
         })
         .detach();
     }

@@ -127,7 +127,15 @@ impl Render for GitView {
                             .cursor_pointer()
                             .hover(move |s| s.bg(hover))
                             .when(is_selected, |d| d.bg(t.active))
-                            .child(div().w(px(18.)).flex_none().font_family(mono()).text_xs().text_color(color).child(status))
+                            .child(
+                                div()
+                                    .w(px(18.))
+                                    .flex_none()
+                                    .font_family(mono())
+                                    .text_xs()
+                                    .text_color(color)
+                                    .child(status),
+                            )
                             .child(div().flex_1().min_w_0().truncate().child(file.clone()))
                             .on_click(cx.listener(move |this, _, _, cx| this.select(file.clone(), cx)))
                     })
@@ -150,7 +158,13 @@ impl Render for GitView {
                             .px_3()
                             .items_center()
                             .text_xs()
-                            .child(div().flex_none().font_family(mono()).text_color(t.text_placeholder).child(hash.to_string()))
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .font_family(mono())
+                                    .text_color(t.text_placeholder)
+                                    .child(hash.to_string()),
+                            )
                             .child(div().flex_1().min_w_0().truncate().text_color(t.text_muted).child(msg.to_string()))
                     })
                     .collect()

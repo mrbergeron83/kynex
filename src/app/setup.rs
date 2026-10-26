@@ -185,7 +185,14 @@ impl KynexApp {
     pub(super) fn render_setup(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
         let busy = |label: &'static str| {
-            div().flex().items_center().gap_2().text_sm().text_color(t.text_muted).child(spinner("setup-spin", t.accent, px(14.))).child(label)
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_sm()
+                .text_color(t.text_muted)
+                .child(spinner("setup-spin", t.accent, px(14.)))
+                .child(label)
         };
         let error = |e: &Option<String>| e.clone().map(|e| div().text_xs().text_color(t.error).child(e));
         let (title, body, content): (&str, &str, AnyElement) = match &self.setup {
@@ -224,7 +231,10 @@ impl KynexApp {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(primary_button("setup-sign-in", "Sign in", cx).on_click(cx.listener(|this, _, _, cx| this.sign_in(false, cx))))
+                            .child(
+                                primary_button("setup-sign-in", "Sign in", cx)
+                                    .on_click(cx.listener(|this, _, _, cx| this.sign_in(false, cx))),
+                            )
                             .child(
                                 ghost_button("setup-console", cx)
                                     .text_color(t.text_muted)
@@ -250,7 +260,12 @@ impl KynexApp {
                                 .flex()
                                 .flex_col()
                                 .gap_1p5()
-                                .child(div().text_xs().text_color(t.text_muted).child("If the page shows a code, paste it here:"))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(t.text_muted)
+                                        .child("If the page shows a code, paste it here:"),
+                                )
                                 .child(
                                     div()
                                         .flex()
@@ -287,12 +302,14 @@ impl KynexApp {
                                             .on_click(move |_, _, cx| cx.open_url(&url)),
                                     )
                                 })
-                                .child(ghost_button("setup-cancel", cx).text_color(t.text_muted).child("Cancel").on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.setup = Setup::LoggedOut { error: None };
-                                        cx.notify();
-                                    }),
-                                )),
+                                .child(
+                                    ghost_button("setup-cancel", cx).text_color(t.text_muted).child("Cancel").on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            this.setup = Setup::LoggedOut { error: None };
+                                            cx.notify();
+                                        }),
+                                    ),
+                                ),
                         )
                         .into_any_element(),
                 )

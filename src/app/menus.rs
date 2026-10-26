@@ -117,7 +117,11 @@ impl KynexApp {
             }
             Menu::Effort => {
                 // From the settings modal, or from the composer for the active project.
-                let path = self.settings.as_ref().map(|s| s.path.clone()).or_else(|| self.active_project().map(|p| p.path.clone()));
+                let path = self
+                    .settings
+                    .as_ref()
+                    .map(|s| s.path.clone())
+                    .or_else(|| self.active_project().map(|p| p.path.clone()));
                 let current = match (&self.settings, &path) {
                     (Some(s), _) => s.claude.effort.clone(),
                     (None, Some(p)) => ClaudeSettings::load(p).effort,

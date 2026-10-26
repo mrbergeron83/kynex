@@ -38,16 +38,39 @@ pub struct Attachment {
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
 pub enum Item {
-    User { text: String, images: Vec<Preview> },
+    User {
+        text: String,
+        images: Vec<Preview>,
+    },
     Assistant(String),
     Thinking,
-    ToolUse { name: String, summary: String, input: String },
-    ToolResult { content: String, is_error: bool },
+    ToolUse {
+        name: String,
+        summary: String,
+        input: String,
+    },
+    ToolResult {
+        content: String,
+        is_error: bool,
+    },
     /// A `can_use_tool` request. `tool` is the tool's name (`Bash`, `mcp__x__y`),
     /// `description` the CLI's one-line summary of what it's for.
-    Permission { request_id: String, tool: String, input: Value, suggestions: Value, description: String, state: PermState },
+    Permission {
+        request_id: String,
+        tool: String,
+        input: Value,
+        suggestions: Value,
+        description: String,
+        state: PermState,
+    },
     /// The end of a turn, with a recap of it: how many tools ran and which files changed.
-    Result { cost: f64, duration_ms: u64, is_error: bool, tools: usize, files: Vec<String> },
+    Result {
+        cost: f64,
+        duration_ms: u64,
+        is_error: bool,
+        tools: usize,
+        files: Vec<String>,
+    },
     Error(String),
 }
 
@@ -222,9 +245,7 @@ impl Session {
         if let Some(id) = &self.session_id {
             cmd.args(["--resume", id]);
         }
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -260,10 +281,11 @@ impl Session {
 
     pub fn send(&mut self, text: String, attachments: Vec<Attachment>) {
         if self.child.is_none()
-            && let Err(e) = self.spawn() {
-                self.items.push(Item::Error(e));
-                return;
-            }
+            && let Err(e) = self.spawn()
+        {
+            self.items.push(Item::Error(e));
+            return;
+        }
         let mut content = Vec::new();
         let mut images = Vec::new();
         for a in attachments {
@@ -304,7 +326,8 @@ impl Session {
     /// to save in the project's settings; the live process gets them right away
     /// as session rules, and later processes get them from the saved settings.
     pub fn answer_permission(&mut self, index: usize, answer: Answer) -> Vec<String> {
-        let Some(Item::Permission { request_id, tool, input, suggestions, state, .. }) = self.items.get_mut(index) else {
+        let Some(Item::Permission { request_id, tool, input, suggestions, state, .. }) = self.items.get_mut(index)
+        else {
             return Vec::new();
         };
         if *state != PermState::Pending {
@@ -324,7 +347,9 @@ impl Session {
                 }),
                 PermState::Denied(format!("denied: {}", feedback.trim())),
             ),
-            Answer::Once => (json!({ "behavior": "allow", "updatedInput": input }), PermState::Allowed("allowed".into())),
+            Answer::Once => {
+                (json!({ "behavior": "allow", "updatedInput": input }), PermState::Allowed("allowed".into()))
+            }
             Answer::Session | Answer::Project => {
                 // Kynex keeps project rules itself, so the CLI never writes them to its settings files.
                 let mut updates = suggestions.clone();
@@ -332,17 +357,26 @@ impl Session {
                     u["destination"] = json!("session");
                 }
                 let note = if rules.is_empty() { "allowed for this session" } else { "always allowed in this project" };
-                (json!({ "behavior": "allow", "updatedInput": input, "updatedPermissions": updates }), PermState::Allowed(note.into()))
+                (
+                    json!({ "behavior": "allow", "updatedInput": input, "updatedPermissions": updates }),
+                    PermState::Allowed(note.into()),
+                )
             }
             Answer::Plan(mode) => {
                 plan_mode = Some(mode);
-                (json!({ "behavior": "allow", "updatedInput": input }), PermState::Allowed(format!("plan approved · {}", mode.label())))
+                (
+                    json!({ "behavior": "allow", "updatedInput": input }),
+                    PermState::Allowed(format!("plan approved · {}", mode.label())),
+                )
             }
             Answer::Questions(answers) => {
                 let note = answers.values().filter_map(Value::as_str).collect::<Vec<_>>().join(" · ");
                 let mut updated = input.clone();
                 updated["answers"] = Value::Object(answers);
-                (json!({ "behavior": "allow", "updatedInput": updated }), PermState::Allowed(format!("answered: {note}")))
+                (
+                    json!({ "behavior": "allow", "updatedInput": updated }),
+                    PermState::Allowed(format!("answered: {note}")),
+                )
             }
         };
         let approves_plan =
@@ -406,9 +440,10 @@ impl Session {
         }
         // `system` init and status messages report the mode, e.g. after a plan is approved.
         if let Some(mode) = v["permissionMode"].as_str().and_then(project::Mode::from_cli)
-            && self.child.is_some() {
-                self.mode = mode;
-            }
+            && self.child.is_some()
+        {
+            self.mode = mode;
+        }
         match v["type"].as_str().unwrap_or("") {
             "stream_event" => self.handle_stream(&v["event"]),
             "assistant" => {
@@ -446,7 +481,11 @@ impl Session {
             "control_request" if v["request"]["subtype"] == "can_use_tool" => {
                 self.items.push(Item::Permission {
                     request_id: v["request_id"].as_str().unwrap_or("").into(),
-                    tool: v["request"]["tool_name"].as_str().or(v["request"]["display_name"].as_str()).unwrap_or("tool").into(),
+                    tool: v["request"]["tool_name"]
+                        .as_str()
+                        .or(v["request"]["display_name"].as_str())
+                        .unwrap_or("tool")
+                        .into(),
                     input: v["request"]["input"].clone(),
                     suggestions: v["request"]["permission_suggestions"].clone(),
                     description: v["request"]["description"].as_str().unwrap_or("").into(),
@@ -500,9 +539,10 @@ impl Session {
             }
             Some("content_block_delta") => {
                 if let Some(t) = ev["delta"]["text"].as_str()
-                    && let Some(Item::Assistant(s)) = self.items.last_mut() {
-                        s.push_str(t);
-                    }
+                    && let Some(Item::Assistant(s)) = self.items.last_mut()
+                {
+                    s.push_str(t);
+                }
             }
             _ => {}
         }
@@ -613,7 +653,8 @@ pub fn list_models() -> Result<Vec<ModelInfo>, String> {
         cmd.creation_flags(0x0800_0000);
     }
     let mut child = cmd.spawn().map_err(|e| format!("failed to start `claude`: {e}"))?;
-    let request = json!({ "type": "control_request", "request_id": "kynex-models", "request": { "subtype": "initialize" } });
+    let request =
+        json!({ "type": "control_request", "request_id": "kynex-models", "request": { "subtype": "initialize" } });
     let sent = child.stdin.as_mut().is_some_and(|s| writeln!(s, "{request}").and_then(|_| s.flush()).is_ok());
     let mut response = None;
     if sent {
@@ -719,17 +760,17 @@ fn tool_summary(name: &str, input: &Value) -> String {
     };
     let s = input[field].as_str().unwrap_or("");
     let first = s.lines().next().unwrap_or("");
-    if first.chars().count() > 120 { format!("{}…", first.chars().take(120).collect::<String>()) } else { first.into() }
+    if first.chars().count() > 120 {
+        format!("{}…", first.chars().take(120).collect::<String>())
+    } else {
+        first.into()
+    }
 }
 
 fn tool_result_text(content: &Value) -> String {
     match content {
         Value::String(s) => s.clone(),
-        Value::Array(parts) => parts
-            .iter()
-            .filter_map(|p| p["text"].as_str())
-            .collect::<Vec<_>>()
-            .join("\n"),
+        Value::Array(parts) => parts.iter().filter_map(|p| p["text"].as_str()).collect::<Vec<_>>().join("\n"),
         _ => String::new(),
     }
 }
@@ -783,7 +824,8 @@ mod tests {
     #[test]
     #[ignore]
     fn lists_real_sessions() {
-        let dir = std::env::var_os("KYNEX_SESSIONS_DIR").map_or_else(|| std::env::current_dir().unwrap(), PathBuf::from);
+        let dir =
+            std::env::var_os("KYNEX_SESSIONS_DIR").map_or_else(|| std::env::current_dir().unwrap(), PathBuf::from);
         let sessions = list_sessions(&dir);
         for s in &sessions {
             println!("{}  {:?}  {}", s.id, s.modified, s.title.chars().take(60).collect::<String>());
@@ -804,7 +846,8 @@ mod tests {
             s.poll();
             std::thread::sleep(Duration::from_millis(50));
         }
-        let text: String = s.items.iter().filter_map(|i| if let Item::Assistant(t) = i { Some(t.as_str()) } else { None }).collect();
+        let text: String =
+            s.items.iter().filter_map(|i| if let Item::Assistant(t) = i { Some(t.as_str()) } else { None }).collect();
         assert!(text.to_lowercase().contains("pong"), "got: {text:?}");
         assert!(s.items.iter().any(|i| matches!(i, Item::Result { is_error: false, .. })));
         assert!(s.session_id.is_some());
@@ -829,7 +872,9 @@ mod tests {
             let start = Instant::now();
             while s.busy && start.elapsed() < Duration::from_secs(120) {
                 s.poll();
-                if let Some(i) = s.items.iter().position(|i| matches!(i, Item::Permission { state: PermState::Pending, .. })) {
+                if let Some(i) =
+                    s.items.iter().position(|i| matches!(i, Item::Permission { state: PermState::Pending, .. }))
+                {
                     s.answer_permission(i, Answer::Deny(String::new()));
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -879,8 +924,12 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        let text: String = s.items.iter().filter_map(|i| if let Item::Assistant(t) = i { Some(t.as_str()) } else { None }).collect();
-        assert!(s.items.iter().any(|i| matches!(i, Item::Permission { state: PermState::Allowed(_), .. })), "never asked");
+        let text: String =
+            s.items.iter().filter_map(|i| if let Item::Assistant(t) = i { Some(t.as_str()) } else { None }).collect();
+        assert!(
+            s.items.iter().any(|i| matches!(i, Item::Permission { state: PermState::Allowed(_), .. })),
+            "never asked"
+        );
         assert!(text.contains("BLUE"), "got: {text:?}");
         s.kill();
     }

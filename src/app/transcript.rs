@@ -86,7 +86,8 @@ impl KynexApp {
         let Some(item) = session.items.get(ix) else { return div().into_any_element() };
         let expanded = self.expanded.contains(&(key, ix));
         // Tool traffic sits tight together; messages get room to breathe.
-        let compact = matches!(item, Item::ToolUse { .. } | Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking);
+        let compact =
+            matches!(item, Item::ToolUse { .. } | Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking);
         let toggle = {
             cx.listener(move |this, _, _, cx| {
                 let k = (key, ix);
@@ -114,7 +115,13 @@ impl KynexApp {
                 .when(!images.is_empty(), |d| {
                     // Previews are the `gpui::Image`s the composer attached.
                     let images = images.iter().filter_map(|i| i.clone().downcast::<gpui::Image>().ok());
-                    d.child(div().flex().flex_wrap().gap_2().children(images.map(|i| img(i).max_h(px(120.)).max_w(px(240.)).rounded_md())))
+                    d.child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .children(images.map(|i| img(i).max_h(px(120.)).max_w(px(240.)).rounded_md())),
+                    )
                 })
                 .when(!text.is_empty(), |d| {
                     d.child(div().text_sm().child(selectable(key, Spot::new(ix, 0), text.clone(), t.selection)))
@@ -128,17 +135,25 @@ impl KynexApp {
                     .text_sm()
                     .child(markdown::render(("md", ix), text, key, ix, cx))
                     .child(
-                        div().absolute().top_0().right(px(-30.)).invisible().group_hover("assistant", |s| s.visible()).child(
-                            crate::ui::icon_button(("copy-msg", ix), Icon::Copy, cx)
-                                .tooltip(Tooltip::text("Copy message"))
-                                .on_click(move |_, _, cx| {
-                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(to_copy.clone()))
-                                }),
-                        ),
+                        div()
+                            .absolute()
+                            .top_0()
+                            .right(px(-30.))
+                            .invisible()
+                            .group_hover("assistant", |s| s.visible())
+                            .child(
+                                crate::ui::icon_button(("copy-msg", ix), Icon::Copy, cx)
+                                    .tooltip(Tooltip::text("Copy message"))
+                                    .on_click(move |_, _, cx| {
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(to_copy.clone()))
+                                    }),
+                            ),
                     )
                     .into_any_element()
             }
-            Item::Thinking => div().text_sm().italic().text_color(t.text_placeholder).child("Thinking…").into_any_element(),
+            Item::Thinking => {
+                div().text_sm().italic().text_color(t.text_placeholder).child("Thinking…").into_any_element()
+            }
             Item::ToolUse { name, summary, input } => {
                 // Claude's description of the call reads as prose; a bare command or path stays mono.
                 let described = serde_json::from_str::<serde_json::Value>(input)
@@ -152,7 +167,14 @@ impl KynexApp {
                 };
                 let head = disclosure_row(("tool", ix), expanded, &t)
                     .child(icon(Icon::Terminal, t.text_muted).size_3())
-                    .child(div().flex_none().text_xs().font_weight(FontWeight::MEDIUM).text_color(t.text_muted).child(name.clone()))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(t.text_muted)
+                            .child(name.clone()),
+                    )
                     .child(summary_el)
                     .on_click(toggle);
                 div()
@@ -167,7 +189,16 @@ impl KynexApp {
                 let color = if *is_error { t.error } else { t.text_placeholder };
                 let head = disclosure_row(("result", ix), expanded, &t)
                     .pl_6()
-                    .child(div().flex_1().min_w_0().truncate().font_family(mono()).text_xs().text_color(color).child(first))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .font_family(mono())
+                            .text_xs()
+                            .text_color(color)
+                            .child(first),
+                    )
                     .on_click(toggle);
                 div()
                     .flex()
@@ -208,7 +239,12 @@ impl KynexApp {
                     .text_xs()
                     .child(icon(which, color).size_3p5().flex_none())
                     .child(div().flex_none().font_weight(FontWeight::MEDIUM).text_color(color).child(label))
-                    .child(div().min_w_0().truncate().text_color(t.text_muted).child(fmt::recap(*duration_ms, *tools, files, *cost)))
+                    .child(div().min_w_0().truncate().text_color(t.text_muted).child(fmt::recap(
+                        *duration_ms,
+                        *tools,
+                        files,
+                        *cost,
+                    )))
                     .into_any_element()
             }
             Item::Error(e) => div()

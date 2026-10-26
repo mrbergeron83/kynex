@@ -86,7 +86,9 @@ impl KynexApp {
                 uid: s.uid,
                 id: s.session_id.clone(),
                 first: s.items.iter().find_map(|i| match i {
-                    Item::User { text, .. } if !text.is_empty() => Some(text.split_whitespace().collect::<Vec<_>>().join(" ")),
+                    Item::User { text, .. } if !text.is_empty() => {
+                        Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
+                    }
                     _ => None,
                 }),
                 busy: s.busy,
@@ -97,12 +99,18 @@ impl KynexApp {
         let live_sig: Vec<(Option<String>, bool)> = open.iter().map(|o| (o.id.clone(), o.busy)).collect();
         // Re-read when the folder or session changes, and when a reply starts or finishes (titles and times move).
         if self.sessions.as_ref().is_none_or(|l| l.cwd != cwd || l.current != current || l.live != live_sig) {
-            self.sessions =
-                Some(SessionList { items: session::list_sessions(&cwd), cwd: cwd.clone(), current: current.clone(), live: live_sig });
+            self.sessions = Some(SessionList {
+                items: session::list_sessions(&cwd),
+                cwd: cwd.clone(),
+                current: current.clone(),
+                live: live_sig,
+            });
         }
         let items = &self.sessions.as_ref().unwrap().items;
         let open_state = |id: &str| {
-            open.iter().find(|o| o.id.as_deref() == Some(id)).map_or((false, false, false), |o| (o.busy, o.waiting, o.finished))
+            open.iter()
+                .find(|o| o.id.as_deref() == Some(id))
+                .map_or((false, false, false), |o| (o.busy, o.waiting, o.finished))
         };
 
         let header = div()
@@ -154,7 +162,15 @@ impl KynexApp {
             );
         }
         if items.is_empty() {
-            rows.push(div().px_3().py_2().text_sm().text_color(t.text_placeholder).child("No past sessions yet").into_any_element());
+            rows.push(
+                div()
+                    .px_3()
+                    .py_2()
+                    .text_sm()
+                    .text_color(t.text_placeholder)
+                    .child("No past sessions yet")
+                    .into_any_element(),
+            );
         }
         for (n, info) in items.iter().enumerate() {
             let is_current = current.as_deref() == Some(info.id.as_str());
@@ -195,7 +211,11 @@ impl KynexApp {
                 .child(
                     delete
                         .when(busy, |d| d.opacity(0.4))
-                        .tooltip(Tooltip::text(if busy { "Stop it first to delete it" } else { "Delete this session's transcript" }))
+                        .tooltip(Tooltip::text(if busy {
+                            "Stop it first to delete it"
+                        } else {
+                            "Delete this session's transcript"
+                        }))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
                             if busy {
@@ -210,7 +230,10 @@ impl KynexApp {
                                 this.open_session(Session::new(kind2, cwd3.clone()));
                             }
                             let open = this.live_mut().and_then(|l| {
-                                l.sessions.iter().find(|s| s.session_id.as_deref() == Some(del_id.as_str())).map(|s| s.uid)
+                                l.sessions
+                                    .iter()
+                                    .find(|s| s.session_id.as_deref() == Some(del_id.as_str()))
+                                    .map(|s| s.uid)
                             });
                             if let Some(uid) = open {
                                 this.close_open(uid);
@@ -275,7 +298,13 @@ fn session_row(
 
 /// A session row's badge: waiting on you, working in the background, or
 /// finished since you last looked.
-fn session_status(id: impl Into<gpui::ElementId>, busy: bool, waiting: bool, finished: bool, t: &Palette) -> Option<AnyElement> {
+fn session_status(
+    id: impl Into<gpui::ElementId>,
+    busy: bool,
+    waiting: bool,
+    finished: bool,
+    t: &Palette,
+) -> Option<AnyElement> {
     if waiting {
         Some(icon(Icon::Dot, t.warning).size_3().flex_none().into_any_element())
     } else if busy {
