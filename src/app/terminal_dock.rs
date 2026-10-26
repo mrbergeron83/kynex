@@ -1,6 +1,6 @@
 //! The terminal under the conversation: one [`TerminalPanel`] per project,
 //! shown below the composer with a draggable top edge, toggled with Ctrl+`
-//! and fed by the play buttons on Bash / PowerShell tool calls.
+//! and fed by the play buttons on the ```bash / ```powershell commands Claude suggests.
 
 use std::path::{Path, PathBuf};
 
@@ -69,7 +69,7 @@ impl KynexApp {
         self.toggle_terminal(&ToggleTerminal, window, cx);
     }
 
-    /// Runs a command from a tool call in the project's terminal, opening it if needed.
+    /// Runs a command Claude suggested in the project's terminal, opening it if needed.
     pub(super) fn run_in_terminal(
         &mut self,
         kind: ShellKind,

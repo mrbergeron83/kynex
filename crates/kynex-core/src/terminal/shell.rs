@@ -16,11 +16,12 @@ impl ShellKind {
         if cfg!(windows) { ShellKind::PowerShell } else { ShellKind::Bash }
     }
 
-    /// The shell that runs a Claude Code tool's commands (`Bash`, `PowerShell`).
-    pub fn for_tool(tool: &str) -> Option<Self> {
-        match tool {
-            "Bash" => Some(ShellKind::Bash),
-            "PowerShell" => Some(ShellKind::PowerShell),
+    /// The shell that runs a fenced code block tagged `lang` (```bash, ```powershell…),
+    /// or `None` when the block isn't shell commands.
+    pub fn for_lang(lang: &str) -> Option<Self> {
+        match lang.to_ascii_lowercase().as_str() {
+            "bash" | "sh" | "shell" | "zsh" | "console" => Some(ShellKind::Bash),
+            "powershell" | "pwsh" | "ps1" | "ps" => Some(ShellKind::PowerShell),
             _ => None,
         }
     }
@@ -126,10 +127,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tools_map_to_shells() {
-        assert_eq!(ShellKind::for_tool("Bash"), Some(ShellKind::Bash));
-        assert_eq!(ShellKind::for_tool("PowerShell"), Some(ShellKind::PowerShell));
-        assert_eq!(ShellKind::for_tool("Read"), None);
+    fn code_fences_map_to_shells() {
+        assert_eq!(ShellKind::for_lang("bash"), Some(ShellKind::Bash));
+        assert_eq!(ShellKind::for_lang("sh"), Some(ShellKind::Bash));
+        assert_eq!(ShellKind::for_lang("PowerShell"), Some(ShellKind::PowerShell));
+        assert_eq!(ShellKind::for_lang("ps1"), Some(ShellKind::PowerShell));
+        assert_eq!(ShellKind::for_lang("rust"), None);
+        assert_eq!(ShellKind::for_lang(""), None);
     }
 
     #[test]

@@ -329,7 +329,7 @@ impl PromptView {
                     .px_3()
                     .py_2()
                     .text_sm()
-                    .child(markdown::render("plan-md", &plan, 0, 0, cx)),
+                    .child(markdown::render("plan-md", &plan, 0, 0, None, cx)),
             )
             .child(self.choice_list(cx))
     }
@@ -560,8 +560,33 @@ fn rules_label(rules: &[String]) -> String {
     words.join(", ")
 }
 
+/// The (old, new) text pairs a file-editing tool call changes; `None` for
+/// tools that don't edit files.
+fn edits(tool: &str, input: &Value) -> Option<Vec<(String, String)>> {
+    let s = |v: &Value| v.as_str().unwrap_or("").to_string();
+    Some(match tool {
+        "Edit" => vec![(s(&input["old_string"]), s(&input["new_string"]))],
+        "MultiEdit" => input["edits"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|e| (s(&e["old_string"]), s(&e["new_string"])))
+            .collect(),
+        "Write" => vec![(String::new(), s(&input["content"]))],
+        "NotebookEdit" => vec![(String::new(), s(&input["new_source"]))],
+        _ => return None,
+    })
+}
+
+/// Lines added and removed by a file-editing tool call, or `None` for other tools.
+pub fn diff_stat(tool: &str, input: &Value) -> Option<(usize, usize)> {
+    let lines = edits(tool, input)?.iter().flat_map(|(old, new)| diff(old, new)).collect::<Vec<_>>();
+    let count = |sign| lines.iter().filter(|(s, _)| *s == sign).count();
+    Some((count('+'), count('-')))
+}
+
 /// What the tool will do: the command, the edit as a diff, the file to write…
-fn preview(tool: &str, input: &Value, t: &Palette) -> impl IntoElement + use<> {
+pub fn preview(tool: &str, input: &Value, t: &Palette) -> impl IntoElement + use<> {
     let code = |s: &str| div().font_family(mono()).text_size(px(13.)).child(s.to_string());
     let path_line = |input: &Value| {
         input["file_path"]
@@ -667,5 +692,16 @@ mod tests {
         assert_eq!(d.first().unwrap(), &(' ', "b".to_string()));
         assert!(d.contains(&('-', "e".to_string())) && d.contains(&('+', "E".to_string())));
         assert_eq!(d.len(), 3 + 2 + 2);
+    }
+
+    #[test]
+    fn diff_stat_counts_edited_lines() {
+        let edit = json!({ "file_path": "a.rs", "old_string": "x\ny", "new_string": "x\nY\nZ" });
+        assert_eq!(diff_stat("Edit", &edit), Some((2, 1)));
+        let multi =
+            json!({ "edits": [{ "old_string": "a", "new_string": "b" }, { "old_string": "c", "new_string": "" }] });
+        assert_eq!(diff_stat("MultiEdit", &multi), Some((1, 2)));
+        assert_eq!(diff_stat("Write", &json!({ "content": "1\n2\n3" })), Some((3, 0)));
+        assert_eq!(diff_stat("Bash", &json!({ "command": "ls" })), None);
     }
 }

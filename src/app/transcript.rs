@@ -1,14 +1,15 @@
 //! The conversation: a virtualized `gpui::list` per session that follows the
 //! tail while a reply streams, and how each [`Item`] draws.
 
+use std::rc::Rc;
+
 use gpui::{
-    AnyElement, Context, FollowMode, FontWeight, ListAlignment, ListState, Pixels, Window, div, img, list, prelude::*,
-    px,
+    AnyElement, App, Context, FollowMode, FontWeight, ListAlignment, ListState, Pixels, Window, div, img, list,
+    prelude::*, px,
 };
 use kynex_core::fmt;
 use kynex_core::live::Key;
 use kynex_core::session::{Item, Kind, PermState};
-use kynex_core::terminal::ShellKind;
 
 use super::KynexApp;
 use super::state::Active;
@@ -131,11 +132,18 @@ impl KynexApp {
                 .into_any_element(),
             Item::Assistant(text) => {
                 let to_copy = text.clone();
+                // Commands Claude suggests (```bash / ```powershell) run in the project's terminal.
+                let run = (session_kind == Kind::Code).then(|| {
+                    let this = cx.entity().downgrade();
+                    Rc::new(move |shell, command, window: &mut Window, cx: &mut App| {
+                        this.update(cx, |this, cx| this.run_in_terminal(shell, command, window, cx)).ok();
+                    }) as markdown::RunCommand
+                });
                 div()
                     .group("assistant")
                     .relative()
                     .text_sm()
-                    .child(markdown::render(("md", ix), text, key, ix, cx))
+                    .child(markdown::render(("md", ix), text, key, ix, run, cx))
                     .child(
                         div()
                             .absolute()
@@ -161,31 +169,17 @@ impl KynexApp {
                 // Claude's description of the call reads as prose; a bare command or path stays mono.
                 let described =
                     parsed.as_ref().is_some_and(|v| v["description"].as_str().is_some_and(|d| !d.trim().is_empty()));
-                // Shell commands get a play button that runs them in the project's terminal.
-                let runnable = ShellKind::for_tool(name)
-                    .filter(|_| session_kind == Kind::Code)
-                    .zip(parsed.as_ref().and_then(|v| v["command"].as_str()).map(str::to_string));
-                let play = runnable.map(|(shell, command)| {
-                    let success = t.success;
+                // File edits show how many lines they change, and open as a diff.
+                let stat = parsed.as_ref().and_then(|v| prompt::diff_stat(name, v));
+                let stat_el = stat.filter(|&(add, del)| add + del > 0).map(|(add, del)| {
                     div()
-                        .id(("run-in-terminal", ix))
                         .flex()
                         .flex_none()
-                        .items_center()
-                        .justify_center()
-                        .size(px(20.))
-                        .rounded_md()
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(success.opacity(0.15)))
-                        .child(icon(Icon::Play, t.success.opacity(0.8)).size_3())
-                        .tooltip(Tooltip::with_meta(
-                            format!("Run in {}", shell.label()),
-                            "In this project's terminal, below",
-                        ))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.run_in_terminal(shell, command.clone(), window, cx);
-                        }))
+                        .gap_1()
+                        .font_family(mono())
+                        .text_xs()
+                        .when(add > 0, |d| d.child(div().text_color(t.success).child(format!("+{add}"))))
+                        .when(del > 0, |d| d.child(div().text_color(t.error).child(format!("−{del}"))))
                 });
                 let summary_el = div().flex_1().min_w_0().truncate().child(summary.clone());
                 let summary_el = if described {
@@ -204,14 +198,16 @@ impl KynexApp {
                             .child(name.clone()),
                     )
                     .child(summary_el)
-                    .children(play)
+                    .children(stat_el)
                     .on_click(toggle);
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(head)
-                    .when(expanded, |d| d.child(code_box(("tool-body", ix).into(), input.clone(), (key, ix), &t)))
-                    .into_any_element()
+                let body = match parsed.filter(|_| expanded && stat.is_some()) {
+                    Some(v) => {
+                        Some(diff_box(("tool-diff", ix).into(), prompt::preview(name, &v, &t), &t).into_any_element())
+                    }
+                    None => expanded
+                        .then(|| code_box(("tool-body", ix).into(), input.clone(), (key, ix), &t).into_any_element()),
+                };
+                div().flex().flex_col().child(head).children(body).into_any_element()
             }
             Item::ToolResult { content, is_error } => {
                 let first: String = content.lines().next().unwrap_or("").chars().take(160).collect();
@@ -307,6 +303,23 @@ fn disclosure_row(id: impl Into<gpui::ElementId>, expanded: bool, t: &Palette) -
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
         .child(icon(if expanded { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_placeholder).size_3())
+}
+
+/// A file edit drawn as a diff, in the same frame as [`code_box`].
+fn diff_box<E: IntoElement>(id: gpui::ElementId, diff: E, t: &Palette) -> impl IntoElement + use<E> {
+    div()
+        .id(id)
+        .ml_6()
+        .mt_1()
+        .max_h(px(420.))
+        .overflow_y_scroll()
+        .rounded_md()
+        .border_1()
+        .border_color(t.border_variant)
+        .bg(t.panel)
+        .px_2()
+        .py_2()
+        .child(diff)
 }
 
 /// A tool's input or output, selectable as item `item` of transcript `group`.

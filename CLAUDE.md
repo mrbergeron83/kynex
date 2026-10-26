@@ -90,7 +90,7 @@ A cargo workspace with two crates:
     Changes tab (commit box, staged / unstaged files), History tab, diff viewer; the table at the
     top of `git/mod.rs` lists the files
   - `terminal/` — the terminal panel under the conversation (`TerminalPanel`, tabs of
-    `TerminalView`s drawn by a custom GPU element); play buttons on Bash / PowerShell tool calls
+    `TerminalView`s drawn by a custom GPU element); play buttons on the ```bash / ```powershell commands Claude suggests
     run their command there; Ctrl+` toggles it
   - `ui/` — our small component kit, Zed `ui`-crate style: buttons, tooltips, menus, icons
     (inline SVGs served as assets), spinner; `ui/input.rs` is the multi-line text field (IME,

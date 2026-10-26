@@ -3,23 +3,36 @@
 //! grows, the next frame parses it again.
 
 use std::ops::Range;
+use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, ClipboardItem, ElementId, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
-    UnderlineStyle, div, prelude::*, px,
+    UnderlineStyle, Window, div, prelude::*, px,
 };
+use kynex_core::terminal::ShellKind;
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::theme::{Palette, mono, theme};
 use crate::ui::selectable::{Spot, selectable};
-use crate::ui::{Icon, Tooltip, icon_button};
+use crate::ui::{Icon, Tooltip, icon, icon_button};
+
+/// Runs a suggested shell command (a ```bash or ```powershell block) somewhere.
+pub type RunCommand = Rc<dyn Fn(ShellKind, String, &mut Window, &mut App)>;
 
 /// Renders `src` as a column of blocks. `id` keeps element ids (copy buttons)
 /// unique across messages; the text is selectable as item `item` of selection
-/// group `group`.
-pub fn render(id: impl Into<ElementId>, src: &str, group: u64, item: usize, cx: &App) -> AnyElement {
+/// group `group`. With `run`, shell code blocks get a play button that calls it.
+pub fn render(
+    id: impl Into<ElementId>,
+    src: &str,
+    group: u64,
+    item: usize,
+    run: Option<RunCommand>,
+    cx: &App,
+) -> AnyElement {
     let mut b = Builder::new(id.into(), theme(cx).clone(), cx);
     b.select = (group, item);
+    b.run = run;
     let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     for event in Parser::new_ext(src, options) {
         b.event(event);
@@ -66,6 +79,7 @@ struct Builder<'a> {
     /// Selection group and item, and the next block's number in it.
     select: (u64, usize),
     blocks: usize,
+    run: Option<RunCommand>,
 }
 
 impl<'a> Builder<'a> {
@@ -85,6 +99,7 @@ impl<'a> Builder<'a> {
             counter: 0,
             select: (0, 0),
             blocks: 0,
+            run: None,
         }
     }
 
@@ -323,6 +338,27 @@ impl<'a> Builder<'a> {
         let copy_id = self.next_id("copy");
         let scroll_id = self.next_id("code");
         let to_copy = code.clone();
+        // Suggested shell commands get a play button; it stays visible so it's found.
+        let play = ShellKind::for_lang(&lang).zip(self.run.clone()).map(|(shell, run)| {
+            let command = code.clone();
+            let success = self.p.success;
+            div()
+                .id(self.next_id("run"))
+                .absolute()
+                .top_1()
+                .right_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(24.))
+                .rounded_md()
+                .cursor_pointer()
+                .hover(move |s| s.bg(success.opacity(0.15)))
+                .child(icon(Icon::Play, success.opacity(0.8)).size_3())
+                .tooltip(Tooltip::with_meta(format!("Run in {}", shell.label()), "In this project's terminal, below"))
+                .on_click(move |_, window, cx| run(shell, command.clone(), window, cx))
+        });
+        let has_play = play.is_some();
         let text = selectable(self.select.0, self.next_spot(), code, self.p.selection);
         let p = &self.p;
         div()
@@ -348,7 +384,7 @@ impl<'a> Builder<'a> {
                 div()
                     .absolute()
                     .top_1()
-                    .right_1()
+                    .map(|d| if has_play { d.right(px(30.)) } else { d.right_1() })
                     .flex()
                     .items_center()
                     .gap_1()
@@ -361,6 +397,7 @@ impl<'a> Builder<'a> {
                         ),
                     ),
             )
+            .children(play)
             .into_any_element()
     }
 
