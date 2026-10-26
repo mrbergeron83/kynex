@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::chrome;
 use crate::git::GitView;
-use crate::session::{Attachment, Item, Kind, PermState, Session};
+use crate::session::{self, Attachment, Item, Kind, PermState, Session, SessionInfo};
 use crate::theme::{self, THEMES, Theme};
 use crate::wsl;
 
@@ -66,9 +66,30 @@ pub struct KynexApp {
     notice: Option<String>,
     last_active: Active,
     switched_at: f64,
+    sessions: Option<SessionList>,
+    /// Session id whose delete button was clicked once and is awaiting confirmation.
+    confirm_delete: Option<String>,
 }
 
+/// Past sessions for the active conversation's folder, re-read when the folder
+/// or the current session changes, or the menu is opened.
+struct SessionList {
+    cwd: PathBuf,
+    current: Option<String>,
+    items: Vec<SessionInfo>,
+}
+
+enum SessionAction {
+    Switch(String),
+    New,
+    Delete(String),
+}
+
+/// `%APPDATA%\kynex`, or `KYNEX_DATA_DIR` to run a test instance without touching your real state.
 fn data_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("KYNEX_DATA_DIR") {
+        return PathBuf::from(dir);
+    }
     let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     base.join("kynex")
 }
@@ -105,6 +126,8 @@ impl KynexApp {
             notice: None,
             last_active: Active::Chat,
             switched_at: f64::NEG_INFINITY,
+            sessions: None,
+            confirm_delete: None,
         }
     }
 
@@ -160,6 +183,114 @@ impl KynexApp {
             s.model = model;
             s
         }))
+    }
+
+    /// Replaces the active conversation (the old process, if any, is stopped).
+    fn set_session(&mut self, mut s: Session) {
+        s.model = self.saved.model.clone();
+        match self.saved.active {
+            Active::Chat => self.chat = s,
+            Active::Project(i) => {
+                if let Some(p) = self.saved.projects.get(i) {
+                    self.code.insert(p.path.clone(), s);
+                }
+            }
+        }
+    }
+
+    /// The current conversation's title, with a menu to switch to, start, or delete sessions.
+    fn session_bar(&mut self, ui: &mut egui::Ui) {
+        let Some(s) = self.session_mut() else { return };
+        let (kind, cwd, current, busy) = (s.kind, s.cwd.clone(), s.session_id.clone(), s.busy);
+        if self.sessions.as_ref().is_none_or(|l| l.cwd != cwd || l.current != current) {
+            self.sessions = Some(SessionList { items: session::list_sessions(&cwd), cwd: cwd.clone(), current: current.clone() });
+        }
+        let Some(list) = &self.sessions else { return };
+        let title = current
+            .as_ref()
+            .and_then(|id| list.items.iter().find(|i| &i.id == id))
+            .map_or_else(|| "New session".to_string(), |i| truncate(&i.title, 70));
+
+        let mut action = None;
+        let mut reload = false;
+        let confirm_delete = &mut self.confirm_delete;
+        ui.horizontal(|ui| {
+            let menu = ui.menu_button(format!("{title}  ▼"), |ui| {
+                ui.set_min_width(420.0);
+                if list.items.is_empty() {
+                    ui.label(RichText::new("No past sessions yet").weak());
+                }
+                egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                    for info in &list.items {
+                        let is_current = current.as_deref() == Some(info.id.as_str());
+                        let confirming = confirm_delete.as_deref() == Some(info.id.as_str());
+                        let (open, delete) = egui::Sides::new().show(
+                            ui,
+                            |ui| {
+                                ui.add_enabled(!busy || is_current, egui::Button::selectable(is_current, truncate(&info.title, 48)))
+                                    .on_hover_text(&info.title)
+                                    .on_disabled_hover_text("Stop the current reply first")
+                                    .clicked()
+                            },
+                            |ui| {
+                                let button = if confirming {
+                                    egui::Button::new(RichText::new("Delete?").color(theme::p().red))
+                                } else {
+                                    egui::Button::new("✖").small()
+                                };
+                                let clicked = ui
+                                    .add_enabled(!(busy && is_current), button)
+                                    .on_hover_text("Delete this session's transcript")
+                                    .on_disabled_hover_text("Stop the current reply first")
+                                    .clicked();
+                                ui.label(RichText::new(ago(info.modified)).small().weak());
+                                clicked
+                            },
+                        );
+                        if open && !is_current {
+                            action = Some(SessionAction::Switch(info.id.clone()));
+                            ui.close();
+                        }
+                        if delete && confirming {
+                            action = Some(SessionAction::Delete(info.id.clone()));
+                            *confirm_delete = None;
+                        } else if delete {
+                            *confirm_delete = Some(info.id.clone());
+                        }
+                    }
+                });
+            });
+            if menu.response.clicked() {
+                reload = true;
+                *confirm_delete = None;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let r = ui
+                    .add_enabled(!busy && current.is_some(), egui::Button::new("+ New session"))
+                    .on_disabled_hover_text(if busy { "Stop the current reply first" } else { "Already a new session" });
+                if r.clicked() {
+                    action = Some(SessionAction::New);
+                }
+            });
+        });
+
+        match action {
+            Some(SessionAction::Switch(id)) => self.set_session(Session::resume(kind, cwd, id)),
+            Some(SessionAction::New) => self.set_session(Session::new(kind, cwd)),
+            Some(SessionAction::Delete(id)) => {
+                if current.as_deref() == Some(id.as_str()) {
+                    self.set_session(Session::new(kind, cwd.clone()));
+                }
+                if let Err(e) = session::delete_session(&cwd, &id) {
+                    self.notice = Some(e);
+                }
+                reload = true;
+            }
+            None => {}
+        }
+        if reload {
+            self.sessions = None;
+        }
     }
 
     fn add_project(&mut self, path: PathBuf) {
@@ -369,13 +500,6 @@ impl KynexApp {
                 send = true;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("New session").clicked() {
-                    if let Some(s) = self.session_mut() {
-                        let (kind, cwd, model) = (s.kind, s.cwd.clone(), s.model.clone());
-                        *s = Session::new(kind, cwd);
-                        s.model = model;
-                    }
-                }
                 if ui.button("Attach image").clicked() {
                     if let Some(files) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "gif", "webp"]).pick_files() {
                         for f in files {
@@ -686,6 +810,8 @@ impl KynexApp {
                     self.project_toolbar(ui);
                     ui.separator();
                 }
+                self.session_bar(ui);
+                ui.separator();
                 self.transcript(ui);
             });
         });
@@ -701,6 +827,21 @@ fn tool_preview(tool: &str, input: &serde_json::Value) -> String {
         _ => None,
     };
     s.unwrap_or_else(|| serde_json::to_string_pretty(input).unwrap_or_default())
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() > max { format!("{}…", s.chars().take(max).collect::<String>()) } else { s.to_string() }
+}
+
+/// "just now", "5m ago", "3h ago", "2d ago".
+fn ago(t: std::time::SystemTime) -> String {
+    let secs = t.elapsed().map_or(0, |d| d.as_secs());
+    match secs {
+        0..60 => "just now".into(),
+        60..3600 => format!("{}m ago", secs / 60),
+        3600..86400 => format!("{}h ago", secs / 3600),
+        _ => format!("{}d ago", secs / 86400),
+    }
 }
 
 fn is_image(p: &Path) -> bool {

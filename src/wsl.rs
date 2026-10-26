@@ -2,8 +2,10 @@
 //! tools in that distro, so Claude Code gets a real Linux shell, Linux paths
 //! and native filesystem speed, while Kynex itself stays a Windows app.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 pub struct WslPath {
     pub distro: String,
@@ -40,10 +42,21 @@ impl WslPath {
     }
 
     /// The distro user's home directory as a Windows path, e.g. `\\wsl.localhost\Ubuntu\home\me`.
+    /// Looked up once per distro, since it means starting a process in WSL.
     pub fn home(&self) -> Option<PathBuf> {
+        static HOMES: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+        let homes = HOMES.get_or_init(Default::default);
+        if let Some(h) = homes.lock().ok()?.get(&self.distro) {
+            return Some(h.clone());
+        }
         let out = self.command("sh").args(["-c", "printf %s \"$HOME\""]).output().ok()?;
         let home = String::from_utf8(out.stdout).ok()?;
-        home.starts_with('/').then(|| PathBuf::from(format!(r"\\wsl.localhost\{}{}", self.distro, home.replace('/', r"\"))))
+        if !home.starts_with('/') {
+            return None;
+        }
+        let home = PathBuf::from(format!(r"\\wsl.localhost\{}{}", self.distro, home.replace('/', r"\")));
+        homes.lock().ok()?.insert(self.distro.clone(), home.clone());
+        Some(home)
     }
 }
 

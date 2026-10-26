@@ -10,6 +10,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::SystemTime;
 
 use eframe::egui;
 use serde_json::{Value, json};
@@ -394,19 +395,107 @@ fn spawn_reader(stream: impl std::io::Read + Send + 'static, tx: Sender<Event>, 
     });
 }
 
-/// Claude Code stores each session as `~/.claude/projects/<encoded cwd>/<id>.jsonl`,
-/// under the WSL user's home for projects that live in WSL.
-fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
+/// A past Claude Code conversation in some directory.
+pub struct SessionInfo {
+    pub id: String,
+    /// The first thing the user said.
+    pub title: String,
+    pub modified: SystemTime,
+}
+
+/// `~/.claude/projects`, under the WSL user's home for projects that live in WSL.
+fn projects_dir(cwd: &Path) -> Option<PathBuf> {
     let home = match wsl::parse(cwd) {
         Some(w) => w.home()?,
         None => PathBuf::from(std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?),
     };
-    let projects = home.join(".claude").join("projects");
-    std::fs::read_dir(projects)
+    Some(home.join(".claude").join("projects"))
+}
+
+/// Claude Code keeps a directory's sessions in `~/.claude/projects/<cwd>`, with
+/// every character that isn't a letter or digit replaced by `-`.
+fn transcripts_dir(cwd: &Path) -> Option<PathBuf> {
+    let path = match wsl::parse(cwd) {
+        Some(w) => w.path,
+        None => cwd.to_string_lossy().into_owned(),
+    };
+    let name: String = path.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    // The drive letter's case depends on who launched Claude (`C:` vs `c:`).
+    std::fs::read_dir(projects_dir(cwd)?)
         .ok()?
         .filter_map(Result::ok)
-        .map(|d| d.path().join(format!("{id}.jsonl")))
+        .map(|d| d.path())
+        .find(|p| p.is_dir() && p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&name)))
+}
+
+/// Each session is `<transcripts dir>/<id>.jsonl`.
+fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
+    let file = format!("{id}.jsonl");
+    if let Some(p) = transcripts_dir(cwd).map(|d| d.join(&file)).filter(|p| p.is_file()) {
+        return Some(p);
+    }
+    // Fall back to every project, in case the folder was renamed or moved.
+    std::fs::read_dir(projects_dir(cwd)?)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|d| d.path().join(&file))
         .find(|p| p.is_file())
+}
+
+/// Past sessions in `cwd`, newest first.
+pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
+    let Some(entries) = transcripts_dir(cwd).and_then(|d| std::fs::read_dir(d).ok()) else { return Vec::new() };
+    let mut sessions: Vec<SessionInfo> = entries
+        .filter_map(Result::ok)
+        .filter_map(|e| {
+            let path = e.path();
+            if path.extension()? != "jsonl" {
+                return None;
+            }
+            Some(SessionInfo {
+                id: path.file_stem()?.to_string_lossy().into_owned(),
+                title: transcript_title(&path)?,
+                modified: e.metadata().and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH),
+            })
+        })
+        .collect();
+    sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
+    sessions
+}
+
+/// The first real user message, or `None` for a transcript with no conversation in it.
+fn transcript_title(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    for line in BufReader::new(file).lines().take(500) {
+        let line = line.ok()?;
+        if !line.contains(r#""type":"user""#) {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
+        if v["type"] != "user" || v["isMeta"] == true || v["isSidechain"] == true {
+            continue;
+        }
+        let text = match &v["message"]["content"] {
+            Value::String(t) => t.clone(),
+            Value::Array(blocks) => blocks.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join(" "),
+            _ => continue,
+        };
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        // Skip slash-command and system wrappers like `<command-name>`.
+        if text.is_empty() || text.starts_with('<') {
+            continue;
+        }
+        return Some(text);
+    }
+    None
+}
+
+/// Deletes a session's transcript, and the folder Claude Code keeps beside it if there is one.
+pub fn delete_session(cwd: &Path, id: &str) -> Result<(), String> {
+    let path = find_transcript(cwd, id).ok_or("transcript not found")?;
+    std::fs::remove_file(&path).map_err(|e| format!("couldn't delete {}: {e}", path.display()))?;
+    let _ = std::fs::remove_dir_all(path.with_extension(""));
+    Ok(())
 }
 
 fn tool_summary(name: &str, input: &Value) -> String {
@@ -440,6 +529,36 @@ fn tool_result_text(content: &Value) -> String {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn title_is_first_real_user_message() {
+        let path = std::env::temp_dir().join(format!("kynex-title-{}.jsonl", std::process::id()));
+        let lines = [
+            r#"{"type":"queue-operation","operation":"enqueue"}"#,
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>x</local-command-caveat>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"image","source":{}},{"type":"text","text":"fix the\n  build"}]}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"second message"}}"#,
+        ];
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        assert_eq!(transcript_title(&path).as_deref(), Some("fix the build"));
+        std::fs::write(&path, lines[..3].join("\n")).unwrap();
+        assert_eq!(transcript_title(&path), None);
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Lists the sessions Claude Code has for this repo (or `KYNEX_SESSIONS_DIR`).
+    /// Run with `cargo test -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn lists_real_sessions() {
+        let dir = std::env::var_os("KYNEX_SESSIONS_DIR").map_or_else(|| std::env::current_dir().unwrap(), PathBuf::from);
+        let sessions = list_sessions(&dir);
+        for s in &sessions {
+            println!("{}  {:?}  {}", s.id, s.modified, s.title.chars().take(60).collect::<String>());
+        }
+        assert!(!sessions.is_empty());
+    }
 
     /// Talks to the real `claude` CLI, so it uses your login and a little quota.
     /// Run with `cargo test -- --ignored`.
