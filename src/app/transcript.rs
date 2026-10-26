@@ -7,7 +7,8 @@ use gpui::{
 };
 use kynex_core::fmt;
 use kynex_core::live::Key;
-use kynex_core::session::{Item, PermState};
+use kynex_core::session::{Item, Kind, PermState};
+use kynex_core::terminal::ShellKind;
 
 use super::KynexApp;
 use super::state::Active;
@@ -83,6 +84,7 @@ impl KynexApp {
         let t = theme(cx).clone();
         let Some(session) = self.active_session() else { return div().into_any_element() };
         let key = session.uid;
+        let session_kind = session.kind;
         let Some(item) = session.items.get(ix) else { return div().into_any_element() };
         let expanded = self.expanded.contains(&(key, ix));
         // Tool traffic sits tight together; messages get room to breathe.
@@ -155,10 +157,36 @@ impl KynexApp {
                 div().text_sm().italic().text_color(t.text_placeholder).child("Thinking…").into_any_element()
             }
             Item::ToolUse { name, summary, input } => {
+                let parsed = serde_json::from_str::<serde_json::Value>(input).ok();
                 // Claude's description of the call reads as prose; a bare command or path stays mono.
-                let described = serde_json::from_str::<serde_json::Value>(input)
-                    .ok()
-                    .is_some_and(|v| v["description"].as_str().is_some_and(|d| !d.trim().is_empty()));
+                let described =
+                    parsed.as_ref().is_some_and(|v| v["description"].as_str().is_some_and(|d| !d.trim().is_empty()));
+                // Shell commands get a play button that runs them in the project's terminal.
+                let runnable = ShellKind::for_tool(name)
+                    .filter(|_| session_kind == Kind::Code)
+                    .zip(parsed.as_ref().and_then(|v| v["command"].as_str()).map(str::to_string));
+                let play = runnable.map(|(shell, command)| {
+                    let success = t.success;
+                    div()
+                        .id(("run-in-terminal", ix))
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .justify_center()
+                        .size(px(20.))
+                        .rounded_md()
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(success.opacity(0.15)))
+                        .child(icon(Icon::Play, t.success.opacity(0.8)).size_3())
+                        .tooltip(Tooltip::with_meta(
+                            format!("Run in {}", shell.label()),
+                            "In this project's terminal, below",
+                        ))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.run_in_terminal(shell, command.clone(), window, cx);
+                        }))
+                });
                 let summary_el = div().flex_1().min_w_0().truncate().child(summary.clone());
                 let summary_el = if described {
                     summary_el.text_sm().text_color(t.text)
@@ -176,6 +204,7 @@ impl KynexApp {
                             .child(name.clone()),
                     )
                     .child(summary_el)
+                    .children(play)
                     .on_click(toggle);
                 div()
                     .flex()

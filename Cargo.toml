@@ -5,6 +5,7 @@ members = ["crates/*"]
 edition = "2024"
 
 [workspace.dependencies]
+alacritty_terminal = "0.26"
 async-channel = "2"
 base64 = "0.23.1"
 dirs = "7.0.0"

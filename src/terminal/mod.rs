@@ -1,0 +1,316 @@
+//! The terminal panel under the conversation: tabs of shells running in the
+//! project folder, a "new terminal" menu, and an Administrator badge when
+//! Kynex (and so every shell it starts) runs elevated.
+//!
+//! | file         | what                                                     |
+//! |--------------|----------------------------------------------------------|
+//! | `mod.rs`     | `TerminalPanel`: tabs, running a command in the right one |
+//! | `view.rs`    | `TerminalView`: one shell, keyboard, mouse, clipboard     |
+//! | `element.rs` | drawing the grid on the GPU, sizing it, colours          |
+//!
+//! The terminal itself (PTY, parser, shells) is `kynex_core::terminal`.
+
+mod element;
+mod view;
+
+use std::path::PathBuf;
+
+use gpui::{
+    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, SharedString, Subscription,
+    Window, anchored, deferred, div, prelude::*, px,
+};
+use kynex_core::terminal::{self as core, ShellKind};
+
+pub use self::view::bind_keys;
+use self::view::{TerminalEvent, TerminalView};
+use crate::theme::theme;
+use crate::ui::{Icon, Tooltip, icon, icon_button, menu_item, popover};
+
+pub enum PanelEvent {
+    /// The user closed the panel.
+    Hide,
+}
+
+impl EventEmitter<PanelEvent> for TerminalPanel {}
+
+struct Tab {
+    view: Entity<TerminalView>,
+    _sub: Subscription,
+}
+
+pub struct TerminalPanel {
+    cwd: PathBuf,
+    tabs: Vec<Tab>,
+    active: usize,
+    new_menu: bool,
+    /// Whether shells run as administrator; `None` until asked.
+    elevated: Option<bool>,
+    error: Option<String>,
+    focus: FocusHandle,
+}
+
+impl TerminalPanel {
+    pub fn new(cwd: PathBuf, cx: &mut Context<Self>) -> Self {
+        cx.spawn(async move |this, cx| {
+            let elevated = cx.background_spawn(async { core::elevated() }).await;
+            this.update(cx, |this, cx| {
+                this.elevated = Some(elevated);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        Self {
+            cwd,
+            tabs: Vec::new(),
+            active: 0,
+            new_menu: false,
+            elevated: None,
+            error: None,
+            focus: cx.focus_handle(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tabs.is_empty()
+    }
+
+    /// Opens a new shell of `kind` and shows it.
+    pub fn open(
+        &mut self,
+        kind: ShellKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<TerminalView>> {
+        self.new_menu = false;
+        let shell = match core::resolve_shell(kind) {
+            Ok(s) => s,
+            Err(e) => {
+                self.error = Some(e);
+                cx.notify();
+                return None;
+            }
+        };
+        self.error = None;
+        let cwd = self.cwd.clone();
+        let view = cx.new(|cx| TerminalView::new(shell, cwd, cx));
+        let sub = cx.subscribe(&view, |_, _, ev: &TerminalEvent, cx| match ev {
+            TerminalEvent::Changed => cx.notify(),
+        });
+        self.tabs.push(Tab { view: view.clone(), _sub: sub });
+        self.active = self.tabs.len() - 1;
+        view.read(cx).focus_handle(cx).focus(window, cx);
+        cx.notify();
+        Some(view)
+    }
+
+    /// Makes sure there's a shell to look at.
+    pub fn ensure_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.tabs.is_empty() {
+            self.open(ShellKind::default_for_os(), window, cx);
+        }
+    }
+
+    /// Runs `command` in a shell of `kind`: the active tab if it is one, else
+    /// another open one, else a new one.
+    pub fn run(&mut self, kind: ShellKind, command: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let is_kind = |t: &Tab, cx: &App| t.view.read(cx).shell.kind == kind;
+        let target = if self.tabs.get(self.active).is_some_and(|t| is_kind(t, cx)) {
+            Some(self.active)
+        } else {
+            self.tabs.iter().rposition(|t| is_kind(t, cx))
+        };
+        let view = match target {
+            Some(i) => {
+                self.active = i;
+                self.tabs[i].view.clone()
+            }
+            None => match self.open(kind, window, cx) {
+                Some(v) => v,
+                None => return,
+            },
+        };
+        view.update(cx, |v, cx| v.run(command, cx));
+        view.read(cx).focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
+    pub fn focus_active(&self, window: &mut Window, cx: &mut App) {
+        if let Some(t) = self.tabs.get(self.active) {
+            t.view.read(cx).focus_handle(cx).focus(window, cx);
+        }
+    }
+
+    fn close(&mut self, i: usize, cx: &mut Context<Self>) {
+        if i < self.tabs.len() {
+            self.tabs.remove(i);
+        }
+        if self.active >= self.tabs.len() {
+            self.active = self.tabs.len().saturating_sub(1);
+        }
+        if self.tabs.is_empty() {
+            cx.emit(PanelEvent::Hide);
+        }
+        cx.notify();
+    }
+
+    fn new_menu(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let kinds = [ShellKind::PowerShell, ShellKind::Bash];
+        div()
+            .absolute()
+            .top(px(28.))
+            .right_0()
+            .child(deferred(
+                anchored().snap_to_window_with_margin(px(8.)).child(
+                    popover(cx)
+                        .min_w(px(180.))
+                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                            this.new_menu = false;
+                            cx.notify();
+                        }))
+                        .children(kinds.into_iter().enumerate().map(|(n, kind)| {
+                            menu_item(("new-terminal", n), kind.label(), false, cx).on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.open(kind, window, cx);
+                                },
+                            ))
+                        })),
+                ),
+            ))
+            .into_any_element()
+    }
+}
+
+impl Focusable for TerminalPanel {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.tabs.get(self.active).map_or_else(|| self.focus.clone(), |t| t.view.read(cx).focus_handle(cx))
+    }
+}
+
+impl Render for TerminalPanel {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme(cx).clone();
+        let tabs: Vec<AnyElement> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(i, tab)| {
+                let v = tab.view.read(cx);
+                let active = i == self.active;
+                let exited = v.exited();
+                let hover = t.hover;
+                let focused = active && v.focus_handle(cx).contains_focused(window, cx);
+                div()
+                    .id(("terminal-tab", i))
+                    .group("terminal-tab")
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .h(px(26.))
+                    .pl_2()
+                    .pr_1()
+                    .rounded_md()
+                    .text_xs()
+                    .cursor_pointer()
+                    .text_color(if active { t.text } else { t.text_muted })
+                    .when(active, |d| d.bg(t.active))
+                    .when(!active, |d| d.hover(move |s| s.bg(hover)))
+                    .child(icon(Icon::Terminal, if focused { t.accent } else { t.text_muted }).size_3())
+                    .child(div().max_w(px(160.)).truncate().child(v.label()))
+                    .when(exited, |d| d.child(div().text_color(t.text_placeholder).child("exited")))
+                    .child(
+                        icon_button(("close-terminal", i), Icon::Close, cx)
+                            .size(px(18.))
+                            .invisible()
+                            .group_hover("terminal-tab", |s| s.visible())
+                            .when(active, |d| d.visible())
+                            .tooltip(Tooltip::text("Close (ends the shell)"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.close(i, cx);
+                            })),
+                    )
+                    .when_some(v.title(), |d, title| d.tooltip(Tooltip::text(title)))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.active = i;
+                        this.focus_active(window, cx);
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+
+        let admin = self.elevated.unwrap_or(false).then(|| {
+            div()
+                .id("terminal-admin")
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_1p5()
+                .h(px(20.))
+                .rounded_sm()
+                .border_1()
+                .border_color(t.warning.opacity(0.5))
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(t.warning)
+                .child(icon(Icon::Shield, t.warning).size_3())
+                .child("Administrator")
+                .tooltip(Tooltip::text("Kynex runs as administrator, so these shells do too"))
+        });
+
+        let header = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_1()
+            .h(px(34.))
+            .px_2()
+            .border_b_1()
+            .border_color(t.border_variant)
+            .child(div().flex().items_center().gap_0p5().min_w_0().overflow_hidden().children(tabs))
+            .child(
+                div()
+                    .relative()
+                    .child(icon_button("new-terminal", Icon::Plus, cx).tooltip(Tooltip::text("New terminal")).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.new_menu = !this.new_menu;
+                            cx.notify();
+                        }),
+                    ))
+                    .when(self.new_menu, |d| d.child(self.new_menu(cx))),
+            )
+            .child(div().flex_1())
+            .when_some(self.error.clone(), |d, e| {
+                d.child(div().min_w_0().truncate().text_xs().text_color(t.error).child(SharedString::from(e)))
+            })
+            .children(admin)
+            .child(
+                icon_button("hide-terminal", Icon::ChevronDown, cx)
+                    .tooltip(Tooltip::with_meta("Hide the terminal", "Ctrl+` · shells keep running"))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PanelEvent::Hide))),
+            );
+
+        let body = match self.tabs.get(self.active) {
+            Some(tab) => tab.view.clone().into_any_element(),
+            None => div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(t.text_placeholder)
+                .child("No terminal open")
+                .into_any_element(),
+        };
+
+        div()
+            .track_focus(&self.focus)
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(element::background(&t))
+            .child(header)
+            .child(div().flex_1().min_h_0().child(body))
+    }
+}

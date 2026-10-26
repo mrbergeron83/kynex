@@ -8,6 +8,7 @@ edition.workspace = true
 # in seconds. dx hot-patches workspace crates too, so edits here apply live.
 
 [dependencies]
+alacritty_terminal.workspace = true
 base64.workspace = true
 dirs.workspace = true
 image.workspace = true

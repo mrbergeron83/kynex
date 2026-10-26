@@ -75,6 +75,9 @@ A cargo workspace with two crates:
     commit, fetch / pull / push), `worktree`; `open.rs` — open a folder in VS Code / file
     manager / terminal; `attach.rs` — image attachments; `fmt.rs` — times and turn recaps;
     `paths.rs` — `data_dir()` and friends; `wsl.rs` — WSL paths (out of scope for now)
+  - `terminal/` — interactive terminals on `alacritty_terminal` (ConPTY on Windows): spawning
+    PowerShell / Git Bash, keys to bytes, render snapshots with resolved colours, selection;
+    shells inherit Kynex's rights (`elevated()` says if that's administrator)
 - **`kynex`** (`src/`) — the gpui app.
   - `main.rs` — app and window setup (custom title bar), key bindings, theme
   - `app/` — `KynexApp`, the root view. `app/mod.rs` has its fields, startup and top-level
@@ -86,6 +89,9 @@ A cargo workspace with two crates:
   - `git/` — the Git view (`GitView` entity): top bar with branch picker and fetch / pull / push,
     Changes tab (commit box, staged / unstaged files), History tab, diff viewer; the table at the
     top of `git/mod.rs` lists the files
+  - `terminal/` — the terminal panel under the conversation (`TerminalPanel`, tabs of
+    `TerminalView`s drawn by a custom GPU element); play buttons on Bash / PowerShell tool calls
+    run their command there; Ctrl+` toggles it
   - `ui/` — our small component kit, Zed `ui`-crate style: buttons, tooltips, menus, icons
     (inline SVGs served as assets), spinner; `ui/input.rs` is the multi-line text field (IME,
     selection, clipboard, image paste) built on gpui's input example; `ui/selectable.rs` is

@@ -11,6 +11,7 @@
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
+//! | `terminal_dock.rs`  | the project's terminal panel under the conversation  |
 //! | `transcript.rs`     | the conversation list and how each item draws        |
 //! | `worktrees.rs`      | the project's git worktrees, in the sessions panel   |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
@@ -30,6 +31,7 @@ mod sessions_panel;
 mod settings;
 mod setup;
 mod state;
+mod terminal_dock;
 mod title_bar;
 mod toolbar;
 mod transcript;
@@ -62,6 +64,7 @@ use transcript::Thread;
 use worktrees::Worktrees;
 
 use crate::git::GitView;
+use crate::terminal::TerminalPanel;
 use crate::theme::theme;
 use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::{Icon, icon, icon_button, popover};
@@ -73,6 +76,8 @@ pub struct KynexApp {
     git: HashMap<PathBuf, Entity<GitView>>,
     /// Each open project's git worktrees, kept fresh in the background.
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
+    /// Each project's terminal panel, created the first time it's opened.
+    terminals: HashMap<PathBuf, Entity<TerminalPanel>>,
     threads: HashMap<Key, Thread>,
     /// Tool calls and results opened up in the transcript.
     expanded: HashSet<(Key, usize)>,
@@ -90,6 +95,7 @@ pub struct KynexApp {
     prompt: Option<ActivePrompt>,
     menu: Option<OpenMenu>,
     resizing_sessions: bool,
+    resizing_terminal: bool,
     /// Whether a newer Claude Code is out, or being installed.
     cli_update: UpdateState,
     /// Whether the CLI is installed and signed in; until it is, a setup screen
@@ -180,6 +186,7 @@ impl KynexApp {
             chat,
             git: HashMap::new(),
             worktrees: HashMap::new(),
+            terminals: HashMap::new(),
             threads: HashMap::new(),
             expanded: HashSet::new(),
             composer,
@@ -193,6 +200,7 @@ impl KynexApp {
             prompt: None,
             menu: None,
             resizing_sessions: false,
+            resizing_terminal: false,
             cli_update: UpdateState::Idle,
             setup: Setup::Checking,
             login_code,
@@ -307,7 +315,8 @@ impl Render for KynexApp {
                         .child(self.render_toolbar(cx))
                         .children(self.render_session_header(cx))
                         .child(self.render_thread(cx))
-                        .child(self.render_composer(window, cx)),
+                        .child(self.render_composer(window, cx))
+                        .children(self.render_terminal_dock(window, cx)),
                 )
                 .into_any_element()
         };
@@ -332,6 +341,7 @@ impl Render for KynexApp {
             .on_action(cx.listener(Self::toggle_sessions))
             .on_action(cx.listener(Self::cycle_mode))
             .on_action(cx.listener(Self::interrupt_action))
+            .on_action(cx.listener(Self::toggle_terminal))
             .on_action(cx.listener(|_, _: &CopySelection, _, cx| copy_selection(cx)))
             // The composer's Ctrl+C, passed on when nothing is selected in it.
             .on_action(cx.listener(|_, _: &crate::ui::input::Copy, _, cx| copy_selection(cx)))
@@ -347,6 +357,21 @@ impl Render for KynexApp {
                         MouseButton::Left,
                         cx.listener(|this, _, _, cx| {
                             this.resizing_sessions = false;
+                            this.save();
+                            cx.notify();
+                        }),
+                    )
+            })
+            .when(self.resizing_terminal, |d| {
+                d.cursor_row_resize()
+                    .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
+                        this.drag_terminal_edge(f32::from(ev.position.y), window);
+                        cx.notify();
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.resizing_terminal = false;
                             this.save();
                             cx.notify();
                         }),

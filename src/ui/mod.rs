@@ -45,6 +45,8 @@ pub enum Icon {
     Undo,
     ArrowDown,
     GitCommit,
+    Play,
+    Shield,
 }
 
 impl Icon {
@@ -77,12 +79,14 @@ impl Icon {
             Icon::Undo => "icons/undo.svg",
             Icon::ArrowDown => "icons/arrow-down.svg",
             Icon::GitCommit => "icons/git-commit.svg",
+            Icon::Play => "icons/play.svg",
+            Icon::Shield => "icons/shield.svg",
         }
     }
 }
 
 /// Line icons drawn on a 24px grid, Lucide style.
-const ICONS: [(&str, &str); 27] = [
+const ICONS: [(&str, &str); 29] = [
     ("close", r#"<path d="M18 6 6 18M6 6l12 12"/>"#),
     ("minimize", r#"<path d="M5 12h14"/>"#),
     ("maximize", r#"<rect x="5" y="5" width="14" height="14" rx="1.5"/>"#),
@@ -125,6 +129,11 @@ const ICONS: [(&str, &str); 27] = [
     ("undo", r#"<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>"#),
     ("arrow-down", r#"<path d="M12 5v14M19 12l-7 7-7-7"/>"#),
     ("git-commit", r#"<circle cx="12" cy="12" r="3"/><path d="M3 12h6M15 12h6"/>"#),
+    (
+        "play",
+        r#"<path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z" fill="black"/>"#,
+    ),
+    ("shield", r#"<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>"#),
 ];
 
 /// Serves the icons to gpui's `svg()` element.

@@ -12,15 +12,16 @@ use super::KynexApp;
 use super::state::Active;
 use crate::ui::selectable;
 
-actions!(kynex, [OpenProject, NextTab, PrevTab, ToggleSessions, CycleMode, Interrupt, CopySelection]);
+actions!(kynex, [OpenProject, NextTab, PrevTab, ToggleSessions, CycleMode, Interrupt, CopySelection, ToggleTerminal]);
 
 /// Workspace shortcuts and their defaults. `<data dir>/keymap.json` overrides
 /// them by name, e.g. `{ "interrupt": "ctrl-c" }`; an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 6] = [
+const SHORTCUTS: [(&str, &str); 7] = [
     ("open_project", "secondary-o"),
     ("next_tab", "ctrl-tab"),
     ("prev_tab", "ctrl-shift-tab"),
     ("toggle_sessions", "secondary-b"),
+    ("toggle_terminal", "ctrl-`"),
     ("cycle_mode", "shift-tab"),
     ("interrupt", "escape"),
 ];
@@ -62,6 +63,7 @@ pub fn bind_keys(cx: &mut App) {
             "next_tab" => KeyBinding::new(keys, NextTab, c),
             "prev_tab" => KeyBinding::new(keys, PrevTab, c),
             "toggle_sessions" => KeyBinding::new(keys, ToggleSessions, c),
+            "toggle_terminal" => KeyBinding::new(keys, ToggleTerminal, c),
             "cycle_mode" => KeyBinding::new(keys, CycleMode, c),
             _ => KeyBinding::new(keys, Interrupt, c),
         });

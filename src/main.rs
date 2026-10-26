@@ -8,6 +8,7 @@ mod chrome;
 mod git;
 mod markdown;
 mod prompt;
+mod terminal;
 mod theme;
 mod ui;
 
@@ -22,6 +23,7 @@ fn main() {
         theme::init_fonts(cx);
         ui::input::bind_keys(cx);
         prompt::bind_keys(cx);
+        terminal::bind_keys(cx);
         app::bind_keys(cx);
 
         let bounds = match saved.window {

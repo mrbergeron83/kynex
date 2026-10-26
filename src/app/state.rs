@@ -60,6 +60,9 @@ pub struct Saved {
     pub window: Option<WindowState>,
     /// A Claude Code release the user chose to skip; newer ones are offered again.
     pub skipped_cli_version: Option<String>,
+    /// The terminal panel under the conversation is showing.
+    pub terminal_open: bool,
+    pub terminal_height: f32,
 }
 
 impl Default for Saved {
@@ -74,6 +77,8 @@ impl Default for Saved {
             sessions_width: 260.,
             window: None,
             skipped_cli_version: None,
+            terminal_open: false,
+            terminal_height: 280.,
         }
     }
 }
@@ -88,6 +93,7 @@ impl Saved {
             saved.active = Active::Chat;
         }
         saved.sessions_width = saved.sessions_width.clamp(180., 480.);
+        saved.terminal_height = saved.terminal_height.max(120.);
         saved
     }
 
