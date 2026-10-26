@@ -55,6 +55,7 @@ struct Saved {
     model: String,
     chat_session_id: Option<String>,
     theme: Theme,
+    sessions_collapsed: bool,
 }
 
 pub struct KynexApp {
@@ -229,6 +230,9 @@ impl KynexApp {
         let mut action = None;
         let confirm_delete = &mut self.confirm_delete;
         ui.horizontal(|ui| {
+            if ui.add(egui::Button::new("«").frame(false)).on_hover_text("Hide sessions (Ctrl+B)").clicked() {
+                self.saved.sessions_collapsed = true;
+            }
             ui.label(RichText::new("Sessions").strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let r = ui
@@ -875,6 +879,12 @@ impl KynexApp {
             ctx.request_repaint();
         }
 
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::B)) {
+            self.saved.sessions_collapsed = !self.saved.sessions_collapsed;
+            self.save();
+        }
+        let sessions_collapsed = self.saved.sessions_collapsed;
+
         chrome::background(ui);
         let gap = theme::p().gap;
         let gaps = egui::Frame::new().inner_margin(gap);
@@ -922,14 +932,28 @@ impl KynexApp {
             // so a restored transcript is visible before the first message.
             let _ = self.session_mut();
 
-            egui::Panel::left("sessions")
-                .frame(egui::Frame::NONE.inner_margin(egui::Margin { right: gap as i8, ..Default::default() }))
-                .resizable(true)
-                .default_size(260.0)
-                .size_range(160.0..=480.0)
-                .show(ui, |ui| {
-                    theme::tile(ui, "sessions", "", false, true, |ui| self.sessions_panel(ui));
+            let side = egui::Frame::NONE.inner_margin(egui::Margin { right: gap as i8, ..Default::default() });
+            if self.saved.sessions_collapsed {
+                egui::Panel::left("sessions-collapsed").frame(side).resizable(false).show(ui, |ui| {
+                    theme::tile(ui, "sessions-collapsed", "", false, true, |ui| {
+                        if ui.add(egui::Button::new("»").frame(false)).on_hover_text("Show sessions (Ctrl+B)").clicked() {
+                            self.saved.sessions_collapsed = false;
+                        }
+                    });
                 });
+            } else {
+                egui::Panel::left("sessions")
+                    .frame(side)
+                    .resizable(true)
+                    .default_size(260.0)
+                    .size_range(160.0..=480.0)
+                    .show(ui, |ui| {
+                        theme::tile(ui, "sessions", "", false, true, |ui| self.sessions_panel(ui));
+                    });
+            }
+            if self.saved.sessions_collapsed != sessions_collapsed {
+                self.save();
+            }
             egui::Panel::bottom("composer").frame(egui::Frame::NONE).show(ui, |ui| {
                 ui.add_space(gap);
                 theme::tile(ui, "composer", "", composer_focused, false, |ui| self.composer(ui));
