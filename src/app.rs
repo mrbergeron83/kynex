@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use crate::chrome;
 use crate::git::GitView;
 use crate::project::{self, ClaudeSettings, Mode, Permissions};
-use crate::session::{self, Answer, Attachment, Item, Kind, PermState, Session, SessionInfo};
+use crate::prompt;
+use crate::session::{self, Attachment, Item, Kind, PermState, Session, SessionInfo};
 use crate::theme::{self, THEMES, Theme};
 use crate::wsl;
 
@@ -483,7 +484,48 @@ impl KynexApp {
         }
     }
 
+    /// Claude's oldest unanswered prompt in the active session, shown in the
+    /// composer's place like the VS Code extension. Returns whether one is up.
+    fn permission_prompt(&mut self, ui: &mut egui::Ui) -> bool {
+        let session = match self.saved.active {
+            Active::Chat => Some(&mut self.chat),
+            Active::Project(i) => self.saved.projects.get(i).and_then(|p| self.code.get_mut(&p.path)),
+        };
+        let Some(session) = session else { return false };
+        let mut pending = session.items.iter().enumerate().filter_map(|(i, it)| match it {
+            Item::Permission { request_id, tool, input, suggestions, description, state: PermState::Pending } => {
+                Some((i, request_id, tool, input, suggestions, description))
+            }
+            _ => None,
+        });
+        let Some((i, id, tool, input, suggestions, description)) = pending.next() else { return false };
+        let req = prompt::Request { id, tool, input, suggestions, description, kind: session.kind, queued: pending.count() };
+        if let Some(answer) = prompt::show(ui, &mut self.md, &req) {
+            let rules = session.answer_permission(i, answer);
+            let cwd = session.cwd.clone();
+            self.save_rules(&cwd, rules);
+        }
+        true
+    }
+
+    /// Adds "always allow in this project" rules to the project's Kynex settings.
+    fn save_rules(&mut self, cwd: &Path, rules: Vec<String>) {
+        if rules.is_empty() {
+            return;
+        }
+        let mut perms = Permissions::load(cwd);
+        if perms.allow(rules) {
+            if let Err(e) = perms.save(cwd) {
+                self.notice = Some(e);
+            }
+            self.settings = None;
+        }
+    }
+
     fn composer(&mut self, ui: &mut egui::Ui) {
+        if self.permission_prompt(ui) {
+            return;
+        }
         let ctx = ui.ctx().clone();
         let busy = self.session_mut().is_some_and(|s| s.busy);
 
@@ -678,8 +720,6 @@ impl KynexApp {
             return;
         };
 
-        let kind = session.kind;
-        let mut answer: Option<(usize, Answer)> = None;
         egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink(false).show(ui, |ui| {
             ui.set_max_width(ui.available_width().min(900.0));
             for (i, item) in session.items.iter().enumerate() {
@@ -728,49 +768,20 @@ impl KynexApp {
                                 });
                             });
                     }
-                    Item::Permission { tool, input, state, suggestions, .. } => {
-                        egui::Frame::new()
-                            .stroke(egui::Stroke::new(1.0, theme::p().peach))
-                            .corner_radius(6.0)
-                            .inner_margin(8.0)
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                ui.label(RichText::new(format!("Claude wants to use {tool}")).strong());
-                                ui.label(RichText::new(tool_preview(tool, input)).monospace().small());
-                                match state {
-                                    PermState::Pending => {
-                                        ui.horizontal(|ui| {
-                                            if ui.button("Allow once").clicked() {
-                                                answer = Some((i, Answer::Once));
-                                            }
-                                            if suggestions.as_array().is_some_and(|a| !a.is_empty())
-                                                && ui.button("Allow this session").clicked()
-                                            {
-                                                answer = Some((i, Answer::Session));
-                                            }
-                                            let rules = project::suggested_rules(suggestions);
-                                            if kind == Kind::Code
-                                                && !rules.is_empty()
-                                                && ui
-                                                    .button("Always allow in this project")
-                                                    .on_hover_text(format!("Saves {} to this project's Kynex settings", rules.join(", ")))
-                                                    .clicked()
-                                            {
-                                                answer = Some((i, Answer::Project));
-                                            }
-                                            if ui.button("Deny").clicked() {
-                                                answer = Some((i, Answer::Deny));
-                                            }
-                                        });
-                                    }
-                                    PermState::Allowed => {
-                                        ui.label(RichText::new("✔ allowed").color(theme::p().green));
-                                    }
-                                    PermState::Denied => {
-                                        ui.label(RichText::new("✖ denied").color(theme::p().red));
-                                    }
-                                }
-                            });
+                    // Answered in the prompt that takes the composer's place; the
+                    // transcript keeps a one-line record.
+                    Item::Permission { tool, input, state, .. } => {
+                        let p = theme::p();
+                        let (mark, note, color) = match state {
+                            PermState::Pending => ("●", "waiting for you below", p.peach),
+                            PermState::Allowed(n) => ("✔", n.as_str(), p.green),
+                            PermState::Denied(n) => ("✖", n.as_str(), p.red),
+                        };
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new(mark).color(color));
+                            ui.label(RichText::new(prompt::title(tool, input)).small());
+                            ui.label(RichText::new(note).small().color(color));
+                        });
                     }
                     Item::Result { cost, duration_ms, is_error } => {
                         let text = format!("— done in {:.1}s · ${cost:.4}{}", *duration_ms as f64 / 1000.0, if *is_error { " · error" } else { "" });
@@ -782,19 +793,6 @@ impl KynexApp {
                 }
             }
         });
-        if let Some((i, a)) = answer {
-            let rules = session.answer_permission(i, a);
-            if !rules.is_empty() {
-                let cwd = session.cwd.clone();
-                let mut perms = Permissions::load(&cwd);
-                if perms.allow(rules) {
-                    if let Err(e) = perms.save(&cwd) {
-                        self.notice = Some(e);
-                    }
-                    self.settings = None;
-                }
-            }
-        }
     }
 
     /// The ⚙ Claude settings modal for a project, open while egui's temp memory
@@ -1112,17 +1110,6 @@ impl KynexApp {
         self.claude_settings_modal(ctx);
         chrome::resize_edges(ui);
     }
-}
-
-fn tool_preview(tool: &str, input: &serde_json::Value) -> String {
-    let s = match tool {
-        "Bash" | "PowerShell" => input["command"].as_str().map(str::to_string),
-        "Write" => input["file_path"].as_str().map(|p| format!("write {p}")),
-        "Edit" => input["file_path"].as_str().map(|p| format!("edit {p}")),
-        "ExitPlanMode" => input["plan"].as_str().map(str::to_string),
-        _ => None,
-    };
-    s.unwrap_or_else(|| serde_json::to_string_pretty(input).unwrap_or_default())
 }
 
 fn truncate(s: &str, max: usize) -> String {

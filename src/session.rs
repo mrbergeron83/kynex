@@ -37,26 +37,35 @@ pub enum Item {
     Thinking,
     ToolUse { name: String, summary: String, input: String },
     ToolResult { content: String, is_error: bool },
-    Permission { request_id: String, tool: String, input: Value, suggestions: Value, state: PermState },
+    /// A `can_use_tool` request. `tool` is the tool's name (`Bash`, `mcp__x__y`),
+    /// `description` the CLI's one-line summary of what it's for.
+    Permission { request_id: String, tool: String, input: Value, suggestions: Value, description: String, state: PermState },
     Result { cost: f64, duration_ms: u64, is_error: bool },
     Error(String),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// Where a prompt stands; answered ones say how, e.g. "allowed for this session".
+#[derive(Clone, PartialEq, Eq)]
 pub enum PermState {
     Pending,
-    Allowed,
-    Denied,
+    Allowed(String),
+    Denied(String),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub enum Answer {
     Once,
     /// Allow, and stop asking for the same thing until this process ends.
     Session,
     /// Allow, and save the rule in the project's Kynex settings.
     Project,
-    Deny,
+    /// Approve a plan (`ExitPlanMode`) and build it in this mode.
+    Plan(project::Mode),
+    /// Answers to `AskUserQuestion`: question text → the chosen label(s), comma-separated.
+    Questions(serde_json::Map<String, Value>),
+    /// Say no. With feedback Claude reads it and carries on; without, the turn
+    /// stops, like Esc in the CLI.
+    Deny(String),
 }
 
 enum Event {
@@ -273,32 +282,60 @@ impl Session {
     /// to save in the project's settings; the live process gets them right away
     /// as session rules, and later processes get them from the saved settings.
     pub fn answer_permission(&mut self, index: usize, answer: Answer) -> Vec<String> {
-        let Some(Item::Permission { request_id, tool, input, suggestions, state }) = self.items.get_mut(index) else {
+        let Some(Item::Permission { request_id, tool, input, suggestions, state, .. }) = self.items.get_mut(index) else {
             return Vec::new();
         };
-        let approves_plan = answer != Answer::Deny && tool.replace(' ', "").eq_ignore_ascii_case("ExitPlanMode");
-        *state = if answer == Answer::Deny { PermState::Denied } else { PermState::Allowed };
-        let response = match answer {
-            Answer::Deny => json!({ "behavior": "deny", "message": "The user denied this action in Kynex." }),
-            Answer::Once => json!({ "behavior": "allow", "updatedInput": input }),
+        if *state != PermState::Pending {
+            return Vec::new();
+        }
+        let rules = if answer == Answer::Project { project::suggested_rules(suggestions) } else { Vec::new() };
+        let mut plan_mode = None;
+        let (response, new_state) = match answer {
+            Answer::Deny(feedback) if feedback.trim().is_empty() => (
+                json!({ "behavior": "deny", "message": "The user doesn't want to proceed with this tool use.", "interrupt": true }),
+                PermState::Denied("denied".into()),
+            ),
+            Answer::Deny(feedback) => (
+                json!({
+                    "behavior": "deny",
+                    "message": format!("The user doesn't want to proceed with this tool use. They said: {}", feedback.trim()),
+                }),
+                PermState::Denied(format!("denied: {}", feedback.trim())),
+            ),
+            Answer::Once => (json!({ "behavior": "allow", "updatedInput": input }), PermState::Allowed("allowed".into())),
             Answer::Session | Answer::Project => {
                 // Kynex keeps project rules itself, so the CLI never writes them to its settings files.
                 let mut updates = suggestions.clone();
                 for u in updates.as_array_mut().into_iter().flatten() {
                     u["destination"] = json!("session");
                 }
-                json!({ "behavior": "allow", "updatedInput": input, "updatedPermissions": updates })
+                let note = if rules.is_empty() { "allowed for this session" } else { "always allowed in this project" };
+                (json!({ "behavior": "allow", "updatedInput": input, "updatedPermissions": updates }), PermState::Allowed(note.into()))
+            }
+            Answer::Plan(mode) => {
+                plan_mode = Some(mode);
+                (json!({ "behavior": "allow", "updatedInput": input }), PermState::Allowed(format!("plan approved · {}", mode.label())))
+            }
+            Answer::Questions(answers) => {
+                let note = answers.values().filter_map(Value::as_str).collect::<Vec<_>>().join(" · ");
+                let mut updated = input.clone();
+                updated["answers"] = Value::Object(answers);
+                (json!({ "behavior": "allow", "updatedInput": updated }), PermState::Allowed(format!("answered: {note}")))
             }
         };
-        let rules = if answer == Answer::Project { project::suggested_rules(suggestions) } else { Vec::new() };
+        let approves_plan =
+            matches!(new_state, PermState::Allowed(_)) && tool.replace(' ', "").eq_ignore_ascii_case("ExitPlanMode");
+        *state = new_state;
         let msg = json!({
             "type": "control_response",
             "response": { "subtype": "success", "request_id": request_id.clone(), "response": response }
         });
         self.write(msg);
-        // An approved plan means "go build it": leave plan mode for the project's
-        // default, or Auto if the default is Plan itself.
-        if approves_plan && self.mode == project::Mode::Plan {
+        // An approved plan means "go build it": in the mode picked with it, else
+        // leave plan mode for the project's default, or Auto if that's Plan itself.
+        if let Some(mode) = plan_mode {
+            self.set_mode(mode);
+        } else if approves_plan && self.mode == project::Mode::Plan {
             let default = match self.kind {
                 Kind::Code => project::ClaudeSettings::load(&self.cwd).mode,
                 Kind::Chat => project::Mode::default(),
@@ -388,13 +425,10 @@ impl Session {
             "control_request" if v["request"]["subtype"] == "can_use_tool" => {
                 self.items.push(Item::Permission {
                     request_id: v["request_id"].as_str().unwrap_or("").into(),
-                    tool: v["request"]["display_name"]
-                        .as_str()
-                        .or(v["request"]["tool_name"].as_str())
-                        .unwrap_or("tool")
-                        .into(),
+                    tool: v["request"]["tool_name"].as_str().or(v["request"]["display_name"].as_str()).unwrap_or("tool").into(),
                     input: v["request"]["input"].clone(),
                     suggestions: v["request"]["permission_suggestions"].clone(),
+                    description: v["request"]["description"].as_str().unwrap_or("").into(),
                     state: PermState::Pending,
                 });
             }
@@ -666,7 +700,7 @@ mod tests {
             while s.busy && start.elapsed() < Duration::from_secs(120) {
                 s.poll();
                 if let Some(i) = s.items.iter().position(|i| matches!(i, Item::Permission { state: PermState::Pending, .. })) {
-                    s.answer_permission(i, Answer::Deny);
+                    s.answer_permission(i, Answer::Deny(String::new()));
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -685,5 +719,41 @@ mod tests {
 
         s.kill();
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An `AskUserQuestion` answered from Kynex reaches Claude. Run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn answers_questions() {
+        let ctx = egui::Context::default();
+        let mut s = Session::new(Kind::Code, std::env::temp_dir());
+        s.model = "haiku".into();
+        s.send(
+            &ctx,
+            "Use the AskUserQuestion tool to ask me which color I like, with options Red and Blue. \
+             Then reply with exactly the color I picked, in capitals."
+                .into(),
+            Vec::new(),
+        );
+        let start = Instant::now();
+        while s.busy && start.elapsed() < Duration::from_secs(120) {
+            s.poll();
+            let pending = s.items.iter().enumerate().find_map(|(i, it)| match it {
+                Item::Permission { tool, input, state: PermState::Pending, .. } if tool == "AskUserQuestion" => {
+                    Some((i, input["questions"][0]["question"].as_str().unwrap_or("").to_string()))
+                }
+                _ => None,
+            });
+            if let Some((i, question)) = pending {
+                let mut answers = serde_json::Map::new();
+                answers.insert(question, json!("Blue"));
+                s.answer_permission(i, Answer::Questions(answers));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let text: String = s.items.iter().filter_map(|i| if let Item::Assistant(t) = i { Some(t.as_str()) } else { None }).collect();
+        assert!(s.items.iter().any(|i| matches!(i, Item::Permission { state: PermState::Allowed(_), .. })), "never asked");
+        assert!(text.contains("BLUE"), "got: {text:?}");
+        s.kill();
     }
 }
