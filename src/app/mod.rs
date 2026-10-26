@@ -10,7 +10,9 @@
 //! | `title_bar.rs`      | title bar and project tabs                           |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
 //! | `sessions_panel.rs` | open and past sessions                               |
+//! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `transcript.rs`     | the conversation list and how each item draws        |
+//! | `worktrees.rs`      | the project's git worktrees, in the sessions panel   |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
@@ -23,6 +25,7 @@ mod keys;
 mod menus;
 mod models;
 mod prompts;
+mod session_header;
 mod sessions_panel;
 mod settings;
 mod setup;
@@ -31,6 +34,7 @@ mod title_bar;
 mod toolbar;
 mod transcript;
 mod workspace;
+mod worktrees;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -55,6 +59,7 @@ use setup::Setup;
 pub use state::Saved;
 use state::{Active, View, WindowState};
 use transcript::Thread;
+use worktrees::Worktrees;
 
 use crate::git::GitView;
 use crate::theme::theme;
@@ -66,6 +71,8 @@ pub struct KynexApp {
     code: HashMap<PathBuf, Live>,
     chat: Live,
     git: HashMap<PathBuf, Entity<GitView>>,
+    /// Each open project's git worktrees, kept fresh in the background.
+    worktrees: HashMap<PathBuf, Entity<Worktrees>>,
     threads: HashMap<Key, Thread>,
     /// Tool calls and results opened up in the transcript.
     expanded: HashSet<(Key, usize)>,
@@ -172,6 +179,7 @@ impl KynexApp {
             code: HashMap::new(),
             chat,
             git: HashMap::new(),
+            worktrees: HashMap::new(),
             threads: HashMap::new(),
             expanded: HashSet::new(),
             composer,
@@ -297,6 +305,7 @@ impl Render for KynexApp {
                         .min_w_0()
                         .bg(t.editor)
                         .child(self.render_toolbar(cx))
+                        .children(self.render_session_header(cx))
                         .child(self.render_thread(cx))
                         .child(self.render_composer(window, cx)),
                 )

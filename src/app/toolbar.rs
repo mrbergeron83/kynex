@@ -1,5 +1,6 @@
-//! The bar above the transcript: Code / Git switch, the project path, the
-//! session's cost, and buttons to open the project in other apps.
+//! The bar above the transcript: Code / Git switch, the project path, and
+//! buttons to open the project in other apps. The session's own details are in
+//! the session header below it.
 
 use std::path::PathBuf;
 
@@ -9,14 +10,13 @@ use kynex_core::open::{Opener, open_project};
 use super::KynexApp;
 use super::keys::ToggleSessions;
 use super::state::{Active, View};
-use crate::theme::{Palette, mono, theme};
+use crate::theme::theme;
 use crate::ui::{Icon, Tooltip, icon, icon_button};
 
 impl KynexApp {
     pub(super) fn render_toolbar(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         let project = self.active_project().map(|p| (p.path.clone(), p.view));
-        let cost = self.active_session().map_or(0.0, |s| s.total_cost);
         let collapsed = self.saved.sessions_collapsed;
         let bar = div()
             .flex()
@@ -37,8 +37,7 @@ impl KynexApp {
         let Some((path, view)) = project else {
             return bar
                 .child(div().px_1().text_sm().font_weight(FontWeight::MEDIUM).child("Chat"))
-                .child(div().flex_1())
-                .when(cost > 0.0, |d| d.child(cost_label(cost, &t)));
+                .child(div().flex_1());
         };
         let segment = |id: &'static str, label: &'static str, which: Icon, v: View, cx: &mut Context<Self>| {
             let selected = view == v;
@@ -91,7 +90,6 @@ impl KynexApp {
                     .text_color(t.text_placeholder)
                     .child(path.display().to_string()),
             )
-            .when(cost > 0.0, |d| d.child(cost_label(cost, &t)))
             .child(open("open-code", Icon::Code, "Open in VS Code", Opener::Code, path.clone(), cx))
             .child(open("open-files", Icon::Folder, "Open in file manager", Opener::Explorer, path.clone(), cx))
             .child(open("open-term", Icon::Terminal, "Open a terminal here", Opener::Terminal, path, cx))
@@ -103,8 +101,4 @@ impl KynexApp {
             self.notice = Some(e);
         }
     }
-}
-
-fn cost_label(cost: f64, t: &Palette) -> impl IntoElement + use<> {
-    div().px_1().text_xs().font_family(mono()).text_color(t.text_placeholder).child(format!("${cost:.3}"))
 }

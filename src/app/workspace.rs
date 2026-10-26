@@ -167,6 +167,7 @@ impl KynexApp {
         let closed: Vec<Key> = self.code.remove(&p.path).into_iter().flat_map(|l| l.sessions).map(|s| s.uid).collect();
         self.forget(&closed);
         self.git.remove(&p.path);
+        self.worktrees.remove(&p.path);
         self.saved.active = match self.saved.active {
             Active::Project(a) if a > i => Active::Project(a - 1),
             Active::Project(a) if a == i && i > 0 => Active::Project(i - 1),

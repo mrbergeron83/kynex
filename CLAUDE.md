@@ -70,7 +70,7 @@ A cargo workspace with two crates:
   - `project.rs` — per-project settings folders (`<data dir>/projects/<name>-<hash>/`, one
     JSON file per section); rules go to each session via `claude --settings`, mode / effort /
     extra dirs via `--permission-mode`, `--effort`, `--add-dir`; the mode switches live
-  - `git.rs` — git status, log and diffs; `open.rs` — open a folder in VS Code / file
+  - `git.rs` — git status, log, diffs and worktrees; `open.rs` — open a folder in VS Code / file
     manager / terminal; `attach.rs` — image attachments; `fmt.rs` — times and turn recaps;
     `paths.rs` — `data_dir()` and friends; `wsl.rs` — WSL paths (out of scope for now)
 - **`kynex`** (`src/`) — the gpui app.

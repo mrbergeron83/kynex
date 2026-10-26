@@ -248,12 +248,14 @@ impl KynexApp {
             rows.push(row.into_any_element());
         }
 
+        let worktrees = if kind == Kind::Code { self.render_worktrees(&cwd, cx) } else { None };
         div()
             .flex()
             .flex_col()
             .size_full()
             .child(header)
             .child(div().id("session-list").flex_1().min_h_0().overflow_y_scroll().px_1p5().pb_1().children(rows))
+            .when(kind == Kind::Code, |d| d.children(worktrees))
             // Project sessions have Claude settings; chat has no tools.
             .when(kind == Kind::Code, |d| {
                 d.child(divider(cx)).child(
