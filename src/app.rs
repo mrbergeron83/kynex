@@ -15,6 +15,7 @@ use gpui::{
 use serde::{Deserialize, Serialize};
 
 use crate::chrome::{self, TITLE_BAR_HEIGHT};
+use crate::cli::{self, UpdateState};
 use crate::git::GitView;
 use crate::markdown;
 use crate::project::{self, ClaudeSettings, Mode, Permissions};
@@ -32,6 +33,7 @@ const MODELS: [(&str, &str); 5] =
     [("", "Default"), ("opus", "Opus"), ("fable", "Fable"), ("sonnet", "Sonnet"), ("haiku", "Haiku")];
 const MAX_IMAGE_EDGE: u32 = 1568;
 const THREAD_WIDTH: Pixels = px(780.);
+const CLI_CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
 actions!(kynex, [OpenProject, NextTab, PrevTab, ToggleSessions, CycleMode, Interrupt]);
 
@@ -140,6 +142,8 @@ pub struct Saved {
     sessions_collapsed: bool,
     sessions_width: f32,
     pub window: Option<WindowState>,
+    /// A Claude Code release the user chose to skip; newer ones are offered again.
+    skipped_cli_version: Option<String>,
 }
 
 impl Default for Saved {
@@ -153,6 +157,7 @@ impl Default for Saved {
             sessions_collapsed: false,
             sessions_width: 260.,
             window: None,
+            skipped_cli_version: None,
         }
     }
 }
@@ -244,6 +249,8 @@ pub struct KynexApp {
     prompt: Option<ActivePrompt>,
     menu: Option<OpenMenu>,
     resizing_sessions: bool,
+    /// Whether a newer Claude Code is out, or being installed.
+    cli_update: UpdateState,
     focus: FocusHandle,
     wake: session::Wake,
 }
@@ -278,6 +285,18 @@ impl KynexApp {
                 if this.update(cx, |this, cx| this.poll(cx)).is_err() {
                     break;
                 }
+            }
+        })
+        .detach();
+
+        // Look for a newer Claude Code now and every few hours after.
+        cx.spawn(async move |this, cx| {
+            loop {
+                let found = cx.background_spawn(async { cli::check() }).await;
+                if this.update(cx, |this, cx| this.cli_checked(found, cx)).is_err() {
+                    break;
+                }
+                cx.background_executor().timer(CLI_CHECK_EVERY).await;
             }
         })
         .detach();
@@ -345,6 +364,7 @@ impl KynexApp {
             prompt: None,
             menu: None,
             resizing_sessions: false,
+            cli_update: UpdateState::Idle,
             focus: cx.focus_handle(),
             wake,
         }
@@ -376,6 +396,66 @@ impl KynexApp {
             }
             None => false,
         });
+    }
+
+    /// Takes in a background version check. Never interrupts an update in progress,
+    /// and stays quiet about a release the user skipped.
+    fn cli_checked(&mut self, found: Result<Option<(String, String)>, String>, cx: &mut Context<Self>) {
+        if matches!(self.cli_update, UpdateState::Updating { .. }) {
+            return;
+        }
+        match found {
+            Ok(Some((installed, latest))) => {
+                if self.saved.skipped_cli_version.as_deref() != Some(latest.as_str()) {
+                    self.cli_update = UpdateState::Available { installed, latest };
+                }
+            }
+            // Updated elsewhere (or by the CLI itself) since the last check.
+            Ok(None) if matches!(self.cli_update, UpdateState::Available { .. }) => self.cli_update = UpdateState::Idle,
+            Ok(None) => {}
+            Err(e) => eprintln!("kynex: couldn't check for Claude Code updates: {e}"),
+        }
+        cx.notify();
+    }
+
+    /// Installs the newest Claude Code with `claude update`. Idle sessions stop
+    /// first so their binary isn't in use, and resume on the new one with the next
+    /// message; busy ones restart once they finish.
+    fn update_cli(&mut self, cx: &mut Context<Self>) {
+        let UpdateState::Available { latest, .. } = &self.cli_update else { return };
+        self.cli_update = UpdateState::Updating { latest: latest.clone() };
+        if !self.chat.busy {
+            self.chat.kill();
+        }
+        for s in self.code.values_mut().filter(|s| !s.busy) {
+            s.kill();
+        }
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_spawn(async { cli::update() }).await;
+            this.update(cx, |this, cx| {
+                this.cli_update = match result {
+                    Ok(version) => {
+                        let busy = this.code.iter().filter(|(_, s)| s.busy).map(|(p, _)| p.clone());
+                        this.restart_when_idle.extend(busy.collect::<Vec<_>>());
+                        UpdateState::Updated { version }
+                    }
+                    Err(e) => UpdateState::Failed(e),
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn skip_cli_version(&mut self, cx: &mut Context<Self>) {
+        if let UpdateState::Available { latest, .. } = &self.cli_update {
+            self.saved.skipped_cli_version = Some(latest.clone());
+            self.save();
+        }
+        self.cli_update = UpdateState::Idle;
+        cx.notify();
     }
 
     /// Copy live session ids into the saved state so they survive a restart.
@@ -1385,9 +1465,10 @@ impl KynexApp {
         let waiting = self.prompt.is_some();
         let working = !waiting && self.active_session().is_some_and(|s| s.busy);
         let status = (working || waiting).then(|| working_bar(working, &t));
+        let update = self.render_cli_update(cx);
         let shell = |child: AnyElement, focused: bool| {
             div().w_full().flex().justify_center().px_6().pb_4().pt_1().child(
-                div().w_full().max_w(THREAD_WIDTH).flex().flex_col().gap_1p5().children(status).child(
+                div().w_full().max_w(THREAD_WIDTH).flex().flex_col().gap_1p5().children(update).children(status).child(
                     div()
                         .w_full()
                         .p_3()
@@ -1973,6 +2054,74 @@ impl KynexApp {
                     }),
                 )
                 .child(card),
+        )
+    }
+
+    /// The Claude Code update strip above the composer: an offer, progress, or the outcome.
+    fn render_cli_update(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let t = theme(cx).clone();
+        let (lead, text, color): (AnyElement, String, _) = match &self.cli_update {
+            UpdateState::Idle => return None,
+            UpdateState::Available { installed, latest } => (
+                icon(Icon::ArrowUp, t.info).size_3p5().into_any_element(),
+                format!("Claude Code {latest} is available (you have {installed})"),
+                t.text,
+            ),
+            UpdateState::Updating { latest } => (
+                spinner("cli-update-spin", t.accent, px(14.)).into_any_element(),
+                format!("Updating Claude Code to {latest}…"),
+                t.text_muted,
+            ),
+            UpdateState::Updated { version } => (
+                icon(Icon::Check, t.success).size_3p5().into_any_element(),
+                format!("Claude Code updated to {version}. Sessions pick it up with their next message."),
+                t.text,
+            ),
+            UpdateState::Failed(e) => (icon(Icon::Dot, t.error).size_3p5().into_any_element(), e.clone(), t.text),
+        };
+        let dismiss = || {
+            icon_button("cli-update-dismiss", Icon::Close, cx).on_click(cx.listener(|this, _, _, cx| {
+                this.cli_update = UpdateState::Idle;
+                cx.notify();
+            }))
+        };
+        let actions = match &self.cli_update {
+            UpdateState::Available { .. } => div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    ghost_button("cli-skip", cx)
+                        .text_xs()
+                        .text_color(t.text_muted)
+                        .child("Skip this version")
+                        .on_click(cx.listener(|this, _, _, cx| this.skip_cli_version(cx))),
+                )
+                .child(
+                    outline_button("cli-update", "Update", cx)
+                        .tooltip(Tooltip::text("Runs `claude update`; idle sessions restart on the new version"))
+                        .on_click(cx.listener(|this, _, _, cx| this.update_cli(cx))),
+                )
+                .into_any_element(),
+            UpdateState::Updating { .. } => div().into_any_element(),
+            _ => dismiss().into_any_element(),
+        };
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .pl_2()
+                .pr_1()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(t.border_variant)
+                .bg(t.panel)
+                .child(lead)
+                .child(div().flex_1().min_w_0().text_xs().text_color(color).child(text))
+                .child(actions)
+                .into_any_element(),
         )
     }
 

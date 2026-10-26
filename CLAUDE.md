@@ -59,6 +59,8 @@ One-time setup: `cargo install dioxus-cli@0.7.10 --locked`, and `claude` logged 
   persisted state
 - `src/session.rs` — Claude CLI session process and stream-json protocol, session listing;
   reader threads ring a `Wake` callback and the app drains every session on one task
+- `src/cli.rs` — keeping the `claude` CLI current: version check against npm dist-tags,
+  `claude update` from the strip above the composer
 - `src/prompt.rs` — `PromptView`: permission / plan / question prompts in the composer's place
 - `src/markdown.rs` — markdown to gpui elements (pulldown-cmark), re-parsed per render
 - `src/ui/` — our small component kit, Zed `ui`-crate style: buttons, tooltips, menus, icons

@@ -2,6 +2,7 @@
 
 mod app;
 mod chrome;
+mod cli;
 mod git;
 mod markdown;
 mod project;
