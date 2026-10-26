@@ -2,6 +2,7 @@
 //! `RenderOnce`-style builders over `div`, styled from the theme global.
 
 pub mod input;
+pub mod selectable;
 
 use std::borrow::Cow;
 use std::collections::HashMap;

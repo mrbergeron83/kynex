@@ -414,10 +414,13 @@ impl TextInput {
         }
     }
 
+    /// With nothing selected here, Ctrl+C goes on to the views around the
+    /// field, e.g. to copy text selected in the transcript.
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
-            cx.write_to_clipboard(ClipboardItem::new_string(self.content[self.selected_range.clone()].to_string()));
+        if self.selected_range.is_empty() {
+            return cx.propagate();
         }
+        cx.write_to_clipboard(ClipboardItem::new_string(self.content[self.selected_range.clone()].to_string()));
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {

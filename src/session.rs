@@ -42,7 +42,8 @@ pub enum Item {
     /// A `can_use_tool` request. `tool` is the tool's name (`Bash`, `mcp__x__y`),
     /// `description` the CLI's one-line summary of what it's for.
     Permission { request_id: String, tool: String, input: Value, suggestions: Value, description: String, state: PermState },
-    Result { cost: f64, duration_ms: u64, is_error: bool },
+    /// The end of a turn, with a recap of it: how many tools ran and which files changed.
+    Result { cost: f64, duration_ms: u64, is_error: bool, tools: usize, files: Vec<String> },
     Error(String),
 }
 
@@ -77,12 +78,17 @@ enum Event {
 }
 
 pub struct Session {
+    /// Unique among this run's sessions, so the UI can tell them apart before
+    /// (and regardless of) the CLI assigning a `session_id`.
+    pub uid: u64,
     pub kind: Kind,
     pub cwd: PathBuf,
     pub model: String,
     pub items: Vec<Item>,
     pub session_id: Option<String>,
     pub busy: bool,
+    /// A turn ended and the user hasn't looked at it yet; the UI clears it.
+    pub finished: bool,
     pub total_cost: f64,
     /// The live permission mode: starts at the project's default, follows the
     /// CLI's reports, and is switched from the composer without a restart.
@@ -102,13 +108,16 @@ impl Session {
             Kind::Code => project::ClaudeSettings::load(&cwd).mode,
             Kind::Chat => project::Mode::default(),
         };
+        static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
+            uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             kind,
             cwd,
             model: String::new(),
             items: Vec::new(),
             session_id: None,
             busy: false,
+            finished: false,
             total_cost: 0.0,
             mode,
             wake: Arc::new(|| {}),
@@ -163,6 +172,11 @@ impl Session {
 
     pub fn is_running(&self) -> bool {
         self.child.is_some()
+    }
+
+    /// Whether a permission prompt or question is waiting on the user.
+    pub fn waiting(&self) -> bool {
+        self.items.iter().any(|i| matches!(i, Item::Permission { state: PermState::Pending, .. }))
     }
 
     fn spawn(&mut self) -> Result<(), String> {
@@ -440,15 +454,40 @@ impl Session {
             "result" => {
                 let cost = v["total_cost_usd"].as_f64().unwrap_or(0.0);
                 self.total_cost = cost.max(self.total_cost);
+                let (tools, files) = self.turn_recap();
                 self.items.push(Item::Result {
                     cost,
                     duration_ms: v["duration_ms"].as_u64().unwrap_or(0),
                     is_error: v["is_error"].as_bool().unwrap_or(false),
+                    tools,
+                    files,
                 });
                 self.busy = false;
+                self.finished = true;
             }
             _ => {}
         }
+    }
+
+    /// Tool calls since the last user message, and the file names they wrote to.
+    fn turn_recap(&self) -> (usize, Vec<String>) {
+        let start = self.items.iter().rposition(|i| matches!(i, Item::User { .. })).map_or(0, |i| i + 1);
+        let mut tools = 0;
+        let mut files: Vec<String> = Vec::new();
+        for item in &self.items[start..] {
+            let Item::ToolUse { name, input, .. } = item else { continue };
+            tools += 1;
+            if !matches!(name.as_str(), "Edit" | "MultiEdit" | "Write" | "NotebookEdit") {
+                continue;
+            }
+            let v: Value = serde_json::from_str(input).unwrap_or_default();
+            let path = v["file_path"].as_str().or(v["notebook_path"].as_str()).unwrap_or("");
+            let file = Path::new(path).file_name().map(|f| f.to_string_lossy().into_owned());
+            if let Some(f) = file.filter(|f| !files.contains(f)) {
+                files.push(f);
+            }
+        }
+        (tools, files)
     }
 
     fn handle_stream(&mut self, ev: &Value) {
@@ -698,6 +737,28 @@ fn tool_result_text(content: &Value) -> String {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn result_recaps_the_turn() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        s.items.push(Item::User { text: "old".into(), images: Vec::new() });
+        s.handle(json!({ "type": "assistant", "message": { "content": [
+            { "type": "tool_use", "name": "Edit", "input": { "file_path": "C:/x/old.rs" } }
+        ] } }));
+        s.items.push(Item::User { text: "go".into(), images: Vec::new() });
+        s.handle(json!({ "type": "assistant", "message": { "content": [
+            { "type": "tool_use", "name": "Read", "input": { "file_path": "C:/x/a.rs" } },
+            { "type": "tool_use", "name": "Edit", "input": { "file_path": "C:/x/a.rs" } },
+            { "type": "tool_use", "name": "Write", "input": { "file_path": "/y/b.md" } },
+            { "type": "tool_use", "name": "Edit", "input": { "file_path": "C:/x/a.rs" } }
+        ] } }));
+        s.busy = true;
+        s.handle(json!({ "type": "result", "duration_ms": 5000, "total_cost_usd": 0.1 }));
+        assert!(!s.busy && s.finished);
+        let Some(Item::Result { tools, files, .. }) = s.items.last() else { panic!("no result") };
+        assert_eq!(*tools, 4);
+        assert_eq!(files, &["a.rs", "b.md"]);
+    }
 
     #[test]
     fn title_is_first_real_user_message() {

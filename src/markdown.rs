@@ -5,18 +5,21 @@
 use std::ops::Range;
 
 use gpui::{
-    AnyElement, App, ClipboardItem, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText,
-    SharedString, StrikethroughStyle, StyledText, UnderlineStyle, div, prelude::*, px,
+    AnyElement, App, ClipboardItem, ElementId, FontStyle, FontWeight, HighlightStyle, SharedString,
+    StrikethroughStyle, UnderlineStyle, div, prelude::*, px,
 };
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::theme::{Palette, mono, theme};
+use crate::ui::selectable::{Spot, selectable};
 use crate::ui::{Icon, Tooltip, icon_button};
 
-/// Renders `src` as a column of blocks. `id` keeps element ids (links, copy
-/// buttons) unique across messages.
-pub fn render(id: impl Into<ElementId>, src: &str, cx: &App) -> AnyElement {
+/// Renders `src` as a column of blocks. `id` keeps element ids (copy buttons)
+/// unique across messages; the text is selectable as item `item` of selection
+/// group `group`.
+pub fn render(id: impl Into<ElementId>, src: &str, group: u64, item: usize, cx: &App) -> AnyElement {
     let mut b = Builder::new(id.into(), theme(cx).clone(), cx);
+    b.select = (group, item);
     let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     for event in Parser::new_ext(src, options) {
         b.event(event);
@@ -60,6 +63,9 @@ struct Builder<'a> {
     heading: Option<HeadingLevel>,
     code: Option<(String, String)>,
     counter: usize,
+    /// Selection group and item, and the next block's number in it.
+    select: (u64, usize),
+    blocks: usize,
 }
 
 impl<'a> Builder<'a> {
@@ -77,12 +83,20 @@ impl<'a> Builder<'a> {
             heading: None,
             code: None,
             counter: 0,
+            select: (0, 0),
+            blocks: 0,
         }
     }
 
     fn next_id(&mut self, what: &'static str) -> ElementId {
         self.counter += 1;
         ElementId::NamedChild(std::sync::Arc::new(self.id.clone()), format!("{what}-{}", self.counter).into())
+    }
+
+    /// Where the next block of text sits in the selection order.
+    fn next_spot(&mut self) -> Spot {
+        self.blocks += 1;
+        Spot::new(self.select.1, self.blocks)
     }
 
     fn push_block(&mut self, el: AnyElement) {
@@ -283,15 +297,12 @@ impl<'a> Builder<'a> {
             return;
         }
         let inline = std::mem::take(&mut self.inline);
-        let styled = StyledText::new(inline.text).with_highlights(inline.highlights).with_font_family_overrides(inline.fonts);
-        let body: AnyElement = if inline.links.is_empty() {
-            styled.into_any_element()
-        } else {
-            let (ranges, urls): (Vec<_>, Vec<_>) = inline.links.into_iter().unzip();
-            InteractiveText::new(self.next_id("links"), styled)
-                .on_click(ranges, move |ix, _, cx| cx.open_url(&urls[ix]))
-                .into_any_element()
-        };
+        let spot = self.next_spot();
+        let (highlights, fonts) = (inline.highlights, inline.fonts);
+        let body = selectable(self.select.0, spot, inline.text, self.p.selection)
+            .styled(|t| t.with_highlights(highlights).with_font_family_overrides(fonts))
+            .links(inline.links)
+            .into_any_element();
         let block = match self.heading {
             Some(level) => {
                 let size = match level {
@@ -312,6 +323,7 @@ impl<'a> Builder<'a> {
         let copy_id = self.next_id("copy");
         let scroll_id = self.next_id("code");
         let to_copy = code.clone();
+        let text = selectable(self.select.0, self.next_spot(), code, self.p.selection);
         let p = &self.p;
         div()
             .group("code")
@@ -330,9 +342,7 @@ impl<'a> Builder<'a> {
                     .py_2()
                     .font_family(mono())
                     .text_size(px(13.))
-                    .child(div().whitespace_nowrap().children(code.lines().map(|l| {
-                        div().child(if l.is_empty() { " ".to_string() } else { l.to_string() })
-                    }))),
+                    .child(div().whitespace_nowrap().child(text)),
             )
             .child(
                 div()

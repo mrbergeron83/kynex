@@ -23,6 +23,7 @@ use crate::prompt::{self, PromptAnswer, PromptView, Request};
 use crate::session::{self, Attachment, Item, Kind, PermState, Session, SessionInfo};
 use crate::theme::{self, THEMES, Theme, mono, theme};
 use crate::ui::input::{InputEvent, TextInput};
+use crate::ui::selectable::{self, Spot, selectable};
 use crate::ui::{
     Icon, Tooltip, divider, ghost_button, icon, icon_button, menu_item, outline_button, popover, primary_button,
 };
@@ -35,7 +36,7 @@ const MAX_IMAGE_EDGE: u32 = 1568;
 const THREAD_WIDTH: Pixels = px(780.);
 const CLI_CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
-actions!(kynex, [OpenProject, NextTab, PrevTab, ToggleSessions, CycleMode, Interrupt]);
+actions!(kynex, [OpenProject, NextTab, PrevTab, ToggleSessions, CycleMode, Interrupt, CopySelection]);
 
 /// Workspace shortcuts and their defaults. `<data dir>/keymap.json` overrides
 /// them by name, e.g. `{ "interrupt": "ctrl-c" }`; an empty string unbinds one.
@@ -89,6 +90,8 @@ pub fn bind_keys(cx: &mut App) {
             _ => KeyBinding::new(keys, Interrupt, c),
         });
     }
+    // Copies text selected in the transcript; the composer has its own Ctrl+C.
+    bindings.push(KeyBinding::new(&crate::ui::keys("secondary-c"), CopySelection, c));
     cx.bind_keys(bindings);
 }
 
@@ -181,7 +184,75 @@ impl Saved {
 }
 
 /// Which conversation: Chat, or a project's by its folder.
-type Key = Option<PathBuf>;
+/// A session's [`Session::uid`]: transcripts, expanded tools and prompts follow it.
+type Key = u64;
+
+/// The open conversations in one folder (a project, or the chat folder). Each
+/// runs its own `claude` process, so one can keep working while you're in another.
+#[derive(Default)]
+struct Live {
+    sessions: Vec<Session>,
+    /// The one shown, and talked to from the composer.
+    active: usize,
+}
+
+impl Live {
+    fn current(&self) -> Option<&Session> {
+        self.sessions.get(self.active)
+    }
+
+    fn current_mut(&mut self) -> Option<&mut Session> {
+        self.sessions.get_mut(self.active)
+    }
+
+    fn busy(&self) -> bool {
+        self.sessions.iter().any(|s| s.busy)
+    }
+
+    fn waiting(&self) -> bool {
+        self.sessions.iter().any(Session::waiting)
+    }
+
+    /// A session here finished a turn you haven't seen.
+    fn finished(&self) -> bool {
+        self.sessions.iter().any(|s| s.finished)
+    }
+
+    /// Shows the first open session that matches, if any.
+    fn show_where(&mut self, f: impl Fn(&Session) -> bool) -> bool {
+        match self.sessions.iter().position(f) {
+            Some(i) => {
+                self.active = i;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Shows `s`. Sessions left behind keep running while busy or waiting on
+    /// you; idle ones close (their process with them) and resume from the
+    /// transcript if picked again. Returns the uids that closed.
+    fn show(&mut self, s: Session) -> Vec<Key> {
+        self.sessions.push(s);
+        self.active = self.sessions.len() - 1;
+        self.prune()
+    }
+
+    /// Closes the idle sessions that aren't shown.
+    fn prune(&mut self) -> Vec<Key> {
+        let active = self.current().map(|s| s.uid);
+        let mut closed = Vec::new();
+        self.sessions.retain(|s| {
+            let keep = Some(s.uid) == active || s.busy || s.waiting() || s.finished;
+            if !keep {
+                closed.push(s.uid);
+            }
+            keep
+        });
+        self.active = self.sessions.iter().position(|s| Some(s.uid) == active).unwrap_or(0);
+        closed
+    }
+}
 
 #[derive(Clone, PartialEq)]
 enum Menu {
@@ -216,8 +287,22 @@ struct SettingsView {
 struct SessionList {
     cwd: PathBuf,
     current: Option<String>,
-    busy: bool,
+    /// The folder's open sessions and whether each is busy: titles and times
+    /// move when a reply starts or finishes.
+    live: Vec<(Option<String>, bool)>,
     items: Vec<SessionInfo>,
+}
+
+/// An open session as the sessions panel shows it.
+struct OpenSession {
+    uid: Key,
+    /// The CLI's session id, once it has one.
+    id: Option<String>,
+    /// The first thing the user said, for a title before the transcript lists it.
+    first: Option<String>,
+    busy: bool,
+    waiting: bool,
+    finished: bool,
 }
 
 /// Getting the `claude` CLI ready to run sessions, without leaving Kynex.
@@ -239,8 +324,8 @@ struct ActivePrompt {
 
 pub struct KynexApp {
     saved: Saved,
-    code: HashMap<PathBuf, Session>,
-    chat: Session,
+    code: HashMap<PathBuf, Live>,
+    chat: Live,
     git: HashMap<PathBuf, Entity<GitView>>,
     threads: HashMap<Key, Thread>,
     /// Tool calls and results opened up in the transcript.
@@ -322,6 +407,7 @@ impl KynexApp {
         };
         chat.model = saved.model.clone();
         chat.wake = wake.clone();
+        let chat = Live { sessions: vec![chat], active: 0 };
 
         let composer = cx.new(|cx| TextInput::new(cx).multiline());
         cx.subscribe_in(&composer, window, |this, _, ev, window, cx| match ev {
@@ -402,8 +488,7 @@ impl KynexApp {
     }
 
     fn poll(&mut self, cx: &mut Context<Self>) {
-        self.chat.poll();
-        for s in self.code.values_mut() {
+        for s in self.chat.sessions.iter_mut().chain(self.code.values_mut().flat_map(|l| l.sessions.iter_mut())) {
             s.poll();
         }
         self.restart_idle();
@@ -413,13 +498,12 @@ impl KynexApp {
 
     /// Restart the projects whose settings changed, once they're idle.
     fn restart_idle(&mut self) {
-        self.restart_when_idle.retain(|path| match self.code.get_mut(path) {
-            Some(s) if s.busy => true,
-            Some(s) => {
+        self.restart_when_idle.retain(|path| {
+            let Some(live) = self.code.get_mut(path) else { return false };
+            for s in live.sessions.iter_mut().filter(|s| !s.busy) {
                 s.kill();
-                false
             }
-            None => false,
+            live.busy()
         });
     }
 
@@ -449,10 +533,8 @@ impl KynexApp {
     fn update_cli(&mut self, cx: &mut Context<Self>) {
         let UpdateState::Available { latest, .. } = &self.cli_update else { return };
         self.cli_update = UpdateState::Updating { latest: latest.clone() };
-        if !self.chat.busy {
-            self.chat.kill();
-        }
-        for s in self.code.values_mut().filter(|s| !s.busy) {
+        let all = self.chat.sessions.iter_mut().chain(self.code.values_mut().flat_map(|l| l.sessions.iter_mut()));
+        for s in all.filter(|s| !s.busy) {
             s.kill();
         }
         cx.notify();
@@ -461,7 +543,7 @@ impl KynexApp {
             this.update(cx, |this, cx| {
                 this.cli_update = match result {
                     Ok(version) => {
-                        let busy = this.code.iter().filter(|(_, s)| s.busy).map(|(p, _)| p.clone());
+                        let busy = this.code.iter().filter(|(_, l)| l.busy()).map(|(p, _)| p.clone());
                         this.restart_when_idle.extend(busy.collect::<Vec<_>>());
                         UpdateState::Updated { version }
                     }
@@ -576,12 +658,13 @@ impl KynexApp {
     /// Copy live session ids into the saved state so they survive a restart.
     fn sync_session_ids(&mut self) {
         let mut changed = false;
-        if self.saved.chat_session_id != self.chat.session_id {
-            self.saved.chat_session_id = self.chat.session_id.clone();
+        let chat_id = self.chat.current().and_then(|s| s.session_id.clone());
+        if self.saved.chat_session_id != chat_id {
+            self.saved.chat_session_id = chat_id;
             changed = true;
         }
         for p in &mut self.saved.projects {
-            if let Some(s) = self.code.get(&p.path) {
+            if let Some(s) = self.code.get(&p.path).and_then(Live::current) {
                 if p.session_id != s.session_id {
                     p.session_id = s.session_id.clone();
                     changed = true;
@@ -600,61 +683,102 @@ impl KynexApp {
         }
     }
 
-    fn active_key(&self) -> Key {
-        self.active_project().map(|p| p.path.clone())
+    /// The shown session's uid.
+    fn active_key(&self) -> Option<Key> {
+        self.active_session().map(|s| s.uid)
     }
 
-    fn session_for(&mut self, key: &Key) -> Option<&mut Session> {
-        match key {
-            None => Some(&mut self.chat),
-            Some(p) => self.code.get_mut(p),
-        }
+    fn session_for(&mut self, key: Key) -> Option<&mut Session> {
+        self.chat.sessions.iter_mut().chain(self.code.values_mut().flat_map(|l| l.sessions.iter_mut())).find(|s| s.uid == key)
     }
 
-    fn active_session(&self) -> Option<&Session> {
+    fn active_live(&self) -> Option<&Live> {
         match self.saved.active {
             Active::Chat => Some(&self.chat),
             Active::Project(i) => self.saved.projects.get(i).and_then(|p| self.code.get(&p.path)),
         }
     }
 
-    /// The session the composer talks to, created (or resumed) on first use.
-    fn session_mut(&mut self) -> Option<&mut Session> {
-        let Active::Project(i) = self.saved.active else {
-            return Some(&mut self.chat);
+    fn active_session(&self) -> Option<&Session> {
+        self.active_live().and_then(Live::current)
+    }
+
+    /// The open sessions in the active tab's folder, created (with the saved
+    /// session resumed) on first use.
+    fn live_mut(&mut self) -> Option<&mut Live> {
+        let (kind, path, resume, live) = match self.saved.active {
+            Active::Chat => (Kind::Chat, data_dir().join("chat"), None, &mut self.chat),
+            Active::Project(i) => {
+                let p = self.saved.projects.get(i)?;
+                if p.view != View::Code {
+                    return None;
+                }
+                (Kind::Code, p.path.clone(), p.session_id.clone(), self.code.entry(p.path.clone()).or_default())
+            }
         };
-        let p = self.saved.projects.get(i)?;
-        if p.view != View::Code {
-            return None;
-        }
-        let (path, resume) = (p.path.clone(), p.session_id.clone());
         let (model, wake) = (self.saved.model.clone(), self.wake.clone());
-        Some(self.code.entry(path.clone()).or_insert_with(|| {
+        if live.sessions.is_empty() {
             let mut s = match resume {
-                Some(id) => Session::resume(Kind::Code, path, id),
-                None => Session::new(Kind::Code, path),
+                Some(id) => Session::resume(kind, path, id),
+                None => Session::new(kind, path),
             };
             s.model = model;
             s.wake = wake;
-            s
-        }))
+            live.sessions.push(s);
+            live.active = 0;
+        }
+        Some(live)
     }
 
-    /// Replaces the active conversation (the old process, if any, is stopped).
-    fn set_session(&mut self, mut s: Session) {
+    /// The session the composer talks to.
+    fn session_mut(&mut self) -> Option<&mut Session> {
+        self.live_mut()?.current_mut()
+    }
+
+    /// Shows `s` in the active tab. Sessions it replaces keep running if
+    /// they're working; idle ones close.
+    fn open_session(&mut self, mut s: Session) {
         s.model = self.saved.model.clone();
         s.wake = self.wake.clone();
-        let key = self.active_key();
-        self.threads.remove(&key);
-        self.expanded.retain(|(k, _)| *k != key);
-        match self.saved.active {
-            Active::Chat => self.chat = s,
-            Active::Project(i) => {
-                if let Some(p) = self.saved.projects.get(i) {
-                    self.code.insert(p.path.clone(), s);
-                }
-            }
+        let Some(live) = self.live_mut() else { return };
+        let closed = live.show(s);
+        self.forget(&closed);
+    }
+
+    /// Shows the open session with this CLI id, or resumes it from its transcript.
+    fn switch_session(&mut self, kind: Kind, cwd: PathBuf, id: String) {
+        if !self.show_open(|s| s.session_id.as_deref() == Some(id.as_str())) {
+            self.open_session(Session::resume(kind, cwd, id));
         }
+    }
+
+    /// Shows an open session in the active tab, if one matches.
+    fn show_open(&mut self, f: impl Fn(&Session) -> bool) -> bool {
+        let Some(live) = self.live_mut() else { return false };
+        if !live.show_where(f) {
+            return false;
+        }
+        let closed = live.prune();
+        self.forget(&closed);
+        true
+    }
+
+    /// Closes an open session that isn't working (its transcript stays).
+    fn close_open(&mut self, key: Key) {
+        let Some(live) = self.live_mut() else { return };
+        let Some(i) = live.sessions.iter().position(|s| s.uid == key && !s.busy) else { return };
+        let shown = live.current().map(|s| s.uid);
+        live.sessions.remove(i);
+        live.active = live.sessions.iter().position(|s| Some(s.uid) == shown).unwrap_or(0);
+        self.forget(&[key]);
+    }
+
+    /// Drops the view state of sessions that closed.
+    fn forget(&mut self, closed: &[Key]) {
+        for k in closed {
+            self.threads.remove(k);
+        }
+        self.expanded.retain(|(k, _)| !closed.contains(k));
     }
 
     fn select(&mut self, a: Active, window: &mut Window, cx: &mut Context<Self>) {
@@ -681,9 +805,9 @@ impl KynexApp {
 
     fn close_project(&mut self, i: usize) {
         let p = self.saved.projects.remove(i);
-        self.code.remove(&p.path);
+        let closed: Vec<Key> = self.code.remove(&p.path).into_iter().flat_map(|l| l.sessions).map(|s| s.uid).collect();
+        self.forget(&closed);
         self.git.remove(&p.path);
-        self.threads.remove(&Some(p.path.clone()));
         self.saved.active = match self.saved.active {
             Active::Project(a) if a > i => Active::Project(a - 1),
             Active::Project(a) if a == i && i > 0 => Active::Project(i - 1),
@@ -809,7 +933,7 @@ impl KynexApp {
             s.send(text, atts);
         }
         self.composer.update(cx, |c, cx| c.set_text("", cx));
-        if let Some(t) = self.threads.get(&self.active_key()) {
+        if let Some(t) = self.active_key().and_then(|k| self.threads.get(&k)) {
             t.list.scroll_to_end();
             t.list.set_follow_mode(FollowMode::Tail);
         }
@@ -923,7 +1047,7 @@ impl KynexApp {
     fn answer(&mut self, key: Key, request_id: String, answer: session::Answer, window: &mut Window, cx: &mut Context<Self>) {
         let mut rules = Vec::new();
         let mut cwd = None;
-        if let Some(s) = self.session_for(&key) {
+        if let Some(s) = self.session_for(key) {
             let ix = s.items.iter().position(|i| matches!(i, Item::Permission { request_id: r, .. } if *r == request_id));
             if let Some(ix) = ix {
                 rules = s.answer_permission(ix, answer);
@@ -940,7 +1064,6 @@ impl KynexApp {
 
     /// Keeps the prompt view in step with the active session's oldest pending request.
     fn sync_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let key = self.active_key();
         let pending = self.active_session().and_then(|s| {
             let mut it = s.items.iter().filter_map(|i| match i {
                 Item::Permission { request_id, tool, input, suggestions, description, state: PermState::Pending } => {
@@ -956,9 +1079,9 @@ impl KynexApp {
                 _ => None,
             });
             let first = it.next()?;
-            Some((first, it.count()))
+            Some((s.uid, first, it.count()))
         });
-        let Some((req, queued)) = pending else {
+        let Some((key, req, queued)) = pending else {
             self.prompt = None;
             return;
         };
@@ -966,8 +1089,8 @@ impl KynexApp {
             let id = req.id.clone();
             let view = cx.new(|cx| PromptView::new(req, window, cx));
             let sub = cx.subscribe_in(&view, window, {
-                let (key, id) = (key.clone(), id.clone());
-                move |this, _, PromptAnswer(answer), window, cx| this.answer(key.clone(), id.clone(), answer.clone(), window, cx)
+                let id = id.clone();
+                move |this, _, PromptAnswer(answer), window, cx| this.answer(key, id.clone(), answer.clone(), window, cx)
             });
             self.prompt = Some(ActivePrompt { key, id, view, _sub: sub });
         }
@@ -1013,7 +1136,7 @@ impl KynexApp {
                 errors.push(e);
             }
             if view.claude.mode != claude_before.mode {
-                if let Some(s) = self.code.get_mut(&path) {
+                for s in self.code.get_mut(&path).into_iter().flat_map(|l| l.sessions.iter_mut()) {
                     s.set_mode(view.claude.mode);
                 }
             }
@@ -1075,14 +1198,12 @@ impl KynexApp {
 
     fn render_title_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
-        let mut tabs = vec![self.render_tab(0, "Chat".into(), Icon::Message, None, self.chat.busy, false, cx)];
+        let status = |l: &Live| (l.busy(), l.waiting(), l.finished());
+        let mut tabs = vec![self.render_tab(0, "Chat".into(), Icon::Message, None, status(&self.chat), cx)];
         for (i, p) in self.saved.projects.iter().enumerate() {
-            let session = self.code.get(&p.path);
-            let waiting =
-                session.is_some_and(|s| s.items.iter().any(|it| matches!(it, Item::Permission { state: PermState::Pending, .. })));
-            let busy = session.is_some_and(|s| s.busy);
+            let state = self.code.get(&p.path).map_or((false, false, false), status);
             let tooltip = p.path.display().to_string();
-            tabs.push(self.render_tab(i + 1, project_name(&p.path).into(), Icon::Folder, Some(tooltip), busy, waiting, cx));
+            tabs.push(self.render_tab(i + 1, project_name(&p.path).into(), Icon::Folder, Some(tooltip), state, cx));
         }
 
         div()
@@ -1135,8 +1256,7 @@ impl KynexApp {
         label: SharedString,
         which: Icon,
         tooltip: Option<String>,
-        busy: bool,
-        waiting: bool,
+        (busy, waiting, finished): (bool, bool, bool),
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = theme(cx).clone();
@@ -1160,6 +1280,7 @@ impl KynexApp {
             .child(label)
             .when(waiting, |d| d.child(icon(Icon::Dot, t.warning).size_2()))
             .when(busy && !waiting, |d| d.child(spinner(("tab-spin", pos), t.accent, px(12.))))
+            .when(finished && !busy && !waiting, |d| d.child(icon(Icon::Check, t.success).size_3()))
             .when_some(tooltip, |d, tip| d.tooltip(Tooltip::with_meta(tip, "Middle-click to close · right-click for more")))
             .on_click(cx.listener(move |this, _, window, cx| this.jump(pos, window, cx)))
             .when(pos > 0, |d| {
@@ -1182,13 +1303,34 @@ impl KynexApp {
 
     fn render_sessions_panel(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
-        let Some(s) = self.session_mut() else { return div() };
-        let (kind, cwd, current, busy) = (s.kind, s.cwd.clone(), s.session_id.clone(), s.busy);
-        // Re-read when the folder or session changes, and when a reply finishes (titles and times move).
-        if self.sessions.as_ref().is_none_or(|l| l.cwd != cwd || l.current != current || l.busy != busy) {
-            self.sessions = Some(SessionList { items: session::list_sessions(&cwd), cwd: cwd.clone(), current: current.clone(), busy });
+        let Some(live) = self.live_mut() else { return div() };
+        let Some(s) = live.current() else { return div() };
+        let (kind, cwd, current, current_uid) = (s.kind, s.cwd.clone(), s.session_id.clone(), s.uid);
+        let open: Vec<OpenSession> = live
+            .sessions
+            .iter()
+            .map(|s| OpenSession {
+                uid: s.uid,
+                id: s.session_id.clone(),
+                first: s.items.iter().find_map(|i| match i {
+                    Item::User { text, .. } if !text.is_empty() => Some(text.split_whitespace().collect::<Vec<_>>().join(" ")),
+                    _ => None,
+                }),
+                busy: s.busy,
+                waiting: s.waiting(),
+                finished: s.finished,
+            })
+            .collect();
+        let live_sig: Vec<(Option<String>, bool)> = open.iter().map(|o| (o.id.clone(), o.busy)).collect();
+        // Re-read when the folder or session changes, and when a reply starts or finishes (titles and times move).
+        if self.sessions.as_ref().is_none_or(|l| l.cwd != cwd || l.current != current || l.live != live_sig) {
+            self.sessions =
+                Some(SessionList { items: session::list_sessions(&cwd), cwd: cwd.clone(), current: current.clone(), live: live_sig });
         }
         let items = &self.sessions.as_ref().unwrap().items;
+        let open_state = |id: &str| {
+            open.iter().find(|o| o.id.as_deref() == Some(id)).map_or((false, false, false), |o| (o.busy, o.waiting, o.finished))
+        };
 
         let header = div()
             .flex()
@@ -1201,21 +1343,15 @@ impl KynexApp {
             .child(div().flex_1().text_sm().font_weight(FontWeight::MEDIUM).child("Sessions"))
             .child(
                 icon_button("new-session", Icon::Plus, cx)
-                    .when(busy || current.is_none(), |b| b.opacity(0.4))
-                    .tooltip(Tooltip::text(if busy {
-                        "Stop the current reply first"
-                    } else if current.is_none() {
-                        "Already a new session"
-                    } else {
-                        "New session"
-                    }))
+                    .when(current.is_none(), |b| b.opacity(0.4))
+                    .tooltip(Tooltip::text(if current.is_none() { "Already a new session" } else { "New session" }))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let Some(s) = this.session_mut() else { return };
-                        if s.busy || s.session_id.is_none() {
+                        if s.session_id.is_none() {
                             return;
                         }
                         let (kind, cwd) = (s.kind, s.cwd.clone());
-                        this.set_session(Session::new(kind, cwd));
+                        this.open_session(Session::new(kind, cwd));
                         cx.notify();
                     })),
             )
@@ -1226,8 +1362,23 @@ impl KynexApp {
             );
 
         let mut rows: Vec<AnyElement> = Vec::new();
-        if current.is_none() {
-            rows.push(session_row("new", "New session".into(), None, true, &t).into_any_element());
+        // Open sessions with no transcript listed yet: new ones, before or just after their first message.
+        let unlisted = open.iter().filter(|o| o.id.as_ref().is_none_or(|id| !items.iter().any(|i| i.id == *id)));
+        for o in unlisted {
+            let (uid, is_current) = (o.uid, o.uid == current_uid);
+            let title = o.first.clone().unwrap_or_else(|| "New session".into());
+            rows.push(
+                session_row(("open", uid as usize), title.into(), None, is_current, &t)
+                    .children(session_status(("open-status", uid as usize), o.busy, o.waiting, o.finished, &t))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.confirm_delete = None;
+                        if !is_current {
+                            this.show_open(|s| s.uid == uid);
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            );
         }
         if items.is_empty() {
             rows.push(div().px_3().py_2().text_sm().text_color(t.text_placeholder).child("No past sessions yet").into_any_element());
@@ -1238,7 +1389,7 @@ impl KynexApp {
             let id = info.id.clone();
             let (open_id, del_id) = (id.clone(), id.clone());
             let (kind2, cwd2, cwd3) = (kind, cwd.clone(), cwd.clone());
-            let current2 = current.clone();
+            let (busy, waiting, finished) = open_state(&id);
             let delete = if confirming {
                 div()
                     .id(("confirm-delete", n))
@@ -1255,24 +1406,26 @@ impl KynexApp {
             } else {
                 icon_button(("delete", n), Icon::Trash, cx).invisible().group_hover("session-row", |s| s.visible())
             };
-            let row = session_row(("session", n), info.title.clone().into(), Some(ago(info.modified)), is_current, &t)
+            let when = (!busy && !waiting && !finished).then(|| ago(info.modified));
+            let row = session_row(("session", n), info.title.clone().into(), when, is_current, &t)
                 .group("session-row")
                 .tooltip(Tooltip::with_meta(info.title.clone(), ago(info.modified)))
+                .children(session_status(("session-status", n), busy, waiting, finished, &t))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.confirm_delete = None;
-                    if is_current || busy {
+                    if is_current {
                         return;
                     }
-                    this.set_session(Session::resume(kind2, cwd2.clone(), open_id.clone()));
+                    this.switch_session(kind2, cwd2.clone(), open_id.clone());
                     cx.notify();
                 }))
                 .child(
                     delete
-                        .when(busy && is_current, |d| d.opacity(0.4))
-                        .tooltip(Tooltip::text("Delete this session's transcript"))
+                        .when(busy, |d| d.opacity(0.4))
+                        .tooltip(Tooltip::text(if busy { "Stop it first to delete it" } else { "Delete this session's transcript" }))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
-                            if busy && is_current {
+                            if busy {
                                 return;
                             }
                             if this.confirm_delete.as_deref() != Some(del_id.as_str()) {
@@ -1280,8 +1433,14 @@ impl KynexApp {
                                 return cx.notify();
                             }
                             this.confirm_delete = None;
-                            if current2.as_deref() == Some(del_id.as_str()) {
-                                this.set_session(Session::new(kind2, cwd3.clone()));
+                            if is_current {
+                                this.open_session(Session::new(kind2, cwd3.clone()));
+                            }
+                            let open = this.live_mut().and_then(|l| {
+                                l.sessions.iter().find(|s| s.session_id.as_deref() == Some(del_id.as_str())).map(|s| s.uid)
+                            });
+                            if let Some(uid) = open {
+                                this.close_open(uid);
                             }
                             if let Err(e) = session::delete_session(&cwd3, &del_id) {
                                 this.notice = Some(e);
@@ -1396,16 +1555,15 @@ impl KynexApp {
 
     fn render_item(&mut self, ix: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
-        let key = self.active_key();
         let Some(session) = self.active_session() else { return div().into_any_element() };
+        let key = session.uid;
         let Some(item) = session.items.get(ix) else { return div().into_any_element() };
-        let expanded = self.expanded.contains(&(key.clone(), ix));
+        let expanded = self.expanded.contains(&(key, ix));
         // Tool traffic sits tight together; messages get room to breathe.
         let compact = matches!(item, Item::ToolUse { .. } | Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking);
         let toggle = {
-            let key = key.clone();
             cx.listener(move |this, _, _, cx| {
-                let k = (key.clone(), ix);
+                let k = (key, ix);
                 if !this.expanded.remove(&k) {
                     this.expanded.insert(k);
                 }
@@ -1432,7 +1590,9 @@ impl KynexApp {
                         img(i.clone()).max_h(px(120.)).max_w(px(240.)).rounded_md()
                     })))
                 })
-                .when(!text.is_empty(), |d| d.child(div().text_sm().child(text.clone())))
+                .when(!text.is_empty(), |d| {
+                    d.child(div().text_sm().child(selectable(key, Spot::new(ix, 0), text.clone(), t.selection)))
+                })
                 .into_any_element(),
             Item::Assistant(text) => {
                 let to_copy = text.clone();
@@ -1440,7 +1600,7 @@ impl KynexApp {
                     .group("assistant")
                     .relative()
                     .text_sm()
-                    .child(markdown::render(("md", ix), text, cx))
+                    .child(markdown::render(("md", ix), text, key, ix, cx))
                     .child(
                         div().absolute().top_0().right(px(-30.)).invisible().group_hover("assistant", |s| s.visible()).child(
                             crate::ui::icon_button(("copy-msg", ix), Icon::Copy, cx)
@@ -1473,7 +1633,7 @@ impl KynexApp {
                     .flex()
                     .flex_col()
                     .child(head)
-                    .when(expanded, |d| d.child(code_box(("tool-body", ix).into(), input.clone(), &t)))
+                    .when(expanded, |d| d.child(code_box(("tool-body", ix).into(), input.clone(), (key, ix), &t)))
                     .into_any_element()
             }
             Item::ToolResult { content, is_error } => {
@@ -1487,7 +1647,7 @@ impl KynexApp {
                     .flex()
                     .flex_col()
                     .child(head)
-                    .when(expanded, |d| d.child(code_box(("result-body", ix).into(), content.clone(), &t)))
+                    .when(expanded, |d| d.child(code_box(("result-body", ix).into(), content.clone(), (key, ix), &t)))
                     .into_any_element()
             }
             // Answered in the prompt that takes the composer's place; the
@@ -1509,17 +1669,38 @@ impl KynexApp {
                     .child(div().text_color(color).child(note))
                     .into_any_element()
             }
-            Item::Result { cost, duration_ms, is_error } => div()
+            // A clear end to the turn, with a one-line recap of it.
+            Item::Result { cost, duration_ms, is_error, tools, files } => {
+                let (which, color, label) =
+                    if *is_error { (Icon::Close, t.error, "Stopped") } else { (Icon::Check, t.success, "Finished") };
+                let mut recap = vec![format_duration(*duration_ms)];
+                if *tools > 0 {
+                    recap.push(format!("{tools} tool call{}", if *tools == 1 { "" } else { "s" }));
+                }
+                match files.len() {
+                    0 => {}
+                    1..=3 => recap.push(format!("edited {}", files.join(", "))),
+                    n => recap.push(format!("edited {}, {} and {} more", files[0], files[1], n - 2)),
+                }
+                recap.push(format!("${cost:.2}"));
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .px_1()
+                    .pt_1()
+                    .text_xs()
+                    .child(icon(which, color).size_3p5().flex_none())
+                    .child(div().flex_none().font_weight(FontWeight::MEDIUM).text_color(color).child(label))
+                    .child(div().min_w_0().truncate().text_color(t.text_muted).child(recap.join(" · ")))
+                    .into_any_element()
+            }
+            Item::Error(e) => div()
                 .px_1()
-                .text_xs()
-                .text_color(t.text_placeholder)
-                .child(format!(
-                    "Done in {:.1}s · ${cost:.4}{}",
-                    *duration_ms as f64 / 1000.0,
-                    if *is_error { " · error" } else { "" }
-                ))
+                .text_sm()
+                .text_color(t.error)
+                .child(selectable(key, Spot::new(ix, 0), e.clone(), t.selection))
                 .into_any_element(),
-            Item::Error(e) => div().px_1().text_sm().text_color(t.error).child(e.clone()).into_any_element(),
         };
         div()
             .w_full()
@@ -1551,6 +1732,7 @@ impl KynexApp {
                 .child(msg)
                 .into_any_element();
         }
+        let Some(key) = key else { return div().into_any_element() };
         let thread = self.threads.entry(key).or_insert_with(|| {
             let list = ListState::new(0, ListAlignment::Top, px(1000.));
             list.set_follow_mode(FollowMode::Tail);
@@ -1835,7 +2017,7 @@ impl KynexApp {
             }
             Menu::Effort => {
                 // From the settings modal, or from the composer for the active project.
-                let path = self.settings.as_ref().map(|s| s.path.clone()).or_else(|| self.active_key());
+                let path = self.settings.as_ref().map(|s| s.path.clone()).or_else(|| self.active_project().map(|p| p.path.clone()));
                 let current = match (&self.settings, &path) {
                     (Some(s), _) => s.claude.effort.clone(),
                     (None, Some(p)) => ClaudeSettings::load(p).effort,
@@ -2429,8 +2611,11 @@ impl Render for KynexApp {
         let view = self.active_project().map(|p| p.view);
         // Create (or resume) the project's session as soon as its tab is shown,
         // so a restored transcript is visible before the first message.
+        // Showing it counts as seeing it finish.
         if view != Some(View::Git) {
-            let _ = self.session_mut();
+            if let Some(s) = self.session_mut() {
+                s.finished = false;
+            }
         }
         self.sync_prompt(window, cx);
         // Shortcuts (Esc, Ctrl+B…) only reach the workspace through the focused
@@ -2524,6 +2709,9 @@ impl Render for KynexApp {
             .on_action(cx.listener(Self::toggle_sessions))
             .on_action(cx.listener(Self::cycle_mode))
             .on_action(cx.listener(Self::interrupt_action))
+            .on_action(cx.listener(|_, _: &CopySelection, _, cx| copy_selection(cx)))
+            // The composer's Ctrl+C, passed on when nothing is selected in it.
+            .on_action(cx.listener(|_, _: &crate::ui::input::Copy, _, cx| copy_selection(cx)))
             .on_key_down(cx.listener(Self::key_down))
             .on_drop(cx.listener(Self::on_drop))
             .when(self.resizing_sessions, |d| {
@@ -2655,6 +2843,36 @@ fn session_row(
         .when_some(when, |d, w| d.child(div().flex_none().text_xs().text_color(t.text_placeholder).child(w)))
 }
 
+/// A session row's badge: waiting on you, working in the background, or
+/// finished since you last looked.
+fn session_status(
+    id: impl Into<gpui::ElementId>,
+    busy: bool,
+    waiting: bool,
+    finished: bool,
+    t: &theme::Palette,
+) -> Option<AnyElement> {
+    if waiting {
+        Some(icon(Icon::Dot, t.warning).size_3().flex_none().into_any_element())
+    } else if busy {
+        Some(div().flex_none().child(spinner(id, t.accent, px(12.))).into_any_element())
+    } else if finished {
+        Some(icon(Icon::Check, t.success).size_3p5().flex_none().into_any_element())
+    } else {
+        None
+    }
+}
+
+/// "8.2s", "4m 12s", "1h 3m".
+fn format_duration(ms: u64) -> String {
+    let s = ms / 1000;
+    match s {
+        0..60 => format!("{:.1}s", ms as f64 / 1000.0),
+        60..3600 => format!("{}m {}s", s / 60, s % 60),
+        _ => format!("{}h {}m", s / 3600, s % 3600 / 60),
+    }
+}
+
 fn disclosure_row(id: impl Into<gpui::ElementId>, expanded: bool, t: &theme::Palette) -> gpui::Stateful<gpui::Div> {
     let hover = t.hover;
     div()
@@ -2670,7 +2888,17 @@ fn disclosure_row(id: impl Into<gpui::ElementId>, expanded: bool, t: &theme::Pal
         .child(icon(if expanded { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_placeholder).size_3())
 }
 
-fn code_box(id: gpui::ElementId, text: String, t: &theme::Palette) -> impl IntoElement + use<> {
+/// Puts the text selected in the transcript on the clipboard.
+fn copy_selection(cx: &mut App) {
+    match selectable::selected_text(cx) {
+        Some(text) => cx.write_to_clipboard(gpui::ClipboardItem::new_string(text)),
+        None => cx.propagate(),
+    }
+}
+
+/// A tool's input or output, selectable as item `item` of transcript `group`.
+fn code_box(id: gpui::ElementId, text: String, (group, item): (Key, usize), t: &theme::Palette) -> impl IntoElement + use<> {
+    let text = selectable(group, Spot::new(item, 0), text, t.selection);
     div()
         .id(id)
         .ml_6()

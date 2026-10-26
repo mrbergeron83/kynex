@@ -322,7 +322,7 @@ impl PromptView {
                     .px_3()
                     .py_2()
                     .text_sm()
-                    .child(markdown::render("plan-md", &plan, cx)),
+                    .child(markdown::render("plan-md", &plan, 0, 0, cx)),
             )
             .child(self.choice_list(cx))
     }
