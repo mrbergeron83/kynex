@@ -18,6 +18,7 @@ use crate::wsl;
 const MODELS: [(&str, &str); 4] = [("", "Default"), ("opus", "Opus"), ("sonnet", "Sonnet"), ("haiku", "Haiku")];
 const MAX_IMAGE_EDGE: u32 = 1568;
 const COMPOSER_ID: &str = "composer-input";
+const SETTINGS_MODAL: &str = "claude-settings";
 
 /// Which top-level tab is showing. Projects sit at the top of the hierarchy,
 /// with Chat pinned as the first tab.
@@ -34,6 +35,8 @@ enum View {
     #[default]
     Code,
     Git,
+    /// Old Settings tab, now the ⚙ Claude settings modal. Kept so saved state
+    /// still loads; switched back to Code on sight.
     Settings,
 }
 
@@ -72,7 +75,7 @@ pub struct KynexApp {
     sessions: Option<SessionList>,
     /// Session id whose delete button was clicked once and is awaiting confirmation.
     confirm_delete: Option<String>,
-    /// The project settings being edited, loaded when the Settings view opens.
+    /// The project settings being edited, loaded when the settings modal opens.
     settings: Option<SettingsView>,
     /// Projects whose rules changed mid-reply; their process restarts once it's idle.
     restart_when_idle: HashSet<PathBuf>,
@@ -225,10 +228,7 @@ impl KynexApp {
         if self.sessions.as_ref().is_none_or(|l| l.cwd != cwd || l.current != current || l.busy != busy) {
             self.sessions = Some(SessionList { items: session::list_sessions(&cwd), cwd: cwd.clone(), current: current.clone(), busy });
         }
-        let Some(list) = &self.sessions else { return };
-
         let mut action = None;
-        let confirm_delete = &mut self.confirm_delete;
         ui.horizontal(|ui| {
             if ui.add(egui::Button::new("«").frame(false)).on_hover_text("Hide sessions (Ctrl+B)").clicked() {
                 self.saved.sessions_collapsed = true;
@@ -246,6 +246,19 @@ impl KynexApp {
         });
         ui.separator();
 
+        // Project sessions have Claude settings (permissions so far); chat has no tools.
+        if kind == Kind::Code {
+            egui::Panel::bottom("sessions-footer").frame(egui::Frame::NONE).show(ui, |ui| {
+                ui.separator();
+                let r = ui.add(egui::Button::new("⚙  Claude settings").frame(false)).on_hover_text("Permissions for Claude in this project");
+                if r.clicked() {
+                    ui.data_mut(|d| d.insert_temp(egui::Id::unique(SETTINGS_MODAL), Some(cwd.clone())));
+                }
+            });
+        }
+
+        let Some(list) = &self.sessions else { return };
+        let confirm_delete = &mut self.confirm_delete;
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             if current.is_none() {
                 ui.add(egui::Button::selectable(true, "New session").min_size(egui::vec2(ui.available_width(), 0.0)));
@@ -444,7 +457,6 @@ impl KynexApp {
         ui.horizontal(|ui| {
             changed |= ui.selectable_value(&mut p.view, View::Code, "Code").changed();
             changed |= ui.selectable_value(&mut p.view, View::Git, "Git").changed();
-            changed |= ui.selectable_value(&mut p.view, View::Settings, "Settings").changed();
             ui.add_space(8.0);
             ui.label(RichText::new(path.display().to_string()).weak().small());
 
@@ -760,67 +772,118 @@ impl KynexApp {
         }
     }
 
-    /// Per-project settings. Permissions are the first section.
-    fn settings_view(&mut self, ui: &mut egui::Ui, path: &Path) {
+    /// The ⚙ Claude settings modal for a project, open while egui's temp memory
+    /// holds its path. Sections down the left; Permissions is the first.
+    fn claude_settings_modal(&mut self, ctx: &egui::Context) {
+        let id = egui::Id::unique(SETTINGS_MODAL);
+        let Some(path) = ctx.data(|d| d.get_temp::<Option<PathBuf>>(id)).flatten() else { return };
+        const SECTIONS: [&str; 1] = ["Permissions"];
+        let section_id = id.with("section");
+        let mut section = ctx.data(|d| d.get_temp::<usize>(section_id)).unwrap_or(0).min(SECTIONS.len() - 1);
+        let mut close = false;
+
+        let modal = egui::Modal::new(id).show(ctx, |ui| {
+            ui.set_width(760.0_f32.min(ctx.content_rect().width() - 80.0));
+            ui.set_height(520.0_f32.min(ctx.content_rect().height() - 120.0));
+            ui.horizontal(|ui| {
+                ui.heading("⚙  Claude settings");
+                ui.label(RichText::new(project_name(&path)).weak());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    close |= ui.add(egui::Button::new("✖").frame(false)).on_hover_text("Close (Esc)").clicked();
+                });
+            });
+            ui.separator();
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(150.0);
+                    for (i, name) in SECTIONS.iter().enumerate() {
+                        if ui.add(egui::Button::selectable(section == i, *name).min_size(egui::vec2(150.0, 0.0))).clicked() {
+                            section = i;
+                        }
+                    }
+                });
+                ui.separator();
+                ui.vertical(|ui| {
+                    egui::ScrollArea::vertical().id_salt("claude-settings-scroll").auto_shrink(false).show(ui, |ui| match section {
+                        _ => self.permissions_section(ui, &path),
+                    });
+                });
+            });
+        });
+
+        ctx.data_mut(|d| d.insert_temp(section_id, section));
+        if close || modal.should_close() {
+            ctx.data_mut(|d| d.remove::<Option<PathBuf>>(id));
+        }
+    }
+
+    fn permissions_section(&mut self, ui: &mut egui::Ui, path: &Path) {
+        ui.label(
+            RichText::new(
+                "Rules Kynex gives every Claude session in this project, in Claude Code's syntax:                  Bash(cargo test:*), Edit, WebFetch(domain:docs.rs). They add to your own Claude                  settings; a deny anywhere wins.",
+            )
+            .weak(),
+        );
+        ui.add_space(8.0);
+        self.permissions_editor(ui, path, false);
+        ui.add_space(12.0);
+        ui.label(RichText::new(format!("Stored in {}", project::dir(path).display())).small().weak());
+    }
+
+    /// Lists, adds and removes a project's permission rules, saving on every change.
+    /// `compact` stacks the add controls for the narrow sessions panel.
+    fn permissions_editor(&mut self, ui: &mut egui::Ui, path: &Path, compact: bool) {
         if self.settings.as_ref().is_none_or(|s| s.path != path) {
             self.settings = Some(SettingsView { path: path.to_path_buf(), perms: Permissions::load(path), new_rule: String::new() });
         }
         let Some(view) = &mut self.settings else { return };
         let before = view.perms.clone();
 
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            ui.set_max_width(ui.available_width().min(900.0));
-            ui.heading("Permissions");
-            ui.label(
-                RichText::new(
-                    "Rules Kynex gives every Claude session in this project, in Claude Code's syntax: \
-                     Bash(cargo test:*), Edit, WebFetch(domain:docs.rs). They add to your own Claude \
-                     settings; a deny anywhere wins.",
-                )
-                .weak(),
-            );
-            ui.add_space(8.0);
-
-            for (title, rules) in [("Allow", &mut view.perms.allow), ("Deny", &mut view.perms.deny)] {
-                ui.label(RichText::new(title).strong());
-                if rules.is_empty() {
-                    ui.label(RichText::new("  none").weak());
-                }
-                let mut remove = None;
-                for (i, rule) in rules.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        if ui.small_button("✖").on_hover_text("Remove this rule").clicked() {
-                            remove = Some(i);
-                        }
-                        ui.label(RichText::new(rule).monospace());
-                    });
-                }
-                if let Some(i) = remove {
-                    rules.remove(i);
-                }
-                ui.add_space(8.0);
+        for (title, rules) in [("Allow", &mut view.perms.allow), ("Deny", &mut view.perms.deny)] {
+            ui.label(RichText::new(title).strong());
+            if rules.is_empty() {
+                ui.label(RichText::new("  none").weak());
             }
-
-            ui.horizontal(|ui| {
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut view.new_rule).hint_text("Bash(npm test:*)").desired_width(320.0),
-                );
-                let rule = view.new_rule.trim().to_string();
-                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                let add_allow = ui.add_enabled(!rule.is_empty(), egui::Button::new("Allow")).clicked() || enter;
-                let add_deny = ui.add_enabled(!rule.is_empty(), egui::Button::new("Deny")).clicked();
-                let list = if add_deny { Some(&mut view.perms.deny) } else if add_allow { Some(&mut view.perms.allow) } else { None };
-                if let Some(list) = list.filter(|_| !rule.is_empty()) {
-                    if !list.contains(&rule) {
-                        list.push(rule);
+            let mut remove = None;
+            for (i, rule) in rules.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    if ui.small_button("✖").on_hover_text("Remove this rule").clicked() {
+                        remove = Some(i);
                     }
-                    view.new_rule.clear();
-                }
-            });
+                    let text = RichText::new(rule).monospace();
+                    ui.add(egui::Label::new(if compact { text.small() } else { text }).truncate()).on_hover_text(rule);
+                });
+            }
+            if let Some(i) = remove {
+                rules.remove(i);
+            }
+            ui.add_space(if compact { 4.0 } else { 8.0 });
+        }
 
-            ui.add_space(12.0);
-            ui.label(RichText::new(format!("Stored in {}", project::dir(path).display())).small().weak());
-        });
+        let add = |ui: &mut egui::Ui, new_rule: &mut String| {
+            let width = if compact { ui.available_width() } else { 320.0 };
+            let field = ui.add(egui::TextEdit::singleline(new_rule).hint_text("Bash(npm test:*)").desired_width(width));
+            field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+        };
+        let buttons = |ui: &mut egui::Ui, enabled: bool| {
+            let allow = ui.add_enabled(enabled, egui::Button::new("Allow")).clicked();
+            let deny = ui.add_enabled(enabled, egui::Button::new("Deny")).clicked();
+            (allow, deny)
+        };
+        let rule = view.new_rule.trim().to_string();
+        let (enter, (add_allow, add_deny)) = if compact {
+            let enter = add(ui, &mut view.new_rule);
+            (enter, ui.horizontal(|ui| buttons(ui, !rule.is_empty())).inner)
+        } else {
+            ui.horizontal(|ui| (add(ui, &mut view.new_rule), buttons(ui, !rule.is_empty()))).inner
+        };
+        let list = if add_deny { Some(&mut view.perms.deny) } else if add_allow || enter { Some(&mut view.perms.allow) } else { None };
+        if let Some(list) = list.filter(|_| !rule.is_empty()) {
+            if !list.contains(&rule) {
+                list.push(rule);
+            }
+            view.new_rule.clear();
+        }
 
         if view.perms != before {
             if let Err(e) = view.perms.save(path) {
@@ -867,6 +930,11 @@ impl KynexApp {
 
         // Like Hyprland, one tile always has focus: the composer while typing, otherwise the main view.
         let composer_focused = ctx.memory(|m| m.has_focus(egui::Id::unique(COMPOSER_ID)));
+        if let Active::Project(i) = self.saved.active {
+            if let Some(p) = self.saved.projects.get_mut(i).filter(|p| p.view == View::Settings) {
+                p.view = View::Code;
+            }
+        }
         let view = self.active_project().map(|p| p.view);
 
         // Switching workspace fades the content in, like Hyprland's workspace animation.
@@ -918,16 +986,6 @@ impl KynexApp {
                 });
                 return;
             }
-            if view == Some(View::Settings) {
-                let path = self.active_project().map(|p| p.path.clone()).unwrap();
-                theme::tile(ui, "main", "", true, true, |ui| {
-                    self.project_toolbar(ui);
-                    ui.separator();
-                    self.settings_view(ui, &path);
-                });
-                return;
-            }
-
             // Create (or resume) the project's session as soon as its tab is shown,
             // so a restored transcript is visible before the first message.
             let _ = self.session_mut();
@@ -966,6 +1024,7 @@ impl KynexApp {
                 self.transcript(ui);
             });
         });
+        self.claude_settings_modal(ctx);
         chrome::resize_edges(ui);
     }
 }
