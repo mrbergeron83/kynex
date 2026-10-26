@@ -207,6 +207,11 @@ impl Session {
         self.items.iter().any(|i| matches!(i, Item::Permission { state: PermState::Pending, .. }))
     }
 
+    /// Whether this session wants the user: a turn ended unseen, or a prompt waits.
+    pub fn wants_you(&self) -> bool {
+        self.finished || self.waiting()
+    }
+
     fn spawn(&mut self) -> Result<(), String> {
         let mut cmd = match wsl::parse(&self.cwd) {
             Some(w) => w.command("claude"),
@@ -851,6 +856,25 @@ mod tests {
         let Some(Item::Result { tools, files, .. }) = s.items.last() else { panic!("no result") };
         assert_eq!(*tools, 4);
         assert_eq!(files, &["a.rs", "b.md"]);
+    }
+
+    #[test]
+    fn wants_you_after_a_turn_or_on_a_prompt() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        assert!(!s.wants_you());
+        s.busy = true;
+        s.handle(json!({ "type": "result", "duration_ms": 10, "total_cost_usd": 0.0 }));
+        assert!(s.wants_you());
+        s.finished = false;
+        s.items.push(Item::Permission {
+            request_id: "r".into(),
+            tool: "Bash".into(),
+            input: Value::Null,
+            suggestions: Value::Null,
+            description: String::new(),
+            state: PermState::Pending,
+        });
+        assert!(s.wants_you());
     }
 
     #[test]

@@ -221,8 +221,24 @@ impl KynexApp {
     }
 
     fn poll(&mut self, cx: &mut Context<Self>) {
+        // A session that starts wanting you (turn done, prompt up) while Kynex is
+        // in the background flashes the taskbar / bounces the Dock icon.
+        let mut called = false;
         for s in self.all_sessions_mut() {
+            let before = s.wants_you();
             s.poll();
+            called |= !before && s.wants_you();
+        }
+        if called && let Some(handle) = cx.windows().first().copied() {
+            cx.defer(move |cx| {
+                handle
+                    .update(cx, |_, window, _| {
+                        if !window.is_window_active() {
+                            window.request_attention();
+                        }
+                    })
+                    .ok();
+            });
         }
         self.restart_idle();
         self.sync_session_ids();
