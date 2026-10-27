@@ -13,6 +13,8 @@ pub mod open;
 pub mod paths;
 pub mod process;
 pub mod project;
+pub mod questions;
+pub mod queue;
 pub mod session;
 pub mod terminal;
 pub mod titles;

@@ -82,7 +82,9 @@ A cargo workspace with two crates:
     layout; every other file is one `impl KynexApp` block for one part of the window
     (the table at the top of `app/mod.rs` lists them: title bar, sessions panel, transcript,
     composer, prompts, menus, settings modal, setup screen…)
-  - `prompt.rs` — `PromptView`: permission / plan / question prompts in the composer's place
+  - `prompt/` — `PromptView`: permission / plan / question prompts in the composer's place,
+    Claude Code-style (cursor, numbered choices, a tab per question); `questions.rs` draws the
+    questions, whose state is `kynex_core::questions::Form`; `preview.rs` has titles and diffs
   - `markdown.rs` — markdown to gpui elements (pulldown-cmark), re-parsed per render
   - `git/` — the Git view (`GitView` entity): top bar with branch picker and fetch / pull / push,
     Changes tab (commit box, staged / unstaged files), History tab, diff viewer; the table at the
@@ -135,6 +137,8 @@ to open it without taking focus.
 - Bugs and ideas live in GitHub issues (`gh issue list`), not TODO files or comments.
   File new ones with `gh issue create --label bug|enhancement`; close them from commits
   with `Fixes #N`.
+- Every PR links its issue with `Fixes #N` in the description (`Refs #N` if it doesn't
+  close it); if there's no issue yet, open one first.
 - Workflows pin third-party actions to a commit SHA with the tag in a comment, and set
   `permissions:` explicitly (read-only by default); Dependabot bumps the pins. A new
   dependency's license must be allowed in both `deny.toml` and `packaging/about.toml`.

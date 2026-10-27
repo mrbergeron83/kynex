@@ -15,6 +15,7 @@ use std::time::SystemTime;
 
 use serde_json::{Value, json};
 
+use crate::queue::Queue;
 use crate::{project, wsl};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -149,6 +150,8 @@ pub struct Session {
     /// The live permission mode: starts at the project's default, follows the
     /// CLI's reports, and is switched from the composer without a restart.
     pub mode: project::Mode,
+    /// Messages written while Claude works; the next goes when a turn ends.
+    pub queue: Queue,
     /// Set by the UI so it hears about new events; a no-op until then.
     pub wake: Wake,
     child: Option<Child>,
@@ -179,6 +182,7 @@ impl Session {
             total_cost: 0.0,
             context: ContextUse::default(),
             mode,
+            queue: Queue::default(),
             wake: Arc::new(|| {}),
             child: None,
             stdin: None,
@@ -344,8 +348,19 @@ impl Session {
         self.write(json!({ "type": "user", "message": { "role": "user", "content": content } }));
     }
 
+    /// Stops the turn. Anything queued goes out as soon as it has ended.
     pub fn interrupt(&mut self) {
         self.control(json!({ "subtype": "interrupt" }));
+    }
+
+    /// Sends the queue now: right away when idle, otherwise it stops the turn
+    /// and the queue goes as soon as the turn has ended.
+    pub fn send_queue_now(&mut self) {
+        if self.busy {
+            self.interrupt();
+        } else if let Some(m) = self.queue.take_all() {
+            self.send(m.text, m.attachments);
+        }
     }
 
     /// Switches the permission mode, live if the process is running (like
@@ -579,6 +594,9 @@ impl Session {
                 });
                 self.busy = false;
                 self.finished = true;
+                if let Some(next) = self.queue.take_all() {
+                    self.send(next.text, next.attachments);
+                }
             }
             _ => {}
         }

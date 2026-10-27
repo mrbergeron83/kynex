@@ -18,6 +18,7 @@
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
+//! | `queue.rs`          | messages queued while Claude works, Send now         |
 //! | `slash.rs`          | the slash-command popup, and built-ins Kynex runs   |
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
@@ -35,6 +36,7 @@ mod keys;
 mod menus;
 mod models;
 mod prompts;
+mod queue;
 mod session_groups;
 mod session_header;
 mod sessions_panel;

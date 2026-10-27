@@ -5,10 +5,27 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Queue messages while Claude works, with Claude Code's keys: Enter queues them above the
+  composer, and they all go out together when the turn ends, or when you stop it with Esc.
+  **Send now** (Ctrl+Enter) stops Claude and sends them right away; ↑ from the first line
+  takes them back to edit, and clicking one edits just that one.
+- Shift+Tab on a permission prompt allows the action for the rest of the session, as in
+  Claude Code.
+
 ### Changed
 
+- Prompts work like Claude Code's: a cursor over numbered choices instead of outlined rows.
+  Several questions get a tab each (←→ or Tab) and a Submit tab that sums up the answers;
+  picking an answer moves on by itself, multi-select has checkboxes (Space toggles), and
+  "Type something" / "No, and tell Claude what to do differently" open their field in place.
 - Releases are gated: the Release workflow publishes only if the tag is on `main`, CI passes
   on every OS for the tagged commit, and cargo-deny finds no advisories at release time.
+
+### Fixed
+
+- Restart after an update opens the new version on Windows instead of just closing Kynex.
 
 ## [0.0.3] - 2026-10-27
 
