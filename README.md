@@ -5,6 +5,18 @@ A fast, native workspace for Claude Code, written in Rust.
 Kynex drives your installed `claude` CLI over its stream-json protocol, so it
 uses whatever account `claude` is logged into. No API key needed.
 
+## Install
+
+Windows (PowerShell, no admin needed; run it again to update):
+
+```powershell
+irm https://raw.githubusercontent.com/mrbergeron83/kynex/main/install.ps1 | iex
+```
+
+It installs the latest release to `%LOCALAPPDATA%\Programs\kynex` and adds Start menu
+and desktop shortcuts. macOS and Linux builds are on the
+[releases page](https://github.com/mrbergeron83/kynex/releases) (unsigned for now).
+
 ## Features (milestone 1)
 
 - **Projects** sidebar: add folders (button or drag-and-drop), open in VS Code / Explorer / Windows Terminal
