@@ -39,26 +39,15 @@ impl Motion {
 /// Smooth scrolling: a mouse-wheel notch adds its distance, and each frame
 /// moves part of what's left, so the view glides there and slows as it
 /// arrives. Time-based: the same path at 60 and 240 Hz.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Glide {
     /// Pixels still to scroll; positive is down.
     remaining: f32,
-    /// How quickly it closes the gap, in seconds: about 95% of the way in
-    /// three of these.
-    time_constant: f32,
-}
-
-impl Default for Glide {
-    /// A jump across the transcript: brisk.
-    fn default() -> Self {
-        Self::new(0.05)
-    }
 }
 
 impl Glide {
-    pub const fn new(time_constant: f32) -> Self {
-        Self { remaining: 0., time_constant }
-    }
+    /// How quickly it closes the gap: about 95% of the way in three of these.
+    const TIME_CONSTANT: f32 = 0.05;
 
     /// Adds a wheel notch's (or a jump's) distance, in pixels.
     pub fn push(&mut self, distance: f32) {
@@ -71,7 +60,7 @@ impl Glide {
 
     /// The pixels to scroll this frame, `dt` seconds after the last.
     pub fn step(&mut self, dt: f32) -> f32 {
-        let part = 1. - (-dt.max(0.) / self.time_constant).exp();
+        let part = 1. - (-dt.max(0.) / Self::TIME_CONSTANT).exp();
         let mut moved = self.remaining * part;
         // The last half pixel lands at once rather than creeping.
         if (self.remaining - moved).abs() < 0.5 {
@@ -88,71 +77,6 @@ impl Glide {
     /// Stops where it is: the view hit an end, or you grabbed it.
     pub fn stop(&mut self) {
         self.remaining = 0.;
-    }
-}
-
-/// Mouse-wheel turns made smooth, for every scroll area at once: a notch
-/// becomes a browser-like distance that glides out over a few frames, as
-/// pixels. Signs follow the wheel: positive scrolls back towards the top
-/// (or the left).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Wheel {
-    x: Glide,
-    y: Glide,
-    /// Turns that land on the next frame without gliding.
-    now: (f32, f32),
-}
-
-impl Default for Wheel {
-    fn default() -> Self {
-        Self { x: Glide::new(Self::TIME_CONSTANT), y: Glide::new(Self::TIME_CONSTANT), now: (0., 0.) }
-    }
-}
-
-impl Wheel {
-    /// Pixels per wheel line: Windows' usual three-line notch scrolls 120px,
-    /// about what browsers and VS Code do.
-    pub const LINE: f32 = 40.;
-    /// Mostly there in ~120ms, settled in ~250ms.
-    const TIME_CONSTANT: f32 = 0.04;
-    /// Windows' "one screen at a time" reports a huge line count; cap a turn.
-    const MAX_TURN: f32 = 2000.;
-
-    /// Adds a wheel turn of `lines` (x, y). It glides when `glide`; otherwise,
-    /// and for turns under a line (touchpads, free-spinning wheels, already
-    /// smooth), it lands whole on the next step.
-    pub fn push(&mut self, lines: (f32, f32), glide: bool) {
-        let px = |l: f32| (l * Self::LINE).clamp(-Self::MAX_TURN, Self::MAX_TURN);
-        let (x, y) = (px(lines.0), px(lines.1));
-        if glide && lines.0.abs().max(lines.1.abs()) >= 1. {
-            self.x.push(x);
-            self.y.push(y);
-        } else {
-            // A turn the other way drops what was still gliding.
-            if self.x.remaining * x < 0. {
-                self.x.stop();
-            }
-            if self.y.remaining * y < 0. {
-                self.y.stop();
-            }
-            self.now.0 += x;
-            self.now.1 += y;
-        }
-    }
-
-    /// The pixels (x, y) to scroll this frame, `dt` seconds after the last.
-    pub fn step(&mut self, dt: f32) -> (f32, f32) {
-        let now = std::mem::take(&mut self.now);
-        (now.0 + self.x.step(dt), now.1 + self.y.step(dt))
-    }
-
-    pub fn is_moving(&self) -> bool {
-        self.x.is_moving() || self.y.is_moving() || self.now != (0., 0.)
-    }
-
-    /// Drops whatever was still to scroll: you clicked or grabbed something.
-    pub fn stop(&mut self) {
-        *self = Self::default();
     }
 }
 
