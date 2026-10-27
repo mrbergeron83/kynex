@@ -787,6 +787,7 @@ pub(crate) fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
 
 /// `claude`, to be run in `cwd` (inside WSL for a WSL folder), without a console window.
 pub(crate) fn claude_command(cwd: &Path) -> Command {
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut cmd = match wsl::parse(cwd) {
         Some(w) => w.command("claude"),
         None => {
