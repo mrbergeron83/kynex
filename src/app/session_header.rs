@@ -4,10 +4,11 @@
 
 use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
 use kynex_core::fmt;
+use kynex_core::git::Worktree;
 use kynex_core::session::{Item, Kind};
 
 use super::KynexApp;
-use crate::theme::{mono, theme};
+use crate::theme::{Palette, mono, theme};
 use crate::ui::{Icon, Tooltip, icon};
 
 impl KynexApp {
@@ -26,10 +27,13 @@ impl KynexApp {
         let turns = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
         let (cost, kind, cwd, context, busy) = (s.total_cost, s.kind, s.cwd.clone(), s.context, s.busy);
 
-        // Where a project session runs: its branch, flagged when it's a linked worktree.
         let place = if kind == Kind::Code { self.worktrees(&cwd, cx).read(cx).at(&cwd).cloned() } else { None };
+        // Where a project session runs: its branch, flagged when it's a linked
+        // worktree, and what's changed there. A click opens its Git view.
         let place = place.map(|w| {
             let where_ = if w.main { "Main worktree" } else { "Worktree" };
+            let path = w.path.clone();
+            let hover = t.hover;
             div()
                 .id("session-branch")
                 .flex()
@@ -43,13 +47,14 @@ impl KynexApp {
                 .border_color(t.border_variant)
                 .text_xs()
                 .text_color(t.text_muted)
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover))
                 .child(icon(Icon::GitBranch, t.text_muted).size_3())
                 .child(w.label().to_string())
                 .when(!w.main, |d| d.child(div().text_color(t.info).child("worktree")))
-                .when_some(w.changes.filter(|&n| n > 0), |d, n| {
-                    d.child(div().text_color(t.warning).child(format!("{n} changed")))
-                })
-                .tooltip(Tooltip::text(format!("{where_} at {}", w.path.display())))
+                .children(git_stats(&w, &t))
+                .tooltip(Tooltip::with_meta(format!("{where_} at {}", w.path.display()), "Click to see its changes"))
+                .on_click(cx.listener(move |this, _, _, cx| this.open_git_modal(path.clone(), cx)))
         });
 
         // Where Claude is actually working, when that's another worktree: one
@@ -76,12 +81,12 @@ impl KynexApp {
                 .child("working in")
                 .child(icon(Icon::GitBranch, accent).size_3())
                 .child(w.label().to_string())
-                .when_some(w.changes.filter(|&n| n > 0), |d, n| d.child(format!("· {n} changed")))
+                .children(git_stats(&w, &t))
                 .tooltip(Tooltip::with_meta(
                     format!("Claude is editing the worktree at {}", w.path.display()),
                     "Click to see its changes",
                 ))
-                .on_click(cx.listener(move |this, _, _, cx| this.open_worktree_changes(path.clone(), cx)))
+                .on_click(cx.listener(move |this, _, _, cx| this.open_git_modal(path.clone(), cx)))
         });
 
         // How full the context is; past half, a click compacts it.
@@ -185,4 +190,27 @@ impl KynexApp {
                 .into_any_element(),
         )
     }
+}
+
+/// A worktree's uncommitted changes and distance from its upstream, for a
+/// branch chip: `3 files +42 −7 ↑2 ↓1`; nothing when it's clean and in sync.
+fn git_stats(w: &Worktree, t: &Palette) -> Vec<AnyElement> {
+    let mut out = Vec::new();
+    let stat = |text: String, color| div().font_family(mono()).text_color(color).child(text).into_any_element();
+    if let Some(n) = w.changes.filter(|&n| n > 0) {
+        out.push(stat(format!("{n} file{}", if n == 1 { "" } else { "s" }), t.warning));
+        if let Some((added, removed)) = w.lines {
+            out.push(stat(format!("+{added}"), t.success));
+            out.push(stat(format!("−{removed}"), t.error));
+        }
+    }
+    if let Some((ahead, behind)) = w.upstream {
+        if ahead > 0 {
+            out.push(stat(format!("↑{ahead}"), t.text_muted));
+        }
+        if behind > 0 {
+            out.push(stat(format!("↓{behind}"), t.text_muted));
+        }
+    }
+    out
 }

@@ -24,6 +24,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   files Claude changed since, or both; the message comes back into the box to edit and send
   again. Sessions now keep file checkpoints so their files can be restored. Rebind it with
   `rewind` in `keymap.json`.
+- The branch chips above a conversation show what's changed there (`3 files +42 −7`) and how
+  far the branch is ahead of / behind its upstream, refreshed as each tool call and turn ends
+  and when you come back to Kynex. Clicking one opens that worktree's Git view in a modal over
+  the conversation, with **Open as tab** to keep it.
 
 ### Changed
 

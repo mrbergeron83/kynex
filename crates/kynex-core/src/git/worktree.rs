@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::git;
+use super::{Change, diff_stat, git, status};
 
 /// One working tree of a repository, as `git worktree list` sees it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -20,8 +20,12 @@ pub struct Worktree {
     pub prunable: bool,
     /// Changed files (staged, unstaged or untracked), if it could be read.
     pub changes: Option<usize>,
+    /// Lines `(added, removed)` against HEAD, untracked files included.
+    pub lines: Option<(usize, usize)>,
     /// Commits `(ahead, behind)` the main working tree's branch.
     pub ahead_behind: Option<(usize, usize)>,
+    /// Commits `(ahead, behind)` its upstream, when it has one.
+    pub upstream: Option<(usize, usize)>,
 }
 
 impl Worktree {
@@ -32,8 +36,8 @@ impl Worktree {
 }
 
 /// Every working tree of the repository `root` belongs to, main first, with
-/// each one's changed-file count and how far it is from the main branch.
-/// Runs a few `git` commands per worktree.
+/// each one's changes (files and lines), distance from its upstream and from
+/// the main branch. Runs a few `git` commands per worktree.
 pub fn list_worktrees(root: &Path) -> Result<Vec<Worktree>, String> {
     let mut list = parse_worktrees(&git(root, &["worktree", "list", "--porcelain"])?);
     let base = list.first().and_then(|w| w.branch.clone());
@@ -41,7 +45,13 @@ pub fn list_worktrees(root: &Path) -> Result<Vec<Worktree>, String> {
         if w.prunable {
             continue;
         }
-        w.changes = git(&w.path, &["status", "--porcelain"]).ok().map(|s| s.lines().count());
+        if let Ok(st) = status(&w.path) {
+            w.changes = Some(st.files.len());
+            w.upstream = st.upstream.is_some().then_some((st.ahead, st.behind));
+            let untracked: Vec<&str> =
+                st.files.iter().filter(|f| f.unstaged == Some(Change::Untracked)).map(|f| f.path.as_str()).collect();
+            w.lines = if st.files.is_empty() { Some((0, 0)) } else { diff_stat(&w.path, &untracked).ok() };
+        }
         if let (Some(base), Some(branch)) = (&base, &w.branch)
             && !w.main
         {

@@ -17,6 +17,7 @@
 //! | `transcript.rs`     | the conversation list and how each item draws        |
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
+//! | `git_modal.rs`      | a worktree's Git view in a modal, from the header    |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
@@ -35,6 +36,7 @@ mod about;
 mod app_update;
 mod composer;
 mod drafts;
+mod git_modal;
 mod history;
 mod keys;
 mod menus;
@@ -97,6 +99,8 @@ pub struct KynexApp {
     code: HashMap<PathBuf, Live>,
     chat: Live,
     git: HashMap<PathBuf, Entity<GitView>>,
+    /// The folder whose Git view is open in a modal over the conversation.
+    git_modal: Option<PathBuf>,
     /// Each open project's git worktrees, kept fresh in the background.
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
     /// Each project's terminal panel, created the first time it's opened.
@@ -236,6 +240,14 @@ impl KynexApp {
             });
         })
         .detach();
+        // Coming back to Kynex: files may have changed while it was in the background.
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                let folders: Vec<PathBuf> = this.worktrees.keys().cloned().collect();
+                this.refresh_worktrees(&folders, cx);
+            }
+        })
+        .detach();
         cx.on_app_quit(|this, cx| {
             this.stash_draft(cx);
             this.save();
@@ -249,6 +261,7 @@ impl KynexApp {
             code: HashMap::new(),
             chat,
             git: HashMap::new(),
+            git_modal: None,
             worktrees: HashMap::new(),
             terminals: HashMap::new(),
             threads: HashMap::new(),
@@ -301,10 +314,20 @@ impl KynexApp {
         // in the background flashes the taskbar / bounces the Dock icon.
         let mut called = false;
         let mut reports = Vec::new();
+        // Folders whose files may have just changed: a turn ended or a tool call finished.
+        let mut touched = HashSet::new();
         for s in self.all_sessions_mut() {
             let before = s.wants_you();
+            let (was_busy, seen) = (s.busy, s.items.len());
             s.poll();
             called |= !before && s.wants_you();
+            let finished_tool = s
+                .items
+                .get(seen..)
+                .is_some_and(|new| new.iter().any(|i| matches!(i, session::Item::ToolResult { .. })));
+            if (was_busy && !s.busy) || finished_tool {
+                touched.insert(s.cwd.clone());
+            }
             if let Some(init) = s.take_init() {
                 reports.push((s.cwd.clone(), init));
             }
@@ -314,6 +337,7 @@ impl KynexApp {
             self.commands_reported(cwd, init.commands, cx);
             models::reported(init.models, cx);
         }
+        self.refresh_worktrees(&touched, cx);
         if called && let Some(handle) = cx.windows().first().copied() {
             cx.defer(move |cx| {
                 handle
@@ -435,6 +459,7 @@ impl Render for KynexApp {
         let notice = self.render_notice(cx);
         let toast = self.render_update_toast(cx);
         let about = self.render_about(window, cx);
+        let git_modal = self.render_git_modal(window, cx);
         div()
             .id("workspace")
             .key_context("Workspace")
@@ -499,6 +524,7 @@ impl Render for KynexApp {
             .child(main)
             .children(notice)
             .children(toast)
+            .children(git_modal)
             .children(settings)
             .children(about)
             .children(menu)
