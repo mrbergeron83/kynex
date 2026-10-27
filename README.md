@@ -1,9 +1,38 @@
-# Kynex
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/design/branding/mark-dark.svg">
+    <img src="docs/design/branding/mark-light.svg" alt="Kynex" width="96" height="96">
+  </picture>
+</p>
 
-A fast, native workspace for Claude Code, written in Rust.
+<h1 align="center">Kynex</h1>
 
-Kynex drives your installed `claude` CLI over its stream-json protocol, so it
-uses whatever account `claude` is logged into. No API key needed.
+<p align="center">A fast, native desktop workspace for Claude Code, written in Rust.</p>
+
+<p align="center">
+  <a href="https://github.com/mrbergeron83/kynex/actions/workflows/ci.yml"><img src="https://github.com/mrbergeron83/kynex/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/mrbergeron83/kynex/actions/workflows/security.yml"><img src="https://github.com/mrbergeron83/kynex/actions/workflows/security.yml/badge.svg?branch=main" alt="Security"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/mrbergeron83/kynex"><img src="https://api.scorecard.dev/projects/github.com/mrbergeron83/kynex/badge" alt="OpenSSF Scorecard"></a>
+  <a href="https://github.com/mrbergeron83/kynex/releases/latest"><img src="https://img.shields.io/github/v/release/mrbergeron83/kynex?include_prereleases&sort=semver" alt="Release"></a>
+  <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-PolyForm%20Strict%201.0.0-blue" alt="License: PolyForm Strict 1.0.0"></a>
+</p>
+
+Kynex drives your installed `claude` CLI over its stream-json protocol, so it uses whatever
+account `claude` is logged into. No API key needed. It runs on Windows, macOS and Linux.
+
+## Features
+
+- **Sessions per project:** several Claude Code sessions per folder, streaming transcripts with
+  tool calls and edits shown as diffs, unread markers and turn recaps.
+- **Prompts as buttons:** permission requests, plans and questions are answered in place of the
+  composer; set the permission mode, effort and extra directories per project.
+- **Context at a glance:** how full the context is, and compact it in one click.
+- **Git view:** branches, stage and commit, diffs, history, fetch / pull / push, worktrees.
+- **Built-in terminal:** PowerShell or Git Bash under the conversation; play buttons run the
+  commands Claude suggests.
+- **No terminal needed:** installs Claude Code, signs you in and keeps it updated; Kynex updates
+  itself from its GitHub releases.
+- Image attachments (paste, drop or pick), a model picker, and a Chat tab for plain conversation.
 
 ## Install
 
@@ -19,57 +48,24 @@ macOS (Apple silicon) and Linux (x86_64), no sudo needed; run it again to update
 curl -fsSL https://raw.githubusercontent.com/mrbergeron83/kynex/main/install.sh | sh
 ```
 
-Both install the latest release and add a `knx` command to start Kynex from a terminal:
+Both install the latest release, verify it against `SHA256SUMS`, and add a `knx` command to
+start Kynex from a terminal. Archives are also on the
+[releases page](https://github.com/mrbergeron83/kynex/releases), each with a build provenance
+attestation (`gh attestation verify <archive> --repo mrbergeron83/kynex`). Builds are not
+code-signed yet.
 
-- **Windows:** `%LOCALAPPDATA%\Programs\kynex`, Start menu and desktop shortcuts, `knx`
-  on your PATH.
-- **macOS:** `~/Applications/Kynex.app` (Launchpad, Spotlight), `knx` in `~/.local/bin`.
-- **Linux:** `~/.local/share/kynex`, an app menu entry, `knx` in `~/.local/bin`.
+## Quick start
 
-Builds are unsigned for now; they're also on the
-[releases page](https://github.com/mrbergeron83/kynex/releases).
+1. Start Kynex. If Claude Code isn't installed or signed in, Kynex offers to do both.
+2. Add a project folder (button or drag and drop) and start a session.
+3. Answer permission prompts as they come, or pick a permission mode in the project settings.
 
-## Features (milestone 1)
+## Links
 
-- **Projects** sidebar: add folders (button or drag-and-drop), open in VS Code / Explorer / Windows Terminal
-- **Code**: one Claude Code agent session per project, with streaming output, tool calls, and permission prompts as buttons
-- **Chat**: general conversation (same login, tools disabled)
-- **Git**: branch, changed files, diffs, recent history
-- Paste images with Ctrl+V, drop image files, or use "Attach image"
-- Model picker, Stop (interrupt), New session, running cost
-
-## Run
-
-```sh
-claude          # once, to log in
-cargo run --release
-```
-
-### Hot-patching (dev)
-
-Edit UI code and see it live without restarting, via [subsecond](https://crates.io/crates/subsecond):
-
-```sh
-cargo install dioxus-cli@0.7.10 --locked   # once
-./dev.ps1                                  # dx serve --hot-patch, with auto-restart
-```
-
-Everything reached from `KynexApp::render` is patched on save, in both workspace crates;
-third-party dependencies aren't patched.
-A compile error leaves the running app alone. Changing a struct's fields (adding state)
-can't be hot-patched and crashes the app, so `dev.ps1` restarts dx, which relaunches the
-app once a full build succeeds. Tabs and Claude sessions are restored on relaunch.
-
-`./check.ps1` runs formatting, clippy and every test. `cargo test -p kynex-core -- --ignored`
-runs a live round-trip against the real CLI (uses a little quota).
-
-## Layout
-
-A cargo workspace: `crates/kynex-core` is the logic with no UI (the `claude` protocol,
-sessions, project settings, git), and `src/` is the gpui app. See `CLAUDE.md` for a map.
-
-State is saved to `state.json` in the per-user data dir: `%APPDATA%\kynex` on Windows,
-`~/Library/Application Support/kynex` on macOS, `~/.local/share/kynex` on Linux.
+- [Changelog](CHANGELOG.md)
+- [Contributing and building from source](CONTRIBUTING.md)
+- [Report a bug or suggest an idea](https://github.com/mrbergeron83/kynex/issues/new/choose)
+- [Security policy](SECURITY.md)
 
 ## License
 
