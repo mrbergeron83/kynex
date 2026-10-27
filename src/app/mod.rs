@@ -423,14 +423,23 @@ impl Render for KynexApp {
         } else if view == Some(View::Git) {
             let path = self.active_project().map(|p| p.path.clone()).unwrap();
             let git = self.git.entry(path.clone()).or_insert_with(|| cx.new(|cx| GitView::new(path, cx))).clone();
+            // The sessions panel stays, so the toolbar (and its Code / Git switch)
+            // doesn't move when the view changes.
             div()
                 .flex()
-                .flex_col()
                 .flex_1()
-                .min_w_0()
-                .bg(t.editor)
-                .child(self.render_toolbar(cx))
-                .child(div().flex_1().min_h_0().child(git))
+                .min_h_0()
+                .children(self.render_sessions_column(cx))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_w_0()
+                        .bg(t.editor)
+                        .child(self.render_toolbar(cx))
+                        .child(div().flex_1().min_h_0().child(git)),
+                )
                 .into_any_element()
         } else {
             div()
