@@ -7,7 +7,7 @@ use kynex_core::git::{self, Change, FileStatus};
 use super::diff_view::split_path;
 use super::{GitView, Selection};
 use crate::theme::{Palette, mono, theme};
-use crate::ui::{Icon, Tooltip, icon, icon_button};
+use crate::ui::{Icon, Tooltip, icon, icon_button, section_label};
 
 impl GitView {
     pub(super) fn render_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -169,10 +169,7 @@ impl GitView {
             .pl_1p5()
             .pt_2()
             .pb_0p5()
-            .text_xs()
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(t.text_muted)
-            .child(title)
+            .child(section_label(title, cx))
             .child(div().px_1().rounded_sm().bg(t.active).text_color(t.text_muted).child(n.to_string()))
             .child(div().flex_1())
             .child(
@@ -341,5 +338,5 @@ fn checkbox(checked: bool, t: &Palette) -> impl IntoElement + use<> {
         .rounded_sm()
         .border_1()
         .border_color(if checked { t.accent } else { t.border })
-        .when(checked, |d| d.bg(t.accent).child(icon(Icon::Check, t.editor).size_2p5()))
+        .when(checked, |d| d.bg(t.accent).child(icon(Icon::Check, t.on_accent).size_2p5()))
 }

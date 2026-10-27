@@ -30,6 +30,16 @@ DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN AC
 CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 
+## Fonts
+
+Kynex bundles Mona Sans, Hubot Sans and Monaspace (Neon, Krypton) by GitHub, under the
+SIL Open Font License 1.1. Their licences are in `assets/fonts/` and ship in every release
+archive as `fonts/`.
+
+- Mona Sans: Copyright 2022 The Mona Sans Project Authors (https://github.com/github/mona-sans)
+- Hubot Sans: Copyright (c) 2022, GitHub (https://github.com/github/hubot-sans)
+- Monaspace: Copyright (c) 2023, GitHub (https://github.com/githubnext/monaspace)
+
 ## Rust crates
 
 Kynex links many third-party crates (gpui, alacritty_terminal and others). Their licenses

@@ -67,7 +67,7 @@ use worktrees::Worktrees;
 
 use crate::git::GitView;
 use crate::terminal::TerminalPanel;
-use crate::theme::theme;
+use crate::theme::{UI_FONT, theme};
 use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::{Icon, icon, icon_button, popover};
 
@@ -356,6 +356,7 @@ impl Render for KynexApp {
             .flex_col()
             .size_full()
             .bg(t.editor)
+            .font_family(UI_FONT)
             .text_color(t.text)
             .text_sm()
             .on_action(cx.listener(Self::open_project))

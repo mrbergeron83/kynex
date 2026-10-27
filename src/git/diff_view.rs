@@ -273,8 +273,8 @@ fn render_row(row: &Row, t: &Palette) -> AnyElement {
         }
         Row::Line { kind, old, new, text } => {
             let (bg, gutter, sign, fg): (Option<Hsla>, Option<Hsla>, &str, Hsla) = match kind {
-                LineKind::Added => (Some(t.success.opacity(0.10)), Some(t.success.opacity(0.18)), "+", t.text),
-                LineKind::Removed => (Some(t.error.opacity(0.10)), Some(t.error.opacity(0.18)), "-", t.text),
+                LineKind::Added => (Some(t.diff_add), Some(t.success.opacity(0.12)), "+", t.text),
+                LineKind::Removed => (Some(t.diff_del), Some(t.error.opacity(0.12)), "-", t.text),
                 LineKind::Context => (None, None, " ", t.text_muted),
                 LineKind::NoNewline => (None, None, " ", t.text_placeholder),
             };

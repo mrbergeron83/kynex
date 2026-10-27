@@ -120,7 +120,8 @@ impl KynexApp {
         let working = !waiting && self.active_session().is_some_and(|s| s.busy);
         let status = (working || waiting).then(|| working_bar(working, &t));
         let update = self.render_cli_update(cx);
-        let shell = |child: AnyElement, focused: bool| {
+        // A prompt is the one surface that needs you: it gets the amber lamp colour.
+        let shell = |child: AnyElement, focused: bool, needs_you: bool| {
             div().w_full().flex().justify_center().px_6().pb_4().pt_1().child(
                 div().w_full().max_w(THREAD_WIDTH).flex().flex_col().gap_1p5().children(update).children(status).child(
                     div()
@@ -128,7 +129,13 @@ impl KynexApp {
                         .p_3()
                         .rounded_lg()
                         .border_1()
-                        .border_color(if focused { t.border_focused } else { t.border })
+                        .border_color(if needs_you {
+                            t.warning
+                        } else if focused {
+                            t.border_focused
+                        } else {
+                            t.border
+                        })
                         .bg(t.panel)
                         .shadow_sm()
                         .child(child),
@@ -137,7 +144,7 @@ impl KynexApp {
         };
         if let Some(p) = &self.prompt {
             let focused = p.view.read(cx).focus_handle(cx).contains_focused(window, cx);
-            return shell(p.view.clone().into_any_element(), focused);
+            return shell(p.view.clone().into_any_element(), focused, true);
         }
 
         let session = self.active_session();
@@ -209,7 +216,7 @@ impl KynexApp {
                 .rounded_md()
                 .bg(if can_send { t.accent } else { t.active })
                 .when(can_send, |d| d.cursor_pointer().hover(|s| s.opacity(0.9)))
-                .child(icon(Icon::ArrowUp, if can_send { t.editor } else { t.text_placeholder }))
+                .child(icon(Icon::ArrowUp, if can_send { t.on_accent } else { t.text_placeholder }))
                 .tooltip(Tooltip::with_meta("Send", "Enter · Shift+Enter for a new line"))
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
         };
@@ -267,7 +274,7 @@ impl KynexApp {
                     .child(div().flex_1())
                     .child(send),
             );
-        shell(body.into_any_element(), focused)
+        shell(body.into_any_element(), focused, false)
     }
 }
 

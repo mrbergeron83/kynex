@@ -11,11 +11,14 @@ use super::KynexApp;
 use super::menus::Menu;
 use crate::chrome::{self, TITLE_BAR_HEIGHT};
 use crate::theme::{THEMES, theme};
-use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, spinner};
+use crate::ui::mark::mark;
+use crate::ui::{Icon, Lamp, Tooltip, ghost_button, icon, icon_button, lamp, section_label};
 
 impl KynexApp {
     pub(super) fn render_title_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
+        // The mark's lamp shows the shown session.
+        let shown = self.active_session().map_or(Lamp::Idle, |s| Lamp::of(s.busy, s.waiting(), s.finished));
         let status = |l: &Live| (l.busy(), l.waiting(), l.finished());
         let mut tabs = vec![self.render_tab(0, "Chat".into(), Icon::Message, None, status(&self.chat), cx)];
         for (i, p) in self.saved.projects.iter().enumerate() {
@@ -38,12 +41,10 @@ impl KynexApp {
                 div()
                     .flex()
                     .items_center()
-                    .gap_1()
+                    .gap_2()
                     .pr_3()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(t.text_muted)
-                    .child("kynex"),
+                    .child(mark("title-mark", px(20.), shown, cx))
+                    .child(section_label("Kynex", cx).font_weight(FontWeight::EXTRA_BOLD)),
             )
             .child(div().flex().items_center().gap_0p5().children(tabs))
             .child(
@@ -95,9 +96,10 @@ impl KynexApp {
             .when(!active, |d| d.hover(move |s| s.bg(hover)))
             .child(icon(which, fg).size_3p5())
             .child(label)
-            .when(waiting, |d| d.child(icon(Icon::Dot, t.warning).size_2()))
-            .when(busy && !waiting, |d| d.child(spinner(("tab-spin", pos), t.accent, px(12.))))
-            .when(finished && !busy && !waiting, |d| d.child(icon(Icon::Check, t.success).size_3()))
+            .map(|d| match Lamp::of(busy, waiting, finished) {
+                Lamp::Idle => d,
+                state => d.child(lamp(("tab-lamp", pos), state, cx)),
+            })
             .when_some(tooltip, |d, tip| {
                 d.tooltip(Tooltip::with_meta(tip, "Middle-click to close · right-click for more"))
             })

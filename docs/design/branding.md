@@ -1,6 +1,13 @@
 # Kynex brand: Instrument · Petrol
 
-Status: **decided, not implemented** (2026-10-26). This is the spec for implementing it.
+Status: **implemented in v0.2.0** (2026-10-26), with these gaps:
+
+- Hubot Sans 1.0 ships no SemiExpanded cut, so labels use Expanded SemiBold; gpui has no
+  letter-spacing, so the tracking values aren't applied.
+- No red "failed" lamp yet: sessions don't track a failed state.
+- Icons: Windows `.ico` is embedded (`assets/icons/`, drawn by `make-icons.py`); Linux PNGs
+  are generated but not wired to a desktop file, and there's no macOS `.icns` until there's an
+  app bundle.
 
 ![Type study: system A is the chosen one](branding/type-study.png)
 

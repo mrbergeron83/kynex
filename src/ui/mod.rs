@@ -2,6 +2,7 @@
 //! `RenderOnce`-style builders over `div`, styled from the theme global.
 
 pub mod input;
+pub mod mark;
 pub mod selectable;
 
 use std::borrow::Cow;
@@ -10,11 +11,11 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyView, App, AssetSource, Context, ElementId, Hsla, IntoElement, Pixels, SharedString,
-    Stateful, Transformation, Window, div, percentage, prelude::*, px, svg,
+    Animation, AnimationExt, AnyView, App, AssetSource, Context, ElementId, FontWeight, Hsla, IntoElement, Pixels,
+    SharedString, Stateful, Transformation, Window, div, percentage, prelude::*, px, svg,
 };
 
-use crate::theme::theme;
+use crate::theme::{UI_FONT, label_font, theme};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
@@ -47,6 +48,8 @@ pub enum Icon {
     GitCommit,
     Play,
     Shield,
+    /// The pointer on the mark's knob, drawn filled.
+    MarkPointer,
 }
 
 impl Icon {
@@ -81,12 +84,13 @@ impl Icon {
             Icon::GitCommit => "icons/git-commit.svg",
             Icon::Play => "icons/play.svg",
             Icon::Shield => "icons/shield.svg",
+            Icon::MarkPointer => "icons/mark-pointer.svg",
         }
     }
 }
 
 /// Line icons drawn on a 24px grid, Lucide style.
-const ICONS: [(&str, &str); 29] = [
+const ICONS: [(&str, &str); 30] = [
     ("close", r#"<path d="M18 6 6 18M6 6l12 12"/>"#),
     ("minimize", r#"<path d="M5 12h14"/>"#),
     ("maximize", r#"<rect x="5" y="5" width="14" height="14" rx="1.5"/>"#),
@@ -134,6 +138,12 @@ const ICONS: [(&str, &str); 29] = [
         r#"<path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z" fill="black"/>"#,
     ),
     ("shield", r#"<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>"#),
+    // The knob's box: the mark's pointer (x 47 y 27, 6×21, rotated 38° about the
+    // knob centre) scaled from the 62-unit knob to 24, so the svg rotates about the knob.
+    (
+        "mark-pointer",
+        r#"<rect x="10.839" y="1.548" width="2.323" height="8.129" rx="1.161" fill="black" stroke="none" transform="rotate(38 12 12)"/>"#,
+    ),
 ];
 
 /// Serves the icons to gpui's `svg()` element.
@@ -230,7 +240,7 @@ pub fn primary_button(id: impl Into<ElementId>, label: impl Into<SharedString>, 
         .rounded_md()
         .text_sm()
         .bg(accent)
-        .text_color(t.editor)
+        .text_color(t.on_accent)
         .cursor_pointer()
         .hover(move |s| s.opacity(0.9))
         .child(label.into())
@@ -293,6 +303,7 @@ impl Render for Tooltip {
                 .border_color(t.border)
                 .bg(t.elevated)
                 .shadow_md()
+                .font_family(UI_FONT)
                 .text_xs()
                 .text_color(t.text)
                 .child(self.text.clone())
@@ -305,6 +316,67 @@ impl Render for Tooltip {
 /// Bindings are registered once at startup, so leaking the string is fine.
 pub fn keys(binding: &str) -> &'static str {
     binding.replace("secondary", if cfg!(target_os = "macos") { "cmd" } else { "ctrl" }).leak()
+}
+
+/// A section heading, engraved-panel style: SESSIONS, STAGED.
+pub fn section_label(text: &str, cx: &App) -> gpui::Div {
+    div()
+        .font_family(label_font())
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_size(px(10.5))
+        .text_color(theme(cx).text_muted)
+        .child(text.to_uppercase())
+}
+
+/// What a session is doing, shown as an indicator lamp (IEC 60073 colours).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Lamp {
+    Idle,
+    Working,
+    NeedsYou,
+    Done,
+}
+
+impl Lamp {
+    pub fn of(busy: bool, waiting: bool, finished: bool) -> Self {
+        if waiting {
+            Lamp::NeedsYou
+        } else if busy {
+            Lamp::Working
+        } else if finished {
+            Lamp::Done
+        } else {
+            Lamp::Idle
+        }
+    }
+
+    pub fn color(self, cx: &App) -> Option<Hsla> {
+        let t = theme(cx);
+        match self {
+            Lamp::Idle => None,
+            Lamp::Working => Some(t.accent),
+            Lamp::NeedsYou => Some(t.warning),
+            Lamp::Done => Some(t.success),
+        }
+    }
+}
+
+/// The pulse of a working lamp: 1.6 s, easing in and out.
+pub fn pulse() -> Animation {
+    Animation::new(Duration::from_millis(1600)).repeat().with_easing(gpui::pulsating_between(0.3, 1.))
+}
+
+/// A 7 px lamp: pulsing petrol while working, amber when it needs you, green when
+/// done, a hollow ring when idle.
+pub fn lamp(id: impl Into<ElementId>, state: Lamp, cx: &App) -> gpui::AnyElement {
+    let dot = div().flex_none().size(px(7.)).rounded_full();
+    match state.color(cx) {
+        None => dot.border_1().border_color(theme(cx).text_placeholder).into_any_element(),
+        Some(c) if state == Lamp::Working => {
+            dot.bg(c).with_animation(id, pulse(), |d, a| d.opacity(a)).into_any_element()
+        }
+        Some(c) => dot.bg(c).into_any_element(),
+    }
 }
 
 /// A horizontal hairline.

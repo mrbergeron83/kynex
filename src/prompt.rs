@@ -643,7 +643,7 @@ fn diff_lines(old: &str, new: &str, t: &Palette) -> impl IntoElement + use<> {
     const MAX_LINES: usize = 400;
     let lines = diff(old, new);
     let more = lines.len().saturating_sub(MAX_LINES);
-    let (add_bg, del_bg) = (t.success.opacity(0.12), t.error.opacity(0.12));
+    let (add_bg, del_bg) = (t.diff_add, t.diff_del);
     div()
         .flex()
         .flex_col()

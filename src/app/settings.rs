@@ -12,7 +12,7 @@ use kynex_core::project::{self, ClaudeSettings, Mode, Permissions};
 
 use super::KynexApp;
 use super::menus::Menu;
-use crate::theme::{Palette, mono, theme};
+use crate::theme::{Palette, mono, mono_label, theme};
 use crate::ui::{Icon, Tooltip, icon, icon_button, menu_item, outline_button};
 
 pub struct SettingsView {
@@ -285,7 +285,7 @@ impl KynexApp {
                                     .pl_2()
                                     .rounded_md()
                                     .hover(|s| s.bg(t.hover))
-                                    .child(div().flex_1().min_w_0().truncate().font_family(mono()).text_sm().child(d.display().to_string()))
+                                    .child(div().flex_1().min_w_0().truncate().font_family(mono_label()).text_sm().child(d.display().to_string()))
                                     .child(
                                         icon_button(("rm-dir", i), Icon::Close, cx).tooltip(Tooltip::text("Remove")).on_click(cx.listener(
                                             move |this, _, _, cx| {

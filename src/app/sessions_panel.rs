@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use gpui::{AnyElement, Context, FontWeight, MouseButton, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, MouseButton, SharedString, div, prelude::*, px};
 use kynex_core::fmt::ago;
 use kynex_core::live::Key;
 use kynex_core::session::{self, Item, Kind, Session, SessionInfo};
@@ -11,7 +11,7 @@ use kynex_core::session::{self, Item, Kind, Session, SessionInfo};
 use super::KynexApp;
 use super::keys::ToggleSessions;
 use crate::theme::{Palette, theme};
-use crate::ui::{Icon, Tooltip, divider, ghost_button, icon, icon_button, spinner};
+use crate::ui::{Icon, Lamp, Tooltip, divider, ghost_button, icon, icon_button, lamp, section_label};
 
 /// Past sessions for the active conversation's folder, re-read when the folder
 /// or the current session changes, or a reply starts or finishes.
@@ -123,7 +123,7 @@ impl KynexApp {
             .pl_3()
             .pr_1p5()
             .gap_1()
-            .child(div().flex_1().text_sm().font_weight(FontWeight::MEDIUM).child("Sessions"))
+            .child(section_label("Sessions", cx).flex_1())
             .child(
                 icon_button("new-session", Icon::Plus, cx)
                     .when(current.is_none(), |b| b.opacity(0.4))
@@ -152,7 +152,7 @@ impl KynexApp {
             let title = o.first.clone().unwrap_or_else(|| "New session".into());
             rows.push(
                 session_row(("open", uid as usize), title.into(), None, is_current, &t)
-                    .children(session_status(("open-status", uid as usize), o.busy, o.waiting, o.finished, &t))
+                    .child(lamp(("open-status", uid as usize), Lamp::of(o.busy, o.waiting, o.finished), cx))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.confirm_delete = None;
                         if !is_current {
@@ -201,7 +201,7 @@ impl KynexApp {
             let row = session_row(("session", n), info.title.clone().into(), when, is_current, &t)
                 .group("session-row")
                 .tooltip(Tooltip::with_meta(info.title.clone(), ago(info.modified)))
-                .children(session_status(("session-status", n), busy, waiting, finished, &t))
+                .child(lamp(("session-status", n), Lamp::of(busy, waiting, finished), cx))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.confirm_delete = None;
                     if is_current {
@@ -296,24 +296,4 @@ fn session_row(
         .when(!current, |d| d.hover(move |s| s.bg(hover)))
         .child(div().flex_1().min_w_0().truncate().text_color(if current { t.text } else { t.text_muted }).child(title))
         .when_some(when, |d, w| d.child(div().flex_none().text_xs().text_color(t.text_placeholder).child(w)))
-}
-
-/// A session row's badge: waiting on you, working in the background, or
-/// finished since you last looked.
-fn session_status(
-    id: impl Into<gpui::ElementId>,
-    busy: bool,
-    waiting: bool,
-    finished: bool,
-    t: &Palette,
-) -> Option<AnyElement> {
-    if waiting {
-        Some(icon(Icon::Dot, t.warning).size_3().flex_none().into_any_element())
-    } else if busy {
-        Some(div().flex_none().child(spinner(id, t.accent, px(12.))).into_any_element())
-    } else if finished {
-        Some(icon(Icon::Check, t.success).size_3p5().flex_none().into_any_element())
-    } else {
-        None
-    }
 }
