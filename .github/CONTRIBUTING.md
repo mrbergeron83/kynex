@@ -80,6 +80,8 @@ State is saved to `state.json` in the per-user data dir: `%APPDATA%\kynex` on Wi
   ("Show how full the context is, and compact it in one click"); `Fixes #N` closes an issue.
 - Versions follow [SemVer](https://semver.org) and are tagged `vX.Y.Z`. To release: bump the
   version in `Cargo.toml`, add the section to [CHANGELOG.md](../CHANGELOG.md), commit, then push a
-  matching tag; the Release workflow builds every OS and publishes the release.
+  matching tag on `main`; the Release workflow re-runs CI and cargo-deny on the tagged commit,
+  then builds every OS and publishes the release. A tag that isn't on `main`, or fails a
+  check, publishes nothing.
 - Label pull requests (`enhancement`, `bug`, `security`, …): generated release notes are grouped
   by label.

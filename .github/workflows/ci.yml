@@ -2,13 +2,15 @@
 # Windows but must build everywhere.
 #
 # Third-party actions are pinned to a commit (the tag is in the comment);
-# Dependabot keeps them current.
+# Dependabot keeps them current. The Release workflow calls this too, so
+# nothing is published that doesn't pass it.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read

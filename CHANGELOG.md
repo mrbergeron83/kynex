@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Releases are gated: the Release workflow publishes only if the tag is on `main`, CI passes
+  on every OS for the tagged commit, and cargo-deny finds no advisories at release time.
+
 ## [0.0.3] - 2026-10-27
 
 ### Added
