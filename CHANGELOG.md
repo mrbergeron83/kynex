@@ -16,6 +16,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The slash-command popup is full on the first `/`, right after a restart too: each project's
+  list is saved, and sessions refresh it as they start instead of Kynex running an extra
+  `claude` process (and again every minute). The model picker's list is saved the same way.
 - A quieter transcript: each tool result folds into its call (open the call to see it, and a
   failed call is marked), edits no longer echo "updated successfully", and a run of tool calls
   collapses to one summary row, e.g. "Edited app.rs ×3, read 2 files  +22 −6". While Claude

@@ -1,13 +1,18 @@
 //! Slash commands in the composer: a popup of the session's commands while a
 //! `/name` is typed (Up / Down to move, Tab or Enter to take one, Esc to close),
 //! and the built-ins Kynex runs itself instead of sending.
+//!
+//! A folder's commands come from its sessions: each reports them as its process
+//! starts, and the last list is saved with the project. So the popup shows the
+//! saved list at once, and a fresh one replaces it when a session starts. Only a
+//! folder never seen before asks the CLI with a process of its own.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use gpui::{Anchor, AnyElement, Bounds, Context, Focusable, Pixels, Window, point, prelude::*, px};
-use kynex_core::commands::{self, Action, SlashCommand};
+use kynex_core::commands::{self, Action, Commands, SlashCommand};
 use kynex_core::project;
 use kynex_core::session::{Kind, Session};
 
@@ -15,14 +20,13 @@ use super::menus::Menu;
 use super::{KynexApp, models};
 use crate::ui::completions::{Completion, completions};
 
-/// How long a folder's command list is trusted before it's asked for again,
-/// so newly added skills and commands show up.
-const FRESH: Duration = Duration::from_secs(60);
-
 /// The popup's state, and each folder's commands.
 #[derive(Default)]
 pub(super) struct Slash {
-    commands: HashMap<PathBuf, Fetched>,
+    commands: HashMap<PathBuf, Known>,
+    /// The last matches, so the popup filters once per keystroke rather than on
+    /// every render and key handler.
+    matches: Option<Matches>,
     selected: usize,
     /// What the selection belongs to; a new query starts at the top again.
     query: String,
@@ -32,10 +36,20 @@ pub(super) struct Slash {
     pub(super) composer: Option<Bounds<Pixels>>,
 }
 
-struct Fetched {
-    list: Vec<SlashCommand>,
-    at: Instant,
+/// A folder's commands as far as Kynex knows them.
+struct Known {
+    commands: Rc<Commands>,
+    /// The saved list (or the CLI's) is on its way.
     loading: bool,
+    /// From a session that started this run, so a saved list mustn't replace it.
+    fresh: bool,
+}
+
+struct Matches {
+    cwd: PathBuf,
+    commands: Rc<Commands>,
+    query: String,
+    found: Rc<Vec<SlashCommand>>,
 }
 
 impl KynexApp {
@@ -51,36 +65,54 @@ impl KynexApp {
     }
 
     /// The commands matching what's typed, or `None` when the popup is closed.
-    fn slash_matches(&mut self, cx: &mut Context<Self>) -> Option<Vec<SlashCommand>> {
+    fn slash_matches(&mut self, cx: &mut Context<Self>) -> Option<Rc<Vec<SlashCommand>>> {
         let query = self.slash_query(cx)?;
         let cwd = self.active_session()?.cwd.clone();
-        self.fetch_commands(cwd.clone(), cx);
-        let list = self.slash.commands.get(&cwd).map_or(&[][..], |f| &f.list[..]);
-        Some(commands::matching(list, &query).into_iter().cloned().collect())
+        self.load_commands(&cwd, cx);
+        let commands = self.slash.commands.get(&cwd).map(|k| k.commands.clone()).unwrap_or_default();
+        if let Some(m) = &self.slash.matches
+            && m.cwd == cwd
+            && m.query == query
+            && Rc::ptr_eq(&m.commands, &commands)
+        {
+            return Some(m.found.clone());
+        }
+        let found = Rc::new(commands.matching(&query).into_iter().map(|i| commands.list[i].clone()).collect());
+        self.slash.matches = Some(Matches { cwd, commands, query, found: Rc::clone(&found) });
+        Some(found)
     }
 
-    /// Asks the CLI for a folder's commands, the first time and once they're stale.
-    fn fetch_commands(&mut self, cwd: PathBuf, cx: &mut Context<Self>) {
-        if self.slash.commands.get(&cwd).is_some_and(|f| f.loading || f.at.elapsed() < FRESH) {
+    /// Loads a folder's saved commands the first time it's shown, or for a
+    /// folder never seen, asks the CLI.
+    fn load_commands(&mut self, cwd: &Path, cx: &mut Context<Self>) {
+        if self.slash.commands.contains_key(cwd) {
             return;
         }
-        let entry = self.slash.commands.entry(cwd.clone()).or_insert(Fetched {
-            list: Vec::new(),
-            at: Instant::now(),
-            loading: true,
-        });
-        entry.loading = true;
+        let known = Known { commands: Rc::default(), loading: true, fresh: false };
+        self.slash.commands.insert(cwd.to_path_buf(), known);
+        let cwd = cwd.to_path_buf();
         cx.spawn(async move |this, cx| {
             let dir = cwd.clone();
-            let result = cx.background_spawn(async move { commands::list(&dir) }).await;
-            this.update(cx, |this, cx| {
-                if let Some(f) = this.slash.commands.get_mut(&cwd) {
-                    match result {
-                        Ok(list) => f.list = list,
-                        Err(e) => eprintln!("kynex: couldn't list slash commands: {e}"),
+            let result = cx
+                .background_spawn(async move {
+                    match commands::saved(&dir) {
+                        Some(list) => Ok((list, false)),
+                        None => commands::list(&dir).map(|list| (list, true)),
                     }
-                    f.at = Instant::now();
-                    f.loading = false;
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok((list, fresh)) if fresh => this.commands_reported(cwd.clone(), list, cx),
+                    Ok((list, _)) => {
+                        if let Some(k) = this.slash.commands.get_mut(&cwd).filter(|k| !k.fresh) {
+                            k.commands = Rc::new(Commands::new(list));
+                        }
+                    }
+                    Err(e) => eprintln!("kynex: couldn't list slash commands: {e}"),
+                }
+                if let Some(k) = this.slash.commands.get_mut(&cwd) {
+                    k.loading = false;
                 }
                 cx.notify();
             })
@@ -89,8 +121,38 @@ impl KynexApp {
         .detach();
     }
 
+    /// A folder's fresh list, from a session that started there: shown from now
+    /// on, and saved for the next start if it changed.
+    pub(super) fn commands_reported(&mut self, cwd: PathBuf, list: Vec<SlashCommand>, cx: &mut Context<Self>) {
+        if list.is_empty() {
+            return;
+        }
+        let same = self.slash.commands.get(&cwd).is_some_and(|k| k.commands.list == list);
+        if !same {
+            let dir = cwd.clone();
+            let to_save = list.clone();
+            cx.background_spawn(async move {
+                if let Err(e) = commands::save(&dir, &to_save) {
+                    eprintln!("kynex: {e}");
+                }
+            })
+            .detach();
+        }
+        let k =
+            self.slash.commands.entry(cwd).or_insert(Known { commands: Rc::default(), loading: false, fresh: true });
+        k.fresh = true;
+        if !same {
+            k.commands = Rc::new(Commands::new(list));
+        }
+    }
+
     /// The popup above the composer, while a `/name` is being typed.
     pub(super) fn render_slash(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        // Load the shown folder's commands before the first `/`, so it opens full.
+        if let Some(cwd) = self.active_session().map(|s| s.cwd.clone()).filter(|c| !self.slash.commands.contains_key(c))
+        {
+            self.load_commands(&cwd, cx);
+        }
         let matches = self.slash_matches(cx)?;
         let query = self.slash_query(cx).unwrap_or_default();
         if self.slash.query != query {
@@ -147,7 +209,7 @@ impl KynexApp {
     /// Puts command `i` in the composer: ready for its arguments if it takes
     /// some, else sent right away with `run`.
     fn take_slash(&mut self, i: usize, run: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(c) = self.slash_matches(cx).and_then(|m| m.into_iter().nth(i)) else { return };
+        let Some(c) = self.slash_matches(cx).and_then(|m| m.get(i).cloned()) else { return };
         let text = if c.argument_hint.is_empty() { format!("/{}", c.name) } else { format!("/{} ", c.name) };
         self.composer.update(cx, |input, cx| input.set_text(text.clone(), cx));
         // Typing a space closes it anyway; a complete `/name` would keep it open.

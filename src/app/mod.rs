@@ -282,10 +282,19 @@ impl KynexApp {
         // A session that starts wanting you (turn done, prompt up) while Kynex is
         // in the background flashes the taskbar / bounces the Dock icon.
         let mut called = false;
+        let mut reports = Vec::new();
         for s in self.all_sessions_mut() {
             let before = s.wants_you();
             s.poll();
             called |= !before && s.wants_you();
+            if let Some(init) = s.take_init() {
+                reports.push((s.cwd.clone(), init));
+            }
+        }
+        // What a session reported as it started: its folder's commands, the models.
+        for (cwd, init) in reports {
+            self.commands_reported(cwd, init.commands, cx);
+            models::reported(init.models, cx);
         }
         if called && let Some(handle) = cx.windows().first().copied() {
             cx.defer(move |cx| {

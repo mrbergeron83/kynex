@@ -15,6 +15,7 @@ use std::time::SystemTime;
 
 use serde_json::{Value, json};
 
+use crate::commands::SlashCommand;
 use crate::queue::Queue;
 use crate::{project, wsl};
 
@@ -165,7 +166,19 @@ pub struct Session {
     next_request: u64,
     /// The model that wrote the last reply, whose window `context` is measured against.
     reply_model: String,
+    /// What the process reported when it started, until the app takes it.
+    init: Option<Init>,
 }
+
+/// What a session's process reports as it starts (the `initialize` handshake):
+/// its folder's slash commands and the account's models.
+pub struct Init {
+    pub commands: Vec<SlashCommand>,
+    pub models: Vec<ModelInfo>,
+}
+
+/// The request id of the `initialize` handshake each process starts with.
+const INIT_ID: &str = "kynex-init";
 
 impl Session {
     pub fn new(kind: Kind, cwd: PathBuf) -> Self {
@@ -194,6 +207,7 @@ impl Session {
             streaming_text: false,
             next_request: 0,
             reply_model: String::new(),
+            init: None,
         }
     }
 
@@ -314,7 +328,15 @@ impl Session {
         self.child = Some(child);
         self.stdin = Some(Arc::new(Mutex::new(stdin)));
         self.rx = Some(rx);
+        // Ask for the commands and models first, as the Agent SDK does; the
+        // answer comes before any reply, and nothing else about the session changes.
+        self.write(json!({ "type": "control_request", "request_id": INIT_ID, "request": { "subtype": "initialize" } }));
         Ok(())
+    }
+
+    /// The commands and models the process reported when it started, once.
+    pub fn take_init(&mut self) -> Option<Init> {
+        self.init.take()
     }
 
     fn write(&mut self, msg: Value) {
@@ -506,6 +528,10 @@ impl Session {
         }
         match v["type"].as_str().unwrap_or("") {
             "stream_event" => self.handle_stream(&v["event"]),
+            "control_response" if v["response"]["request_id"] == INIT_ID => {
+                let r = &v["response"]["response"];
+                self.init = Some(Init { commands: crate::commands::from_init(r), models: models_from_init(r) });
+            }
             // `/compact` finished: the context is down to its summary.
             // Without a size after it, the meter waits for the next reply.
             "system" if v["subtype"] == "compact_boundary" => {
@@ -731,7 +757,8 @@ fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
 }
 
 /// A model the logged-in account can use, as the CLI reports it.
-#[derive(Clone)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ModelInfo {
     /// What to pass to `--model`: an alias (`opus`), a full name, or `default`.
     pub value: String,
@@ -764,8 +791,7 @@ pub(crate) fn initialize(cwd: &Path) -> Result<Value, String> {
         .stderr(Stdio::null());
     let mut child =
         crate::process::dies_with_parent(&mut cmd).spawn().map_err(|e| format!("failed to start `claude`: {e}"))?;
-    let request =
-        json!({ "type": "control_request", "request_id": "kynex-init", "request": { "subtype": "initialize" } });
+    let request = json!({ "type": "control_request", "request_id": INIT_ID, "request": { "subtype": "initialize" } });
     let sent = child.stdin.as_mut().is_some_and(|s| writeln!(s, "{request}").and_then(|_| s.flush()).is_ok());
     let mut response = None;
     if sent {
@@ -785,11 +811,38 @@ pub(crate) fn initialize(cwd: &Path) -> Result<Value, String> {
 }
 
 /// Asks the CLI which models this account can use. Blocks; see [`initialize`].
+/// Only for when there's no saved list yet: sessions report it when they start.
 pub fn list_models() -> Result<Vec<ModelInfo>, String> {
     let v = initialize(&std::env::temp_dir())?;
-    let models = v["models"].as_array().ok_or("no models in the initialize response")?;
-    Ok(models
-        .iter()
+    let models = models_from_init(&v);
+    if models.is_empty() {
+        return Err("no models in the initialize response".into());
+    }
+    Ok(models)
+}
+
+/// The models a session last reported, saved so the picker has them at once
+/// after a restart. Empty if there's none. Blocks on a small file read.
+pub fn saved_models() -> Vec<ModelInfo> {
+    let path = crate::paths::data_dir().join("models.json");
+    std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+/// Saves the models for [`saved_models`]. Blocks on a small file write.
+pub fn save_models(models: &[ModelInfo]) -> Result<(), String> {
+    let dir = crate::paths::data_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't create {}: {e}", dir.display()))?;
+    let path = dir.join("models.json");
+    let s = serde_json::to_string_pretty(models).map_err(|e| e.to_string())?;
+    std::fs::write(&path, s).map_err(|e| format!("Couldn't save {}: {e}", path.display()))
+}
+
+/// The models in an `initialize` response.
+fn models_from_init(v: &Value) -> Vec<ModelInfo> {
+    v["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
         .filter_map(|m| {
             Some(ModelInfo {
                 value: m["value"].as_str()?.to_string(),
@@ -803,7 +856,7 @@ pub fn list_models() -> Result<Vec<ModelInfo>, String> {
                     .collect(),
             })
         })
-        .collect())
+        .collect()
 }
 
 /// Past sessions in `cwd`, newest first.
@@ -983,6 +1036,25 @@ mod tests {
     }
 
     #[test]
+    fn keeps_what_the_process_reports_at_start() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        // Other control responses (an interrupt's, say) aren't the handshake.
+        s.handle(json!({ "type": "control_response", "response": { "request_id": "kynex-1", "response": {} } }));
+        assert!(s.take_init().is_none());
+        s.handle(json!({ "type": "control_response", "response": { "subtype": "success", "request_id": INIT_ID,
+            "response": {
+                "commands": [{ "name": "compact", "description": "Free up context" }],
+                "models": [{ "value": "opus", "displayName": "Opus", "supportedEffortLevels": ["high"] }],
+            } } }));
+        let init = s.take_init().unwrap();
+        assert_eq!(init.commands[0].name, "compact");
+        assert_eq!(init.models[0].value, "opus");
+        assert_eq!(init.models[0].efforts, ["high"]);
+        assert!(s.take_init().is_none(), "taken once");
+        assert!(s.items.is_empty(), "nothing in the transcript");
+    }
+
+    #[test]
     fn context_use_follows_main_thread_replies() {
         let mut s = Session::new(Kind::Chat, std::env::temp_dir());
         let reply = |parent: Value, input: u64| {
@@ -1088,6 +1160,10 @@ mod tests {
         assert!(text.to_lowercase().contains("pong"), "got: {text:?}");
         assert!(s.items.iter().any(|i| matches!(i, Item::Result { is_error: false, .. })));
         assert!(s.session_id.is_some());
+        // The process answered the `initialize` it starts with, before the reply.
+        let init = s.take_init().expect("no initialize response");
+        assert!(init.commands.iter().any(|c| c.name == "compact"));
+        assert!(!init.models.is_empty());
     }
 
     /// A project session starts in Auto (no prompt for a harmless mkdir), then a
