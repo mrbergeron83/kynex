@@ -20,6 +20,7 @@
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
+//! | `history.rs`        | ↑ / ↓ history, Ctrl+R search, stash, Esc Esc, editor |
 //! | `slash.rs`          | the slash-command popup, and built-ins Kynex runs   |
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
@@ -33,6 +34,7 @@ mod about;
 mod app_update;
 mod composer;
 mod drafts;
+mod history;
 mod keys;
 mod menus;
 mod models;
@@ -68,8 +70,8 @@ use kynex_core::paths::chat_dir;
 use kynex_core::session::{self, Attachment, Kind, Session};
 
 use drafts::Draft;
-pub use keys::bind_keys;
 use keys::{CopySelection, copy_selection};
+pub use keys::{SHELL_KEYS, bind_keys};
 use menus::OpenMenu;
 use prompts::ActivePrompt;
 use session_groups::Organize;
@@ -102,6 +104,13 @@ pub struct KynexApp {
     expanded: HashSet<(Key, usize)>,
     /// Runs of tool calls opened up, by their first call's index.
     open_runs: HashSet<(Key, usize)>,
+    /// Ctrl+O: every tool call in the transcript shown open.
+    expand_tools: bool,
+    /// Each project's sent messages and stash, loaded when first needed.
+    histories: HashMap<PathBuf, kynex_core::history::History>,
+    history_search: Option<history::HistorySearch>,
+    /// When Esc last went to a draft, for Esc Esc.
+    last_esc: Option<std::time::Instant>,
     composer: Entity<TextInput>,
     new_rule: Entity<TextInput>,
     attachments: Vec<Attachment>,
@@ -241,6 +250,10 @@ impl KynexApp {
             threads: HashMap::new(),
             expanded: HashSet::new(),
             open_runs: HashSet::new(),
+            expand_tools: false,
+            histories: HashMap::new(),
+            history_search: None,
+            last_esc: None,
             composer,
             new_rule,
             attachments: Vec::new(),
@@ -436,6 +449,11 @@ impl Render for KynexApp {
             .on_action(cx.listener(Self::cycle_mode))
             .on_action(cx.listener(Self::interrupt_action))
             .on_action(cx.listener(Self::toggle_terminal))
+            .on_action(cx.listener(Self::search_history))
+            .on_action(cx.listener(Self::stash_action))
+            .on_action(cx.listener(Self::pick_model))
+            .on_action(cx.listener(Self::expand_tools))
+            .on_action(cx.listener(Self::edit_in_editor_action))
             .on_action(cx.listener(|_, _: &CopySelection, _, cx| copy_selection(cx)))
             // The composer's Ctrl+C, passed on when nothing is selected in it.
             .on_action(cx.listener(|_, _: &crate::ui::input::Copy, _, cx| copy_selection(cx)))

@@ -271,6 +271,11 @@ impl KynexApp {
         true
     }
 
+    /// The model picker above the composer (Alt+P).
+    pub(super) fn open_model_menu(&mut self, cx: &mut Context<Self>) {
+        self.open_menu_at_composer(Menu::Model, cx);
+    }
+
     /// Opens a composer menu without a click to anchor it: above the composer's left edge.
     fn open_menu_at_composer(&mut self, which: Menu, cx: &mut Context<Self>) {
         let at = self.slash.composer.map_or(point(px(200.), px(400.)), |b| point(b.left() + px(12.), b.top() - px(4.)));

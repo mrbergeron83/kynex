@@ -25,6 +25,7 @@ pub struct SendKey(pub &'static str);
 pub fn bind_keys(cx: &mut App) {
     let c = Some(CONTEXT);
     let keys = ["escape", "shift-tab", "ctrl-b", "ctrl-o", "ctrl-c", "ctrl-v", "ctrl-shift-c", "ctrl-shift-v"];
+    let keys = keys.into_iter().chain(crate::app::SHELL_KEYS);
     cx.bind_keys(keys.map(|k| KeyBinding::new(k, SendKey(k), c)));
 }
 

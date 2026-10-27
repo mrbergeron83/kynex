@@ -25,6 +25,7 @@ impl KynexApp {
     /// if it's working. With nothing queued and Claude idle, it just sends.
     pub(super) fn send_queue_now(&mut self, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).text().trim().to_string();
+        self.remember_sent(&text, cx);
         if !text.is_empty() || !self.attachments.is_empty() {
             self.queue_message(text, cx);
         }

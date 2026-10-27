@@ -13,6 +13,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
   takes them back to edit, and clicking one edits just that one.
 - Shift+Tab on a permission prompt allows the action for the rest of the session, as in
   Claude Code.
+- More of Claude Code's keys in the message box: ↑ / ↓ go through what you've sent in the
+  project, Ctrl+R searches it, Ctrl+S stashes the draft (again on an empty box brings it
+  back), Esc Esc clears it, Ctrl+G writes it in your editor (`$VISUAL` / `$EDITOR`, else
+  Notepad / TextEdit), Ctrl+J adds a line, and Alt+P opens the model picker. Ctrl+Shift+O
+  (Ctrl+O on macOS) opens every tool call in the transcript. All of them can be rebound in
+  `keymap.json`.
 
 ### Changed
 

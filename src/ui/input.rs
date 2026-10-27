@@ -86,6 +86,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(crate::ui::keys("secondary-c"), Copy, c),
         KeyBinding::new("enter", Enter, c),
         KeyBinding::new("shift-enter", Newline, c),
+        KeyBinding::new("ctrl-j", Newline, c),
     ]);
 }
 
