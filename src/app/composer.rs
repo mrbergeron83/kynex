@@ -149,6 +149,7 @@ impl KynexApp {
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
         let popup = match () {
             _ if self.prompt.is_some() => None,
+            _ if self.rewinding() => self.render_rewind(cx),
             _ if self.history_searching() => self.render_history_search(cx),
             _ => self.render_slash(cx),
         };
@@ -217,7 +218,9 @@ impl KynexApp {
             }
         });
         let in_project = matches!(self.saved.active, Active::Project(_));
-        let placeholder = if self.history_searching() {
+        let placeholder = if self.rewinding() {
+            "Pick a message to go back to · Esc to cancel"
+        } else if self.history_searching() {
             "Search what you've sent…"
         } else if in_project {
             "Ask Claude Code to do something in this project…"
@@ -299,7 +302,7 @@ impl KynexApp {
             .flex_col()
             .gap_2()
             .capture_action(cx.listener(|this, _: &input::Up, _, cx| {
-                if this.history_search_move(false, cx) || this.slash_move(false, cx) {
+                if this.rewind_move(false, cx) || this.history_search_move(false, cx) || this.slash_move(false, cx) {
                     cx.stop_propagation();
                 }
             }))
@@ -311,7 +314,7 @@ impl KynexApp {
                 }
             }))
             .capture_action(cx.listener(|this, _: &input::Down, _, cx| {
-                if this.history_search_move(true, cx) || this.slash_move(true, cx) {
+                if this.rewind_move(true, cx) || this.history_search_move(true, cx) || this.slash_move(true, cx) {
                     cx.stop_propagation();
                 }
             }))
@@ -321,7 +324,9 @@ impl KynexApp {
                 }
             }))
             .capture_action(cx.listener(|this, _: &input::Enter, window, cx| {
-                if this.history_searching() {
+                if this.rewind_accept(cx) {
+                    cx.stop_propagation();
+                } else if this.history_searching() {
                     this.take_history_match(cx);
                     cx.stop_propagation();
                 } else if this.slash_accept(true, window, cx) {
@@ -329,12 +334,19 @@ impl KynexApp {
                 }
             }))
             .capture_action(cx.listener(|this, _: &Interrupt, _, cx| {
-                if this.cancel_history_search(cx) || this.slash_dismiss(cx) || this.double_esc(cx) {
+                if this.rewind_back(cx)
+                    || this.cancel_history_search(cx)
+                    || this.slash_dismiss(cx)
+                    || this.double_esc(cx)
+                {
                     cx.stop_propagation();
                 }
             }))
             .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 let k = &ev.keystroke;
+                if k.key == "tab" && !k.modifiers.modified() && this.rewind_accept(cx) {
+                    return cx.stop_propagation();
+                }
                 if k.key == "tab" && !k.modifiers.modified() && this.history_searching() {
                     this.take_history_match(cx);
                     return cx.stop_propagation();

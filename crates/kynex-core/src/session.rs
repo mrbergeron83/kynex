@@ -168,6 +168,8 @@ pub struct Session {
     reply_model: String,
     /// What the process reported when it started, until the app takes it.
     init: Option<Init>,
+    /// The log entry a rewind went back to, which the next process continues from.
+    resume_at: Option<String>,
 }
 
 /// What a session's process reports as it starts (the `initialize` handshake):
@@ -208,32 +210,66 @@ impl Session {
             next_request: 0,
             reply_model: String::new(),
             init: None,
+            resume_at: None,
         }
     }
 
     /// Reopen a previous conversation: replay its transcript from Claude Code's
     /// own session log, and `--resume` it on the next message.
     pub fn resume(kind: Kind, cwd: PathBuf, id: String) -> Self {
-        let transcript = find_transcript(&cwd, &id);
         let mut s = Self::new(kind, cwd);
-        match transcript.and_then(|p| std::fs::read_to_string(p).ok()) {
-            Some(log) => {
-                for line in log.lines() {
-                    let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-                    if v["isSidechain"] == true || v["isMeta"] == true {
-                        continue;
-                    }
-                    if v["type"] == "user" {
-                        s.replay_user(&v["message"]["content"]);
-                    }
-                    s.handle(v);
-                }
-                s.streaming_text = false;
-            }
-            None => s.items.push(Item::Error("previous transcript not found; continuing the session anyway".into())),
-        }
         s.session_id = Some(id);
+        if !s.replay(None) {
+            s.items.push(Item::Error("previous transcript not found; continuing the session anyway".into()));
+        }
         s
+    }
+
+    /// Fills the transcript from the session log's current branch, up to and
+    /// including entry `until` if given. False if there's no log to read.
+    fn replay(&mut self, until: Option<&str>) -> bool {
+        let id = self.session_id.clone().unwrap_or_default();
+        let Some(log) = find_transcript(&self.cwd, &id).and_then(|p| std::fs::read_to_string(p).ok()) else {
+            return false;
+        };
+        for v in crate::rewind::branch(&log) {
+            let last = until.is_some_and(|u| v["uuid"] == u);
+            if v["isMeta"] != true {
+                if v["type"] == "user" {
+                    self.replay_user(&v["message"]["content"]);
+                }
+                self.handle(v);
+            }
+            if last {
+                break;
+            }
+        }
+        // Replayed ids are this session's own; a slip shouldn't change it.
+        self.session_id = Some(id);
+        self.streaming_text = false;
+        true
+    }
+
+    /// Goes back to just before `point`: its transcript ends there and the next
+    /// message continues from there, leaving out what came after (it stays in
+    /// the log, on its own branch). Back to the first message, it starts over
+    /// as a new session. Stops the process; blocks on reading the log.
+    pub fn rewind_to(&mut self, point: &crate::rewind::Point) {
+        self.kill();
+        self.items.clear();
+        self.context = ContextUse::default();
+        self.queue = Queue::default();
+        self.finished = false;
+        match &point.before {
+            Some(before) => {
+                self.replay(Some(before));
+                self.resume_at = Some(before.clone());
+            }
+            None => {
+                self.session_id = None;
+                self.resume_at = None;
+            }
+        }
     }
 
     fn replay_user(&mut self, content: &Value) {
@@ -269,14 +305,9 @@ impl Session {
     }
 
     fn spawn(&mut self) -> Result<(), String> {
-        let mut cmd = match wsl::parse(&self.cwd) {
-            Some(w) => w.command("claude"),
-            None => {
-                let mut c = Command::new(crate::cli::program());
-                c.current_dir(&self.cwd);
-                c
-            }
-        };
+        let mut cmd = claude_command(&self.cwd);
+        // Checkpoints of the files Claude edits, so a rewind can restore them.
+        cmd.env(crate::rewind::CHECKPOINTS_ENV, "1");
         cmd.args([
             "-p",
             "--input-format",
@@ -306,14 +337,12 @@ impl Session {
         }
         if let Some(id) = &self.session_id {
             cmd.args(["--resume", id]);
+            // After a rewind: continue from there, branching off what came after.
+            if let Some(at) = self.resume_at.take() {
+                cmd.args(["--resume-session-at", &at]);
+            }
         }
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
 
         let mut child =
             crate::process::dies_with_parent(&mut cmd).spawn().map_err(|e| format!("failed to start `claude`: {e}"))?;
@@ -743,7 +772,7 @@ fn transcripts_dir(cwd: &Path) -> Option<PathBuf> {
 }
 
 /// Each session is `<transcripts dir>/<id>.jsonl`.
-fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
+pub(crate) fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
     let file = format!("{id}.jsonl");
     if let Some(p) = transcripts_dir(cwd).map(|d| d.join(&file)).filter(|p| p.is_file()) {
         return Some(p);
@@ -754,6 +783,25 @@ fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
         .filter_map(Result::ok)
         .map(|d| d.path().join(&file))
         .find(|p| p.is_file())
+}
+
+/// `claude`, to be run in `cwd` (inside WSL for a WSL folder), without a console window.
+pub(crate) fn claude_command(cwd: &Path) -> Command {
+    let mut cmd = match wsl::parse(cwd) {
+        Some(w) => w.command("claude"),
+        None => {
+            let mut c = Command::new(crate::cli::program());
+            c.current_dir(cwd);
+            c
+        }
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
 }
 
 /// A model the logged-in account can use, as the CLI reports it.
@@ -772,19 +820,7 @@ pub struct ModelInfo {
 /// in `cwd`: models, slash commands, agents and so on. Sends no message, so it
 /// costs nothing. Blocks for a second or two; call it off the UI thread.
 pub(crate) fn initialize(cwd: &Path) -> Result<Value, String> {
-    let mut cmd = match wsl::parse(cwd) {
-        Some(w) => w.command("claude"),
-        None => {
-            let mut c = Command::new(crate::cli::program());
-            c.current_dir(cwd);
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                c.creation_flags(0x0800_0000);
-            }
-            c
-        }
-    };
+    let mut cmd = claude_command(cwd);
     cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1164,6 +1200,53 @@ mod tests {
         let init = s.take_init().expect("no initialize response");
         assert!(init.commands.iter().any(|c| c.name == "compact"));
         assert!(!init.models.is_empty());
+    }
+
+    /// Two turns, the second writing a file; rewinding to it restores the file
+    /// and the conversation, and the next message carries on from the first
+    /// turn. Run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn rewind_live() {
+        let root = std::env::temp_dir().join(format!("kynex-rewind-{}", std::process::id()));
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        unsafe { std::env::set_var("KYNEX_DATA_DIR", root.join("data")) };
+        let mut s = Session::new(Kind::Code, project.clone());
+        s.model = "haiku".into();
+        s.mode = project::Mode::AcceptEdits;
+        let turn = |s: &mut Session, text: &str| {
+            s.send(text.into(), Vec::new());
+            let start = Instant::now();
+            while s.busy && start.elapsed() < Duration::from_secs(120) {
+                s.poll();
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            s.items
+                .iter()
+                .rev()
+                .find_map(|i| if let Item::Assistant(t) = i { Some(t.clone()) } else { None })
+                .unwrap_or_default()
+        };
+        turn(&mut s, "Remember the word APPLE. Reply only OK.");
+        turn(&mut s, "Also remember BANANA, and write BANANA to fruit.txt with the Write tool. Reply only OK.");
+        assert!(project.join("fruit.txt").is_file(), "the second turn wrote no file");
+
+        let id = s.session_id.clone().unwrap();
+        let points = crate::rewind::points(&project, &id).unwrap();
+        assert_eq!(points.len(), 2);
+        let second = &points[0];
+        assert!(second.checkpoint && second.changed == ["fruit.txt"], "{second:?}");
+        s.kill();
+        crate::rewind::restore_files(&project, &id, second).unwrap();
+        assert!(!project.join("fruit.txt").exists(), "the file is still there");
+        s.rewind_to(second);
+        assert_eq!(s.items.iter().filter(|i| matches!(i, Item::User { .. })).count(), 1);
+
+        let reply = turn(&mut s, "List every word I asked you to remember, nothing else.");
+        assert!(reply.contains("APPLE") && !reply.contains("BANANA"), "got: {reply:?}");
+        assert_eq!(s.session_id.as_deref(), Some(id.as_str()));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A project session starts in Auto (no prompt for a harmless mkdir), then a

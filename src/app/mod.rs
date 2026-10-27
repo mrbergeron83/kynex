@@ -21,6 +21,7 @@
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
 //! | `history.rs`        | ↑ / ↓ history, Ctrl+R search, stash, Esc Esc, editor |
+//! | `rewind.rs`         | rewind to an earlier message: conversation and files |
 //! | `slash.rs`          | the slash-command popup, and built-ins Kynex runs   |
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
@@ -40,6 +41,7 @@ mod menus;
 mod models;
 mod prompts;
 mod queue;
+mod rewind;
 mod session_groups;
 mod session_header;
 mod sessions_panel;
@@ -109,6 +111,8 @@ pub struct KynexApp {
     /// Each project's sent messages and stash, loaded when first needed.
     histories: HashMap<PathBuf, kynex_core::history::History>,
     history_search: Option<history::HistorySearch>,
+    /// The rewind popup (Esc Esc on an empty composer), while open.
+    rewind: Option<rewind::RewindMenu>,
     /// When Esc last went to a draft, for Esc Esc.
     last_esc: Option<std::time::Instant>,
     composer: Entity<TextInput>,
@@ -253,6 +257,7 @@ impl KynexApp {
             expand_tools: false,
             histories: HashMap::new(),
             history_search: None,
+            rewind: None,
             last_esc: None,
             composer,
             new_rule,
@@ -454,6 +459,7 @@ impl Render for KynexApp {
             .on_action(cx.listener(Self::pick_model))
             .on_action(cx.listener(Self::expand_tools))
             .on_action(cx.listener(Self::edit_in_editor_action))
+            .on_action(cx.listener(Self::rewind_action))
             .on_action(cx.listener(|_, _: &CopySelection, _, cx| copy_selection(cx)))
             // The composer's Ctrl+C, passed on when nothing is selected in it.
             .on_action(cx.listener(|_, _: &crate::ui::input::Copy, _, cx| copy_selection(cx)))

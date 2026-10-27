@@ -66,6 +66,9 @@ A cargo workspace with two crates:
     extra dirs via `--permission-mode`, `--effort`, `--add-dir`; the mode switches live
   - `commands.rs` — slash commands: listing a folder's (the CLI's free `initialize`
     handshake), matching as you type, and the built-ins Kynex runs itself (`/clear`, `/model`…)
+  - `rewind.rs` — going back to an earlier message: the log's current branch, the points with
+    their file checkpoints, restoring files (`--rewind-files`); the session resumes with
+    `--resume-session-at`
   - `groups.rs` — session groups and the archive in the sessions panel (`sessions.json` per project)
   - `git/` — everything git, parsed from machine formats: `status`, `diff` (hunks with line
     numbers), `log` and commit details, `branch` (list / switch / create), `ops` (stage, discard,
