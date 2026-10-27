@@ -18,6 +18,8 @@ impl KynexApp {
     pub(super) fn render_title_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         // The mark's lamp shows the shown session.
+        let hover = t.hover;
+        let update_waiting = self.update_waiting();
         let shown = self.active_session().map_or(Lamp::Idle, |s| Lamp::of(s.busy, s.waiting(), s.finished));
         let status = |l: &Live| (l.busy(), l.waiting(), l.finished());
         let mut tabs = vec![self.render_tab(0, "Chat".into(), Icon::Message, None, status(&self.chat), cx)];
@@ -37,14 +39,29 @@ impl KynexApp {
             .border_b_1()
             .border_color(t.border)
             .pl(chrome::leading_inset() + px(10.))
+            // The mark and name open the Kynex menu (About, updates); a dot marks
+            // an update waiting.
             .child(
                 div()
+                    .id("kynex-menu")
                     .flex()
                     .items_center()
                     .gap_2()
-                    .pr_3()
+                    .mr_2()
+                    .pl_1()
+                    .pr_2()
+                    .h(px(28.))
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover))
                     .child(mark("title-mark", px(20.), shown, cx))
-                    .child(section_label("Kynex", cx).font_weight(FontWeight::EXTRA_BOLD)),
+                    .child(section_label("Kynex", cx).font_weight(FontWeight::EXTRA_BOLD))
+                    .when(update_waiting, |d| d.child(div().size(px(6.)).rounded_full().bg(t.accent)))
+                    .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                        // Drop the menu from under the bar rather than from the cursor.
+                        let at = gpui::point(ev.position().x, TITLE_BAR_HEIGHT);
+                        this.open_menu(Menu::Kynex, at, Anchor::TopLeft, cx)
+                    })),
             )
             .child(div().flex().items_center().gap_0p5().children(tabs))
             .child(

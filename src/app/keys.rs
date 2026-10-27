@@ -144,9 +144,10 @@ impl KynexApp {
 
     pub(super) fn key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
-        if k.key == "escape" && (self.menu.is_some() || self.settings.is_some()) {
+        if k.key == "escape" && (self.menu.is_some() || self.settings.is_some() || self.about_open) {
             if self.menu.take().is_none() {
                 self.settings = None;
+                self.about_open = false;
             }
             cx.notify();
             cx.stop_propagation();

@@ -20,9 +20,11 @@
 //! | `menus.rs`          | popup menus                                          |
 //! | `settings.rs`       | the project's Claude settings modal                  |
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
-//! | `app_update.rs`     | Kynex updating itself from its GitHub releases       |
+//! | `app_update.rs`     | Kynex updating itself: checks, the update toast      |
+//! | `about.rs`          | the About Kynex modal: version, paths, updates       |
 //! | `models.rs`         | the model list                                       |
 
+mod about;
 mod app_update;
 mod composer;
 mod keys;
@@ -105,8 +107,16 @@ pub struct KynexApp {
     resizing_terminal: bool,
     /// Whether a newer Claude Code is out, or being installed.
     cli_update: UpdateState,
-    /// Kynex's own update, shown in the same strip style as the CLI's.
+    /// Kynex's own update: found, downloading, installed or failed.
     app_update: UpdateState,
+    /// When Kynex last asked GitHub for a newer version, and whether it's asking now.
+    update_checked: Option<std::time::SystemTime>,
+    update_checking: bool,
+    /// The small "update available" toast under the title bar.
+    update_toast: bool,
+    /// The About Kynex modal is open; the installed Claude Code version, once read.
+    about_open: bool,
+    claude_version: Option<String>,
     /// Whether the CLI is installed and signed in; until it is, a setup screen
     /// takes the workspace's place.
     setup: Setup,
@@ -215,6 +225,11 @@ impl KynexApp {
             resizing_terminal: false,
             cli_update: UpdateState::Idle,
             app_update: UpdateState::Idle,
+            update_checked: None,
+            update_checking: false,
+            update_toast: false,
+            about_open: false,
+            claude_version: None,
             setup: Setup::Checking,
             login_code,
             focus: cx.focus_handle(),
@@ -353,6 +368,8 @@ impl Render for KynexApp {
         let menu = self.render_menu(cx);
         let settings = self.render_settings(window, cx);
         let notice = self.render_notice(cx);
+        let toast = self.render_update_toast(cx);
+        let about = self.render_about(window, cx);
         div()
             .id("workspace")
             .key_context("Workspace")
@@ -410,7 +427,9 @@ impl Render for KynexApp {
             .child(self.render_title_bar(window, cx))
             .child(main)
             .children(notice)
+            .children(toast)
             .children(settings)
+            .children(about)
             .children(menu)
     }
 }

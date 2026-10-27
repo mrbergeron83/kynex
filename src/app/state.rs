@@ -63,8 +63,6 @@ pub struct Saved {
     pub window: Option<WindowState>,
     /// A Claude Code release the user chose to skip; newer ones are offered again.
     pub skipped_cli_version: Option<String>,
-    /// A Kynex release the user chose to skip.
-    pub skipped_app_version: Option<String>,
     /// The terminal panel under the conversation is showing.
     pub terminal_open: bool,
     pub terminal_height: f32,
@@ -84,7 +82,6 @@ impl Default for Saved {
             sessions_width: 260.,
             window: None,
             skipped_cli_version: None,
-            skipped_app_version: None,
             terminal_open: false,
             terminal_height: 280.,
         }

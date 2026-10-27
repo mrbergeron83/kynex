@@ -4,6 +4,7 @@
 use gpui::{Anchor, AnyElement, Context, Pixels, Point, anchored, deferred, div, prelude::*, px};
 use kynex_core::open::Opener;
 use kynex_core::project::{self, ClaudeSettings, Mode};
+use kynex_core::update;
 
 use super::{KynexApp, models};
 use crate::theme::{self, DEFAULT_CODE_FONT, DEFAULT_UI_FONT, SUGGESTED_CODE_FONTS, SUGGESTED_UI_FONTS, THEMES, theme};
@@ -12,6 +13,7 @@ use crate::ui::{Icon, Tooltip, divider, icon, menu_item, popover};
 #[derive(Clone, PartialEq)]
 pub enum Menu {
     Model,
+    Kynex,
     Theme,
     Font(FontRole),
     Mode,
@@ -50,6 +52,47 @@ impl KynexApp {
         // Font lists are long: they scroll inside the menu.
         let mut scroll = false;
         match &which {
+            Menu::Kynex => {
+                let update = self.update_waiting();
+                items.push(
+                    menu_item("kynex-about", "About Kynex", false, cx)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.menu = None;
+                            this.open_about(cx);
+                        }))
+                        .into_any_element(),
+                );
+                items.push(
+                    menu_item("kynex-check", if update { "Update available" } else { "Check for updates" }, false, cx)
+                        .when(update, |d| d.text_color(t.accent))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = None;
+                            this.open_about(cx);
+                            if !update {
+                                this.check_for_update(cx);
+                            }
+                        }))
+                        .into_any_element(),
+                );
+                items.push(div().my_1().child(divider(cx)).into_any_element());
+                for (n, (label, url)) in [
+                    ("Release notes", format!("https://github.com/{}/releases", update::REPO)),
+                    ("Report an issue", format!("https://github.com/{}/issues/new", update::REPO)),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    items.push(
+                        menu_item(("kynex-link", n), label, false, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.menu = None;
+                                cx.open_url(&url);
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
             Menu::Model => {
                 for (n, m) in models::models().into_iter().enumerate() {
                     let id = if m.value == "default" { String::new() } else { m.value.clone() };

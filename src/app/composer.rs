@@ -119,7 +119,7 @@ impl KynexApp {
         let waiting = self.prompt.is_some();
         let working = !waiting && self.active_session().is_some_and(|s| s.busy);
         let status = (working || waiting).then(|| working_bar(working, &t));
-        let update = self.render_app_update(cx).into_iter().chain(self.render_cli_update(cx));
+        let update = self.render_cli_update(cx);
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
         let shell = |child: AnyElement, focused: bool, needs_you: bool| {
             div().w_full().flex().justify_center().px_6().pb_4().pt_1().child(

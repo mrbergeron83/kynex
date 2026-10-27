@@ -1,21 +1,25 @@
 //! Kynex updating itself: a check against the GitHub releases at startup and every
-//! few hours, an offer in a strip above the composer, then download, swap and
-//! restart (`kynex_core::update`). Tabs and sessions come back after the restart.
+//! few hours (or on demand from the Kynex menu), a small toast when a new version
+//! turns up, then download, swap and restart from the About modal
+//! (`kynex_core::update`). Tabs and sessions come back after the restart.
+
+use std::time::SystemTime;
 
 use gpui::{AnyElement, Context, div, prelude::*, px};
 use kynex_core::cli::UpdateState;
 use kynex_core::update;
 
 use super::KynexApp;
-use super::setup::{CLI_CHECK_EVERY, update_strip};
+use super::setup::CLI_CHECK_EVERY;
+use crate::chrome::TITLE_BAR_HEIGHT;
 use crate::theme::theme;
-use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, outline_button, primary_button, spinner};
+use crate::ui::{Icon, ghost_button, icon, icon_button, popover};
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(super) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 impl KynexApp {
     /// Look for a newer Kynex now and every few hours after. Development builds
-    /// don't replace themselves, so they don't look.
+    /// don't replace themselves, so they only check when asked.
     pub(super) fn watch_app_updates(cx: &mut Context<Self>) {
         update::clean_up();
         if update::installed_exe().is_err() {
@@ -23,8 +27,7 @@ impl KynexApp {
         }
         cx.spawn(async move |this, cx| {
             loop {
-                let found = cx.background_spawn(async { update::check(VERSION) }).await;
-                if this.update(cx, |this, cx| this.app_checked(found, cx)).is_err() {
+                if this.update(cx, |this, cx| this.check_for_update(cx)).is_err() {
                     break;
                 }
                 cx.background_executor().timer(CLI_CHECK_EVERY).await;
@@ -33,37 +36,60 @@ impl KynexApp {
         .detach();
     }
 
+    /// Asks GitHub for the newest release now.
+    pub(super) fn check_for_update(&mut self, cx: &mut Context<Self>) {
+        if self.update_checking || matches!(self.app_update, UpdateState::Updating { .. } | UpdateState::Updated { .. })
+        {
+            return;
+        }
+        self.update_checking = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let found = cx.background_spawn(async { update::check(VERSION) }).await;
+            this.update(cx, |this, cx| this.app_checked(found, cx)).ok();
+        })
+        .detach();
+    }
+
     fn app_checked(&mut self, found: Result<Option<String>, String>, cx: &mut Context<Self>) {
-        if !matches!(self.app_update, UpdateState::Idle | UpdateState::Available { .. }) {
+        self.update_checking = false;
+        self.update_checked = Some(SystemTime::now());
+        if matches!(self.app_update, UpdateState::Updating { .. } | UpdateState::Updated { .. }) {
             return;
         }
         match found {
-            Ok(Some(latest)) if self.saved.skipped_app_version.as_deref() != Some(latest.as_str()) => {
+            Ok(Some(latest)) => {
+                // Toast once per version found, not on every periodic check.
+                let new = !matches!(&self.app_update, UpdateState::Available { latest: l, .. } if *l == latest);
+                self.update_toast |= new && !self.about_open;
                 self.app_update = UpdateState::Available { installed: VERSION.to_string(), latest };
             }
-            Ok(_) => {}
-            Err(e) => eprintln!("kynex: couldn't check for Kynex updates: {e}"),
+            Ok(None) => self.app_update = UpdateState::Idle,
+            Err(e) => self.app_update = UpdateState::Failed(e),
         }
         cx.notify();
     }
 
+    /// A newer version is waiting to be installed or restarted into.
+    pub(super) fn update_waiting(&self) -> bool {
+        matches!(self.app_update, UpdateState::Available { .. } | UpdateState::Updated { .. })
+    }
+
     /// Downloads and swaps in the new version; Kynex keeps running the old one
     /// until you restart.
-    fn update_app(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn update_app(&mut self, cx: &mut Context<Self>) {
         let UpdateState::Available { latest, .. } = &self.app_update else { return };
         let latest = latest.clone();
         self.app_update = UpdateState::Updating { latest: latest.clone() };
+        self.update_toast = false;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = cx.background_spawn({
-                let latest = latest.clone();
-                async move { update::install(&latest) }
-            });
-            let result = result.await;
+            let version = latest.clone();
+            let result = cx.background_spawn(async move { update::install(&version) }).await;
             this.update(cx, |this, cx| {
                 this.app_update = match result {
                     Ok(()) => UpdateState::Updated { version: latest },
-                    Err(e) => UpdateState::Failed(format!("Couldn't update Kynex: {e}")),
+                    Err(e) => UpdateState::Failed(format!("Couldn't update: {e}")),
                 };
                 cx.notify();
             })
@@ -72,7 +98,7 @@ impl KynexApp {
         .detach();
     }
 
-    fn restart_app(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn restart_app(&mut self, cx: &mut Context<Self>) {
         self.save();
         match update::relaunch() {
             Ok(()) => cx.quit(),
@@ -83,79 +109,43 @@ impl KynexApp {
         }
     }
 
-    fn skip_app_version(&mut self, cx: &mut Context<Self>) {
-        if let UpdateState::Available { latest, .. } = &self.app_update {
-            self.saved.skipped_app_version = Some(latest.clone());
-            self.save();
+    /// The toast under the title bar when a new version turns up: out of the way,
+    /// one click to the About modal.
+    pub(super) fn render_update_toast(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let UpdateState::Available { latest, .. } = &self.app_update else { return None };
+        if !self.update_toast {
+            return None;
         }
-        self.app_update = UpdateState::Idle;
-        cx.notify();
-    }
-
-    /// The Kynex update strip above the composer.
-    pub(super) fn render_app_update(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
-        let (lead, text, color): (AnyElement, String, _) = match &self.app_update {
-            UpdateState::Idle => return None,
-            UpdateState::Available { installed, latest } => (
-                icon(Icon::ArrowUp, t.info).size_3p5().into_any_element(),
-                format!("Kynex {latest} is available (you have {installed})"),
-                t.text,
-            ),
-            UpdateState::Updating { latest } => (
-                spinner("app-update-spin", t.accent, px(14.)).into_any_element(),
-                format!("Downloading Kynex {latest}…"),
-                t.text_muted,
-            ),
-            UpdateState::Updated { version } => (
-                icon(Icon::Check, t.success).size_3p5().into_any_element(),
-                format!("Kynex {version} is installed. Restart to use it; your tabs and sessions come back."),
-                t.text,
-            ),
-            UpdateState::Failed(e) => (icon(Icon::Dot, t.error).size_3p5().into_any_element(), e.clone(), t.text),
-        };
-        let actions = match &self.app_update {
-            UpdateState::Available { .. } => div()
-                .flex()
-                .items_center()
-                .gap_1()
+        Some(
+            div()
+                .absolute()
+                .top(TITLE_BAR_HEIGHT + px(8.))
+                .right_4()
                 .child(
-                    ghost_button("app-skip", cx)
-                        .text_xs()
-                        .text_color(t.text_muted)
-                        .child("Skip this version")
-                        .on_click(cx.listener(|this, _, _, cx| this.skip_app_version(cx))),
-                )
-                .child(
-                    outline_button("app-update", "Update", cx)
-                        .tooltip(Tooltip::text("Downloads the new version; Kynex restarts when you say so"))
-                        .on_click(cx.listener(|this, _, _, cx| this.update_app(cx))),
+                    popover(cx)
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .pl_3()
+                        .pr_1()
+                        .py_1()
+                        .child(icon(Icon::ArrowUp, t.accent).size_3p5())
+                        .child(div().text_sm().child(format!("Kynex {latest} is available")))
+                        .child(
+                            ghost_button("update-toast-view", cx)
+                                .text_color(t.accent)
+                                .child("View")
+                                .on_click(cx.listener(|this, _, _, cx| this.open_about(cx))),
+                        )
+                        .child(icon_button("update-toast-close", Icon::Close, cx).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.update_toast = false;
+                                cx.notify();
+                            },
+                        ))),
                 )
                 .into_any_element(),
-            UpdateState::Updating { .. } => div().into_any_element(),
-            UpdateState::Updated { .. } => div()
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(ghost_button("app-later", cx).text_xs().text_color(t.text_muted).child("Later").on_click(
-                    cx.listener(|this, _, _, cx| {
-                        this.app_update = UpdateState::Idle;
-                        cx.notify();
-                    }),
-                ))
-                .child(
-                    primary_button("app-restart", "Restart", cx)
-                        .tooltip(Tooltip::text("Running turns stop; sessions resume after the restart"))
-                        .on_click(cx.listener(|this, _, _, cx| this.restart_app(cx))),
-                )
-                .into_any_element(),
-            UpdateState::Idle | UpdateState::Failed(_) => icon_button("app-update-dismiss", Icon::Close, cx)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.app_update = UpdateState::Idle;
-                    cx.notify();
-                }))
-                .into_any_element(),
-        };
-        Some(update_strip(lead, text, color, actions, &t))
+        )
     }
 }
