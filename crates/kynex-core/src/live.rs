@@ -47,8 +47,8 @@ impl Live {
         }
     }
 
-    /// Shows `s`. Sessions left behind keep running while busy or waiting on
-    /// you; idle ones close (their process with them) and resume from the
+    /// Shows `s`. Sessions left behind keep running while busy, waiting on
+    /// you or holding queued messages; idle ones close (their process with them) and resume from the
     /// transcript if picked again. Returns the uids that closed.
     pub fn show(&mut self, s: Session) -> Vec<Key> {
         self.sessions.push(s);
@@ -61,7 +61,7 @@ impl Live {
         let active = self.current().map(|s| s.uid);
         let mut closed = Vec::new();
         self.sessions.retain(|s| {
-            let keep = Some(s.uid) == active || s.busy || s.waiting() || s.finished;
+            let keep = Some(s.uid) == active || s.busy || s.waiting() || s.finished || !s.queue.is_empty();
             if !keep {
                 closed.push(s.uid);
             }
@@ -106,6 +106,17 @@ mod tests {
         assert!(live.show(c).is_empty(), "busy b stays open");
         assert_eq!(live.sessions.iter().map(|s| s.uid).collect::<Vec<_>>(), [b_uid, c_uid]);
         assert_eq!(live.current().map(|s| s.uid), Some(c_uid));
+    }
+
+    #[test]
+    fn queued_messages_keep_a_session_open() {
+        let mut live = Live::default();
+        let mut a = session();
+        a.queue.push("later".into(), Vec::new());
+        let a_uid = a.uid;
+        live.show(a);
+        assert!(live.show(session()).is_empty());
+        assert_eq!(live.sessions[0].uid, a_uid);
     }
 
     #[test]

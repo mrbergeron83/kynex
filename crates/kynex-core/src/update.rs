@@ -200,7 +200,9 @@ pub fn relaunch() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     // On Linux the running exe's path gains " (deleted)" once it's replaced.
     let exe = PathBuf::from(exe.to_string_lossy().trim_end_matches(" (deleted)"));
-    Command::new(&exe).spawn().map(|_| ()).map_err(|e| format!("couldn't restart Kynex: {e}"))
+    // Detached: on Windows a plain child joins Kynex's job object and is killed
+    // with it when the caller quits, so the new Kynex would close straight away.
+    crate::process::detach(&mut Command::new(&exe)).map(|_| ()).map_err(|e| format!("couldn't restart Kynex: {e}"))
 }
 
 #[cfg(test)]

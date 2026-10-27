@@ -31,8 +31,11 @@ impl KynexApp {
             self.composer.update(cx, |c, cx| c.set_text("", cx));
             return;
         }
-        if busy || (text.is_empty() && self.attachments.is_empty()) {
+        if text.is_empty() && self.attachments.is_empty() {
             return;
+        }
+        if busy {
+            return self.queue_message(text, cx);
         }
         let atts = std::mem::take(&mut self.attachments);
         let model = self.saved.model.clone();
@@ -140,43 +143,53 @@ impl KynexApp {
         let working = !waiting && self.active_session().is_some_and(|s| s.busy);
         let status = (working || waiting).then(|| working_bar(working, &t));
         let update = self.render_cli_update(cx);
+        let queued = self.render_queue(cx);
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
         let popup = if self.prompt.is_none() { self.render_slash(cx) } else { None };
         let this = cx.entity().downgrade();
         let shell = |child: AnyElement, focused: bool, needs_you: bool| {
             div().w_full().flex().justify_center().px_6().pb_4().pt_1().child(
-                div().w_full().max_w(THREAD_WIDTH).flex().flex_col().gap_1p5().children(update).children(status).child(
-                    div()
-                        .relative()
-                        .w_full()
-                        // Remembered so a command can open a menu above the composer.
-                        .child(
-                            canvas(
-                                move |bounds, _, cx| {
-                                    this.update(cx, |this, _| this.slash.composer = Some(bounds)).ok();
-                                },
-                                |_, _, _, _| {},
+                div()
+                    .w_full()
+                    .max_w(THREAD_WIDTH)
+                    .flex()
+                    .flex_col()
+                    .gap_1p5()
+                    .children(update)
+                    .children(status)
+                    .children(queued)
+                    .child(
+                        div()
+                            .relative()
+                            .w_full()
+                            // Remembered so a command can open a menu above the composer.
+                            .child(
+                                canvas(
+                                    move |bounds, _, cx| {
+                                        this.update(cx, |this, _| this.slash.composer = Some(bounds)).ok();
+                                    },
+                                    |_, _, _, _| {},
+                                )
+                                .absolute()
+                                .size_full(),
                             )
-                            .absolute()
-                            .size_full(),
-                        )
-                        .when_some(popup, |d, popup| {
-                            d.child(deferred(div().absolute().bottom_full().left_0().w_full().pb_1().child(popup)))
-                        })
-                        .p_3()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(if needs_you {
-                            t.warning
-                        } else if focused {
-                            t.border_focused
-                        } else {
-                            t.border
-                        })
-                        .bg(t.panel)
-                        .shadow_sm()
-                        .child(child),
-                ),
+                            .when_some(popup, |d, popup| {
+                                d.child(deferred(div().absolute().bottom_full().left_0().w_full().pb_1().child(popup)))
+                            })
+                            .p_3()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(if needs_you {
+                                t.warning
+                            } else if focused {
+                                t.border_focused
+                            } else {
+                                t.border
+                            })
+                            .bg(t.panel)
+                            .shadow_sm()
+                            .child(child),
+                    ),
             )
         };
         if let Some(p) = &self.prompt {
@@ -202,7 +215,8 @@ impl KynexApp {
             if in_project { "Ask Claude Code to do something in this project…" } else { "Message Claude…" };
         self.composer.update(cx, |c, _| c.set_placeholder(placeholder));
         let focused = self.composer.read(cx).is_focused(window);
-        let can_send = !busy && (!self.composer.read(cx).text().trim().is_empty() || !self.attachments.is_empty());
+        let has_message = !self.composer.read(cx).text().trim().is_empty() || !self.attachments.is_empty();
+        let can_send = !busy && has_message;
         let max_h = window.viewport_size().height * 0.4;
 
         let attachments =
@@ -224,6 +238,16 @@ impl KynexApp {
                     }))
             }));
 
+        // While Claude works, a written message can be queued beside the stop button.
+        let queue = (busy && has_message).then(|| {
+            ghost_button("queue", cx)
+                .text_sm()
+                .text_color(t.text_muted)
+                .child(icon(Icon::ArrowUp, t.text_muted).size_3())
+                .child("Queue")
+                .tooltip(Tooltip::with_meta("Send when Claude finishes", "Enter"))
+                .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
+        });
         let send = if busy {
             div()
                 .id("stop")
@@ -268,6 +292,12 @@ impl KynexApp {
                     cx.stop_propagation();
                 }
             }))
+            // The field passes ↑ on from its first line: take the queue back, as in Claude Code.
+            .on_action(cx.listener(|this, _: &input::Up, _, cx| {
+                if !this.take_back_queue(cx) {
+                    cx.propagate();
+                }
+            }))
             .capture_action(cx.listener(|this, _: &input::Down, _, cx| {
                 if this.slash_move(true, cx) {
                     cx.stop_propagation();
@@ -286,6 +316,12 @@ impl KynexApp {
             .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 let k = &ev.keystroke;
                 if k.key == "tab" && !k.modifiers.modified() && this.slash_accept(false, window, cx) {
+                    cx.stop_propagation();
+                }
+                // Ctrl+Enter, Claude Code's "send now": the queue and the draft go right away.
+                let m = &k.modifiers;
+                if k.key == "enter" && m.control && !m.shift && !m.alt && !m.platform {
+                    this.send_queue_now(cx);
                     cx.stop_propagation();
                 }
             }))
@@ -336,6 +372,7 @@ impl KynexApp {
                         )
                     })
                     .child(div().flex_1())
+                    .children(queue)
                     .child(send),
             );
         shell(body.into_any_element(), focused, false)
