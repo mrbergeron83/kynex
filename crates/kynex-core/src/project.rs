@@ -6,6 +6,7 @@
 //!     permissions.json    allow / deny rules Kynex hands to every Claude session
 //!     claude.json         how sessions start: permission mode, effort, extra directories
 //!     sessions.json       how the sessions panel is organised: groups, archive
+//!     appearance.json     the project's colour
 //! ```
 //!
 //! Each section is its own file, read and written on its own, so a new kind of
@@ -219,6 +220,58 @@ impl ClaudeSettings {
     }
 }
 
+/// The colours a project can be marked with, by name; the app turns each into a
+/// shade that suits the theme. Ordered round the colour wheel.
+pub const COLOURS: [&str; 8] = ["red", "orange", "yellow", "green", "teal", "blue", "violet", "pink"];
+
+/// A project's colour, to tell at a glance which project you're in.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Colour {
+    /// One of [`COLOURS`], picked from the folder's path so it stays the same.
+    #[default]
+    Auto,
+    /// No colour: the project looks like any other.
+    Off,
+    /// One of [`COLOURS`], by name.
+    Named(String),
+}
+
+/// How a project looks in Kynex.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Appearance {
+    pub colour: Colour,
+}
+
+impl Appearance {
+    const FILE: &str = "appearance.json";
+
+    pub fn load(project: &Path) -> Self {
+        load(project, Self::FILE)
+    }
+
+    pub fn save(&self, project: &Path) -> Result<(), String> {
+        save(project, Self::FILE, self)
+    }
+
+    /// The name of the project's colour from [`COLOURS`], or `None` when it's off
+    /// (or names a colour Kynex no longer has).
+    pub fn colour(&self, project: &Path) -> Option<&'static str> {
+        match &self.colour {
+            Colour::Auto => Some(auto_colour(project)),
+            Colour::Off => None,
+            Colour::Named(name) => COLOURS.iter().copied().find(|c| c == name),
+        }
+    }
+}
+
+/// The colour a project gets unless you pick one: from its path's hash, so the
+/// same folder is always the same colour.
+pub fn auto_colour(project: &Path) -> &'static str {
+    COLOURS[(fnv1a(normalize(project).as_bytes()) % COLOURS.len() as u64) as usize]
+}
+
 /// The allow rules in a `can_use_tool` request's `permission_suggestions`, as
 /// rule strings. Other suggestion kinds (mode switches, extra directories)
 /// aren't project rules, so they're left out.
@@ -242,6 +295,32 @@ pub fn suggested_rules(suggestions: &Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colours_are_stable_and_can_be_picked_or_turned_off() {
+        let p = Path::new("/home/me/work/api");
+        let auto = Appearance::default().colour(p).unwrap();
+        assert_eq!(auto, auto_colour(Path::new("/home/me/work/api/")), "same folder, same colour");
+        assert!(COLOURS.contains(&auto));
+        let named = |n: &str| Appearance { colour: Colour::Named(n.into()) };
+        assert_eq!(named("teal").colour(p), Some("teal"));
+        assert_eq!(named("chartreuse").colour(p), None);
+        assert_eq!(Appearance { colour: Colour::Off }.colour(p), None);
+        // Different folders don't all land on one colour.
+        let spread: std::collections::HashSet<_> =
+            (0..20).map(|i| auto_colour(Path::new(&format!("/repos/project-{i}")))).collect();
+        assert!(spread.len() > 3);
+    }
+
+    #[test]
+    fn appearance_round_trips_through_json() {
+        for colour in [Colour::Auto, Colour::Off, Colour::Named("blue".into())] {
+            let a = Appearance { colour };
+            let s = serde_json::to_string(&a).unwrap();
+            assert_eq!(serde_json::from_str::<Appearance>(&s).unwrap(), a);
+        }
+        assert_eq!(serde_json::from_str::<Appearance>("{}").unwrap(), Appearance::default());
+    }
 
     #[test]
     fn folder_names_are_readable_and_distinct() {

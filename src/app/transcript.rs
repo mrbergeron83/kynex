@@ -11,6 +11,7 @@ use gpui::{
 };
 use kynex_core::live::Key;
 use kynex_core::motion::Glide;
+use kynex_core::paths::project_name;
 use kynex_core::session::{Item, Kind, PermState};
 use kynex_core::transcript::{self, Row};
 use kynex_core::{commands, fmt};
@@ -19,7 +20,7 @@ use super::KynexApp;
 use super::state::Active;
 use crate::markdown;
 use crate::prompt;
-use crate::theme::{Palette, mono, theme};
+use crate::theme::{Palette, label_font, mono, theme};
 use crate::ui::motion::{self, fade_in};
 use crate::ui::selectable::{Spot, selectable};
 use crate::ui::{Icon, Tooltip, icon};
@@ -85,13 +86,26 @@ impl KynexApp {
                 Active::Chat => "Start a conversation. Uses your Claude Code login, no API key needed.",
                 Active::Project(_) => "Ask Claude Code to work on this project.",
             };
+            // A new conversation in a project starts under its name, in its colour.
+            let name = self.active_project().map(|p| {
+                let colour = self.project_colour(&p.path, &t).unwrap_or(t.text_muted);
+                div()
+                    .text_size(px(22.))
+                    .font_family(label_font())
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(colour)
+                    .child(project_name(&p.path))
+            });
             return div()
                 .flex_1()
                 .flex()
+                .flex_col()
+                .gap_2()
                 .items_center()
                 .justify_center()
                 .text_sm()
                 .text_color(t.text_placeholder)
+                .children(name)
                 .child(msg)
                 .into_any_element();
         }

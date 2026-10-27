@@ -136,6 +136,8 @@ impl KynexApp {
                     .when(current.is_none(), |b| b.opacity(0.4))
                     .tooltip(Tooltip::text(if current.is_none() { "Already a new session" } else { "New session" }))
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        this.show_code_view();
+                        cx.notify();
                         let Some(s) = this.session_mut() else { return };
                         if s.session_id.is_none() {
                             return;
@@ -162,6 +164,7 @@ impl KynexApp {
                     .child(lamp(("open-status", uid as usize), Lamp::of(o.busy, o.waiting, o.finished), cx))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.confirm_delete = None;
+                        this.show_code_view();
                         if !is_current {
                             this.show_open(|s| s.uid == uid);
                         }
@@ -221,8 +224,9 @@ impl KynexApp {
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.confirm_delete = None;
+                    this.show_code_view();
                     if is_current {
-                        return;
+                        return cx.notify();
                     }
                     this.switch_session(kind2, cwd2.clone(), open_id.clone());
                     cx.notify();

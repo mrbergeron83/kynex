@@ -309,6 +309,8 @@ impl KynexApp {
                     );
                 }
                 items.push(div().my_1().child(divider(cx)).into_any_element());
+                items.extend(self.tab_colour_items(&path, cx));
+                items.push(div().my_1().child(divider(cx)).into_any_element());
                 items.push(
                     menu_item("tab-close", "Close", false, cx)
                         .text_color(t.error)
