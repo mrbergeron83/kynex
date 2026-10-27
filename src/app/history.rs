@@ -1,6 +1,6 @@
 //! The composer's Claude Code keys beyond sending: ↑ / ↓ through what you've
-//! sent, Ctrl+R to search it, Ctrl+S to stash a draft, Esc Esc to clear one,
-//! and Ctrl+G to write it in your editor. The rules live in
+//! sent, Ctrl+R to search it, Ctrl+S to stash a draft, Esc Esc to clear one
+//! (or, with none, to rewind), and Ctrl+G to write it in your editor. The rules live in
 //! `kynex_core::history`; this file only asks and draws.
 
 use std::path::PathBuf;
@@ -49,7 +49,7 @@ impl KynexApp {
         }
     }
 
-    fn set_composer(&mut self, text: String, cx: &mut Context<Self>) {
+    pub(super) fn set_composer(&mut self, text: String, cx: &mut Context<Self>) {
         self.composer.update(cx, |c, cx| c.set_text(text, cx));
         cx.notify();
     }
@@ -90,19 +90,25 @@ impl KynexApp {
         self.save_history(cx);
     }
 
-    /// Esc with a draft and Claude idle: a second Esc soon after clears it
-    /// (it stays in ↑'s list). False if this Esc wasn't one of those.
+    /// Esc with Claude idle: a second Esc soon after clears the draft (it stays
+    /// in ↑'s list), or on an empty composer opens the rewind menu, unless
+    /// `keymap.json` moved rewind to other keys. False if this Esc wasn't one of those.
     pub(super) fn double_esc(&mut self, cx: &mut Context<Self>) -> bool {
         let text = self.composer.read(cx).text().to_string();
         // Esc closes a menu or modal first; that press isn't for the draft.
         let covered = self.menu.is_some() || self.settings.is_some() || self.about_open;
-        if covered || text.trim().is_empty() || self.active_session().is_some_and(|s| s.busy) {
+        let empty = text.trim().is_empty();
+        if covered || (empty && !super::keys::esc_esc_rewinds()) || self.active_session().is_some_and(|s| s.busy) {
             self.last_esc = None;
             return false;
         }
         if self.last_esc.take().is_some_and(|t| t.elapsed() < DOUBLE_ESC) {
-            self.remember_sent(&text, cx);
-            self.set_composer(String::new(), cx);
+            if empty {
+                self.open_rewind(cx);
+            } else {
+                self.remember_sent(&text, cx);
+                self.set_composer(String::new(), cx);
+            }
         } else {
             self.last_esc = Some(Instant::now());
         }

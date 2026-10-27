@@ -259,6 +259,7 @@ impl KynexApp {
                     }
                 }
             }
+            Action::Rewind => self.open_rewind(cx),
             Action::Sessions => {
                 self.saved.sessions_collapsed = false;
                 self.save();

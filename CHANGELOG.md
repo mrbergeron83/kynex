@@ -19,6 +19,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   Notepad / TextEdit), Ctrl+J adds a line, and Alt+P opens the model picker. Ctrl+Shift+O
   (Ctrl+O on macOS) opens every tool call in the transcript. All of them can be rebound in
   `keymap.json`.
+- Rewind, as in Claude Code: Esc Esc on an empty message box (or `/rewind`) lists what you've
+  sent, newest first; pick one to go back to just before it. Restore the conversation, the
+  files Claude changed since, or both; the message comes back into the box to edit and send
+  again. Sessions now keep file checkpoints so their files can be restored. Rebind it with
+  `rewind` in `keymap.json`.
 
 ### Changed
 

@@ -16,6 +16,7 @@ pub mod process;
 pub mod project;
 pub mod questions;
 pub mod queue;
+pub mod rewind;
 pub mod session;
 pub mod terminal;
 pub mod titles;

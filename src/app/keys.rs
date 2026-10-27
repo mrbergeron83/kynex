@@ -2,6 +2,7 @@
 //! aren't tied to one panel (tabs, Esc, Shift+Tab, Ctrl+1…9).
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::{App, Context, KeyBinding, KeyDownEvent, Window, actions};
 use kynex_core::paths::data_dir;
@@ -27,14 +28,15 @@ actions!(
         StashDraft,
         PickModel,
         ExpandTools,
-        EditInEditor
+        EditInEditor,
+        Rewind
     ]
 );
 
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 12] = [
+const SHORTCUTS: [(&str, &str); 13] = [
     ("open_project", "secondary-o"),
     ("next_tab", "ctrl-tab"),
     ("prev_tab", "ctrl-shift-tab"),
@@ -48,7 +50,19 @@ const SHORTCUTS: [(&str, &str); 12] = [
     // Claude Code's Ctrl+O; Ctrl+O already opens a project outside macOS.
     ("expand_tools", if cfg!(target_os = "macos") { "ctrl-o" } else { "ctrl-shift-o" }),
     ("edit_in_editor", "ctrl-g"),
+    // Two Esc presses on an empty composer, told apart from one by timing (see
+    // `history.rs`): a key sequence would hold every single Esc back.
+    ("rewind", ESC_ESC),
 ];
+
+const ESC_ESC: &str = "escape escape";
+
+/// Whether Esc Esc opens the rewind menu: the default, unless `keymap.json` moved it.
+static ESC_ESC_REWINDS: AtomicBool = AtomicBool::new(true);
+
+pub(super) fn esc_esc_rewinds() -> bool {
+    ESC_ESC_REWINDS.load(Ordering::Relaxed)
+}
 
 /// The keys above a terminal sends to its shell instead (see `terminal::view`).
 pub const SHELL_KEYS: [&str; 4] = ["ctrl-r", "ctrl-s", "ctrl-g", "alt-p"];
@@ -74,6 +88,13 @@ pub fn bind_keys(cx: &mut App) {
     let mut bindings = Vec::new();
     for (name, default) in SHORTCUTS {
         let keys = crate::ui::keys(user.get(name).map_or(default, String::as_str));
+        if name == "rewind" {
+            let esc_esc = keys.split_whitespace().collect::<Vec<_>>().join(" ") == ESC_ESC;
+            ESC_ESC_REWINDS.store(esc_esc, Ordering::Relaxed);
+            if esc_esc {
+                continue;
+            }
+        }
         if keys.trim().is_empty() {
             continue;
         }
@@ -97,6 +118,7 @@ pub fn bind_keys(cx: &mut App) {
             "pick_model" => KeyBinding::new(keys, PickModel, c),
             "expand_tools" => KeyBinding::new(keys, ExpandTools, c),
             "edit_in_editor" => KeyBinding::new(keys, EditInEditor, c),
+            "rewind" => KeyBinding::new(keys, Rewind, c),
             _ => KeyBinding::new(keys, Interrupt, c),
         });
     }
@@ -201,6 +223,11 @@ impl KynexApp {
             return cx.propagate();
         }
         self.edit_in_editor(cx);
+    }
+
+    /// The rewind menu, from a key `keymap.json` gave it instead of Esc Esc.
+    pub(super) fn rewind_action(&mut self, _: &Rewind, _: &mut Window, cx: &mut Context<Self>) {
+        self.open_rewind(cx);
     }
 
     /// Claude Code's Ctrl+O: every tool call in the transcript open, or all closed again.

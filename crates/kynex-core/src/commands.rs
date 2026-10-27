@@ -129,6 +129,8 @@ pub enum Action {
     Effort(String),
     /// `/resume`: the sessions panel.
     Sessions,
+    /// `/rewind`: go back to an earlier message (Esc Esc on an empty composer).
+    Rewind,
     /// Only does something in the terminal CLI's own UI.
     TerminalOnly,
 }
@@ -140,6 +142,7 @@ pub fn action(name: &str, args: &str) -> Action {
         "model" => Action::Model(args.to_string()),
         "effort" => Action::Effort(args.to_string()),
         "resume" | "continue" => Action::Sessions,
+        "rewind" | "checkpoint" => Action::Rewind,
         "color" | "focus" | "theme" | "vim" | "terminal-setup" | "statusline" | "keybindings" | "ide" | "exit"
         | "quit" | "heapdump" => Action::TerminalOnly,
         _ => Action::Send,
@@ -234,6 +237,7 @@ mod tests {
         assert_eq!(action("new", ""), Action::NewSession);
         assert_eq!(action("model", "opus"), Action::Model("opus".into()));
         assert_eq!(action("resume", ""), Action::Sessions);
+        assert_eq!(action("checkpoint", ""), Action::Rewind);
         assert_eq!(action("vim", ""), Action::TerminalOnly);
         assert_eq!(action("compact", ""), Action::Send);
         assert_eq!(action("my-skill", "x"), Action::Send);
