@@ -36,7 +36,7 @@ impl KynexApp {
             }
             s.send_queue_now();
         }
-        self.follow_tail();
+        self.follow_tail(cx);
         cx.notify();
     }
 

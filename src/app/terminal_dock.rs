@@ -12,6 +12,7 @@ use super::keys::ToggleTerminal;
 use super::state::{Active, View};
 use crate::terminal::{PanelEvent, TerminalPanel};
 use crate::theme::theme;
+use crate::ui::motion::{self, fade_in};
 
 /// The panel never shrinks below this, nor squeezes the conversation below it.
 const MIN_HEIGHT: f32 = 120.;
@@ -103,7 +104,9 @@ impl KynexApp {
         let t = theme(cx).clone();
         let max = (f32::from(window.viewport_size().height) - MIN_CONVERSATION).max(MIN_HEIGHT);
         let height = self.saved.terminal_height.clamp(MIN_HEIGHT, max);
-        Some(
+        // Fades in rather than growing, so the shell isn't resized on every frame.
+        Some(fade_in(
+            "terminal-in",
             div().relative().flex_none().h(px(height)).border_t_1().border_color(t.border).child(panel).child(
                 // Drag the top edge to resize.
                 div()
@@ -123,7 +126,8 @@ impl KynexApp {
                         }),
                     ),
             ),
-        )
+            motion::NORMAL,
+        ))
     }
 
     /// Follows the mouse while the top edge is dragged.

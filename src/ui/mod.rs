@@ -4,6 +4,7 @@
 pub mod completions;
 pub mod input;
 pub mod mark;
+pub mod motion;
 pub mod selectable;
 
 use std::borrow::Cow;
@@ -299,7 +300,8 @@ impl Tooltip {
 impl Render for Tooltip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
-        div().pl_2().pt_2().child(
+        let card = motion::fade_in(
+            "tooltip-in",
             div()
                 .flex()
                 .flex_col()
@@ -316,7 +318,9 @@ impl Render for Tooltip {
                 .text_color(t.text)
                 .child(self.text.clone())
                 .children(self.meta.clone().map(|m| div().text_color(t.text_muted).child(m))),
-        )
+            motion::QUICK,
+        );
+        div().pl_2().pt_2().child(card)
     }
 }
 

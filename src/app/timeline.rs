@@ -66,19 +66,22 @@ impl KynexApp {
     }
 
     /// Scrolls the transcript to the row drawing `item`, puts it at the top
-    /// and flashes it.
+    /// and flashes it. Glides there when it can, as the wheel does.
     fn jump_to_item(&mut self, item: usize, cx: &mut Context<Self>) {
+        let reduce = cx.reduce_motion();
         let Some(key) = self.active_key() else { return };
-        let Some(th) = self.threads.get(&key) else { return };
+        let Some(th) = self.threads.get_mut(&key) else { return };
         let Some(row) = row_of(&th.rows, item) else { return };
-        th.list.scroll_to(ListOffset { item_ix: row, offset_in_item: px(0.) });
+        if reduce || !th.glide_to_row(row) {
+            th.list.scroll_to(ListOffset { item_ix: row, offset_in_item: px(0.) });
+        }
         let generation = self.flash.as_ref().map_or(0, |f| f.generation + 1);
         self.flash = Some(Flash { key, row, generation });
         cx.notify();
     }
 
     /// A row's flash after a jump: the accent, fading out.
-    pub(super) fn flash_row(&self, key: Key, row: usize, el: gpui::Div, t: &Palette) -> AnyElement {
+    pub(super) fn flash_row(&self, key: Key, row: usize, el: gpui::Stateful<gpui::Div>, t: &Palette) -> AnyElement {
         match &self.flash {
             Some(f) if f.key == key && f.row == row => {
                 let accent = t.accent;

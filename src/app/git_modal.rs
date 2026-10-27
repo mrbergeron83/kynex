@@ -10,6 +10,7 @@ use kynex_core::git::Worktree;
 use super::KynexApp;
 use crate::git::GitView;
 use crate::theme::{mono, theme};
+use crate::ui::motion::{self, fade_in, pop_in};
 use crate::ui::{Icon, Tooltip, icon, icon_button, outline_button};
 
 impl KynexApp {
@@ -103,18 +104,22 @@ impl KynexApp {
             .child(div().flex_1().min_h_0().child(git));
 
         Some(
-            div()
-                .id("git-modal-backdrop")
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(gpui::black().opacity(0.45))
-                .occlude()
-                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_git_modal(cx)))
-                .child(card)
-                .into_any_element(),
+            fade_in(
+                "git-modal-fade",
+                div()
+                    .id("git-modal-backdrop")
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(gpui::black().opacity(0.45))
+                    .occlude()
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_git_modal(cx)))
+                    .child(pop_in("git-modal-in", card, px(8.))),
+                motion::QUICK,
+            )
+            .into_any_element(),
         )
     }
 }

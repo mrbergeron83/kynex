@@ -10,6 +10,7 @@ pub mod git;
 pub mod groups;
 pub mod history;
 pub mod live;
+pub mod motion;
 pub mod open;
 pub mod paths;
 pub mod process;

@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use kynex_core::motion::Motion;
 use kynex_core::paths::data_dir;
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +60,8 @@ pub struct Saved {
     /// Interface and code font families; empty means the built-in ones.
     pub ui_font: String,
     pub code_font: String,
+    /// Whether Kynex animates, or follows the OS's "reduce motion".
+    pub motion: Motion,
     pub sessions_collapsed: bool,
     pub sessions_width: f32,
     pub window: Option<WindowState>,
@@ -83,6 +86,7 @@ impl Default for Saved {
             theme: Theme::default(),
             ui_font: String::new(),
             code_font: String::new(),
+            motion: Motion::System,
             sessions_collapsed: false,
             sessions_width: 260.,
             window: None,

@@ -14,6 +14,7 @@ use super::KynexApp;
 use super::app_update::VERSION;
 use crate::theme::{Palette, mono, theme};
 use crate::ui::mark::mark;
+use crate::ui::motion::{self, fade_in, pop_in};
 use crate::ui::{
     Icon, Lamp, Tooltip, ghost_button, icon, icon_button, outline_button, primary_button, section_label, spinner,
 };
@@ -160,24 +161,28 @@ impl KynexApp {
             );
 
         Some(
-            div()
-                .id("about-backdrop")
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(gpui::black().opacity(0.45))
-                .occlude()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.about_open = false;
-                        cx.notify();
-                    }),
-                )
-                .child(card)
-                .into_any_element(),
+            fade_in(
+                "about-fade",
+                div()
+                    .id("about-backdrop")
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(gpui::black().opacity(0.45))
+                    .occlude()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.about_open = false;
+                            cx.notify();
+                        }),
+                    )
+                    .child(pop_in("about-in", card, px(8.))),
+                motion::QUICK,
+            )
+            .into_any_element(),
         )
     }
 

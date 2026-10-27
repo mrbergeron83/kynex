@@ -96,6 +96,7 @@ use crate::git::GitView;
 use crate::terminal::TerminalPanel;
 use crate::theme::{theme, ui_font};
 use crate::ui::input::{InputEvent, TextInput};
+use crate::ui::motion::{self, fade_in, pop_in};
 use crate::ui::{Icon, icon, icon_button, popover};
 
 pub struct KynexApp {
@@ -379,7 +380,8 @@ impl KynexApp {
         let n = self.notice.clone()?;
         let t = theme(cx).clone();
         Some(
-            div().absolute().bottom_4().right_4().max_w(px(480.)).child(
+            div().absolute().bottom_4().right_4().max_w(px(480.)).child(pop_in(
+                "notice-in",
                 popover(cx)
                     .flex_row()
                     .items_start()
@@ -392,7 +394,8 @@ impl KynexApp {
                         this.notice = None;
                         cx.notify();
                     }))),
-            ),
+                px(6.),
+            )),
         )
     }
 }
@@ -449,7 +452,12 @@ impl Render for KynexApp {
                         .min_w_0()
                         .bg(t.editor)
                         .child(self.render_toolbar(cx))
-                        .child(div().flex_1().min_h_0().child(git)),
+                        // Fades in when you switch to it, as the transcript does.
+                        .child(fade_in(
+                            ("git-view-in", git.entity_id().as_u64() as usize),
+                            div().flex_1().min_h_0().child(git),
+                            motion::NORMAL,
+                        )),
                 )
                 .into_any_element()
         } else {
@@ -472,7 +480,7 @@ impl Render for KynexApp {
                                 .flex()
                                 .flex_1()
                                 .min_h_0()
-                                .child(div().flex().flex_col().flex_1().min_w_0().child(self.render_thread(cx)))
+                                .child(div().flex().flex_col().flex_1().min_w_0().child(self.render_thread(window, cx)))
                                 .children(self.render_timeline(cx)),
                         )
                         .child(self.render_composer(window, cx))
