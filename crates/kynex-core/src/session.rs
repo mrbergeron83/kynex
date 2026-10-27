@@ -1236,7 +1236,10 @@ mod tests {
         let points = crate::rewind::points(&project, &id).unwrap();
         assert_eq!(points.len(), 2);
         let second = &points[0];
-        assert!(second.checkpoint && second.changed == ["fruit.txt"], "{second:?}");
+        assert!(
+            second.checkpoint && second.changed == ["fruit.txt"],
+            "unexpected rewind checkpoint metadata"
+        );
         s.kill();
         crate::rewind::restore_files(&project, &id, second).unwrap();
         assert!(!project.join("fruit.txt").exists(), "the file is still there");
