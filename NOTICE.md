@@ -10,5 +10,28 @@ are adapted from the following projects, which remain under their own licenses.
 Copyright Zed Industries, Inc.
 Licensed under the Apache License, Version 2.0: https://www.apache.org/licenses/LICENSE-2.0
 
-Kynex also links many third-party crates (gpui, alacritty_terminal and others); each is
-distributed under its own license, listed in its crate metadata.
+## Lucide
+
+Most icons in `src/ui/mod.rs` are drawn from Lucide (https://lucide.dev).
+
+ISC License
+
+Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather
+(MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2022.
+
+Permission to use, copy, modify, and/or distribute this software for any purpose with or
+without fee is hereby granted, provided that the above copyright notice and this permission
+notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS
+SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL
+THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY
+DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
+CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+
+## Rust crates
+
+Kynex links many third-party crates (gpui, alacritty_terminal and others). Their licenses
+are collected by cargo-about (`about.toml`) into THIRD-PARTY-LICENSES.txt, shipped in
+every release archive.

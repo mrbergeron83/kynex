@@ -57,15 +57,24 @@ jobs:
           sudo apt-get install -y libfontconfig-dev libfreetype-dev libwayland-dev libxkbcommon-x11-dev \
             libx11-xcb-dev libxcb1-dev libvulkan-dev libasound2-dev
       - run: cargo build --release --locked --target ${{ matrix.target }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+      # Fails if a dependency's license isn't accepted in about.toml.
+      - name: Third-party licenses
+        run: cargo about generate about.hbs -o THIRD-PARTY-LICENSES.txt
       - name: Package
         run: |
-          mkdir dist
+          mkdir dist pkg
           dir=target/${{ matrix.target }}/release
           name=kynex-${{ matrix.target }}
+          cp LICENSE.md NOTICE.md THIRD-PARTY-LICENSES.txt pkg/
           if [ "$RUNNER_OS" = "Windows" ]; then
-            7z a "dist/$name.zip" "./$dir/kynex.exe"
+            cp "$dir/kynex.exe" pkg/
+            (cd pkg && 7z a "../dist/$name.zip" .)
           else
-            tar -czf "dist/$name.tar.gz" -C "$dir" kynex
+            cp "$dir/kynex" pkg/
+            tar -czf "dist/$name.tar.gz" -C pkg .
           fi
       - uses: actions/upload-artifact@v4
         with:

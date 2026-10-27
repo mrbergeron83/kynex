@@ -1,0 +1,16 @@
+Third-party licenses
+
+Kynex is built with the open-source crates below. Each license is listed once,
+followed by the text it is distributed under.
+{{#each licenses}}
+
+================================================================================
+{{{name}}}
+
+Used by:
+{{#each used_by}}
+  - {{crate.name}} {{crate.version}}
+{{/each}}
+
+{{{text}}}
+{{/each}}
