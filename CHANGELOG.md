@@ -33,6 +33,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
   far the branch is ahead of / behind its upstream, refreshed as each tool call and turn ends
   and when you come back to Kynex. Clicking one opens that worktree's Git view in a modal over
   the conversation, with **Open as tab** to keep it.
+- Things move instead of popping in: menus, modals, tooltips, the slash-command popup and
+  prompts fade and settle into place, the sessions panel slides open, and switching sessions
+  or to the Git view fades the new one in. The mouse wheel scrolls the conversation smoothly
+  (touchpads stay 1:1), and sending a message glides down to the end. Short and time-based, so
+  it looks the same at 60 and 240 Hz. Follows the system's "reduce motion" setting, or pick Animations on / off in
+  the Appearance menu.
 
 ### Changed
 
