@@ -16,7 +16,7 @@ protocol, so no API key is needed.
 
 ## You are running inside Kynex
 
-The dev app is started with `./dev.ps1` (`dx serve --hot-patch --features hotpatch`),
+The dev app is started with `./scripts/dev.ps1` (`dx serve --hot-patch --features hotpatch`),
 and this Claude session is usually a child process of that Kynex window. That means:
 
 - **Every save under `src/` or `crates/` hot-patches the app hosting this conversation**
@@ -42,10 +42,10 @@ Rules:
 ## Commands
 
 ```powershell
-./check.ps1                                  # THE done check: fmt, clippy -D warnings, all tests (target/claude)
-./check.ps1 -Core                            # same, kynex-core only: no gpui, seconds
-./check.ps1 -Fix                             # cargo fmt + clippy --fix first
-./dev.ps1                                    # hot-patch dev loop (dx serve) with auto-restart
+./scripts/check.ps1                          # THE done check: fmt, clippy -D warnings, all tests (target/claude)
+./scripts/check.ps1 -Core                    # same, kynex-core only: no gpui, seconds
+./scripts/check.ps1 -Fix                     # cargo fmt + clippy --fix first
+./scripts/dev.ps1                            # hot-patch dev loop (dx serve) with auto-restart
 cargo run --release                          # plain release run
 cargo check --target-dir target/claude       # type-check without touching the dev build
 cargo test -p kynex-core -- --ignored        # live round-trip against the real claude CLI (uses quota)
@@ -54,7 +54,7 @@ cargo deny check                             # advisories, licenses, sources (de
 
 One-time setup: `cargo install dioxus-cli@0.7.10 --locked`, and `claude` logged in.
 
-**Done means `./check.ps1` passes.** Run it before saying a change is finished; formatting
+**Done means `./scripts/check.ps1` passes.** Run it before saying a change is finished; formatting
 is `cargo fmt` (rustfmt.toml), not hand-tuned.
 
 ## Layout
@@ -140,7 +140,7 @@ to open it without taking focus.
   with `Fixes #N`.
 - Workflows pin third-party actions to a commit SHA with the tag in a comment, and set
   `permissions:` explicitly (read-only by default); Dependabot bumps the pins. A new
-  dependency's license must be allowed in both `deny.toml` and `about.toml`.
+  dependency's license must be allowed in both `deny.toml` and `packaging/about.toml`.
 - User-facing changes get a line under `[Unreleased]` in `CHANGELOG.md`.
 - No AI attribution anywhere in git or GitHub: no `Co-Authored-By: Claude …` trailers,
   no "Generated with Claude Code" lines in commits or PR descriptions, no `claude/`

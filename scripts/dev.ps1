@@ -5,10 +5,11 @@
 # dx, which does a full build and only relaunches the app if the build succeeds.
 # A plain compile error never closes the app: dx keeps the old one running.
 #
-# Usage: ./dev.ps1 [extra dx args]
+# Usage: ./scripts/dev.ps1 [extra dx args]
 
 $ErrorActionPreference = 'Stop'
-Set-Location $PSScriptRoot
+$root = Split-Path $PSScriptRoot
+Set-Location $root
 
 $dxArgs = @('serve', '--hot-patch', '--features', 'hotpatch', '--interactive', 'false') + $args
 
@@ -16,7 +17,7 @@ while ($true) {
     $psi = [System.Diagnostics.ProcessStartInfo]::new('dx')
     foreach ($a in $dxArgs) { $psi.ArgumentList.Add($a) }
     # Set-Location doesn't change the process cwd that child processes inherit.
-    $psi.WorkingDirectory = $PSScriptRoot
+    $psi.WorkingDirectory = $root
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
     $dx = [System.Diagnostics.Process]::Start($psi)

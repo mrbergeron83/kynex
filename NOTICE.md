@@ -44,5 +44,5 @@ License 1.1. Their licences are in `assets/fonts/` and ship in every release arc
 ## Rust crates
 
 Kynex links many third-party crates (gpui, alacritty_terminal and others). Their licenses
-are collected by cargo-about (`about.toml`) into THIRD-PARTY-LICENSES.txt, shipped in
+are collected by cargo-about (`packaging/about.toml`) into THIRD-PARTY-LICENSES.txt, shipped in
 every release archive.

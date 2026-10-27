@@ -11,7 +11,7 @@ not public issues.
 
 ## Code contributions
 
-Kynex is under the [PolyForm Strict License](LICENSE.md), which doesn't allow changes or
+Kynex is under the [PolyForm Strict License](../LICENSE), which doesn't allow changes or
 derivative works without permission. So **open an issue before writing code**, and agree on the
 change there; pull requests that weren't discussed may be closed.
 
@@ -37,7 +37,7 @@ Edit UI code and see it live without restarting, via [subsecond](https://crates.
 
 ```powershell
 cargo install dioxus-cli@0.7.10 --locked   # once
-./dev.ps1                                  # dx serve --hot-patch, with auto-restart
+./scripts/dev.ps1                          # dx serve --hot-patch, with auto-restart
 ```
 
 Everything reached from `KynexApp::render` is patched on save, in both workspace crates;
@@ -49,9 +49,9 @@ Set `KYNEX_DATA_DIR` to run a test instance without touching your real state.
 
 ## Checks
 
-**Done means `./check.ps1` passes**: `cargo fmt --check`, clippy with `-D warnings`, and every
-test, built into `target/claude` so it never touches the dev build. `./check.ps1 -Fix` formats
-and applies clippy's fixes first; `./check.ps1 -Core` checks only `kynex-core` (seconds).
+**Done means `./scripts/check.ps1` passes**: `cargo fmt --check`, clippy with `-D warnings`, and every
+test, built into `target/claude` so it never touches the dev build. `./scripts/check.ps1 -Fix` formats
+and applies clippy's fixes first; `./scripts/check.ps1 -Core` checks only `kynex-core` (seconds).
 
 `cargo test -p kynex-core -- --ignored` runs a live round-trip against the real CLI (uses a
 little quota).
@@ -60,12 +60,12 @@ CI runs the same checks on Windows, macOS and Linux. The Security workflow runs
 [cargo-deny](https://github.com/EmbarkStudios/cargo-deny) (`cargo deny check`, configured in
 `deny.toml`) and [zizmor](https://github.com/zizmorcore/zizmor) on the workflows; CodeQL and
 OpenSSF Scorecard run too. A new dependency must have a license listed in both `deny.toml` and
-`about.toml`.
+`packaging/about.toml`.
 
 ## Layout
 
 A cargo workspace: `crates/kynex-core` is the logic with no UI (the `claude` protocol, sessions,
-project settings, git, terminals), and `src/` is the gpui app. [CLAUDE.md](CLAUDE.md) has the
+project settings, git, terminals), and `src/` is the gpui app. [CLAUDE.md](../CLAUDE.md) has the
 full map and the conventions (where code goes, UI style, Rust 2024 notes).
 
 Kynex must build and run on Windows, macOS and Linux: keep platform-specific code behind
@@ -79,7 +79,7 @@ State is saved to `state.json` in the per-user data dir: `%APPDATA%\kynex` on Wi
 - Small commits with a sentence-case summary saying what changes for the user
   ("Show how full the context is, and compact it in one click"); `Fixes #N` closes an issue.
 - Versions follow [SemVer](https://semver.org) and are tagged `vX.Y.Z`. To release: bump the
-  version in `Cargo.toml`, add the section to [CHANGELOG.md](CHANGELOG.md), commit, then push a
+  version in `Cargo.toml`, add the section to [CHANGELOG.md](../CHANGELOG.md), commit, then push a
   matching tag; the Release workflow builds every OS and publishes the release.
 - Label pull requests (`enhancement`, `bug`, `security`, …): generated release notes are grouped
   by label.

@@ -63,9 +63,9 @@ code-signed yet.
 ## Links
 
 - [Changelog](CHANGELOG.md)
-- [Contributing and building from source](CONTRIBUTING.md)
+- [Contributing and building from source](.github/CONTRIBUTING.md)
 - [Report a bug or suggest an idea](https://github.com/mrbergeron83/kynex/issues/new/choose)
-- [Security policy](SECURITY.md)
+- [Security policy](.github/SECURITY.md)
 
 ## License
 
