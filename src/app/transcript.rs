@@ -6,8 +6,8 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, App, Context, FollowMode, FontWeight, ListAlignment, ListOffset, ListState, Pixels, ScrollDelta,
-    ScrollEvent, Window, div, img, list, prelude::*, px,
+    AnyElement, App, Context, FollowMode, FontWeight, ListAlignment, ListOffset, ListState, Pixels, ScrollEvent,
+    Window, div, img, list, prelude::*, px,
 };
 use kynex_core::live::Key;
 use kynex_core::motion::Glide;
@@ -40,9 +40,6 @@ pub struct Thread {
     /// Gliding to the end: follow new output once there.
     follow_after: bool,
 }
-
-/// How far one wheel line scrolls, as gpui's own list does.
-const WHEEL_LINE: f32 = 20.;
 
 /// How far ↑ / ↓ scroll the transcript, as a browser's arrow keys do.
 const ARROW_STEP: f32 = 40.;
@@ -93,7 +90,7 @@ impl Thread {
         if moved != step {
             self.glide.stop();
         }
-        // Gliding down onto the end (a wheel turn, a jump) follows new output
+        // Gliding down onto the end (Page Down, a jump) follows new output
         // again, as gpui's own list does; the end grows while a reply streams.
         if step > 0. && offset + moved >= max - 1. {
             self.glide.stop();
@@ -264,23 +261,13 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// A mouse-wheel turn over the transcript: glide instead of jumping a
-    /// notch at a time. Touchpads report exact pixels and scroll 1:1, and
-    /// with motion reduced the list scrolls itself as before.
-    fn wheel(&mut self, key: Key, ev: &ScrollEvent, cx: &mut Context<Self>) {
-        let ScrollDelta::Lines(lines) = ev.delta else { return };
-        if cx.reduce_motion() || lines.y == 0. {
-            return;
+    /// Scrolling by hand (wheels glide in `ui::smooth_scroll`) takes over from
+    /// a glide to the end or to a timeline step; the list scrolls itself.
+    fn scrolled(&mut self, key: Key) {
+        if let Some(t) = self.threads.get_mut(&key) {
+            t.glide.stop();
+            t.follow_after = false;
         }
-        let Some(t) = self.threads.get_mut(&key) else { return };
-        cx.stop_propagation();
-        t.follow_after = false;
-        // Lines up (positive) scroll the content back towards the top.
-        t.glide.push(-lines.y * WHEEL_LINE);
-        if lines.y > 0. {
-            t.list.pause_following_tail();
-        }
-        cx.notify();
     }
 
     /// Measures row `row` of `key`'s transcript again, after it opened or closed.
@@ -317,8 +304,7 @@ impl KynexApp {
             .px_6()
             .map(|d| if compact { d.py_0p5() } else { d.py_2() })
             .child(div().w_full().max_w(THREAD_WIDTH).child(body))
-            // After any scroll box inside the row, before the list itself.
-            .on_scroll(cx.listener(move |this, ev: &ScrollEvent, _, cx| this.wheel(key, ev, cx)));
+            .on_scroll(cx.listener(move |this, _: &ScrollEvent, _, _| this.scrolled(key)));
         // Lit up for a moment when the timeline jumps here.
         self.flash_row(key, row, el, &t)
     }

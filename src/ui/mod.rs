@@ -6,6 +6,7 @@ pub mod input;
 pub mod mark;
 pub mod motion;
 pub mod selectable;
+pub mod smooth_scroll;
 
 use std::borrow::Cow;
 use std::collections::HashMap;

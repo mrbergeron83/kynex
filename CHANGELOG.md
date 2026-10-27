@@ -18,10 +18,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
   `page_up`, `page_down`, `scroll_top` and `scroll_bottom` in `keymap.json`. In the terminal
   these keys still go to the shell.
 
+### Changed
+
+- Mouse-wheel scrolling glides everywhere, not just in the conversation: the sessions panel,
+  timeline, Git view, settings, menus and terminal too. A notch also goes about twice as far,
+  like a browser. Touchpads still scroll 1:1, and with animations off a notch moves at once.
+
 ### Fixed
 
-- The transcript follows new output again after you scroll back down to the end with the mouse
-  wheel, instead of letting a growing reply run off the bottom.
+- A reopened session no longer shows the CLI's background-task notices
+  (`<task-notification>…`) as messages you sent.
+- The transcript follows new output again after you glide back down to the end, instead of
+  letting a growing reply run off the bottom.
 - The timeline runs the full height of the window beside the transcript, with the message box
   under the transcript only.
 
