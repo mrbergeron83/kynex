@@ -1,16 +1,18 @@
 //! Popup menus: model, appearance (theme and fonts), permission mode, effort, and the
 //! right-click menus of project tabs, sessions and session groups. One is open at a time, anchored where it was clicked.
 
-use gpui::{Anchor, AnyElement, Context, Pixels, Point, anchored, deferred, div, prelude::*, px};
+use gpui::{Anchor, AnyElement, Context, Pixels, Point, SharedString, anchored, deferred, div, prelude::*, px};
+use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
 use kynex_core::project::{self, ClaudeSettings, Mode};
 use kynex_core::update;
 
 use super::{KynexApp, models};
 use crate::theme::{self, DEFAULT_CODE_FONT, DEFAULT_UI_FONT, SUGGESTED_CODE_FONTS, SUGGESTED_UI_FONTS, THEMES, theme};
+use crate::ui::motion::pop_in;
 use crate::ui::{Icon, Tooltip, divider, icon, menu_item, popover};
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Menu {
     Model,
     Kynex,
@@ -25,7 +27,7 @@ pub enum Menu {
     Group(usize),
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FontRole {
     Ui,
     Code,
@@ -176,6 +178,20 @@ impl KynexApp {
                             .into_any_element(),
                     );
                 }
+                items.push(div().my_1().child(divider(cx)).into_any_element());
+                for (n, m) in Motion::ALL.into_iter().enumerate() {
+                    items.push(
+                        menu_item(("motion", n), m.label(), self.saved.motion == m, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.saved.motion = m;
+                                this.menu = None;
+                                this.save();
+                                crate::ui::motion::apply(m, cx);
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    );
+                }
             }
             Menu::Font(role) => {
                 let role = *role;
@@ -308,7 +324,8 @@ impl KynexApp {
             Menu::Group(i) => items = self.group_menu_items(*i, cx),
         }
         Some(deferred(
-            anchored().position(at).anchor(anchor).snap_to_window_with_margin(px(8.)).child(
+            anchored().position(at).anchor(anchor).snap_to_window_with_margin(px(8.)).child(pop_in(
+                SharedString::from(format!("menu-in-{which:?}")),
                 popover(cx)
                     .min_w(px(if which == Menu::Theme { 300. } else { 200. }))
                     .on_mouse_down_out(cx.listener(|this, _, _, cx| {
@@ -323,7 +340,9 @@ impl KynexApp {
                             d.children(items)
                         }
                     }),
-            ),
+                // Drops down into place.
+                px(-4.),
+            )),
         ))
     }
 }

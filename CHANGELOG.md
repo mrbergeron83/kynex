@@ -24,6 +24,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   files Claude changed since, or both; the message comes back into the box to edit and send
   again. Sessions now keep file checkpoints so their files can be restored. Rebind it with
   `rewind` in `keymap.json`.
+- Things move instead of popping in: menus, modals, tooltips, the slash-command popup and
+  prompts fade and settle into place, the sessions panel slides open, and switching sessions
+  or to the Git view fades the new one in. Short and time-based, so it looks the same at 60
+  and 240 Hz. Follows the system's "reduce motion" setting, or pick Animations on / off in
+  the Appearance menu.
 
 ### Changed
 

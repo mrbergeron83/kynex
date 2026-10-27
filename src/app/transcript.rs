@@ -18,6 +18,7 @@ use super::state::Active;
 use crate::markdown;
 use crate::prompt;
 use crate::theme::{Palette, mono, theme};
+use crate::ui::motion::{self, fade_in};
 use crate::ui::selectable::{Spot, selectable};
 use crate::ui::{Icon, Tooltip, icon};
 
@@ -75,11 +76,13 @@ impl KynexApp {
             thread.list.remeasure_items(n - 1..n);
         }
         let state = thread.list.clone();
-        list(state, cx.processor(|this, ix, window, cx| this.render_item(ix, window, cx)))
+        let uid = self.active_session().map_or(0, |s| s.uid as usize);
+        let thread = list(state, cx.processor(|this, ix, window, cx| this.render_item(ix, window, cx)))
             .flex_1()
             .size_full()
-            .py_2()
-            .into_any_element()
+            .py_2();
+        // Switching sessions fades the new one in instead of swapping in one frame.
+        fade_in(("thread-in", uid), thread, motion::NORMAL).into_any_element()
     }
 
     /// Scrolls the shown transcript to the bottom and follows new output.

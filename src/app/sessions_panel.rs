@@ -15,6 +15,7 @@ use super::keys::ToggleSessions;
 use super::menus::Menu;
 use super::session_groups::DraggedSession;
 use crate::theme::{Palette, theme};
+use crate::ui::motion::grow_width;
 use crate::ui::{Icon, Lamp, Tooltip, divider, ghost_button, icon, icon_button, lamp, section_label};
 
 /// Past sessions for the active conversation's folder, re-read when the folder
@@ -47,11 +48,12 @@ impl KynexApp {
             return None;
         }
         let t = theme(cx).clone();
-        Some(
+        // Slides open when shown (Ctrl+B); the width is the dragged one after that.
+        Some(grow_width(
+            "sessions-in",
             div()
                 .relative()
                 .flex_none()
-                .w(px(self.saved.sessions_width))
                 .h_full()
                 .bg(t.panel)
                 .border_r_1()
@@ -75,7 +77,8 @@ impl KynexApp {
                             }),
                         ),
                 ),
-        )
+            self.saved.sessions_width,
+        ))
     }
 
     fn render_sessions_panel(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {

@@ -13,6 +13,7 @@ use kynex_core::project::{self, ClaudeSettings, Mode, Permissions};
 use super::KynexApp;
 use super::menus::Menu;
 use crate::theme::{Palette, mono, theme};
+use crate::ui::motion::{self, fade_in, pop_in};
 use crate::ui::{Icon, Tooltip, icon, icon_button, menu_item, outline_button};
 
 pub struct SettingsView {
@@ -386,7 +387,8 @@ impl KynexApp {
                 ),
             );
 
-        Some(
+        Some(fade_in(
+            "settings-fade",
             div()
                 .id("modal-backdrop")
                 .absolute()
@@ -403,8 +405,9 @@ impl KynexApp {
                         cx.notify();
                     }),
                 )
-                .child(card),
-        )
+                .child(pop_in("settings-in", card, px(8.))),
+            motion::QUICK,
+        ))
     }
 }
 

@@ -19,6 +19,7 @@ use super::state::{Active, View};
 use super::transcript::THREAD_WIDTH;
 use super::{KynexApp, models};
 use crate::theme::{Palette, theme};
+use crate::ui::motion::{self, fade_in, pop_in};
 use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, input, spinner};
 
 impl KynexApp {
@@ -181,7 +182,12 @@ impl KynexApp {
                                 .size_full(),
                             )
                             .when_some(popup, |d, popup| {
-                                d.child(deferred(div().absolute().bottom_full().left_0().w_full().pb_1().child(popup)))
+                                // Slash commands, history search, rewind: rise into place above the box.
+                                d.child(deferred(pop_in(
+                                    "composer-popup-in",
+                                    div().absolute().bottom_full().left_0().w_full().pb_1().child(popup),
+                                    px(4.),
+                                )))
                             })
                             .p_3()
                             .rounded_lg()
@@ -201,7 +207,10 @@ impl KynexApp {
         };
         if let Some(p) = &self.prompt {
             let focused = p.view.read(cx).focus_handle(cx).contains_focused(window, cx);
-            return shell(p.view.clone().into_any_element(), focused, true);
+            // Each prompt fades in over the composer it replaces.
+            let id = ("prompt-in", p.view.entity_id().as_u64() as usize);
+            let view = fade_in(id, div().child(p.view.clone()), motion::QUICK);
+            return shell(view.into_any_element(), focused, true);
         }
 
         let session = self.active_session();
