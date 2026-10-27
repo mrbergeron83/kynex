@@ -21,6 +21,7 @@ fn main() {
         let saved = app::Saved::load();
         theme::set(saved.theme, cx);
         theme::init_fonts(cx);
+        theme::set_fonts(&saved.ui_font, &saved.code_font);
         ui::input::bind_keys(cx);
         prompt::bind_keys(cx);
         terminal::bind_keys(cx);

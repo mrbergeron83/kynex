@@ -5,7 +5,7 @@ use kynex_core::fmt::ago_unix;
 use kynex_core::git::{Commit, Ref, RefKind};
 
 use super::{GitView, Selection};
-use crate::theme::{Palette, mono_label, theme};
+use crate::theme::{Palette, mono, theme};
 use crate::ui::Tooltip;
 
 impl GitView {
@@ -77,7 +77,7 @@ fn commit_row(i: usize, c: &Commit, selected: bool, t: &Palette, cx: &mut Contex
                 .gap_1p5()
                 .text_xs()
                 .text_color(t.text_placeholder)
-                .child(div().font_family(mono_label()).child(c.short.clone()))
+                .child(div().font_family(mono()).child(c.short.clone()))
                 .child("·")
                 .child(div().min_w_0().truncate().child(c.author.clone()))
                 .child("·")

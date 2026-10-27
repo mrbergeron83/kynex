@@ -1,21 +1,28 @@
-//! Popup menus: model, theme, permission mode, effort, and a project tab's
-//! right-click menu. One is open at a time, anchored where it was clicked.
+//! Popup menus: model, appearance (theme and fonts), permission mode, effort, and a
+//! project tab's right-click menu. One is open at a time, anchored where it was clicked.
 
 use gpui::{Anchor, AnyElement, Context, Pixels, Point, anchored, deferred, div, prelude::*, px};
 use kynex_core::open::Opener;
 use kynex_core::project::{self, ClaudeSettings, Mode};
 
 use super::{KynexApp, models};
-use crate::theme::{self, THEMES, theme};
+use crate::theme::{self, DEFAULT_CODE_FONT, DEFAULT_UI_FONT, SUGGESTED_CODE_FONTS, SUGGESTED_UI_FONTS, THEMES, theme};
 use crate::ui::{Icon, Tooltip, divider, icon, menu_item, popover};
 
 #[derive(Clone, PartialEq)]
 pub enum Menu {
     Model,
     Theme,
+    Font(FontRole),
     Mode,
     Effort,
     Tab(usize),
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum FontRole {
+    Ui,
+    Code,
 }
 
 pub struct OpenMenu {
@@ -40,6 +47,8 @@ impl KynexApp {
         let (which, at, anchor) = (open.which.clone(), open.at, open.anchor);
         let t = theme(cx).clone();
         let mut items: Vec<AnyElement> = Vec::new();
+        // Font lists are long: they scroll inside the menu.
+        let mut scroll = false;
         match &which {
             Menu::Model => {
                 for (n, m) in models::models().into_iter().enumerate() {
@@ -93,6 +102,63 @@ impl KynexApp {
                             }))
                             .into_any_element(),
                     );
+                }
+                items.push(div().my_1().child(divider(cx)).into_any_element());
+                for (n, (role, label, current)) in
+                    [(FontRole::Ui, "Interface font", theme::ui_font()), (FontRole::Code, "Code font", theme::mono())]
+                        .into_iter()
+                        .enumerate()
+                {
+                    items.push(
+                        menu_item(("font-role", n), label, false, cx)
+                            .child(div().flex_none().text_color(t.text_placeholder).child(current))
+                            .child(icon(Icon::ChevronRight, t.text_placeholder).size_3())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.menu = Some(OpenMenu { which: Menu::Font(role), at, anchor });
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
+            Menu::Font(role) => {
+                let role = *role;
+                scroll = true;
+                let (current, default, suggested) = match role {
+                    FontRole::Ui => (theme::ui_font(), DEFAULT_UI_FONT, &SUGGESTED_UI_FONTS[..]),
+                    FontRole::Code => (theme::mono(), DEFAULT_CODE_FONT, &SUGGESTED_CODE_FONTS[..]),
+                };
+                let all = theme::font_families(cx);
+                let suggested: Vec<String> = suggested
+                    .iter()
+                    .filter(|f| **f == default || all.iter().any(|a| a == *f))
+                    .map(|f| f.to_string())
+                    .collect();
+                let rest = all.into_iter().filter(|f| !suggested.contains(f));
+                let row = |n: usize, name: String, cx: &mut Context<Self>| {
+                    let label = if name == default { format!("{name} (built in)") } else { name.clone() };
+                    // Suggested fonts are shown in themselves; the long list stays plain.
+                    menu_item(("font", n), label, *current == *name, cx)
+                        .when(n < suggested.len(), |d| d.font_family(name.clone()))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let chosen = if name == default { String::new() } else { name.clone() };
+                            match role {
+                                FontRole::Ui => this.saved.ui_font = chosen,
+                                FontRole::Code => this.saved.code_font = chosen,
+                            }
+                            theme::set_fonts(&this.saved.ui_font, &this.saved.code_font);
+                            this.menu = None;
+                            this.save();
+                            cx.refresh_windows();
+                        }))
+                        .into_any_element()
+                };
+                for (n, name) in suggested.iter().enumerate() {
+                    items.push(row(n, name.clone(), cx));
+                }
+                items.push(div().my_1().child(divider(cx)).into_any_element());
+                for (n, name) in rest.enumerate() {
+                    items.push(row(suggested.len() + n, name, cx));
                 }
             }
             Menu::Mode => {
@@ -186,12 +252,19 @@ impl KynexApp {
         Some(deferred(
             anchored().position(at).anchor(anchor).snap_to_window_with_margin(px(8.)).child(
                 popover(cx)
-                    .min_w(px(200.))
+                    .min_w(px(if which == Menu::Theme { 300. } else { 200. }))
                     .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                         this.menu = None;
                         cx.notify();
                     }))
-                    .children(items),
+                    .map(|d| {
+                        if scroll {
+                            d.w(px(280.))
+                                .child(div().id("menu-scroll").max_h(px(420.)).overflow_y_scroll().children(items))
+                        } else {
+                            d.children(items)
+                        }
+                    }),
             ),
         ))
     }

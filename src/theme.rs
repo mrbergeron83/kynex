@@ -3,7 +3,7 @@
 //! The Kynex themes and the bundled fonts follow docs/design/branding.md.
 
 use std::borrow::Cow;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 use gpui::{App, Global, Hsla, SharedString, rgb};
 use serde::{Deserialize, Serialize};
@@ -216,67 +216,101 @@ pub fn theme(cx: &App) -> &Palette {
     &cx.global::<ActiveTheme>().0
 }
 
-/// The UI font: everything you read.
-pub const UI_FONT: &str = "Mona Sans";
+/// The built-in fonts, used unless you pick others (Appearance menu): IBM Plex Sans
+/// for the interface, JetBrains Mono for code, diffs and the terminal.
+pub const DEFAULT_UI_FONT: &str = "IBM Plex Sans";
+pub const DEFAULT_CODE_FONT: &str = "JetBrains Mono";
 
 /// Bundled so the look doesn't depend on what's installed; all SIL OFL 1.1, their
 /// licences sit next to them in assets/fonts.
-const FONTS: [&[u8]; 8] = [
-    include_bytes!("../assets/fonts/MonaSans-Regular.ttf"),
-    include_bytes!("../assets/fonts/MonaSans-SemiBold.ttf"),
+const FONTS: [&[u8]; 11] = [
+    include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf"),
+    include_bytes!("../assets/fonts/IBMPlexSans-Italic.ttf"),
+    include_bytes!("../assets/fonts/IBMPlexSans-Medium.ttf"),
+    include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf"),
+    include_bytes!("../assets/fonts/IBMPlexSans-Bold.ttf"),
     include_bytes!("../assets/fonts/HubotSansExpanded-SemiBold.ttf"),
     include_bytes!("../assets/fonts/HubotSansExpanded-ExtraBold.ttf"),
     include_bytes!("../assets/fonts/HubotSansExpanded-Black.ttf"),
-    include_bytes!("../assets/fonts/MonaspaceNeon-Regular.otf"),
-    include_bytes!("../assets/fonts/MonaspaceNeon-Bold.otf"),
-    include_bytes!("../assets/fonts/MonaspaceKrypton-Regular.otf"),
+    include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf"),
+    include_bytes!("../assets/fonts/JetBrainsMono-Bold.ttf"),
+    include_bytes!("../assets/fonts/JetBrainsMono-Italic.ttf"),
 ];
 
-static MONO: OnceLock<SharedString> = OnceLock::new();
-static MONO_LABEL: OnceLock<SharedString> = OnceLock::new();
+/// Installed fonts worth offering first in the pickers, when present.
+pub const SUGGESTED_UI_FONTS: [&str; 9] = [
+    DEFAULT_UI_FONT,
+    "Segoe UI",
+    "Inter",
+    "SF Pro Text",
+    "Helvetica Neue",
+    "Roboto",
+    "Noto Sans",
+    "Ubuntu",
+    "Cantarell",
+];
+pub const SUGGESTED_CODE_FONTS: [&str; 10] = [
+    DEFAULT_CODE_FONT,
+    "Cascadia Code",
+    "Cascadia Mono",
+    "Consolas",
+    "Fira Code",
+    "Source Code Pro",
+    "SF Mono",
+    "Menlo",
+    "DejaVu Sans Mono",
+    "Ubuntu Mono",
+];
+
+static UI: RwLock<Option<SharedString>> = RwLock::new(None);
+static CODE: RwLock<Option<SharedString>> = RwLock::new(None);
 static LABEL: OnceLock<SharedString> = OnceLock::new();
+
+/// The interface font: everything you read.
+pub fn ui_font() -> SharedString {
+    UI.read().ok().and_then(|f| f.clone()).unwrap_or_else(|| DEFAULT_UI_FONT.into())
+}
+
+/// The code font: code blocks, diffs, tool output, the terminal, paths and branches.
+pub fn mono() -> SharedString {
+    CODE.read().ok().and_then(|f| f.clone()).unwrap_or_else(|| DEFAULT_CODE_FONT.into())
+}
+
+/// Sets the interface and code fonts; an empty name means the built-in one.
+pub fn set_fonts(ui: &str, code: &str) {
+    let pick = |f: &str| (!f.is_empty()).then(|| SharedString::from(f.to_string()));
+    if let Ok(mut u) = UI.write() {
+        *u = pick(ui);
+    }
+    if let Ok(mut c) = CODE.write() {
+        *c = pick(code);
+    }
+}
 
 /// Engraved-panel lettering for the wordmark and uppercase section labels: Hubot
 /// Sans Expanded. DirectWrite files the expanded cuts under "Hubot Sans" (width is
 /// a stretch there, not a family), other platforms under the full name.
 pub fn label_font() -> SharedString {
-    LABEL.get().cloned().unwrap_or_else(|| UI_FONT.into())
+    LABEL.get().cloned().unwrap_or_else(ui_font)
 }
 
-/// Monospace family for code, diffs and tool output.
-pub fn mono() -> SharedString {
-    MONO.get().cloned().unwrap_or_else(|| "monospace".into())
-}
-
-/// Monospace family for small metadata: file paths, branch names.
-pub fn mono_label() -> SharedString {
-    MONO_LABEL.get().cloned().unwrap_or_else(mono)
+/// Every font family the pickers can offer, sorted; the built-in ones included.
+pub fn font_families(cx: &App) -> Vec<String> {
+    let mut all = cx.text_system().all_font_names();
+    all.extend([DEFAULT_UI_FONT.to_string(), DEFAULT_CODE_FONT.to_string()]);
+    // Windows lists vertical-writing variants as "@Family".
+    all.retain(|f| !f.starts_with('@') && !f.starts_with('.'));
+    all.sort_by_key(|f| f.to_lowercase());
+    all.dedup();
+    all
 }
 
 pub fn init_fonts(cx: &App) {
     if let Err(e) = cx.text_system().add_fonts(FONTS.iter().map(|f| Cow::Borrowed(*f)).collect()) {
         eprintln!("kynex: couldn't load the bundled fonts: {e}");
     }
-    // Fall back to an installed monospace font if the bundled ones didn't load.
-    const PREFERRED: [&str; 9] = [
-        "Monaspace Neon",
-        "Cascadia Mono",
-        "Cascadia Code",
-        "JetBrains Mono",
-        "SF Mono",
-        "Menlo",
-        "Consolas",
-        "DejaVu Sans Mono",
-        "Liberation Mono",
-    ];
     let installed = cx.text_system().all_font_names();
-    let has = |f: &str| installed.iter().any(|n| n == f);
-    let pick = PREFERRED.iter().find(|f| has(f)).copied().unwrap_or("monospace");
-    let _ = MONO.set(pick.into());
-    if let Some(f) = ["Hubot Sans Expanded", "Hubot Sans"].into_iter().find(|f| has(f)) {
+    if let Some(f) = ["Hubot Sans Expanded", "Hubot Sans"].into_iter().find(|f| installed.iter().any(|n| n == f)) {
         let _ = LABEL.set(f.into());
-    }
-    if has("Monaspace Krypton") {
-        let _ = MONO_LABEL.set("Monaspace Krypton".into());
     }
 }

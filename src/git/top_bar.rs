@@ -6,7 +6,7 @@ use kynex_core::fmt::ago_unix;
 use kynex_core::git::{self, Branch, Head, Sync};
 
 use super::GitView;
-use crate::theme::{Palette, mono_label, theme};
+use crate::theme::{Palette, mono, theme};
 use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, outline_button, popover, spinner};
 
 impl GitView {
@@ -25,7 +25,7 @@ impl GitView {
         let branch_button = ghost_button("git-branch", cx)
             .font_weight(FontWeight::MEDIUM)
             .child(icon(Icon::GitBranch, t.text_muted).size_3p5())
-            .child(div().font_family(mono_label()).child(head_label))
+            .child(div().font_family(mono()).child(head_label))
             .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
             .tooltip(Tooltip::text("Switch or create a branch"))
             .on_click(cx.listener(|this, _, window, cx| {
@@ -244,7 +244,7 @@ impl GitView {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .font_family(mono_label())
+                    .font_family(mono())
                     .text_color(if b.remote { t.text_muted } else { t.text })
                     .child(b.name.clone()),
             )

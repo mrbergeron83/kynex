@@ -15,7 +15,7 @@ use gpui::{
     SharedString, Stateful, Transformation, Window, div, percentage, prelude::*, px, svg,
 };
 
-use crate::theme::{UI_FONT, label_font, theme};
+use crate::theme::{label_font, theme, ui_font};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
@@ -303,7 +303,7 @@ impl Render for Tooltip {
                 .border_color(t.border)
                 .bg(t.elevated)
                 .shadow_md()
-                .font_family(UI_FONT)
+                .font_family(ui_font())
                 .text_xs()
                 .text_color(t.text)
                 .child(self.text.clone())

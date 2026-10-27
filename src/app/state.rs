@@ -55,6 +55,9 @@ pub struct Saved {
     pub model: String,
     pub chat_session_id: Option<String>,
     pub theme: Theme,
+    /// Interface and code font families; empty means the built-in ones.
+    pub ui_font: String,
+    pub code_font: String,
     pub sessions_collapsed: bool,
     pub sessions_width: f32,
     pub window: Option<WindowState>,
@@ -73,6 +76,8 @@ impl Default for Saved {
             model: String::new(),
             chat_session_id: None,
             theme: Theme::default(),
+            ui_font: String::new(),
+            code_font: String::new(),
             sessions_collapsed: false,
             sessions_width: 260.,
             window: None,

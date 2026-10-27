@@ -2,6 +2,10 @@
 
 Status: **implemented in v0.2.0** (2026-10-26), with these gaps:
 
+- **Fonts changed after trying them in the app:** Mona Sans read oddly in the UI, so the
+  interface uses **IBM Plex Sans** and code, diffs, git and the terminal use **JetBrains Mono**
+  (Monaspace dropped). Hubot Sans stays for the wordmark and section labels. Both the interface
+  and code font can be changed in the theme menu; the type section below is the original study.
 - Hubot Sans 1.0 ships no SemiExpanded cut, so labels use Expanded SemiBold; gpui has no
   letter-spacing, so the tracking values aren't applied.
 - No red "failed" lamp yet: sessions don't track a failed state.
