@@ -68,7 +68,7 @@ jobs:
           mkdir dist pkg
           dir=target/${{ matrix.target }}/release
           name=kynex-${{ matrix.target }}
-          cp LICENSE.md NOTICE.md THIRD-PARTY-LICENSES.txt pkg/
+          cp LICENSE NOTICE.md THIRD-PARTY-LICENSES.txt pkg/
           mkdir pkg/fonts
           cp assets/fonts/*-LICENSE.txt pkg/fonts/
           if [ "$RUNNER_OS" = "Windows" ]; then

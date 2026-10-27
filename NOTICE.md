@@ -1,6 +1,7 @@
 # Third-party notices
 
-Kynex is licensed under the PolyForm Strict License 1.0.0 (see LICENSE.md). Parts of it
+Kynex is Copyright © 2026 Michael Bergeron, licensed under the GNU General Public License
+v3.0 or later (see LICENSE). Parts of it
 are adapted from the following projects, which remain under their own licenses.
 
 ## gpui

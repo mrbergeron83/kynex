@@ -1,0 +1,16 @@
+name: Idea
+description: A feature or improvement for Kynex
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea
+      description: What should Kynex do, and why would it help?
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How it could work
+      description: Optional — where it would live in the window, how it behaves.

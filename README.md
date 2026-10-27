@@ -73,7 +73,10 @@ State is saved to `state.json` in the per-user data dir: `%APPDATA%\kynex` on Wi
 
 ## License
 
-Kynex is free to use but source-available, not open source: it is licensed under the
-[PolyForm Strict License 1.0.0](LICENSE.md), which allows personal and noncommercial use
-but not modifying, redistributing or commercial use without permission. Third-party
-notices are in [NOTICE.md](NOTICE.md).
+Copyright © 2026 Michael Bergeron. Kynex is free software under the
+[GNU General Public License v3.0 or later](LICENSE): use it for anything, including paid
+work, and fork or change it as you like, as long as anything you distribute stays under the
+same license with its source available. Third-party notices are in [NOTICE.md](NOTICE.md).
+
+The license covers the code, not the name: forks should go by a different name and logo,
+so nobody mistakes them for Kynex.
