@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A reopened session no longer shows the CLI's background-task notices
+  (`<task-notification>…`) as messages you sent.
+
 ## [0.0.4] - 2026-10-27
 
 ### Added
