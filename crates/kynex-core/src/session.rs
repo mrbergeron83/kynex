@@ -234,12 +234,7 @@ impl Session {
         };
         for v in crate::rewind::branch(&log) {
             let last = until.is_some_and(|u| v["uuid"] == u);
-            if v["isMeta"] != true {
-                if v["type"] == "user" {
-                    self.replay_user(&v["message"]["content"]);
-                }
-                self.handle(v);
-            }
+            self.replay_entry(v);
             if last {
                 break;
             }
@@ -270,6 +265,17 @@ impl Session {
                 self.resume_at = None;
             }
         }
+    }
+
+    /// One entry of a session log, into the transcript.
+    fn replay_entry(&mut self, v: Value) {
+        if v["isMeta"] == true {
+            return;
+        }
+        if v["type"] == "user" && !written_by_cli(&v) {
+            self.replay_user(&v["message"]["content"]);
+        }
+        self.handle(v);
     }
 
     fn replay_user(&mut self, content: &Value) {
@@ -785,6 +791,14 @@ pub(crate) fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// A user-role log entry the CLI wrote itself, like the `<task-notification>`
+/// it sends Claude when a background command ends: Claude reads it, but it
+/// isn't something the user said.
+fn written_by_cli(v: &Value) -> bool {
+    let text = v["message"]["content"].as_str().unwrap_or("");
+    v["promptSource"] == "system" || v["origin"]["kind"].is_string() || text.starts_with("<task-notification>")
+}
+
 /// `claude`, to be run in `cwd` (inside WSL for a WSL folder), without a console window.
 pub(crate) fn claude_command(cwd: &Path) -> Command {
     #[cfg_attr(not(windows), allow(unused_mut))]
@@ -1126,6 +1140,23 @@ mod tests {
         third.handle(json!({ "type": "result", "modelUsage": {
             "side-model-ctx": { "contextWindow": 100_000 }, "main-model-ctx[1m]": { "contextWindow": 1_000_000 } } }));
         assert_eq!(third.context.window, Some(1_000_000));
+    }
+
+    #[test]
+    fn replay_leaves_out_what_the_cli_wrote() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        let note = "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>";
+        s.replay_entry(json!({ "type": "user", "message": { "role": "user", "content": "check CI" } }));
+        s.replay_entry(json!({ "type": "user", "promptSource": "system",
+            "origin": { "kind": "task-notification" }, "message": { "role": "user", "content": note } }));
+        // Older logs have no `promptSource` or `origin`.
+        s.replay_entry(json!({ "type": "user", "message": { "role": "user", "content": note } }));
+        let said: Vec<_> = s
+            .items
+            .iter()
+            .filter_map(|i| if let Item::User { text, .. } = i { Some(text.as_str()) } else { None })
+            .collect();
+        assert_eq!(said, ["check CI"]);
     }
 
     #[test]
