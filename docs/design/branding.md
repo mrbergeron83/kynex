@@ -1,6 +1,6 @@
 # Kynex brand: Instrument · Petrol
 
-Status: **implemented in v0.2.0** (2026-10-26), with these gaps:
+Status: **implemented in v0.0.1** (2026-10-26), with these gaps:
 
 - **Fonts changed after trying them in the app:** Mona Sans read oddly in the UI, so the
   interface uses **IBM Plex Sans** and code, diffs, git and the terminal use **JetBrains Mono**
