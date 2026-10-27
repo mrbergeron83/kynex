@@ -5,15 +5,32 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-10-27
+
 ### Added
 
+- Slash commands in the composer: typing `/` lists the session's commands (skills, plugin and
+  project commands, built-ins) to pick with the keyboard. `/clear`, `/model`, `/effort` and
+  `/resume` run in Kynex; commands show as a chip in the transcript.
+- Session groups and an archive in the sessions panel: group sessions from their right-click
+  menu or by dragging, collapse and rename groups, and archive sessions without deleting them.
+- Check for Claude Code updates on demand, from the Kynex menu or the About modal, even a
+  version you skipped; failed checks are shown, and the installed version can be copied.
+- Tool calls with a time limit show it, e.g. "max 2m".
+- The Kynex mark is lit and comes alive while Claude works.
 - Security checks on every change and weekly: cargo-deny (RustSec advisories, licenses, sources),
   CodeQL, zizmor for the workflows, and OpenSSF Scorecard.
 - Build provenance attestations for release archives.
 - Contributing guide, security policy, code of conduct, and this changelog.
 
+### Changed
+
+- Licensed under GPL-3.0-or-later.
+
 ### Fixed
 
+- Each session keeps its own unsent message; switching sessions no longer carries the draft
+  along, and drafts survive a restart.
 - Text on macOS: 0.0.2 drew its window but no glyphs, because gpui only installs a text
   system when its `font-kit` feature is enabled. Tab labels, the setup card and button
   captions are visible again.
@@ -47,6 +64,7 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/mrbergeron83/kynex/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/mrbergeron83/kynex/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/mrbergeron83/kynex/releases/tag/v0.0.1

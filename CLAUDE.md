@@ -64,6 +64,9 @@ A cargo workspace with two crates:
   - `project.rs` — per-project settings folders (`<data dir>/projects/<name>-<hash>/`, one
     JSON file per section); rules go to each session via `claude --settings`, mode / effort /
     extra dirs via `--permission-mode`, `--effort`, `--add-dir`; the mode switches live
+  - `commands.rs` — slash commands: listing a folder's (the CLI's free `initialize`
+    handshake), matching as you type, and the built-ins Kynex runs itself (`/clear`, `/model`…)
+  - `groups.rs` — session groups and the archive in the sessions panel (`sessions.json` per project)
   - `git/` — everything git, parsed from machine formats: `status`, `diff` (hunks with line
     numbers), `log` and commit details, `branch` (list / switch / create), `ops` (stage, discard,
     commit, fetch / pull / push), `worktree`; `open.rs` — open a folder in VS Code / file
@@ -90,7 +93,8 @@ A cargo workspace with two crates:
   - `ui/` — our small component kit, Zed `ui`-crate style: buttons, tooltips, menus, icons
     (inline SVGs served as assets), spinner; `ui/input.rs` is the multi-line text field (IME,
     selection, clipboard, image paste) built on gpui's input example; `ui/selectable.rs` is
-    mouse-selectable text across blocks
+    mouse-selectable text across blocks; `ui/completions.rs` is the popup list of completions
+    (slash commands)
   - `chrome.rs` — title bar drag area and window buttons (native snap on Windows via
     `WindowControlArea`, traffic lights on macOS, drawn buttons on Linux)
   - `theme.rs` — palettes as a gpui global (`theme(cx)`), mono font pick
