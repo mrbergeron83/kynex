@@ -84,6 +84,13 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// The Sessions header's new-group button: an empty group, its name open for editing.
+    pub(super) fn new_group(&mut self, cwd: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let mut at = 0;
+        self.edit_groups(&cwd, |g| at = g.add_group(""));
+        self.start_rename(cwd, at, window, cx);
+    }
+
     /// Enter in the name field: keeps the new name.
     pub(super) fn commit_rename(&mut self, cx: &mut Context<Self>) {
         let Some((cwd, i)) = self.organize.editing.take() else { return };

@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/design/branding/mark-dark.svg">
-    <img src="docs/design/branding/mark-light.svg" alt="Kynex" width="96" height="96">
-  </picture>
+  <img src="docs/design/branding/mark-dark.svg" alt="Kynex" width="96" height="96">
 </p>
 
 <h1 align="center">Kynex</h1>

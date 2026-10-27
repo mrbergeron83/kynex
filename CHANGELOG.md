@@ -23,9 +23,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
   again; and Home / End and ↑ / ↓ when the message box isn't focused. Rebind them with
   `page_up`, `page_down`, `scroll_top` and `scroll_bottom` in `keymap.json`. In the terminal
   these keys still go to the shell.
+- A **New group** button in the Sessions header, beside **+**: it adds an empty group with its
+  name open for editing; drag sessions into it or move them with the right-click menu.
 
 ### Changed
 
+- The Kynex logo has one look, the dark mark, under every theme and in the README.
 - Mouse-wheel scrolling glides everywhere, not just in the conversation: the sessions panel,
   timeline, Git view, settings, menus and terminal too. A notch also goes about twice as far,
   like a browser. Touchpads still scroll 1:1, and with animations off a notch moves at once.
