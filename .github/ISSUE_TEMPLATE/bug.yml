@@ -1,0 +1,42 @@
+name: Bug report
+description: Something in Kynex isn't working
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a session in …
+        2. Click …
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: Windows 11, macOS 15, Ubuntu 24.04…
+    validations:
+      required: true
+  - type: input
+    id: kynex
+    attributes:
+      label: Kynex version
+      description: Shown in the About modal (click the Kynex logo).
+      placeholder: 0.0.2
+    validations:
+      required: true
+  - type: input
+    id: claude
+    attributes:
+      label: claude CLI version
+      description: Output of `claude --version`.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or logs

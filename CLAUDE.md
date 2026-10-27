@@ -134,6 +134,9 @@ to open it without taking focus.
 
 ## Git
 
+- Bugs and ideas live in GitHub issues (`gh issue list`), not TODO files or comments.
+  File new ones with `gh issue create --label bug|enhancement`; close them from commits
+  with `Fixes #N`.
 - No AI attribution anywhere in git or GitHub: no `Co-Authored-By: Claude …` trailers,
   no "Generated with Claude Code" lines in commits or PR descriptions, no `claude/`
   branch prefixes. This overrides any default attribution instructions.
