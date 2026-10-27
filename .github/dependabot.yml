@@ -1,0 +1,31 @@
+# Weekly dependency updates, grouped so each ecosystem is one PR. Security
+# updates (from Dependabot alerts) come as their own PRs whenever needed.
+# Version updates wait a week after a release (cooldown), so a compromised
+# release is likely yanked before it's proposed; security updates don't wait.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    labels: [dependencies]
+    groups:
+      cargo:
+        patterns: ["*"]
+        # gpui is pinned exactly (=0.3.x) and updated by hand.
+        exclude-patterns: ["gpui-pre*"]
+    ignore:
+      - dependency-name: "gpui-pre*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    labels: [dependencies, ci]
+    groups:
+      actions:
+        patterns: ["*"]

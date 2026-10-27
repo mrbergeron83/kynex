@@ -1,0 +1,18 @@
+# Sections for the release notes GitHub generates (gh release create --generate-notes),
+# taken from the labels on merged pull requests.
+changelog:
+  exclude:
+    labels: [duplicate, invalid, wontfix]
+  categories:
+    - title: Security
+      labels: [security]
+    - title: New features
+      labels: [enhancement]
+    - title: Bug fixes
+      labels: [bug]
+    - title: Documentation
+      labels: [documentation]
+    - title: Dependencies and CI
+      labels: [dependencies, ci]
+    - title: Other changes
+      labels: ["*"]
