@@ -70,6 +70,10 @@ A cargo workspace with two crates:
     their file checkpoints, restoring files (`--rewind-files`); the session resumes with
     `--resume-session-at`
   - `groups.rs` — session groups and the archive in the sessions panel (`sessions.json` per project)
+  - `timeline.rs` — a session's turns and their notable steps, for the timeline panel;
+    `transcript.rs` lays items out as transcript rows (tool runs folded) and maps between them
+  - `motion.rs` — the Animations setting, the OS's "reduce motion", and `Glide` (smooth,
+    time-based scrolling)
   - `git/` — everything git, parsed from machine formats: `status`, `diff` (hunks with line
     numbers), `log` and commit details, `branch` (list / switch / create), `ops` (stage, discard,
     commit, fetch / pull / push), `worktree`; `open.rs` — open a folder in VS Code / file
@@ -99,10 +103,11 @@ A cargo workspace with two crates:
     (inline SVGs served as assets), spinner; `ui/input.rs` is the multi-line text field (IME,
     selection, clipboard, image paste) built on gpui's input example; `ui/selectable.rs` is
     mouse-selectable text across blocks; `ui/completions.rs` is the popup list of completions
-    (slash commands)
+    (slash commands); `ui/motion.rs` has the transitions (`fade_in`, `pop_in`…) on gpui's
+    time-based `with_animation`, which `cx.reduce_motion()` turns off
   - `chrome.rs` — title bar drag area and window buttons (native snap on Windows via
     `WindowControlArea`, traffic lights on macOS, drawn buttons on Linux)
-  - `theme.rs` — palettes as a gpui global (`theme(cx)`), mono font pick
+  - `theme.rs` — palettes as a gpui global (`theme(cx)`), mono font pick, project colours
 
 ### Where code goes
 

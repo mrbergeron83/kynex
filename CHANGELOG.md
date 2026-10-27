@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-10-27
+
 ### Added
 
 - Queue messages while Claude works, with Claude Code's keys: Enter queues them above the
@@ -128,7 +130,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/mrbergeron83/kynex/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/mrbergeron83/kynex/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/mrbergeron83/kynex/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/mrbergeron83/kynex/releases/tag/v0.0.1
