@@ -49,13 +49,34 @@ impl KynexApp {
         if turns.is_empty() {
             return;
         }
-        let current = self.item_in_view().and_then(|i| timeline::locate(&turns, i)).map(|(t, _)| t);
+        let current = self.turn_in_view(&turns);
         let target = match (current, forward) {
             (None, _) => 0,
             (Some(t), true) => (t + 1).min(turns.len() - 1),
             (Some(t), false) => t.saturating_sub(1),
         };
         self.jump_to_item(turns[target].item, cx);
+    }
+
+    /// The turn whose message (or steps) is at the top of the transcript.
+    fn turn_in_view(&self, turns: &[Turn]) -> Option<usize> {
+        self.item_in_view().and_then(|i| timeline::locate(turns, i)).map(|(t, _)| t)
+    }
+
+    /// Opens or folds turn `n` of the shown session's timeline.
+    fn toggle_turn(&mut self, n: usize, cx: &mut Context<Self>) {
+        let Some(s) = self.active_session() else { return };
+        let (key, turns) = (s.uid, timeline::turns(&s.items));
+        let current = self.turn_in_view(&turns);
+        self.folds.entry(key).or_default().toggle(&turns, n, current);
+        cx.notify();
+    }
+
+    /// Collapse all / Expand all.
+    fn fold_all(&mut self, open: bool, cx: &mut Context<Self>) {
+        let Some(key) = self.active_key() else { return };
+        self.folds.entry(key).or_default().set_all(open);
+        cx.notify();
     }
 
     /// The first item drawn at the top of the shown transcript.
@@ -104,8 +125,13 @@ impl KynexApp {
         let t = theme(cx).clone();
         let s = self.active_session()?;
         let turns = timeline::turns(&s.items);
-        let busy = s.busy;
+        let (busy, key) = (s.busy, s.uid);
         let here = self.item_in_view().and_then(|i| timeline::locate(&turns, i));
+        let fold = self.folds.get(&key).cloned().unwrap_or_default();
+        let current = here.map(|(t, _)| t);
+        let at_latest = self.threads.get(&key).is_none_or(|th| th.at_latest());
+        let foldable = turns.iter().any(|t| !t.steps.is_empty());
+        let any_open = fold.any_open(&turns, current);
 
         let header = div()
             .flex()
@@ -117,6 +143,22 @@ impl KynexApp {
             .border_b_1()
             .border_color(t.border_variant)
             .child(section_label("Timeline", cx).flex_1())
+            .when(!at_latest && !turns.is_empty(), |d| {
+                d.child(
+                    icon_button("timeline-latest", Icon::ArrowDown, cx)
+                        .tooltip(Tooltip::with_meta("Jump to latest", "Back to the end, following new output"))
+                        .on_click(cx.listener(|this, _, _, cx| this.follow_tail(cx))),
+                )
+            })
+            .when(foldable, |d| {
+                let (which, label) =
+                    if any_open { (Icon::CollapseAll, "Collapse all") } else { (Icon::ExpandAll, "Expand all") };
+                d.child(
+                    icon_button("timeline-fold-all", which, cx)
+                        .tooltip(Tooltip::text(label))
+                        .on_click(cx.listener(move |this, _, _, cx| this.fold_all(!any_open, cx))),
+                )
+            })
             .child(
                 icon_button("close-timeline", Icon::Close, cx)
                     .tooltip(Tooltip::with_meta("Hide the timeline", "Ctrl+Shift+T"))
@@ -139,8 +181,9 @@ impl KynexApp {
                 .iter()
                 .enumerate()
                 .map(|(n, turn)| {
-                    let current = here.filter(|(t, _)| *t == n).map(|(_, step)| step);
-                    self.render_turn(n, turn, current, busy && n == last, &t, cx)
+                    let in_view = here.filter(|(t, _)| *t == n).map(|(_, step)| step);
+                    let open = fold.is_open(&turns, n, current);
+                    self.render_turn(n, turn, in_view, open, busy && n == last, cx)
                 })
                 .collect()
         };
@@ -161,18 +204,39 @@ impl KynexApp {
         )
     }
 
-    /// One turn: the message, its recap, and its steps. `current` is set when
-    /// the transcript is in this turn, with the step in view if any.
+    /// One turn: the message, its recap, and its steps while `open`. `current`
+    /// is set when the transcript is in this turn, with the step in view if any.
     fn render_turn(
         &self,
         n: usize,
         turn: &Turn,
         current: Option<Option<usize>>,
+        open: bool,
         working: bool,
-        t: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let t = &theme(cx).clone();
         let (hover, item) = (t.hover, turn.item);
+        // The chevron (or room for one, so the dots line up) opens the steps.
+        let slot = div().flex_none().size(px(14.)).mt(px(2.));
+        let chevron = if turn.steps.is_empty() {
+            slot.into_any_element()
+        } else {
+            slot.id(("timeline-fold", n))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_sm()
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover))
+                .child(icon(if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_placeholder).size_3())
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_turn(n, cx);
+                }))
+                .into_any_element()
+        };
         let in_turn = current.is_some();
         let on_message = current == Some(None);
         let text = turn.text.clone();
@@ -183,12 +247,14 @@ impl KynexApp {
             .items_start()
             .gap_1p5()
             .mx_1()
-            .px_2()
+            .pl_1()
+            .pr_2()
             .py_1()
             .rounded_md()
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
             .when(on_message, |d| d.bg(t.active))
+            .child(chevron)
             .child(div().mt(px(5.)).size(px(7.)).flex_none().rounded_full().map(|d| match (in_turn, turn.failed) {
                 (_, true) => d.bg(t.error),
                 (true, _) => d.bg(t.accent),
@@ -244,7 +310,8 @@ impl KynexApp {
                 .flex()
                 .items_center()
                 .gap_1p5()
-                .ml(px(20.))
+                // Icons under the message text, past the chevron and dot.
+                .ml(px(33.))
                 .mr_1()
                 .px_2()
                 .h(px(22.))
@@ -259,6 +326,6 @@ impl KynexApp {
                 .on_click(cx.listener(move |this, _, _, cx| this.jump_to_item(item, cx)))
         });
 
-        div().flex().flex_col().pb_1().child(head).children(steps).into_any_element()
+        div().flex().flex_col().pb_1().child(head).when(open, |d| d.children(steps)).into_any_element()
     }
 }

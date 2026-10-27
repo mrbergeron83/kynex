@@ -21,9 +21,9 @@ use super::state::Active;
 use crate::markdown;
 use crate::prompt;
 use crate::theme::{Palette, label_font, mono, theme};
-use crate::ui::motion::{self, fade_in};
+use crate::ui::motion::{self, fade_in, pop_in};
 use crate::ui::selectable::{Spot, selectable};
-use crate::ui::{Icon, Tooltip, icon};
+use crate::ui::{Icon, Tooltip, ghost_button, icon};
 
 /// The transcript and composer's column width.
 pub const THREAD_WIDTH: Pixels = px(780.);
@@ -45,6 +45,11 @@ pub struct Thread {
 const WHEEL_LINE: f32 = 20.;
 
 impl Thread {
+    /// Following new output at the bottom, or gliding there to.
+    pub(super) fn at_latest(&self) -> bool {
+        self.list.is_following_tail() || self.follow_after
+    }
+
     /// How far down the list is scrolled, in pixels.
     fn offset(&self) -> f32 {
         -f32::from(self.list.scroll_px_offset_for_scrollbar().y)
@@ -75,6 +80,12 @@ impl Thread {
         }
         if moved != step {
             self.glide.stop();
+        }
+        // Gliding down onto the end (a wheel turn, a jump) follows new output
+        // again, as gpui's own list does; the end grows while a reply streams.
+        if step > 0. && offset + moved >= max - 1. {
+            self.glide.stop();
+            self.follow_after = true;
         }
         if !self.glide.is_moving() {
             self.last_frame = None;
@@ -146,13 +157,41 @@ impl KynexApp {
             window.request_animation_frame();
         }
         let state = thread.list.clone();
+        let at_latest = thread.at_latest();
         let uid = self.active_session().map_or(0, |s| s.uid as usize);
         let thread = list(state, cx.processor(|this, ix, window, cx| this.render_item(ix, window, cx)))
             .flex_1()
             .size_full()
             .py_2();
-        // Switching sessions fades the new one in instead of swapping in one frame.
-        fade_in(("thread-in", uid), thread, motion::NORMAL).into_any_element()
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            // Switching sessions fades the new one in instead of swapping in one frame.
+            .child(fade_in(("thread-in", uid), thread, motion::NORMAL))
+            .when(!at_latest, |d| d.child(self.render_jump_to_latest(uid, &t, cx)))
+            .into_any_element()
+    }
+
+    /// The floating "Jump to latest" over a transcript scrolled up.
+    fn render_jump_to_latest(&self, uid: usize, t: &Palette, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let button = ghost_button("jump-to-latest", cx)
+            .bg(t.elevated)
+            .border_1()
+            .border_color(t.border)
+            .shadow_md()
+            .text_xs()
+            .text_color(t.text_muted)
+            .child(icon(Icon::ArrowDown, t.text_muted).size_3())
+            .child("Jump to latest")
+            .on_click(cx.listener(|this, _, _, cx| this.follow_tail(cx)));
+        div().absolute().bottom_3().left_0().right_0().flex().justify_center().child(pop_in(
+            ("jump-to-latest-in", uid),
+            button,
+            px(6.),
+        ))
     }
 
     /// Scrolls the shown transcript to the bottom and follows new output.

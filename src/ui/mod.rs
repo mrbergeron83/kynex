@@ -36,6 +36,8 @@ pub enum Icon {
     Trash,
     ChevronDown,
     ChevronRight,
+    CollapseAll,
+    ExpandAll,
     Paperclip,
     ArrowUp,
     Stop,
@@ -73,6 +75,8 @@ impl Icon {
             Icon::Trash => "icons/trash.svg",
             Icon::ChevronDown => "icons/chevron-down.svg",
             Icon::ChevronRight => "icons/chevron-right.svg",
+            Icon::CollapseAll => "icons/chevrons-down-up.svg",
+            Icon::ExpandAll => "icons/chevrons-up-down.svg",
             Icon::Paperclip => "icons/paperclip.svg",
             Icon::ArrowUp => "icons/arrow-up.svg",
             Icon::Stop => "icons/stop.svg",
@@ -94,7 +98,7 @@ impl Icon {
 }
 
 /// Line icons drawn on a 24px grid, Lucide style.
-const ICONS: [(&str, &str); 31] = [
+const ICONS: [(&str, &str); 33] = [
     // Steps on a line, for the session timeline.
     (
         "timeline",
@@ -124,6 +128,8 @@ const ICONS: [(&str, &str); 31] = [
     ("trash", r#"<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>"#),
     ("chevron-down", r#"<path d="m6 9 6 6 6-6"/>"#),
     ("chevron-right", r#"<path d="m9 18 6-6-6-6"/>"#),
+    ("chevrons-down-up", r#"<path d="m7 20 5-5 5 5M7 4l5 5 5-5"/>"#),
+    ("chevrons-up-down", r#"<path d="m7 15 5 5 5-5M7 9l5-5 5 5"/>"#),
     (
         "paperclip",
         r#"<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>"#,

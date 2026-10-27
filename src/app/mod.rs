@@ -124,6 +124,8 @@ pub struct KynexApp {
     history_search: Option<history::HistorySearch>,
     /// The transcript row lit up after a jump from the timeline.
     flash: Option<timeline::Flash>,
+    /// Each session's timeline turns opened or folded.
+    folds: HashMap<Key, kynex_core::timeline::Fold>,
     /// The rewind popup (Esc Esc on an empty composer), while open.
     rewind: Option<rewind::RewindMenu>,
     /// When Esc last went to a draft, for Esc Esc.
@@ -281,6 +283,7 @@ impl KynexApp {
             histories: HashMap::new(),
             history_search: None,
             flash: None,
+            folds: HashMap::new(),
             rewind: None,
             last_esc: None,
             composer,
@@ -475,15 +478,24 @@ impl Render for KynexApp {
                         .bg(t.editor)
                         .child(self.render_toolbar(cx))
                         .children(self.render_session_header(cx))
+                        // The timeline runs the full height beside the transcript
+                        // and the composer under it, down to the terminal dock.
                         .child(
                             div()
                                 .flex()
                                 .flex_1()
                                 .min_h_0()
-                                .child(div().flex().flex_col().flex_1().min_w_0().child(self.render_thread(window, cx)))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(self.render_thread(window, cx))
+                                        .child(self.render_composer(window, cx)),
+                                )
                                 .children(self.render_timeline(cx)),
                         )
-                        .child(self.render_composer(window, cx))
                         .children(self.render_terminal_dock(window, cx)),
                 )
                 .into_any_element()

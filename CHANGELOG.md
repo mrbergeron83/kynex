@@ -5,6 +5,21 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Jump to latest**: a button over the transcript when it's scrolled up, and in the timeline's
+  header, glides back to the end and follows new output again.
+- Timeline turns fold: a chevron opens or closes a turn's steps, and **Collapse all** /
+  **Expand all** in the header does every turn. Until you choose, only the latest turn and the
+  one in view are open.
+
+### Fixed
+
+- The transcript follows new output again after you scroll back down to the end with the mouse
+  wheel, instead of letting a growing reply run off the bottom.
+- The timeline runs the full height of the window beside the transcript, with the message box
+  under the transcript only.
+
 ## [0.0.4] - 2026-10-27
 
 ### Added
