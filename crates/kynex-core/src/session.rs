@@ -47,11 +47,15 @@ pub enum Item {
     Assistant(String),
     Thinking,
     ToolUse {
+        /// The call's `tool_use_id`, which its result names.
+        id: String,
         name: String,
         summary: String,
         input: String,
     },
     ToolResult {
+        /// The `tool_use_id` of the call this answers.
+        id: String,
         content: String,
         is_error: bool,
     },
@@ -535,7 +539,8 @@ impl Session {
                             let name = block["name"].as_str().unwrap_or("tool").to_string();
                             let summary = tool_summary(&name, &block["input"]);
                             let input = serde_json::to_string_pretty(&block["input"]).unwrap_or_default();
-                            self.items.push(Item::ToolUse { name, summary, input });
+                            let id = block["id"].as_str().unwrap_or("").to_string();
+                            self.items.push(Item::ToolUse { id, name, summary, input });
                         }
                         _ => {}
                     }
@@ -546,6 +551,7 @@ impl Session {
                 for block in v["message"]["content"].as_array().into_iter().flatten() {
                     if block["type"] == "tool_result" {
                         self.items.push(Item::ToolResult {
+                            id: block["tool_use_id"].as_str().unwrap_or("").to_string(),
                             content: tool_result_text(&block["content"]),
                             is_error: block["is_error"].as_bool().unwrap_or(false),
                         });

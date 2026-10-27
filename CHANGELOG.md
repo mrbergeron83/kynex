@@ -16,6 +16,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A quieter transcript: each tool result folds into its call (open the call to see it, and a
+  failed call is marked), edits no longer echo "updated successfully", and a run of tool calls
+  collapses to one summary row, e.g. "Edited app.rs ×3, read 2 files  +22 −6". While Claude
+  works, the latest call shows under it.
 - Prompts work like Claude Code's: a cursor over numbered choices instead of outlined rows.
   Several questions get a tab each (←→ or Tab) and a Submit tab that sums up the answers;
   picking an answer moves on by itself, multi-select has checkboxes (Space toggles), and
@@ -26,6 +30,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - Restart after an update opens the new version on Windows instead of just closing Kynex.
+- Question prompts show which option you picked: its row is highlighted, with a check mark
+  for single-choice questions and a ticked box for multi-select.
 
 ## [0.0.3] - 2026-10-27
 

@@ -18,5 +18,6 @@ pub mod queue;
 pub mod session;
 pub mod terminal;
 pub mod titles;
+pub mod transcript;
 pub mod update;
 pub mod wsl;
