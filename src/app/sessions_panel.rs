@@ -131,6 +131,12 @@ impl KynexApp {
             .pr_1p5()
             .gap_1()
             .child(section_label("Sessions", cx).flex_1())
+            .child({
+                let cwd = cwd.clone();
+                icon_button("new-group", Icon::FolderPlus, cx)
+                    .tooltip(Tooltip::text("New group"))
+                    .on_click(cx.listener(move |this, _, window, cx| this.new_group(cwd.clone(), window, cx)))
+            })
             .child(
                 icon_button("new-session", Icon::Plus, cx)
                     .when(current.is_none(), |b| b.opacity(0.4))

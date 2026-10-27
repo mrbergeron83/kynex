@@ -17,7 +17,7 @@ Status: **implemented in v0.0.1** (2026-10-26), with these gaps:
 
 | File | What |
 | --- | --- |
-| `branding/mark-light.svg`, `branding/mark-dark.svg` | Master mark, light and dark |
+| `branding/mark-dark.svg` | Master mark: the one look, on light and dark backgrounds alike |
 | `branding/colour-study.png` / `.html` | Petrol vs Cobalt vs Graphite; **Petrol (top board) chosen** |
 | `branding/type-study.png` / `.html` | Type systems A/B/C; **A (top board) chosen** |
 | `branding/round-2-directions.png` | Earlier directions (Kare, Indigo, Instrument, Crossing), for context |
@@ -51,15 +51,17 @@ Four rules drive every decision:
 A device seen from the front: a housing, one **knob** (the operator control, in petrol) and one
 **indicator lamp** (session state).
 
-Geometry on a 100×100 canvas (see the SVGs):
+The mark has **one look**, the dark one, whatever the theme or the viewer's colour scheme: its own
+dark housing is the background, so it reads on a light title bar too. Geometry on a 100×100
+canvas (see the SVG); the colours are the dark palette's:
 
 | Part | Shape | Colour token |
 | --- | --- | --- |
-| Housing | rect 100×100, rx 20 | `title_bar` |
-| Rim | 1.5 stroke, inset .75, rx 19.25 | `border` |
-| Knob | circle (50, 54) r 31 | `accent` |
-| Pointer | rect x 47 y 27, 6×21, rx 3, rotated 38° about (50, 54) | `elevated` |
-| Lamp | circle (21, 20) r 6 | state colour (static icon: `warning`/amber) |
+| Housing | rect 100×100, rx 20 | `#0f0e0c` (dark `title_bar`) |
+| Rim | 1.5 stroke, inset .75, rx 19.25 | `#33312e` (dark `border`) |
+| Knob | circle (50, 54) r 31 | `#77becf` (dark `accent`) |
+| Pointer | rect x 47 y 27, 6×21, rx 3, rotated 38° about (50, 54) | `#22201e` (dark `elevated`) |
+| Lamp | circle (21, 20) r 6 | state colour (static icon: amber `#f2af48`) |
 
 Behaviour in the app (the mark is live, not just a logo):
 
@@ -70,9 +72,8 @@ Behaviour in the app (the mark is live, not just a logo):
   overlay icon, macOS dock badge) is a later nice-to-have.
 - Below ~20 px the rim and pointer can be dropped; the knob and lamp still carry it.
 
-App icon files to generate from `mark-*.svg`: Windows `.ico` (16, 20, 24, 32, 40, 48, 64, 256),
-macOS `.icns` (16–1024 @1x/2x), Linux PNGs (16–512) + SVG. Use the dark mark for the default app
-icon unless the OS asks for a light variant.
+App icon files to generate from `mark-dark.svg`: Windows `.ico` (16, 20, 24, 32, 40, 48, 64, 256),
+macOS `.icns` (16–1024 @1x/2x), Linux PNGs (16–512) + SVG, all from the dark mark.
 
 ## Colour
 

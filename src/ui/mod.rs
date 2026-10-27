@@ -32,6 +32,7 @@ pub enum Icon {
     GitBranch,
     Message,
     Folder,
+    FolderPlus,
     Terminal,
     Code,
     Trash,
@@ -71,6 +72,7 @@ impl Icon {
             Icon::GitBranch => "icons/git-branch.svg",
             Icon::Message => "icons/message.svg",
             Icon::Folder => "icons/folder.svg",
+            Icon::FolderPlus => "icons/folder-plus.svg",
             Icon::Terminal => "icons/terminal.svg",
             Icon::Code => "icons/code.svg",
             Icon::Trash => "icons/trash.svg",
@@ -99,7 +101,7 @@ impl Icon {
 }
 
 /// Line icons drawn on a 24px grid, Lucide style.
-const ICONS: [(&str, &str); 33] = [
+const ICONS: [(&str, &str); 34] = [
     // Steps on a line, for the session timeline.
     (
         "timeline",
@@ -123,6 +125,10 @@ const ICONS: [(&str, &str); 33] = [
     (
         "folder",
         r#"<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>"#,
+    ),
+    (
+        "folder-plus",
+        r#"<path d="M12 10v6M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>"#,
     ),
     ("terminal", r#"<path d="m4 17 6-6-6-6M12 19h8"/>"#),
     ("code", r#"<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>"#),
