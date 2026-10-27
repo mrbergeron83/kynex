@@ -8,7 +8,7 @@ use gpui::{Context, FontWeight, div, prelude::*, px};
 use kynex_core::open::{Opener, open_project};
 
 use super::KynexApp;
-use super::keys::ToggleSessions;
+use super::keys::{ToggleSessions, ToggleTimeline};
 use super::state::{Active, View};
 use crate::theme::theme;
 use crate::ui::{Icon, Tooltip, icon, icon_button};
@@ -34,10 +34,15 @@ impl KynexApp {
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_sessions(&ToggleSessions, window, cx))),
                 )
             });
+        let timeline = icon_button("toggle-timeline", Icon::Timeline, cx)
+            .when(self.saved.timeline_open, |b| b.bg(t.active))
+            .tooltip(Tooltip::with_meta("Timeline", "Ctrl+Shift+T · jump to any message or step"))
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_timeline(&ToggleTimeline, window, cx)));
         let Some((path, view)) = project else {
             return bar
                 .child(div().px_1().text_sm().font_weight(FontWeight::MEDIUM).child("Chat"))
-                .child(div().flex_1());
+                .child(div().flex_1())
+                .child(timeline);
         };
         let segment = |id: &'static str, label: &'static str, which: Icon, v: View, cx: &mut Context<Self>| {
             let selected = view == v;
@@ -90,6 +95,7 @@ impl KynexApp {
                     .text_color(t.text_placeholder)
                     .child(path.display().to_string()),
             )
+            .when(view == View::Code, |d| d.child(timeline))
             .child(open("open-code", Icon::Code, "Open in VS Code", Opener::Code, path.clone(), cx))
             .child(open("open-files", Icon::Folder, "Open in file manager", Opener::Explorer, path.clone(), cx))
             .child(

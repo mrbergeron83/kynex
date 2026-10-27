@@ -33,6 +33,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   far the branch is ahead of / behind its upstream, refreshed as each tool call and turn ends
   and when you come back to Kynex. Clicking one opens that worktree's Git view in a modal over
   the conversation, with **Open as tab** to keep it.
+- A timeline beside the conversation (Ctrl+Shift+T, or the button in the toolbar): each message
+  you sent, with its recap and the steps worth finding again — files edited, commands run,
+  agents, plans, prompts and errors. Click one to jump there; the part you're reading is marked
+  as you scroll, Alt+↑ / Alt+↓ go to the previous / next message, and **Rewind to here** on a
+  message opens rewind on it.
 
 ### Changed
 

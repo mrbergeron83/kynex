@@ -49,6 +49,7 @@ pub enum Icon {
     GitCommit,
     Play,
     Shield,
+    Timeline,
     /// The pointer on the mark's knob, drawn filled.
     MarkPointer,
 }
@@ -85,13 +86,19 @@ impl Icon {
             Icon::GitCommit => "icons/git-commit.svg",
             Icon::Play => "icons/play.svg",
             Icon::Shield => "icons/shield.svg",
+            Icon::Timeline => "icons/timeline.svg",
             Icon::MarkPointer => "icons/mark-pointer.svg",
         }
     }
 }
 
 /// Line icons drawn on a 24px grid, Lucide style.
-const ICONS: [(&str, &str); 30] = [
+const ICONS: [(&str, &str); 31] = [
+    // Steps on a line, for the session timeline.
+    (
+        "timeline",
+        r#"<circle cx="6" cy="5" r="1.5"/><circle cx="6" cy="12" r="1.5"/><circle cx="6" cy="19" r="1.5"/><path d="M6 6.5v4M6 13.5v4M11 5h9M11 12h9M11 19h6"/>"#,
+    ),
     ("close", r#"<path d="M18 6 6 18M6 6l12 12"/>"#),
     ("minimize", r#"<path d="M5 12h14"/>"#),
     ("maximize", r#"<rect x="5" y="5" width="14" height="14" rx="1.5"/>"#),

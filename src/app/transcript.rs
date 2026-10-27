@@ -29,7 +29,7 @@ pub const THREAD_WIDTH: Pixels = px(780.);
 /// they were laid out from.
 pub struct Thread {
     pub list: ListState,
-    rows: Vec<Row>,
+    pub(super) rows: Vec<Row>,
     items: usize,
 }
 
@@ -129,14 +129,16 @@ impl KynexApp {
             }
             None => return div().into_any_element(),
         };
-        div()
+        let t = theme(cx).clone();
+        let el = div()
             .w_full()
             .flex()
             .justify_center()
             .px_6()
             .map(|d| if compact { d.py_0p5() } else { d.py_2() })
-            .child(div().w_full().max_w(THREAD_WIDTH).child(body))
-            .into_any_element()
+            .child(div().w_full().max_w(THREAD_WIDTH).child(body));
+        // Lit up for a moment when the timeline jumps here.
+        self.flash_row(key, row, el, &t)
     }
 
     /// Item `ix` drawn on its own, as transcript row `row`.
