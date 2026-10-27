@@ -97,6 +97,7 @@ use crate::terminal::TerminalPanel;
 use crate::theme::{theme, ui_font};
 use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::motion::{self, fade_in, pop_in};
+use crate::ui::smooth_scroll::SmoothWheel;
 use crate::ui::{Icon, icon, icon_button, popover};
 
 pub struct KynexApp {
@@ -162,6 +163,8 @@ pub struct KynexApp {
     update_checking: bool,
     /// The small "update available" toast under the title bar.
     update_toast: bool,
+    /// Mouse-wheel turns made smooth for every scroll area.
+    wheel: SmoothWheel,
     /// The About Kynex modal is open; the installed Claude Code version, once read.
     about_open: bool,
     claude_version: Option<String>,
@@ -306,6 +309,7 @@ impl KynexApp {
             update_checked: None,
             update_checking: false,
             update_toast: false,
+            wheel: SmoothWheel::default(),
             about_open: false,
             claude_version: None,
             cli_check: CliCheck::default(),
@@ -558,6 +562,7 @@ impl Render for KynexApp {
                         }),
                     )
             })
+            .child(self.wheel.listener())
             .child(self.render_title_bar(window, cx))
             .child(main)
             .children(notice)
