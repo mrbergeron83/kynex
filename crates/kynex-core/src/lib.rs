@@ -4,8 +4,10 @@
 
 pub mod attach;
 pub mod cli;
+pub mod commands;
 pub mod fmt;
 pub mod git;
+pub mod groups;
 pub mod live;
 pub mod open;
 pub mod paths;

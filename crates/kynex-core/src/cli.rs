@@ -227,11 +227,10 @@ pub fn latest_version() -> Result<String, String> {
     tags[channel()].as_str().map(str::to_string).ok_or_else(|| format!("no `{}` release listed", channel()))
 }
 
-/// The installed version and the newest one, if the newest is ahead.
-pub fn check() -> Result<Option<(String, String)>, String> {
-    let installed = installed_version()?;
-    let latest = latest_version()?;
-    Ok(is_newer(&latest, &installed).then_some((installed, latest)))
+/// The installed version and the newest on the user's channel; [`is_newer`]
+/// says whether there's an update. Blocks on a process and a network request.
+pub fn check() -> Result<(String, String), String> {
+    Ok((installed_version()?, latest_version()?))
 }
 
 /// Runs `claude update` (which also handles package-manager installs) and

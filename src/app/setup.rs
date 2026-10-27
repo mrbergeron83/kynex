@@ -12,6 +12,14 @@ use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, outline_button, 
 
 pub(super) const CLI_CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// The last Claude Code version check: running now, when, and why it failed.
+#[derive(Default)]
+pub(super) struct CliCheck {
+    pub checking: bool,
+    pub at: Option<std::time::SystemTime>,
+    pub error: Option<String>,
+}
+
 /// Getting the `claude` CLI ready to run sessions, without leaving Kynex.
 pub enum Setup {
     Checking,
@@ -28,7 +36,7 @@ impl KynexApp {
         cx.spawn(async move |this, cx| {
             loop {
                 let found = cx.background_spawn(async { cli::check() }).await;
-                if this.update(cx, |this, cx| this.cli_checked(found, cx)).is_err() {
+                if this.update(cx, |this, cx| this.cli_checked(found, false, cx)).is_err() {
                     break;
                 }
                 cx.background_executor().timer(CLI_CHECK_EVERY).await;
@@ -37,21 +45,44 @@ impl KynexApp {
         .detach();
     }
 
-    /// Takes in a background version check. Never interrupts an update in progress,
-    /// and stays quiet about a release the user skipped.
-    fn cli_checked(&mut self, found: Result<Option<(String, String)>, String>, cx: &mut Context<Self>) {
-        if matches!(self.cli_update, UpdateState::Updating { .. }) {
+    /// Checks for a newer Claude Code right now, from the About modal or the Kynex
+    /// menu. Offers it even if the user skipped that version before.
+    pub(super) fn check_cli_now(&mut self, cx: &mut Context<Self>) {
+        if self.cli_check.checking || matches!(self.cli_update, UpdateState::Updating { .. }) {
             return;
         }
+        self.cli_check.checking = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let found = cx.background_spawn(async { cli::check() }).await;
+            this.update(cx, |this, cx| this.cli_checked(found, true, cx)).ok();
+        })
+        .detach();
+    }
+
+    /// Takes in a version check. Never interrupts an update in progress; a
+    /// background check stays quiet about a release the user skipped.
+    fn cli_checked(&mut self, found: Result<(String, String), String>, manual: bool, cx: &mut Context<Self>) {
+        if manual {
+            self.cli_check.checking = false;
+        }
+        self.cli_check.at = Some(std::time::SystemTime::now());
+        self.cli_check.error = found.as_ref().err().cloned();
+        if let Ok((installed, _)) = &found {
+            self.claude_version = Some(installed.clone());
+        }
+        if matches!(self.cli_update, UpdateState::Updating { .. }) {
+            return cx.notify();
+        }
         match found {
-            Ok(Some((installed, latest))) => {
-                if self.saved.skipped_cli_version.as_deref() != Some(latest.as_str()) {
+            Ok((installed, latest)) if cli::is_newer(&latest, &installed) => {
+                if manual || self.saved.skipped_cli_version.as_deref() != Some(latest.as_str()) {
                     self.cli_update = UpdateState::Available { installed, latest };
                 }
             }
             // Updated elsewhere (or by the CLI itself) since the last check.
-            Ok(None) if matches!(self.cli_update, UpdateState::Available { .. }) => self.cli_update = UpdateState::Idle,
-            Ok(None) => {}
+            Ok(_) if matches!(self.cli_update, UpdateState::Available { .. }) => self.cli_update = UpdateState::Idle,
+            Ok(_) => {}
             Err(e) => eprintln!("kynex: couldn't check for Claude Code updates: {e}"),
         }
         cx.notify();
@@ -60,7 +91,7 @@ impl KynexApp {
     /// Installs the newest Claude Code with `claude update`. Idle sessions stop
     /// first so their binary isn't in use, and resume on the new one with the next
     /// message; busy ones restart once they finish.
-    fn update_cli(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn update_cli(&mut self, cx: &mut Context<Self>) {
         let UpdateState::Available { latest, .. } = &self.cli_update else { return };
         self.cli_update = UpdateState::Updating { latest: latest.clone() };
         for s in self.all_sessions_mut().filter(|s| !s.busy) {
@@ -72,6 +103,7 @@ impl KynexApp {
             this.update(cx, |this, cx| {
                 this.cli_update = match result {
                     Ok(version) => {
+                        this.claude_version = Some(version.clone());
                         let busy = this.code.iter().filter(|(_, l)| l.busy()).map(|(p, _)| p.clone());
                         this.restart_when_idle.extend(busy.collect::<Vec<_>>());
                         UpdateState::Updated { version }

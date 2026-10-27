@@ -1,6 +1,7 @@
 //! What survives a restart: open projects, the active tab, the model, theme,
 //! window placement. Saved to `<data dir>/state.json`.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use kynex_core::paths::data_dir;
@@ -66,6 +67,8 @@ pub struct Saved {
     /// The terminal panel under the conversation is showing.
     pub terminal_open: bool,
     pub terminal_height: f32,
+    /// Unsent messages, by Claude Code session id.
+    pub drafts: HashMap<String, String>,
 }
 
 impl Default for Saved {
@@ -84,6 +87,7 @@ impl Default for Saved {
             skipped_cli_version: None,
             terminal_open: false,
             terminal_height: 280.,
+            drafts: HashMap::new(),
         }
     }
 }

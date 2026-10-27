@@ -12,6 +12,20 @@ pub fn duration(ms: u64) -> String {
     }
 }
 
+/// A time limit, in whole units: "45s", "2m", "1m 30s", "1h", "1h 30m".
+pub fn limit(ms: u64) -> String {
+    let s = ms.div_ceil(1000);
+    let (big, small) = match s {
+        0..60 => return format!("{s}s"),
+        60..3600 => ((s / 60, "m"), (s % 60, "s")),
+        _ => ((s / 3600, "h"), (s % 3600 / 60, "m")),
+    };
+    match small.0 {
+        0 => format!("{}{}", big.0, big.1),
+        n => format!("{}{} {n}{}", big.0, big.1, small.1),
+    }
+}
+
 /// "just now", "5m ago", "3h ago", "2d ago".
 pub fn ago(t: SystemTime) -> String {
     let secs = t.elapsed().map_or(0, |d| d.as_secs());
@@ -64,6 +78,17 @@ mod tests {
         assert_eq!(duration(8_200), "8.2s");
         assert_eq!(duration(252_000), "4m 12s");
         assert_eq!(duration(3_780_000), "1h 3m");
+    }
+
+    #[test]
+    fn limits() {
+        assert_eq!(limit(45_000), "45s");
+        assert_eq!(limit(500), "1s");
+        assert_eq!(limit(120_000), "2m");
+        assert_eq!(limit(90_000), "1m 30s");
+        assert_eq!(limit(600_000), "10m");
+        assert_eq!(limit(3_600_000), "1h");
+        assert_eq!(limit(5_400_000), "1h 30m");
     }
 
     #[test]

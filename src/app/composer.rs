@@ -7,23 +7,30 @@ use std::time::Duration;
 
 use gpui::{
     Anchor, Animation, AnimationExt, AnyElement, ClickEvent, Context, ExternalPaths, Focusable, Image, ImageFormat,
-    PathPromptOptions, Window, div, img, prelude::*, px,
+    KeyDownEvent, PathPromptOptions, Window, canvas, deferred, div, img, prelude::*, px,
 };
 use kynex_core::attach::{is_image, prepare_image};
 use kynex_core::project::{self, ClaudeSettings, Mode};
 use kynex_core::session::{Attachment, Kind};
 
+use super::keys::Interrupt;
 use super::menus::Menu;
 use super::state::{Active, View};
 use super::transcript::THREAD_WIDTH;
 use super::{KynexApp, models};
 use crate::theme::{Palette, theme};
-use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, spinner};
+use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, input, spinner};
 
 impl KynexApp {
     pub(super) fn send(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let busy = self.session_mut().is_some_and(|s| s.busy);
         let text = self.composer.read(cx).text().trim().to_string();
+        self.slash.dismissed = None;
+        // Built-ins Kynex runs itself (`/clear`, `/model`…) work even mid-reply.
+        if self.attachments.is_empty() && self.run_command(&text, cx) {
+            self.composer.update(cx, |c, cx| c.set_text("", cx));
+            return;
+        }
         if busy || (text.is_empty() && self.attachments.is_empty()) {
             return;
         }
@@ -134,11 +141,28 @@ impl KynexApp {
         let status = (working || waiting).then(|| working_bar(working, &t));
         let update = self.render_cli_update(cx);
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
+        let popup = if self.prompt.is_none() { self.render_slash(cx) } else { None };
+        let this = cx.entity().downgrade();
         let shell = |child: AnyElement, focused: bool, needs_you: bool| {
             div().w_full().flex().justify_center().px_6().pb_4().pt_1().child(
                 div().w_full().max_w(THREAD_WIDTH).flex().flex_col().gap_1p5().children(update).children(status).child(
                     div()
+                        .relative()
                         .w_full()
+                        // Remembered so a command can open a menu above the composer.
+                        .child(
+                            canvas(
+                                move |bounds, _, cx| {
+                                    this.update(cx, |this, _| this.slash.composer = Some(bounds)).ok();
+                                },
+                                |_, _, _, _| {},
+                            )
+                            .absolute()
+                            .size_full(),
+                        )
+                        .when_some(popup, |d, popup| {
+                            d.child(deferred(div().absolute().bottom_full().left_0().w_full().pb_1().child(popup)))
+                        })
                         .p_3()
                         .rounded_lg()
                         .border_1()
@@ -234,10 +258,37 @@ impl KynexApp {
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
         };
 
+        // While the slash-command popup is open it takes the keys first.
         let body = div()
             .flex()
             .flex_col()
             .gap_2()
+            .capture_action(cx.listener(|this, _: &input::Up, _, cx| {
+                if this.slash_move(false, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &input::Down, _, cx| {
+                if this.slash_move(true, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &input::Enter, window, cx| {
+                if this.slash_accept(true, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &Interrupt, _, cx| {
+                if this.slash_dismiss(cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                let k = &ev.keystroke;
+                if k.key == "tab" && !k.modifiers.modified() && this.slash_accept(false, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
             .when(!self.attachments.is_empty(), |d| d.child(attachments))
             .child(div().id("composer-scroll").max_h(max_h).overflow_y_scroll().text_sm().child(self.composer.clone()))
             .child(

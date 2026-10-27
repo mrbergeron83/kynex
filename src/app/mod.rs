@@ -10,12 +10,15 @@
 //! | `title_bar.rs`      | title bar and project tabs                           |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
 //! | `sessions_panel.rs` | open and past sessions                               |
+//! | `session_groups.rs` | session groups and the archive, their menus          |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `terminal_dock.rs`  | the project's terminal panel under the conversation  |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
 //! | `transcript.rs`     | the conversation list and how each item draws        |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
+//! | `drafts.rs`         | each session's unsent message, kept across switches  |
+//! | `slash.rs`          | the slash-command popup, and built-ins Kynex runs   |
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
 //! | `settings.rs`       | the project's Claude settings modal                  |
@@ -27,14 +30,17 @@
 mod about;
 mod app_update;
 mod composer;
+mod drafts;
 mod keys;
 mod menus;
 mod models;
 mod prompts;
+mod session_groups;
 mod session_header;
 mod sessions_panel;
 mod settings;
 mod setup;
+mod slash;
 mod state;
 mod terminal_dock;
 mod title_bar;
@@ -57,13 +63,16 @@ use kynex_core::live::{Key, Live};
 use kynex_core::paths::chat_dir;
 use kynex_core::session::{self, Attachment, Kind, Session};
 
+use drafts::Draft;
 pub use keys::bind_keys;
 use keys::{CopySelection, copy_selection};
 use menus::OpenMenu;
 use prompts::ActivePrompt;
+use session_groups::Organize;
 use sessions_panel::SessionList;
 use settings::SettingsView;
-use setup::Setup;
+use setup::{CliCheck, Setup};
+use slash::Slash;
 pub use state::Saved;
 use state::{Active, View, WindowState};
 use transcript::Thread;
@@ -90,8 +99,15 @@ pub struct KynexApp {
     composer: Entity<TextInput>,
     new_rule: Entity<TextInput>,
     attachments: Vec<Attachment>,
+    /// Unsent messages of the sessions not shown, by draft key; and the shown
+    /// session's uid and draft key, whose message is in the composer.
+    drafts: HashMap<String, Draft>,
+    draft_for: Option<(Key, String)>,
+    slash: Slash,
     notice: Option<String>,
     sessions: Option<SessionList>,
+    /// Groups and the archive in the sessions panel.
+    organize: Organize,
     /// Session id whose delete button was clicked once and is awaiting confirmation.
     confirm_delete: Option<String>,
     /// The session being named right now, and every one tried this run.
@@ -117,6 +133,7 @@ pub struct KynexApp {
     /// The About Kynex modal is open; the installed Claude Code version, once read.
     about_open: bool,
     claude_version: Option<String>,
+    cli_check: CliCheck,
     /// Whether the CLI is installed and signed in; until it is, a setup screen
     /// takes the workspace's place.
     setup: Setup,
@@ -173,6 +190,13 @@ impl KynexApp {
         })
         .detach();
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.check_setup(cx))).detach();
+        let group_name = cx.new(|cx| TextInput::new(cx).placeholder("Group name"));
+        cx.subscribe(&group_name, |this, _, ev, cx| {
+            if let InputEvent::Submit = ev {
+                this.commit_rename(cx);
+            }
+        })
+        .detach();
         let new_rule = cx.new(|cx| TextInput::new(cx).mono().placeholder("Bash(npm test:*)"));
         cx.subscribe(&new_rule, |this, _, ev, cx| {
             if let InputEvent::Submit = ev {
@@ -193,7 +217,8 @@ impl KynexApp {
             });
         })
         .detach();
-        cx.on_app_quit(|this, _| {
+        cx.on_app_quit(|this, cx| {
+            this.stash_draft(cx);
             this.save();
             async {}
         })
@@ -212,8 +237,12 @@ impl KynexApp {
             composer,
             new_rule,
             attachments: Vec::new(),
+            drafts: HashMap::new(),
+            draft_for: None,
+            slash: Slash::default(),
             notice: None,
             sessions: None,
+            organize: Organize::new(group_name),
             confirm_delete: None,
             naming: None,
             naming_tried: HashSet::new(),
@@ -230,6 +259,7 @@ impl KynexApp {
             update_toast: false,
             about_open: false,
             claude_version: None,
+            cli_check: CliCheck::default(),
             setup: Setup::Checking,
             login_code,
             focus: cx.focus_handle(),
@@ -322,6 +352,7 @@ impl Render for KynexApp {
         {
             s.finished = false;
         }
+        self.sync_draft(cx);
         self.sync_prompt(window, cx);
         // Shortcuts (Esc, Ctrl+B…) only reach the workspace through the focused
         // element, so never leave the window with nothing focused.
