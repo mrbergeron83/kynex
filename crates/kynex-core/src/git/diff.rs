@@ -66,6 +66,30 @@ pub fn commit_diff(root: &Path, sha: &str) -> Result<Vec<FileDiff>, String> {
     git(root, &["show", "--format=", "--no-ext-diff", "-M", "--diff-merges=first-parent", sha]).map(|s| parse(&s))
 }
 
+/// Lines `(added, removed)` in the working tree against HEAD, staged or not,
+/// counting each of `untracked` (repo-relative paths) as all added. Runs
+/// `git diff --numstat` and reads the untracked files (the first 200); binary
+/// files and ones over 1 MB count as no lines.
+pub fn diff_stat(root: &Path, untracked: &[&str]) -> Result<(usize, usize), String> {
+    let (added, removed) = parse_numstat(&git(root, &["diff", "HEAD", "--numstat", "--no-ext-diff", "--no-renames"])?);
+    let new_lines: usize = untracked
+        .iter()
+        .take(200)
+        .filter(|p| std::fs::metadata(root.join(p)).is_ok_and(|m| m.len() <= 1 << 20))
+        .filter_map(|p| std::fs::read(root.join(p)).ok())
+        .map(|bytes| untracked_diff("", bytes).added)
+        .sum();
+    Ok((added + new_lines, removed))
+}
+
+/// Sums `git diff --numstat`: `<added>\t<removed>\t<path>` per file, `-` for binary.
+fn parse_numstat(s: &str) -> (usize, usize) {
+    s.lines().fold((0, 0), |(added, removed), line| {
+        let mut cols = line.split('\t').map(|n| n.parse::<usize>().unwrap_or(0));
+        (added + cols.next().unwrap_or(0), removed + cols.next().unwrap_or(0))
+    })
+}
+
 fn untracked_diff(path: &str, bytes: Vec<u8>) -> FileDiff {
     let mut d = FileDiff { path: path.to_string(), new_file: true, ..Default::default() };
     if bytes.contains(&0) {
@@ -261,5 +285,16 @@ Binary files /dev/null and b/logo.png differ
         assert_eq!(d.added, 2);
         assert_eq!(d.hunks[0].lines[1].new, Some(2));
         assert!(untracked_diff("b.bin", vec![0, 1, 2]).binary);
+    }
+
+    #[test]
+    fn sums_numstat() {
+        assert_eq!(parse_numstat("3\t1\tsrc/a.rs\n-\t-\tlogo.png\n10\t0\tnew file.rs\n"), (13, 1));
+        assert_eq!(parse_numstat(""), (0, 0));
+    }
+
+    #[test]
+    fn stats_this_repo() {
+        assert!(diff_stat(Path::new(env!("CARGO_MANIFEST_DIR")), &[]).is_ok());
     }
 }

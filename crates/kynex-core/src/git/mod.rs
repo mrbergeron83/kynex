@@ -17,7 +17,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub use branch::{Branch, branches, create_branch, switch_branch};
-pub use diff::{DiffLine, FileDiff, Hunk, LineKind, commit_diff, file_diff};
+pub use diff::{DiffLine, FileDiff, Hunk, LineKind, commit_diff, diff_stat, file_diff};
 pub use log::{Commit, CommitDetail, Ref, RefKind, commit_detail, log};
 pub use ops::{Sync, commit, discard, last_message, stage, stage_all, sync, unstage, unstage_all};
 pub use status::{Change, FileStatus, Head, Status, status};

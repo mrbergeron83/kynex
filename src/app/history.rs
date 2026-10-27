@@ -96,7 +96,7 @@ impl KynexApp {
     pub(super) fn double_esc(&mut self, cx: &mut Context<Self>) -> bool {
         let text = self.composer.read(cx).text().to_string();
         // Esc closes a menu or modal first; that press isn't for the draft.
-        let covered = self.menu.is_some() || self.settings.is_some() || self.about_open;
+        let covered = self.menu.is_some() || self.settings.is_some() || self.about_open || self.git_modal.is_some();
         let empty = text.trim().is_empty();
         if covered || (empty && !super::keys::esc_esc_rewinds()) || self.active_session().is_some_and(|s| s.busy) {
             self.last_esc = None;

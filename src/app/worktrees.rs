@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gpui::{Context, Entity, prelude::*};
+use gpui::{App, Context, Entity, prelude::*};
 use kynex_core::git::{self, Worktree};
 use kynex_core::session::{Item, Kind};
 
@@ -15,31 +15,53 @@ use super::state::{Active, View};
 /// Worktrees change behind our back (Claude makes and removes them), so re-read often.
 const REFRESH_EVERY: Duration = Duration::from_secs(10);
 
-/// A project's worktrees, re-read in the background while the project is open.
+/// A project's worktrees, re-read in the background while the project is open,
+/// and sooner when a turn ends, a tool call finishes or the window comes back.
 pub struct Worktrees {
     pub list: Vec<Worktree>,
+    root: PathBuf,
+    /// A read is running; `again` asks for another one once it's done.
+    reading: bool,
+    again: bool,
 }
 
 impl Worktrees {
     fn new(root: PathBuf, cx: &mut Context<Self>) -> Self {
         cx.spawn(async move |this, cx| {
             loop {
-                let root = root.clone();
-                let list = cx.background_spawn(async move { git::list_worktrees(&root).unwrap_or_default() }).await;
-                let alive = this.update(cx, |this, cx| {
-                    if this.list != list {
-                        this.list = list;
-                        cx.notify();
-                    }
-                });
-                if alive.is_err() {
+                if this.update(cx, |this, cx| this.refresh(cx)).is_err() {
                     break;
                 }
                 cx.background_executor().timer(REFRESH_EVERY).await;
             }
         })
         .detach();
-        Self { list: Vec::new() }
+        Self { list: Vec::new(), root, reading: false, again: false }
+    }
+
+    /// Re-reads the list now (or right after the read already running).
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.reading {
+            self.again = true;
+            return;
+        }
+        self.reading = true;
+        let root = self.root.clone();
+        cx.spawn(async move |this, cx| {
+            let list = cx.background_spawn(async move { git::list_worktrees(&root).unwrap_or_default() }).await;
+            this.update(cx, |this, cx| {
+                this.reading = false;
+                if this.list != list {
+                    this.list = list;
+                    cx.notify();
+                }
+                if std::mem::take(&mut this.again) {
+                    this.refresh(cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The worktree whose folder is `path`.
@@ -79,6 +101,15 @@ impl KynexApp {
             .collect();
         let list = self.worktrees(&cwd, cx).read(cx).list.clone();
         inputs.iter().find_map(|input| git::worktree_in(input, &list)).filter(|w| w.path != cwd).cloned()
+    }
+
+    /// Re-reads the worktrees of these folders, where they're being watched.
+    pub(super) fn refresh_worktrees<'a>(&mut self, folders: impl IntoIterator<Item = &'a PathBuf>, cx: &mut App) {
+        for folder in folders {
+            if let Some(w) = self.worktrees.get(folder) {
+                w.update(cx, |w, cx| w.refresh(cx));
+            }
+        }
     }
 
     /// Opens a worktree as a tab, on its Git view, to look at its changes.
