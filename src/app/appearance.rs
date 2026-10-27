@@ -4,13 +4,13 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{Context, Div, Hsla, div, prelude::*, px};
+use gpui::{AnyElement, Context, Div, Hsla, Pixels, div, prelude::*, px};
 use kynex_core::project::{self, Appearance, COLOURS, Colour};
 
 use super::KynexApp;
 use super::settings::heading;
-use crate::theme::Palette;
-use crate::ui::Tooltip;
+use crate::theme::{Palette, theme};
+use crate::ui::{Tooltip, menu_item};
 
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
@@ -76,25 +76,7 @@ impl KynexApp {
             .gap_2()
             .child(option("colour-auto", "Automatic", Some(auto), Colour::Auto, cx))
             .child(option("colour-off", "None", None, Colour::Off, cx));
-        let swatches = COLOURS.iter().enumerate().map(|(n, name)| {
-            let selected = current == Colour::Named(name.to_string());
-            let path = path.to_path_buf();
-            div()
-                .id(("project-colour", n))
-                .size(px(28.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_full()
-                .border_2()
-                .border_color(if selected { t.text } else { gpui::transparent_black() })
-                .cursor_pointer()
-                .child(div().size(px(20.)).rounded_full().bg(t.project_colour(name)))
-                .tooltip(Tooltip::text(capitalize(name)))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.set_project_colour(path.clone(), Colour::Named(name.to_string()), cx)
-                }))
-        });
+        let swatches = self.colour_swatches("project-colour", path, px(28.), t, cx);
         div()
             .flex()
             .flex_col()
@@ -105,7 +87,54 @@ impl KynexApp {
                 t,
             ))
             .child(row)
-            .child(div().flex().gap_1().children(swatches))
+            .child(swatches)
+    }
+
+    /// One round swatch per colour, ringed when it's the project's pick;
+    /// clicking one sets it. `size` is the ring's diameter.
+    fn colour_swatches(&self, id: &'static str, path: &Path, size: Pixels, t: &Palette, cx: &mut Context<Self>) -> Div {
+        let current = self.appearances.get(path).map(|a| a.colour.clone()).unwrap_or_default();
+        div().flex().gap_0p5().children(COLOURS.iter().enumerate().map(|(n, name)| {
+            let selected = current == Colour::Named(name.to_string());
+            let path = path.to_path_buf();
+            div()
+                .id((id, n))
+                .size(size)
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .border_2()
+                .border_color(if selected { t.text } else { gpui::transparent_black() })
+                .cursor_pointer()
+                .child(div().size(size * 0.7).rounded_full().bg(t.project_colour(name)))
+                .tooltip(Tooltip::text(capitalize(name)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.set_project_colour(path.clone(), Colour::Named(name.to_string()), cx)
+                }))
+        }))
+    }
+
+    /// The colour part of a project tab's right-click menu: the swatches, then
+    /// Automatic and No colour. The menu stays open so you can try a few.
+    pub(super) fn tab_colour_items(&self, path: &Path, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let t = theme(cx).clone();
+        let current = self.appearances.get(path).map(|a| a.colour.clone()).unwrap_or_default();
+        let mut items = vec![
+            div().px_2().pt_1().text_xs().text_color(t.text_muted).child("Colour").into_any_element(),
+            div().px_1().py_1().child(self.colour_swatches("tab-colour", path, px(22.), &t, cx)).into_any_element(),
+        ];
+        for (n, (label, choice)) in [("Automatic", Colour::Auto), ("No colour", Colour::Off)].into_iter().enumerate() {
+            let path = path.to_path_buf();
+            items.push(
+                menu_item(("tab-colour-mode", n), label, current == choice, cx)
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.set_project_colour(path.clone(), choice.clone(), cx)),
+                    )
+                    .into_any_element(),
+            );
+        }
+        items
     }
 
     /// Sets a project's colour and saves it.
