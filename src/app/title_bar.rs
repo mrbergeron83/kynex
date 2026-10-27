@@ -54,7 +54,7 @@ impl KynexApp {
                     .rounded_md()
                     .cursor_pointer()
                     .hover(move |s| s.bg(hover))
-                    .child(mark("title-mark", px(20.), shown, cx))
+                    .child(mark("title-mark", px(22.), shown, cx))
                     .child(section_label("Kynex", cx).font_weight(FontWeight::EXTRA_BOLD))
                     .when(update_waiting, |d| d.child(div().size(px(6.)).rounded_full().bg(t.accent)))
                     .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
