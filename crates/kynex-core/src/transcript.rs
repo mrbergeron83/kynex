@@ -98,6 +98,30 @@ pub fn rows(items: &[Item]) -> Vec<Row> {
     rows
 }
 
+impl Row {
+    /// Whether item `ix` is drawn in this row: the item itself, or a call, its
+    /// result or its prompt in a run.
+    pub fn holds(&self, ix: usize) -> bool {
+        match self {
+            Row::Item(i) => *i == ix,
+            Row::Tools(run) => run.calls.iter().any(|c| c.ix == ix || c.result == Some(ix) || c.permission == Some(ix)),
+        }
+    }
+
+    /// The first item drawn in this row.
+    pub fn first_item(&self) -> usize {
+        match self {
+            Row::Item(i) => *i,
+            Row::Tools(run) => run.first(),
+        }
+    }
+}
+
+/// The row that draws item `ix`.
+pub fn row_of(rows: &[Row], ix: usize) -> Option<usize> {
+    rows.iter().position(|r| r.holds(ix))
+}
+
 /// The call named `id`, in the open run or a recent one (a result can arrive
 /// after a prompt cut its run short). Older rows aren't searched, so a long
 /// transcript stays linear.
@@ -235,6 +259,14 @@ mod tests {
         );
         assert_eq!(r.summary, "Edited app.rs ×2");
         assert_eq!(rows[2], Row::Item(5));
+
+        // Every item is found in the row that draws it.
+        assert_eq!(row_of(&rows, 0), Some(0));
+        assert_eq!(row_of(&rows, 3), Some(1), "a result is in its call's row");
+        assert_eq!(row_of(&rows, 2), Some(1));
+        assert_eq!(row_of(&rows, 5), Some(2));
+        assert_eq!(row_of(&rows, 9), None);
+        assert_eq!(rows[1].first_item(), 1);
     }
 
     #[test]

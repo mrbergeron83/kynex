@@ -29,14 +29,17 @@ actions!(
         PickModel,
         ExpandTools,
         EditInEditor,
-        Rewind
+        Rewind,
+        ToggleTimeline,
+        PrevTurn,
+        NextTurn
     ]
 );
 
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 13] = [
+const SHORTCUTS: [(&str, &str); 16] = [
     ("open_project", "secondary-o"),
     ("next_tab", "ctrl-tab"),
     ("prev_tab", "ctrl-shift-tab"),
@@ -53,6 +56,10 @@ const SHORTCUTS: [(&str, &str); 13] = [
     // Two Esc presses on an empty composer, told apart from one by timing (see
     // `history.rs`): a key sequence would hold every single Esc back.
     ("rewind", ESC_ESC),
+    ("toggle_timeline", "secondary-shift-t"),
+    // The timeline's turns, previous and next.
+    ("prev_turn", "alt-up"),
+    ("next_turn", "alt-down"),
 ];
 
 const ESC_ESC: &str = "escape escape";
@@ -119,6 +126,9 @@ pub fn bind_keys(cx: &mut App) {
             "expand_tools" => KeyBinding::new(keys, ExpandTools, c),
             "edit_in_editor" => KeyBinding::new(keys, EditInEditor, c),
             "rewind" => KeyBinding::new(keys, Rewind, c),
+            "toggle_timeline" => KeyBinding::new(keys, ToggleTimeline, c),
+            "prev_turn" => KeyBinding::new(keys, PrevTurn, c),
+            "next_turn" => KeyBinding::new(keys, NextTurn, c),
             _ => KeyBinding::new(keys, Interrupt, c),
         });
     }

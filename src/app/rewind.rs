@@ -63,6 +63,12 @@ fn files(n: usize) -> String {
 impl KynexApp {
     /// Opens the popup for the shown session, once its messages are read.
     pub(super) fn open_rewind(&mut self, cx: &mut Context<Self>) {
+        self.open_rewind_at(None, cx);
+    }
+
+    /// Opens the popup; with `message` (from the timeline), straight on that
+    /// message's restore choices, else on the list of messages.
+    pub(super) fn open_rewind_at(&mut self, message: Option<String>, cx: &mut Context<Self>) {
         let Some(s) = self.active_session() else { return };
         if s.busy {
             self.notice = Some("Stop Claude or let it finish before rewinding.".into());
@@ -79,7 +85,13 @@ impl KynexApp {
                 match points {
                     Ok(p) if p.is_empty() => this.notice = Some("Nothing to rewind to yet.".into()),
                     Ok(points) if this.active_key() == Some(key) => {
-                        this.rewind = Some(RewindMenu { key, points, selected: 0, picked: None });
+                        // Newest first, so a message sent twice finds its latest copy.
+                        let picked =
+                            message.as_deref().and_then(|m| points.iter().position(|p| p.text.trim() == m.trim()));
+                        if message.is_some() && picked.is_none() {
+                            this.notice = Some("Can't rewind to that message; pick it from the list.".into());
+                        }
+                        this.rewind = Some(RewindMenu { key, points, selected: 0, picked });
                     }
                     Ok(_) => {}
                     Err(e) => this.notice = Some(e),

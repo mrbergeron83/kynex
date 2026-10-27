@@ -32,7 +32,7 @@ pub const THREAD_WIDTH: Pixels = px(780.);
 /// they were laid out from.
 pub struct Thread {
     pub list: ListState,
-    rows: Vec<Row>,
+    pub(super) rows: Vec<Row>,
     items: usize,
     /// Smooth scrolling in progress, and when its last frame ran.
     glide: Glide,
@@ -48,6 +48,17 @@ impl Thread {
     /// How far down the list is scrolled, in pixels.
     fn offset(&self) -> f32 {
         -f32::from(self.list.scroll_px_offset_for_scrollbar().y)
+    }
+
+    /// Glides row `row` up to the top of the view, when the list knows where
+    /// it is (laid out, at or below the top); false means jump instead.
+    pub(super) fn glide_to_row(&mut self, row: usize) -> bool {
+        let Some(bounds) = self.list.bounds_for_item(row) else { return false };
+        let distance = f32::from(bounds.top() - self.list.viewport_bounds().top());
+        self.glide.stop();
+        self.follow_after = false;
+        self.glide.push(distance);
+        true
     }
 
     /// Moves the list this frame's share of the glide, stopping at either end.
@@ -207,7 +218,8 @@ impl KynexApp {
             }
             None => return div().into_any_element(),
         };
-        div()
+        let t = theme(cx).clone();
+        let el = div()
             .id(("row", row))
             .w_full()
             .flex()
@@ -216,8 +228,9 @@ impl KynexApp {
             .map(|d| if compact { d.py_0p5() } else { d.py_2() })
             .child(div().w_full().max_w(THREAD_WIDTH).child(body))
             // After any scroll box inside the row, before the list itself.
-            .on_scroll(cx.listener(move |this, ev: &ScrollEvent, _, cx| this.wheel(key, ev, cx)))
-            .into_any_element()
+            .on_scroll(cx.listener(move |this, ev: &ScrollEvent, _, cx| this.wheel(key, ev, cx)));
+        // Lit up for a moment when the timeline jumps here.
+        self.flash_row(key, row, el, &t)
     }
 
     /// Item `ix` drawn on its own, as transcript row `row`.

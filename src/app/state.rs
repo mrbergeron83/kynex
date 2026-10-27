@@ -70,6 +70,8 @@ pub struct Saved {
     /// The terminal panel under the conversation is showing.
     pub terminal_open: bool,
     pub terminal_height: f32,
+    /// The session timeline is showing beside the transcript.
+    pub timeline_open: bool,
     /// Unsent messages, by Claude Code session id.
     pub drafts: HashMap<String, String>,
 }
@@ -91,6 +93,7 @@ impl Default for Saved {
             skipped_cli_version: None,
             terminal_open: false,
             terminal_height: 280.,
+            timeline_open: false,
             drafts: HashMap::new(),
         }
     }
