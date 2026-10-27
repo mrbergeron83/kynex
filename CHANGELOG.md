@@ -12,6 +12,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Build provenance attestations for release archives.
 - Contributing guide, security policy, code of conduct, and this changelog.
 
+### Fixed
+
+- Text on macOS: 0.0.2 drew its window but no glyphs, because gpui only installs a text
+  system when its `font-kit` feature is enabled. Tab labels, the setup card and button
+  captions are visible again.
+
 ## [0.0.2] - 2026-10-26
 
 ### Added
