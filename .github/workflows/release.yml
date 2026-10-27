@@ -5,6 +5,10 @@
 # Running it by hand (workflow_dispatch) only builds, so the archives can be
 # checked from the run's artifacts without publishing anything.
 #
+# Nothing is built for release until the gates pass: the tag is on main and
+# matches Cargo.toml, CI (fmt, clippy, tests on every OS) passes on the tagged
+# commit, and cargo-deny finds no advisories as of now, not as of the merge.
+#
 # Assets are plain archives named kynex-<target>.<zip|tar.gz> plus SHA256SUMS;
 # keep those names stable, an installer or updater will look them up. Each
 # archive gets a signed build provenance attestation, also published as
@@ -24,7 +28,46 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f2)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't match Cargo.toml version $version"
+            exit 1
+          fi
+      # Only reviewed, merged code is released: main takes changes through pull requests.
+      - name: Tag is on main
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME ($GITHUB_SHA) isn't on main; release from a merged commit"
+            exit 1
+          fi
+
+  checks:
+    # `$/` is this repository at the commit being released, with no checkout involved.
+    uses: $/.github/workflows/ci.yml
+
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories bans licenses sources
+
   build:
+    needs: [verify, checks, cargo-deny]
     strategy:
       fail-fast: false
       matrix:
@@ -44,14 +87,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Tag matches Cargo.toml
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          version=$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f2)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME doesn't match Cargo.toml version $version"
-            exit 1
-          fi
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: stable
