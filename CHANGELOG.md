@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Mouse-wheel scrolling glides everywhere, not just in the conversation: the sessions panel,
+  timeline, Git view, settings, menus and terminal too. A notch also goes about twice as far,
+  like a browser. Touchpads still scroll 1:1, and with animations off a notch moves at once.
+
 ## [0.0.4] - 2026-10-27
 
 ### Added

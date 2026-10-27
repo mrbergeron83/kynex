@@ -72,8 +72,8 @@ A cargo workspace with two crates:
   - `groups.rs` — session groups and the archive in the sessions panel (`sessions.json` per project)
   - `timeline.rs` — a session's turns and their notable steps, for the timeline panel;
     `transcript.rs` lays items out as transcript rows (tool runs folded) and maps between them
-  - `motion.rs` — the Animations setting, the OS's "reduce motion", and `Glide` (smooth,
-    time-based scrolling)
+  - `motion.rs` — the Animations setting, the OS's "reduce motion", `Glide` (smooth,
+    time-based scrolling) and `Wheel` (wheel notches as gliding pixel steps)
   - `git/` — everything git, parsed from machine formats: `status`, `diff` (hunks with line
     numbers), `log` and commit details, `branch` (list / switch / create), `ops` (stage, discard,
     commit, fetch / pull / push), `worktree`; `open.rs` — open a folder in VS Code / file
@@ -104,7 +104,9 @@ A cargo workspace with two crates:
     selection, clipboard, image paste) built on gpui's input example; `ui/selectable.rs` is
     mouse-selectable text across blocks; `ui/completions.rs` is the popup list of completions
     (slash commands); `ui/motion.rs` has the transitions (`fade_in`, `pop_in`…) on gpui's
-    time-based `with_animation`, which `cx.reduce_motion()` turns off
+    time-based `with_animation`, which `cx.reduce_motion()` turns off; `ui/smooth_scroll.rs`
+    catches every mouse-wheel turn at the window root and replays it as per-frame pixel
+    scrolls, so every scroll area glides without code of its own
   - `chrome.rs` — title bar drag area and window buttons (native snap on Windows via
     `WindowControlArea`, traffic lights on macOS, drawn buttons on Linux)
   - `theme.rs` — palettes as a gpui global (`theme(cx)`), mono font pick, project colours
