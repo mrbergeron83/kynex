@@ -24,6 +24,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   files Claude changed since, or both; the message comes back into the box to edit and send
   again. Sessions now keep file checkpoints so their files can be restored. Rebind it with
   `rewind` in `keymap.json`.
+- Each project has a colour, so you can tell at a glance which one you're in: it tints the title
+  bar (with a line of it along the bottom), colours the project's tab icon, edges the message
+  box, and names the project on a new conversation. It's picked from the folder automatically;
+  choose another or turn it off under Claude settings → Appearance.
 
 ### Changed
 

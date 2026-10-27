@@ -2,7 +2,7 @@
 //! theme picker and the window buttons.
 
 use gpui::{
-    Anchor, AnyElement, ClickEvent, Context, FontWeight, MouseButton, SharedString, Window, div, prelude::*, px,
+    Anchor, AnyElement, ClickEvent, Context, FontWeight, Hsla, MouseButton, SharedString, Window, div, prelude::*, px,
 };
 use kynex_core::live::Live;
 use kynex_core::paths::project_name;
@@ -10,7 +10,7 @@ use kynex_core::paths::project_name;
 use super::KynexApp;
 use super::menus::Menu;
 use crate::chrome::{self, TITLE_BAR_HEIGHT};
-use crate::theme::{THEMES, theme};
+use crate::theme::{THEMES, mix, theme};
 use crate::ui::mark::mark;
 use crate::ui::{Icon, Lamp, Tooltip, ghost_button, icon, icon_button, lamp, section_label};
 
@@ -22,22 +22,28 @@ impl KynexApp {
         let update_waiting = self.update_waiting();
         let shown = self.active_session().map_or(Lamp::Idle, |s| Lamp::of(s.busy, s.waiting(), s.finished));
         let status = |l: &Live| (l.busy(), l.waiting(), l.finished());
-        let mut tabs = vec![self.render_tab(0, "Chat".into(), Icon::Message, None, status(&self.chat), cx)];
+        let mut tabs = vec![self.render_tab(0, "Chat".into(), None, None, status(&self.chat), cx)];
         for (i, p) in self.saved.projects.iter().enumerate() {
             let state = self.code.get(&p.path).map_or((false, false, false), status);
             let tooltip = p.path.display().to_string();
-            tabs.push(self.render_tab(i + 1, project_name(&p.path).into(), Icon::Folder, Some(tooltip), state, cx));
+            let colour = self.project_colour(&p.path, &t);
+            tabs.push(self.render_tab(i + 1, project_name(&p.path).into(), colour, Some(tooltip), state, cx));
         }
 
+        // The shown project's colour tints the bar, with a line of it along the bottom.
+        let colour = self.active_colour(&t);
         div()
             .id("title-bar")
             .flex()
             .flex_none()
             .items_center()
             .h(TITLE_BAR_HEIGHT)
-            .bg(t.title_bar)
-            .border_b_1()
-            .border_color(t.border)
+            .map(|d| match colour {
+                Some(c) => {
+                    d.bg(mix(t.title_bar, c, if t.is_light() { 0.22 } else { 0.16 })).border_b_2().border_color(c)
+                }
+                None => d.bg(t.title_bar).border_b_1().border_color(t.border),
+            })
             .pl(chrome::leading_inset() + px(10.))
             // The mark and name open the Kynex menu (About, updates); a dot marks
             // an update waiting.
@@ -89,7 +95,7 @@ impl KynexApp {
         &self,
         pos: usize,
         label: SharedString,
-        which: Icon,
+        colour: Option<Hsla>,
         tooltip: Option<String>,
         (busy, waiting, finished): (bool, bool, bool),
         cx: &mut Context<Self>,
@@ -111,7 +117,7 @@ impl KynexApp {
             .cursor_pointer()
             .when(active, |d| d.bg(t.active))
             .when(!active, |d| d.hover(move |s| s.bg(hover)))
-            .child(icon(which, fg).size_3p5())
+            .child(icon(if pos == 0 { Icon::Message } else { Icon::Folder }, colour.unwrap_or(fg)).size_3p5())
             .child(label)
             .map(|d| match Lamp::of(busy, waiting, finished) {
                 Lamp::Idle => d,

@@ -154,6 +154,7 @@ impl KynexApp {
             _ => self.render_slash(cx),
         };
         let this = cx.entity().downgrade();
+        let colour = self.active_colour(&t);
         let shell = |child: AnyElement, focused: bool, needs_you: bool| {
             div().w_full().flex().justify_center().px_6().pb_4().pt_1().child(
                 div()
@@ -186,12 +187,13 @@ impl KynexApp {
                             .p_3()
                             .rounded_lg()
                             .border_1()
-                            .border_color(if needs_you {
-                                t.warning
-                            } else if focused {
-                                t.border_focused
-                            } else {
-                                t.border
+                            // The project's colour edges it, so you see where a prompt goes.
+                            .border_color(match colour {
+                                _ if needs_you => t.warning,
+                                Some(c) if focused => c,
+                                Some(c) => c.opacity(0.5),
+                                None if focused => t.border_focused,
+                                None => t.border,
                             })
                             .bg(t.panel)
                             .shadow_sm()
