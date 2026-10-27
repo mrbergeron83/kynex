@@ -3,6 +3,8 @@
 //! plans and prompts, errors. Built from the same items the transcript draws,
 //! so resumed sessions get one too.
 
+use std::collections::HashMap;
+
 use crate::fmt;
 use crate::session::{Item, PermState};
 
@@ -124,6 +126,44 @@ pub fn locate(turns: &[Turn], item: usize) -> Option<(usize, Option<usize>)> {
     Some((t, step))
 }
 
+/// Which turns of a timeline show their steps. Until you choose, the latest
+/// turn and the one in view are open and the rest folded; Collapse all /
+/// Expand all set every turn, and a turn's chevron sets that one.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Fold {
+    /// Every turn, after Collapse all (`false`) or Expand all (`true`).
+    all: Option<bool>,
+    /// Turns opened or folded one at a time, by their message's item.
+    set: HashMap<usize, bool>,
+}
+
+impl Fold {
+    /// Whether turn `n` of `turns` is open, with turn `current` in view.
+    pub fn is_open(&self, turns: &[Turn], n: usize, current: Option<usize>) -> bool {
+        let Some(turn) = turns.get(n) else { return false };
+        self.set.get(&turn.item).copied().or(self.all).unwrap_or(n + 1 == turns.len() || current == Some(n))
+    }
+
+    /// Opens turn `n` if it's folded, folds it if it's open.
+    pub fn toggle(&mut self, turns: &[Turn], n: usize, current: Option<usize>) {
+        if let Some(turn) = turns.get(n) {
+            let open = self.is_open(turns, n, current);
+            self.set.insert(turn.item, !open);
+        }
+    }
+
+    /// Opens (or folds) every turn, forgetting the ones set one at a time.
+    pub fn set_all(&mut self, open: bool) {
+        self.all = Some(open);
+        self.set.clear();
+    }
+
+    /// Whether any turn with steps is open: Collapse all has something to do.
+    pub fn any_open(&self, turns: &[Turn], current: Option<usize>) -> bool {
+        (0..turns.len()).any(|n| !turns[n].steps.is_empty() && self.is_open(turns, n, current))
+    }
+}
+
 fn file_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
@@ -219,5 +259,28 @@ mod tests {
         assert!(turns[0].prompt.chars().count() <= 101);
         assert!(turns[0].steps[0].label.chars().count() <= 81);
         assert_eq!(super::turns(&[user("")])[0].prompt, "(image)");
+    }
+
+    #[test]
+    fn folds_older_turns_until_told_otherwise() {
+        let mut items = sample();
+        items.extend([user("Third"), tool("Bash", "ls")]);
+        let turns = turns(&items);
+        let mut fold = Fold::default();
+        let open = |f: &Fold, current| (0..3).map(|n| f.is_open(&turns, n, current)).collect::<Vec<_>>();
+        assert_eq!(open(&fold, None), [false, false, true], "only the latest at first");
+        assert_eq!(open(&fold, Some(0)), [true, false, true], "and the one in view");
+
+        fold.toggle(&turns, 0, Some(0));
+        fold.toggle(&turns, 1, Some(0));
+        assert_eq!(open(&fold, None), [false, true, true], "a chevron's choice sticks as you scroll");
+
+        fold.set_all(false);
+        assert_eq!(open(&fold, Some(0)), [false; 3]);
+        assert!(!fold.any_open(&turns, Some(0)));
+        fold.toggle(&turns, 2, None);
+        assert!(fold.any_open(&turns, None));
+        fold.set_all(true);
+        assert_eq!(open(&fold, None), [true; 3]);
     }
 }

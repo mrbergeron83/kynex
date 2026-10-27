@@ -89,7 +89,7 @@ use setup::{CliCheck, Setup};
 use slash::Slash;
 pub use state::Saved;
 use state::{Active, View, WindowState};
-use transcript::Thread;
+use transcript::{Scroll, Thread};
 use worktrees::Worktrees;
 
 use crate::git::GitView;
@@ -125,6 +125,8 @@ pub struct KynexApp {
     history_search: Option<history::HistorySearch>,
     /// The transcript row lit up after a jump from the timeline.
     flash: Option<timeline::Flash>,
+    /// Each session's timeline turns opened or folded.
+    folds: HashMap<Key, kynex_core::timeline::Fold>,
     /// The rewind popup (Esc Esc on an empty composer), while open.
     rewind: Option<rewind::RewindMenu>,
     /// When Esc last went to a draft, for Esc Esc.
@@ -284,6 +286,7 @@ impl KynexApp {
             histories: HashMap::new(),
             history_search: None,
             flash: None,
+            folds: HashMap::new(),
             rewind: None,
             last_esc: None,
             composer,
@@ -479,15 +482,24 @@ impl Render for KynexApp {
                         .bg(t.editor)
                         .child(self.render_toolbar(cx))
                         .children(self.render_session_header(cx))
+                        // The timeline runs the full height beside the transcript
+                        // and the composer under it, down to the terminal dock.
                         .child(
                             div()
                                 .flex()
                                 .flex_1()
                                 .min_h_0()
-                                .child(div().flex().flex_col().flex_1().min_w_0().child(self.render_thread(window, cx)))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(self.render_thread(window, cx))
+                                        .child(self.render_composer(window, cx)),
+                                )
                                 .children(self.render_timeline(cx)),
                         )
-                        .child(self.render_composer(window, cx))
                         .children(self.render_terminal_dock(window, cx)),
                 )
                 .into_any_element()
@@ -527,6 +539,12 @@ impl Render for KynexApp {
             .on_action(cx.listener(Self::toggle_timeline))
             .on_action(cx.listener(Self::prev_turn))
             .on_action(cx.listener(Self::next_turn))
+            .on_action(cx.listener(|this, _: &keys::PageUp, _, cx| this.scroll_keys(Scroll::Page(-1.), cx)))
+            .on_action(cx.listener(|this, _: &keys::PageDown, _, cx| this.scroll_keys(Scroll::Page(1.), cx)))
+            .on_action(cx.listener(|this, _: &keys::LineUp, _, cx| this.scroll_keys(Scroll::Line(-1.), cx)))
+            .on_action(cx.listener(|this, _: &keys::LineDown, _, cx| this.scroll_keys(Scroll::Line(1.), cx)))
+            .on_action(cx.listener(|this, _: &keys::ScrollTop, _, cx| this.scroll_keys(Scroll::Top, cx)))
+            .on_action(cx.listener(|this, _: &keys::ScrollBottom, _, cx| this.scroll_keys(Scroll::Bottom, cx)))
             .on_action(cx.listener(|_, _: &CopySelection, _, cx| copy_selection(cx)))
             // The composer's Ctrl+C, passed on when nothing is selected in it.
             .on_action(cx.listener(|_, _: &crate::ui::input::Copy, _, cx| copy_selection(cx)))

@@ -5,6 +5,19 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Jump to latest**: a button over the transcript when it's scrolled up, and in the timeline's
+  header, glides back to the end and follows new output again.
+- Timeline turns fold: a chevron opens or closes a turn's steps, and **Collapse all** /
+  **Expand all** in the header does every turn. Until you choose, only the latest turn and the
+  one in view are open.
+- Scroll the conversation from the keyboard: Page Up / Page Down a page at a time, even while
+  typing; Ctrl+Home / Ctrl+End (Cmd on macOS) to the start or the end, which follows new output
+  again; and Home / End and ↑ / ↓ when the message box isn't focused. Rebind them with
+  `page_up`, `page_down`, `scroll_top` and `scroll_bottom` in `keymap.json`. In the terminal
+  these keys still go to the shell.
+
 ### Changed
 
 - Mouse-wheel scrolling glides everywhere, not just in the conversation: the sessions panel,
@@ -15,6 +28,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - A reopened session no longer shows the CLI's background-task notices
   (`<task-notification>…`) as messages you sent.
+- The transcript follows new output again after you glide back down to the end, instead of
+  letting a growing reply run off the bottom.
+- The timeline runs the full height of the window beside the transcript, with the message box
+  under the transcript only.
 
 ## [0.0.4] - 2026-10-27
 
