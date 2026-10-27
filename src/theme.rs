@@ -204,6 +204,37 @@ impl Theme {
     }
 }
 
+impl Palette {
+    /// A light theme: dark text on a light surface.
+    pub fn is_light(&self) -> bool {
+        self.editor.l > 0.5
+    }
+
+    /// A project colour (`kynex_core::project::COLOURS`) as a shade that reads on
+    /// this palette: lighter on dark themes, deeper on light ones.
+    pub fn project_colour(&self, name: &str) -> Hsla {
+        let hue = match name {
+            "red" => 0.,
+            "orange" => 28.,
+            "yellow" => 48.,
+            "green" => 135.,
+            "teal" => 178.,
+            "blue" => 212.,
+            "violet" => 268.,
+            _ => 325.,
+        };
+        let (s, l) = if self.is_light() { (0.62, 0.40) } else { (0.58, 0.64) };
+        gpui::hsla(hue / 360., s, l, 1.)
+    }
+}
+
+/// `over` laid on `base` at `amount` (0 to 1), as one opaque colour.
+pub fn mix(base: Hsla, over: Hsla, amount: f32) -> Hsla {
+    let (a, b) = (base.to_rgb(), over.to_rgb());
+    let lerp = |x: f32, y: f32| x + (y - x) * amount;
+    gpui::Rgba { r: lerp(a.r, b.r), g: lerp(a.g, b.g), b: lerp(a.b, b.b), a: 1. }.into()
+}
+
 pub struct ActiveTheme(pub Palette);
 
 impl Global for ActiveTheme {}

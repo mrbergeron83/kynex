@@ -133,7 +133,7 @@ impl KynexApp {
     ) -> Option<impl IntoElement + use<>> {
         let view = self.settings.as_ref()?;
         let t = theme(cx).clone();
-        const SECTIONS: [&str; 2] = ["Permissions", "Model"];
+        const SECTIONS: [&str; 3] = ["Permissions", "Model", "Appearance"];
         let section = view.section.min(SECTIONS.len() - 1);
         let path = view.path.clone();
         let vp = window.viewport_size();
@@ -305,7 +305,7 @@ impl KynexApp {
                             ),
                     )
             }
-            _ => {
+            1 => {
                 let effort = project::EFFORTS.iter().find(|e| e.0 == view.claude.effort).map_or("Default", |e| e.1);
                 div()
                     .flex()
@@ -334,6 +334,7 @@ impl KynexApp {
                             .child("The model and effort are also in the composer. The model applies to every tab."),
                     )
             }
+            _ => self.render_colour_picker(&path, &t, cx),
         };
 
         let card = div()
@@ -408,7 +409,7 @@ impl KynexApp {
     }
 }
 
-fn heading(title: &'static str, help: &'static str, t: &Palette) -> impl IntoElement + use<> {
+pub(super) fn heading(title: &'static str, help: &'static str, t: &Palette) -> impl IntoElement + use<> {
     div()
         .flex()
         .flex_col()

@@ -30,10 +30,12 @@
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
 //! | `app_update.rs`     | Kynex updating itself: checks, the update toast      |
 //! | `about.rs`          | the About Kynex modal: version, paths, updates       |
+//! | `appearance.rs`     | each project's colour: title bar, tab, composer      |
 //! | `models.rs`         | the model list                                       |
 
 mod about;
 mod app_update;
+mod appearance;
 mod composer;
 mod drafts;
 mod git_modal;
@@ -103,6 +105,8 @@ pub struct KynexApp {
     git_modal: Option<PathBuf>,
     /// Each open project's git worktrees, kept fresh in the background.
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
+    /// Each open project's colour settings, read once.
+    appearances: HashMap<PathBuf, kynex_core::project::Appearance>,
     /// Each project's terminal panel, created the first time it's opened.
     terminals: HashMap<PathBuf, Entity<TerminalPanel>>,
     threads: HashMap<Key, Thread>,
@@ -264,6 +268,7 @@ impl KynexApp {
             git_modal: None,
             worktrees: HashMap::new(),
             terminals: HashMap::new(),
+            appearances: HashMap::new(),
             threads: HashMap::new(),
             expanded: HashSet::new(),
             open_runs: HashSet::new(),
@@ -412,6 +417,7 @@ impl Render for KynexApp {
         }
         self.sync_draft(cx);
         self.sync_prompt(window, cx);
+        self.load_appearances();
         // Shortcuts (Esc, Ctrl+B…) only reach the workspace through the focused
         // element, so never leave the window with nothing focused.
         if window.focused(cx).is_none() {
