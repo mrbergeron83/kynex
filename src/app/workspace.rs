@@ -138,6 +138,7 @@ impl KynexApp {
             self.threads.remove(k);
         }
         self.expanded.retain(|(k, _)| !closed.contains(k));
+        self.forget_drafts(closed);
     }
 
     pub(super) fn select(&mut self, a: Active, window: &mut Window, cx: &mut Context<Self>) {

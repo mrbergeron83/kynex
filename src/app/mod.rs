@@ -16,6 +16,7 @@
 //! | `transcript.rs`     | the conversation list and how each item draws        |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
+//! | `drafts.rs`         | each session's unsent message, kept across switches  |
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
 //! | `settings.rs`       | the project's Claude settings modal                  |
@@ -27,6 +28,7 @@
 mod about;
 mod app_update;
 mod composer;
+mod drafts;
 mod keys;
 mod menus;
 mod models;
@@ -57,6 +59,7 @@ use kynex_core::live::{Key, Live};
 use kynex_core::paths::chat_dir;
 use kynex_core::session::{self, Attachment, Kind, Session};
 
+use drafts::Draft;
 pub use keys::bind_keys;
 use keys::{CopySelection, copy_selection};
 use menus::OpenMenu;
@@ -90,6 +93,10 @@ pub struct KynexApp {
     composer: Entity<TextInput>,
     new_rule: Entity<TextInput>,
     attachments: Vec<Attachment>,
+    /// Unsent messages of the sessions not shown, by draft key; and the shown
+    /// session's uid and draft key, whose message is in the composer.
+    drafts: HashMap<String, Draft>,
+    draft_for: Option<(Key, String)>,
     notice: Option<String>,
     sessions: Option<SessionList>,
     /// Session id whose delete button was clicked once and is awaiting confirmation.
@@ -193,7 +200,8 @@ impl KynexApp {
             });
         })
         .detach();
-        cx.on_app_quit(|this, _| {
+        cx.on_app_quit(|this, cx| {
+            this.stash_draft(cx);
             this.save();
             async {}
         })
@@ -212,6 +220,8 @@ impl KynexApp {
             composer,
             new_rule,
             attachments: Vec::new(),
+            drafts: HashMap::new(),
+            draft_for: None,
             notice: None,
             sessions: None,
             confirm_delete: None,
@@ -322,6 +332,7 @@ impl Render for KynexApp {
         {
             s.finished = false;
         }
+        self.sync_draft(cx);
         self.sync_prompt(window, cx);
         // Shortcuts (Esc, Ctrl+B…) only reach the workspace through the focused
         // element, so never leave the window with nothing focused.

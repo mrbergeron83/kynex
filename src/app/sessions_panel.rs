@@ -243,6 +243,10 @@ impl KynexApp {
                             if let Err(e) = session::delete_session(&cwd3, &del_id) {
                                 this.notice = Some(e);
                             }
+                            this.drafts.remove(&del_id);
+                            if this.saved.drafts.remove(&del_id).is_some() {
+                                this.save();
+                            }
                             this.sessions = None;
                             cx.notify();
                         })),
