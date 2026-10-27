@@ -46,3 +46,10 @@ sessions, project settings, git), and `src/` is the gpui app. See `CLAUDE.md` fo
 
 State is saved to `state.json` in the per-user data dir: `%APPDATA%\kynex` on Windows,
 `~/Library/Application Support/kynex` on macOS, `~/.local/share/kynex` on Linux.
+
+## License
+
+Kynex is free to use but source-available, not open source: it is licensed under the
+[PolyForm Strict License 1.0.0](LICENSE.md), which allows personal and noncommercial use
+but not modifying, redistributing or commercial use without permission. Third-party
+notices are in [NOTICE.md](NOTICE.md).
