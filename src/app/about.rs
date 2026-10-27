@@ -95,7 +95,7 @@ impl KynexApp {
             [
                 ("GitHub", format!("https://github.com/{}", update::REPO)),
                 ("Release notes", format!("https://github.com/{}/releases", update::REPO)),
-                ("Licence", format!("https://github.com/{}/blob/main/LICENSE.md", update::REPO)),
+                ("Licence", format!("https://github.com/{}/blob/main/LICENSE", update::REPO)),
                 ("Third-party notices", format!("https://github.com/{}/blob/main/NOTICE.md", update::REPO)),
             ]
             .into_iter()
@@ -143,7 +143,7 @@ impl KynexApp {
                     .border_t_1()
                     .border_color(t.border_variant)
                     .child(div().text_xs().text_color(t.text_muted).child(
-                        "Free to use. Source available under the PolyForm Strict License 1.0.0. \
+                        "Free software under the GNU General Public License v3.0 or later. \
                          © 2026 Michael Bergeron.",
                     ))
                     .child(links),

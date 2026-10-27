@@ -2,7 +2,7 @@
 # archives can ship them (THIRD-PARTY-LICENSES.txt, rendered from about.hbs).
 #   cargo about generate about.hbs -o THIRD-PARTY-LICENSES.txt
 # A dependency under a license not listed here fails the release; check it's
-# compatible with distributing Kynex under PolyForm Strict before adding it.
+# compatible with distributing Kynex under GPL-3.0-or-later before adding it.
 accepted = [
     "0BSD",
     "Apache-2.0",
