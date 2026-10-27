@@ -5,12 +5,12 @@
 //! Output is parsed from git's machine formats (`--porcelain=v2 -z`, custom
 //! `--format`s with separator bytes), never from human-readable text.
 
-mod branch;
-mod diff;
-mod log;
+pub(crate) mod branch;
+pub(crate) mod diff;
+pub(crate) mod log;
 mod ops;
-mod status;
-mod worktree;
+pub(crate) mod status;
+pub(crate) mod worktree;
 
 use std::io::Write;
 use std::path::Path;

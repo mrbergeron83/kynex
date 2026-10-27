@@ -95,7 +95,7 @@ pub fn worktree_in<'a>(text: &str, worktrees: &'a [Worktree]) -> Option<&'a Work
 }
 
 /// Parses `git worktree list --porcelain`; bare entries are skipped.
-fn parse_worktrees(s: &str) -> Vec<Worktree> {
+pub(crate) fn parse_worktrees(s: &str) -> Vec<Worktree> {
     let mut list = Vec::new();
     for block in s.split("\n\n").filter(|b| !b.trim().is_empty()) {
         let mut w = Worktree::default();
@@ -124,7 +124,7 @@ fn parse_worktrees(s: &str) -> Vec<Worktree> {
 }
 
 /// Parses `git rev-list --left-right --count`: `"<left>\t<right>"`.
-fn parse_left_right(s: &str) -> Option<(usize, usize)> {
+pub(crate) fn parse_left_right(s: &str) -> Option<(usize, usize)> {
     let mut it = s.split_whitespace().map(str::parse::<usize>);
     Some((it.next()?.ok()?, it.next()?.ok()?))
 }

@@ -1,0 +1,35 @@
+# Fuzzes kynex-core's parsers with ClusterFuzzLite (.clusterfuzzlite/, targets
+# in crates/kynex-core/fuzz/). On demand only (Actions > Fuzz > Run workflow),
+# never on pushes or pull requests, so it never slows them down. A crash fails
+# the run and uploads the input.
+name: Fuzz
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "How long to fuzz, in minutes, shared across all targets"
+        type: number
+        default: 10
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: rust
+          sanitizer: address
+      - uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          mode: batch
+          fuzz-seconds: ${{ inputs.minutes * 60 }}
+          sanitizer: address

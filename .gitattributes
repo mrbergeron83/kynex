@@ -1,1 +1,3 @@
 * text=auto eol=lf
+# Fuzz seeds are parser input byte for byte (NULs, CRs): never normalised.
+crates/kynex-core/fuzz/seeds/** -text

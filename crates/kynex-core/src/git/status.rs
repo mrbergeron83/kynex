@@ -133,7 +133,7 @@ pub fn status(root: &Path) -> Result<Status, String> {
 }
 
 /// Parses `git status --porcelain=v2 --branch -z`.
-fn parse(s: &str) -> Status {
+pub(crate) fn parse(s: &str) -> Status {
     let mut st = Status::default();
     let mut head = None;
     let mut entries = s.split('\0');
@@ -176,18 +176,20 @@ fn parse(s: &str) -> Status {
                 None
             }
             Some('?') => {
-                st.files.push(FileStatus {
-                    path: entry[2..].to_string(),
-                    orig_path: None,
-                    staged: None,
-                    unstaged: Some(Change::Untracked),
-                });
+                if let Some(path) = entry.get(2..) {
+                    st.files.push(FileStatus {
+                        path: path.to_string(),
+                        orig_path: None,
+                        staged: None,
+                        unstaged: Some(Change::Untracked),
+                    });
+                }
                 None
             }
             _ => None,
         };
         if let Some((entry, path, orig_path)) = file {
-            let mut xy = entry[2..4].chars();
+            let mut xy = entry.get(2..4).unwrap_or("").chars();
             st.files.push(FileStatus {
                 path: path.to_string(),
                 orig_path,
@@ -245,6 +247,15 @@ mod tests {
         let st = parse("# branch.oid (initial)\0# branch.head main\0");
         assert_eq!(st.head, Head::Unborn("main".into()));
         assert_eq!(st.head.branch(), Some("main"));
+    }
+
+    /// Found by fuzzing: short entries and multi-byte characters where the
+    /// status codes should be.
+    #[test]
+    fn odd_entries_dont_panic() {
+        assert!(parse("?\0").files.is_empty());
+        let st = parse("1 aé b c d e f g path\0");
+        assert_eq!(st.files[0].path, "path");
     }
 
     #[test]

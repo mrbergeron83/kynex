@@ -274,7 +274,7 @@ impl Session {
     }
 
     /// One entry of a session log, into the transcript.
-    fn replay_entry(&mut self, v: Value) {
+    pub(crate) fn replay_entry(&mut self, v: Value) {
         if v["isMeta"] == true {
             return;
         }
@@ -565,7 +565,7 @@ impl Session {
         }
     }
 
-    fn handle(&mut self, v: Value) {
+    pub(crate) fn handle(&mut self, v: Value) {
         if let Some(id) = v["session_id"].as_str() {
             self.session_id = Some(id.to_string());
         }
@@ -1007,7 +1007,7 @@ fn read_names(path: &Path) -> Option<Names> {
 
 /// The text of a transcript line if it's a real user message (not a tool
 /// result, a meta line or a slash-command wrapper).
-fn first_message(line: &str) -> Option<String> {
+pub(crate) fn first_message(line: &str) -> Option<String> {
     {
         let Ok(v) = serde_json::from_str::<Value>(line) else { return None };
         if v["type"] != "user" || v["isMeta"] == true || v["isSidechain"] == true {

@@ -61,7 +61,7 @@ pub fn commit_detail(root: &Path, sha: &str) -> Result<CommitDetail, String> {
     Ok(detail)
 }
 
-fn parse(s: &str) -> Vec<CommitDetail> {
+pub(crate) fn parse(s: &str) -> Vec<CommitDetail> {
     s.split('\x1e')
         .filter_map(|rec| {
             let rec = rec.trim_start_matches('\n');
@@ -88,7 +88,7 @@ fn parse(s: &str) -> Vec<CommitDetail> {
 }
 
 /// Parses `%D`: `HEAD -> main, origin/main, origin/HEAD, tag: v1.0`.
-fn parse_refs(s: &str) -> Vec<Ref> {
+pub(crate) fn parse_refs(s: &str) -> Vec<Ref> {
     let mut refs = Vec::new();
     for part in s.split(", ").filter(|p| !p.is_empty()) {
         let (name, kind) = if let Some(b) = part.strip_prefix("HEAD -> ") {

@@ -63,7 +63,7 @@ pub fn latest_version() -> Result<String, String> {
     parse_latest(&body)
 }
 
-fn parse_latest(body: &[u8]) -> Result<String, String> {
+pub(crate) fn parse_latest(body: &[u8]) -> Result<String, String> {
     let v: serde_json::Value = serde_json::from_slice(body).map_err(|e| format!("bad release info: {e}"))?;
     v["tag_name"]
         .as_str()
@@ -81,7 +81,7 @@ pub fn check(current: &str) -> Result<Option<String>, String> {
 }
 
 /// The expected hash of `asset` in a `SHA256SUMS` file (`<hex>  <name>` lines).
-fn expected_sum(sums: &str, asset: &str) -> Option<String> {
+pub(crate) fn expected_sum(sums: &str, asset: &str) -> Option<String> {
     sums.lines().find_map(|l| {
         let (hash, name) = l.trim().split_once(char::is_whitespace)?;
         (name.trim().trim_start_matches('*') == asset && hash.len() == 64).then(|| hash.to_lowercase())
