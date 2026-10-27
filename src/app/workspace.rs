@@ -108,7 +108,11 @@ impl KynexApp {
     }
 
     /// Shows the open session with this CLI id, or resumes it from its transcript.
+    /// An archived session comes out of the archive.
     pub(super) fn switch_session(&mut self, kind: Kind, cwd: PathBuf, id: String) {
+        self.edit_groups(&cwd, |g| {
+            g.unarchive(&id);
+        });
         if !self.show_open(|s| s.session_id.as_deref() == Some(id.as_str())) {
             self.open_session(Session::resume(kind, cwd, id));
         }

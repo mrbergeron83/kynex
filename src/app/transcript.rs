@@ -7,9 +7,9 @@ use gpui::{
     AnyElement, App, Context, FollowMode, FontWeight, ListAlignment, ListState, Pixels, Window, div, img, list,
     prelude::*, px,
 };
-use kynex_core::fmt;
 use kynex_core::live::Key;
 use kynex_core::session::{Item, Kind, PermState};
+use kynex_core::{commands, fmt};
 
 use super::KynexApp;
 use super::state::Active;
@@ -126,8 +126,36 @@ impl KynexApp {
                             .children(images.map(|i| img(i).max_h(px(120.)).max_w(px(240.)).rounded_md())),
                     )
                 })
-                .when(!text.is_empty(), |d| {
-                    d.child(div().text_sm().child(selectable(key, Spot::new(ix, 0), text.clone(), t.selection)))
+                .when(!text.is_empty(), |d| match commands::parse(text) {
+                    // A slash command: its name as a chip, then whatever it was given.
+                    Some((name, args)) => d.child(
+                        div()
+                            .flex()
+                            .items_start()
+                            .gap_2()
+                            .text_sm()
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .px_1p5()
+                                    .rounded_md()
+                                    .bg(t.active)
+                                    .font_family(mono())
+                                    .text_color(t.accent)
+                                    .child(format!("/{name}")),
+                            )
+                            .when(!args.is_empty(), |d| {
+                                d.child(div().flex_1().min_w_0().child(selectable(
+                                    key,
+                                    Spot::new(ix, 0),
+                                    args.to_string(),
+                                    t.selection,
+                                )))
+                            }),
+                    ),
+                    None => {
+                        d.child(div().text_sm().child(selectable(key, Spot::new(ix, 0), text.clone(), t.selection)))
+                    }
                 })
                 .into_any_element(),
             Item::Assistant(text) => {
@@ -181,6 +209,16 @@ impl KynexApp {
                         .when(add > 0, |d| d.child(div().text_color(t.success).child(format!("+{add}"))))
                         .when(del > 0, |d| d.child(div().text_color(t.error).child(format!("−{del}"))))
                 });
+                // A call with a time limit (Bash's `timeout`, in ms) says how long it may run.
+                let timeout = parsed.as_ref().and_then(|v| v["timeout"].as_u64()).filter(|&ms| ms > 0).map(|ms| {
+                    div()
+                        .id(("tool-timeout", ix))
+                        .flex_none()
+                        .text_xs()
+                        .text_color(t.text_placeholder)
+                        .child(format!("max {}", fmt::limit(ms)))
+                        .tooltip(Tooltip::text(format!("Will run for at most {}", fmt::limit(ms))))
+                });
                 let summary_el = div().flex_1().min_w_0().truncate().child(summary.clone());
                 let summary_el = if described {
                     summary_el.text_sm().text_color(t.text)
@@ -198,6 +236,7 @@ impl KynexApp {
                             .child(name.clone()),
                     )
                     .child(summary_el)
+                    .children(timeout)
                     .children(stat_el)
                     .on_click(toggle);
                 let body = match parsed.filter(|_| expanded && stat.is_some()) {

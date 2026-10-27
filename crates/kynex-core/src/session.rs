@@ -226,6 +226,8 @@ impl Session {
         if text.is_empty() && images == 0 {
             return;
         }
+        // A slash command is logged in `<command-name>` wrappers; show it as typed.
+        let text = crate::commands::unwrap(&text).unwrap_or(text);
         let text = if images > 0 { format!("[{images} image(s)] {text}") } else { text };
         self.items.push(Item::User { text, images: Vec::new() });
     }
@@ -715,25 +717,31 @@ pub struct ModelInfo {
     pub efforts: Vec<String>,
 }
 
-/// Asks the CLI which models this account can use, through the stream-json
-/// `initialize` handshake. Sends no message, so it costs nothing. Blocks for
-/// a second or two; call it off the UI thread.
-pub fn list_models() -> Result<Vec<ModelInfo>, String> {
-    let mut cmd = Command::new(crate::cli::program());
+/// What the CLI reports in the stream-json `initialize` handshake when started
+/// in `cwd`: models, slash commands, agents and so on. Sends no message, so it
+/// costs nothing. Blocks for a second or two; call it off the UI thread.
+pub(crate) fn initialize(cwd: &Path) -> Result<Value, String> {
+    let mut cmd = match wsl::parse(cwd) {
+        Some(w) => w.command("claude"),
+        None => {
+            let mut c = Command::new(crate::cli::program());
+            c.current_dir(cwd);
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                c.creation_flags(0x0800_0000);
+            }
+            c
+        }
+    };
     cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
-        .current_dir(std::env::temp_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000);
-    }
     let mut child =
         crate::process::dies_with_parent(&mut cmd).spawn().map_err(|e| format!("failed to start `claude`: {e}"))?;
     let request =
-        json!({ "type": "control_request", "request_id": "kynex-models", "request": { "subtype": "initialize" } });
+        json!({ "type": "control_request", "request_id": "kynex-init", "request": { "subtype": "initialize" } });
     let sent = child.stdin.as_mut().is_some_and(|s| writeln!(s, "{request}").and_then(|_| s.flush()).is_ok());
     let mut response = None;
     if sent {
@@ -748,8 +756,14 @@ pub fn list_models() -> Result<Vec<ModelInfo>, String> {
     }
     let _ = child.kill();
     let _ = child.wait();
-    let v = response.ok_or("claude didn't answer the initialize request")?;
-    let models = v["response"]["response"]["models"].as_array().ok_or("no models in the initialize response")?;
+    let mut v = response.ok_or("claude didn't answer the initialize request")?;
+    Ok(v["response"]["response"].take())
+}
+
+/// Asks the CLI which models this account can use. Blocks; see [`initialize`].
+pub fn list_models() -> Result<Vec<ModelInfo>, String> {
+    let v = initialize(&std::env::temp_dir())?;
+    let models = v["models"].as_array().ok_or("no models in the initialize response")?;
     Ok(models
         .iter()
         .filter_map(|m| {

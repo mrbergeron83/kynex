@@ -124,7 +124,7 @@ impl KynexApp {
     /// Esc by default: closes an open menu or the settings modal first, then
     /// stops a running reply. Otherwise the key goes on to whoever else wants it.
     pub(super) fn interrupt_action(&mut self, _: &Interrupt, _: &mut Window, cx: &mut Context<Self>) {
-        if self.menu.take().is_some() || self.settings.take().is_some() {
+        if self.menu.take().is_some() || self.settings.take().is_some() || self.cancel_rename() {
             return cx.notify();
         }
         if self.active_session().is_some_and(|s| s.busy) {

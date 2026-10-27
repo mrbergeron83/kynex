@@ -5,6 +5,7 @@
 //!     project.json        which folder this is (lets a moved repo be re-linked later)
 //!     permissions.json    allow / deny rules Kynex hands to every Claude session
 //!     claude.json         how sessions start: permission mode, effort, extra directories
+//!     sessions.json       how the sessions panel is organised: groups, archive
 //! ```
 //!
 //! Each section is its own file, read and written on its own, so a new kind of
@@ -59,7 +60,7 @@ struct ProjectInfo {
     path: PathBuf,
 }
 
-fn load<T: DeserializeOwned + Default>(project: &Path, file: &str) -> T {
+pub(crate) fn load<T: DeserializeOwned + Default>(project: &Path, file: &str) -> T {
     std::fs::read_to_string(dir(project).join(file))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
@@ -68,7 +69,7 @@ fn load<T: DeserializeOwned + Default>(project: &Path, file: &str) -> T {
 
 /// Writes one section, creating the project's folder (and `project.json`) on first use.
 /// Goes through a temp file so a crash mid-write never leaves a truncated file.
-fn save<T: Serialize>(project: &Path, file: &str, value: &T) -> Result<(), String> {
+pub(crate) fn save<T: Serialize>(project: &Path, file: &str, value: &T) -> Result<(), String> {
     let dir = dir(project);
     std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't create {}: {e}", dir.display()))?;
     let info = dir.join("project.json");

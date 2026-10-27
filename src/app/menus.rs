@@ -1,5 +1,5 @@
-//! Popup menus: model, appearance (theme and fonts), permission mode, effort, and a
-//! project tab's right-click menu. One is open at a time, anchored where it was clicked.
+//! Popup menus: model, appearance (theme and fonts), permission mode, effort, and the
+//! right-click menus of project tabs, sessions and session groups. One is open at a time, anchored where it was clicked.
 
 use gpui::{Anchor, AnyElement, Context, Pixels, Point, anchored, deferred, div, prelude::*, px};
 use kynex_core::open::Opener;
@@ -19,6 +19,10 @@ pub enum Menu {
     Mode,
     Effort,
     Tab(usize),
+    /// A past session's right-click menu, by its id.
+    Session(String),
+    /// A session group's right-click menu.
+    Group(usize),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -71,6 +75,15 @@ impl KynexApp {
                             if !update {
                                 this.check_for_update(cx);
                             }
+                        }))
+                        .into_any_element(),
+                );
+                items.push(
+                    menu_item("kynex-check-cli", "Check for Claude Code updates", false, cx)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.menu = None;
+                            this.open_about(cx);
+                            this.check_cli_now(cx);
                         }))
                         .into_any_element(),
                 );
@@ -291,6 +304,8 @@ impl KynexApp {
                         .into_any_element(),
                 );
             }
+            Menu::Session(id) => items = self.session_menu_items(id, cx),
+            Menu::Group(i) => items = self.group_menu_items(*i, cx),
         }
         Some(deferred(
             anchored().position(at).anchor(anchor).snap_to_window_with_margin(px(8.)).child(

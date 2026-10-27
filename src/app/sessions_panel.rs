@@ -1,15 +1,19 @@
 //! The resizable panel left of the transcript: the folder's open and past
-//! sessions, new / switch / delete, and the project's Claude settings button.
+//! sessions (in their groups, see `session_groups.rs`), new / switch / delete,
+//! and the project's Claude settings button.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use gpui::{AnyElement, Context, MouseButton, SharedString, div, prelude::*, px};
+use gpui::{Anchor, AnyElement, Context, MouseButton, MouseDownEvent, SharedString, div, prelude::*, px};
 use kynex_core::fmt::ago;
 use kynex_core::live::Key;
 use kynex_core::session::{self, Item, Kind, Session, SessionInfo};
 
 use super::KynexApp;
 use super::keys::ToggleSessions;
+use super::menus::Menu;
+use super::session_groups::DraggedSession;
 use crate::theme::{Palette, theme};
 use crate::ui::{Icon, Lamp, Tooltip, divider, ghost_button, icon, icon_button, lamp, section_label};
 
@@ -174,6 +178,8 @@ impl KynexApp {
                     .into_any_element(),
             );
         }
+        // Each past session's row, placed below by group.
+        let mut past: HashMap<String, AnyElement> = HashMap::new();
         for (n, info) in items.iter().enumerate() {
             let is_current = current.as_deref() == Some(info.id.as_str());
             let confirming = self.confirm_delete.as_deref() == Some(info.id.as_str());
@@ -198,10 +204,18 @@ impl KynexApp {
                 icon_button(("delete", n), Icon::Trash, cx).invisible().group_hover("session-row", |s| s.visible())
             };
             let when = (!busy && !waiting && !finished).then(|| ago(info.modified));
+            let (menu_id, drag) = (id.clone(), DraggedSession { id: id.clone(), title: info.title.clone().into() });
             let row = session_row(("session", n), info.title.clone().into(), when, is_current, &t)
                 .group("session-row")
                 .tooltip(Tooltip::with_meta(info.title.clone(), ago(info.modified)))
                 .child(lamp(("session-status", n), Lamp::of(busy, waiting, finished), cx))
+                .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                        this.open_menu(Menu::Session(menu_id.clone()), ev.position, Anchor::TopLeft, cx)
+                    }),
+                )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.confirm_delete = None;
                     if is_current {
@@ -247,19 +261,48 @@ impl KynexApp {
                             if this.saved.drafts.remove(&del_id).is_some() {
                                 this.save();
                             }
+                            this.edit_groups(&cwd3, |g| g.forget(&del_id));
                             this.sessions = None;
                             cx.notify();
                         })),
                 );
-            rows.push(row.into_any_element());
+            past.insert(id, row.into_any_element());
         }
+
+        // Ungrouped first, then each group, then the archive.
+        let arranged = self.groups_for(&cwd).arrange(items.iter().map(|i| i.id.as_str()));
+        let mut take = |ids: Vec<String>| ids.iter().filter_map(|id| past.remove(id)).collect::<Vec<_>>();
+        rows.extend(take(arranged.top));
+        let groups: Vec<Vec<AnyElement>> = arranged.groups.into_iter().map(&mut take).collect();
+        let archived = take(arranged.archived);
+        for (i, group) in groups.into_iter().enumerate() {
+            rows.push(self.render_group(&cwd, i, group, cx));
+        }
+        if !archived.is_empty() {
+            rows.push(self.render_archived(&cwd, archived, cx));
+        }
+        let drop_cwd = cwd.clone();
 
         div()
             .flex()
             .flex_col()
             .size_full()
             .child(header)
-            .child(div().id("session-list").flex_1().min_h_0().overflow_y_scroll().px_1p5().pb_1().children(rows))
+            .child(
+                div()
+                    .id("session-list")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_1p5()
+                    .pb_1()
+                    // Dropped outside any group: back to the top level.
+                    .on_drop(cx.listener(move |this, d: &DraggedSession, _, cx| {
+                        this.edit_groups(&drop_cwd, |g| g.move_to(&d.id, None));
+                        cx.notify();
+                    }))
+                    .children(rows),
+            )
             // Project sessions have Claude settings; chat has no tools.
             .when(kind == Kind::Code, |d| {
                 d.child(divider(cx)).child(

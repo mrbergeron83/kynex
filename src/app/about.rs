@@ -1,6 +1,6 @@
 //! The About Kynex modal, from the Kynex menu in the title bar: the version and
 //! build, where Kynex lives on disk, the Claude Code it drives, licences, and the
-//! update controls (check now, update, restart).
+//! update controls for both (check now, update, restart).
 
 use std::path::PathBuf;
 
@@ -75,13 +75,16 @@ impl KynexApp {
             .flex_col()
             .gap_1()
             .child(info_row("Build", build.into(), None, &t, cx))
-            .child(info_row(
-                "Claude Code",
-                self.claude_version.clone().unwrap_or_else(|| "…".into()).into(),
-                None,
-                &t,
-                cx,
-            ))
+            .child(
+                info_row("Claude Code", self.claude_version.clone().unwrap_or_else(|| "…".into()).into(), None, &t, cx)
+                    .children(self.claude_version.clone().map(|v| {
+                        icon_button("about-copy-cli", Icon::Copy, cx)
+                            .tooltip(Tooltip::text("Copy, for bug reports"))
+                            .on_click(move |_, _, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(format!("Claude Code {v}")))
+                            })
+                    })),
+            )
             .child(info_row(
                 "Installed in",
                 exe_dir.as_ref().map_or("unknown".into(), |d| d.display().to_string()).into(),
@@ -132,7 +135,14 @@ impl KynexApp {
                     }),
                 ),
             ))
-            .child(self.render_update_box(&t, cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(self.render_update_box(&t, cx))
+                    .child(self.render_cli_box(&t, cx)),
+            )
             .child(rows)
             .child(
                 div()
@@ -232,28 +242,101 @@ impl KynexApp {
                     Some(check_now()),
                 ),
             };
-        div()
-            .flex()
-            .items_center()
-            .gap_3()
-            .px_3()
-            .py_2p5()
-            .rounded_md()
-            .border_1()
-            .border_color(if self.update_waiting() { t.accent } else { t.border_variant })
-            .bg(t.panel)
-            .child(lead)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(div().text_sm().child(title))
-                    .children(detail.map(|d| div().text_xs().text_color(t.text_muted).child(d))),
-            )
-            .children(action)
+        status_box(lead, title, detail, action, self.update_waiting(), t)
     }
+
+    /// The Claude Code Kynex drives: its version, a check on demand, and the update.
+    fn render_cli_box(&mut self, t: &Palette, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let version = self.claude_version.clone().unwrap_or_else(|| "…".into());
+        let check_now = || {
+            outline_button("about-cli-check", "Check now", cx)
+                .on_click(cx.listener(|this, _, _, cx| this.check_cli_now(cx)))
+                .into_any_element()
+        };
+        let ok = || icon(Icon::Check, t.success).size_3p5().into_any_element();
+        let failed = || icon(Icon::Dot, t.error).size_3p5().into_any_element();
+        let (lead, title, detail, action): (AnyElement, String, Option<String>, Option<AnyElement>) =
+            match (&self.cli_update, &self.cli_check) {
+                (UpdateState::Updating { latest }, _) => (
+                    spinner("about-cli-update-spin", t.accent, px(14.)).into_any_element(),
+                    format!("Updating Claude Code to {latest}…"),
+                    None,
+                    None,
+                ),
+                (_, c) if c.checking => (
+                    spinner("about-cli-check-spin", t.accent, px(14.)).into_any_element(),
+                    "Checking for Claude Code updates…".into(),
+                    None,
+                    None,
+                ),
+                (UpdateState::Available { installed, latest }, _) => (
+                    icon(Icon::ArrowUp, t.accent).size_3p5().into_any_element(),
+                    format!("Claude Code {installed} → {latest} available"),
+                    Some("Idle sessions restart on it; busy ones once they finish.".into()),
+                    Some(
+                        primary_button("about-cli-update", "Update", cx)
+                            .tooltip(Tooltip::text("Runs `claude update`"))
+                            .on_click(cx.listener(|this, _, _, cx| this.update_cli(cx)))
+                            .into_any_element(),
+                    ),
+                ),
+                (UpdateState::Updated { version }, _) => (
+                    ok(),
+                    format!("Claude Code {version} is installed"),
+                    Some("Sessions pick it up with their next message.".into()),
+                    None,
+                ),
+                (UpdateState::Failed(e), _) => {
+                    (failed(), "Couldn't update Claude Code".into(), Some(e.clone()), Some(check_now()))
+                }
+                (_, c) if c.error.is_some() => {
+                    (failed(), "Couldn't check for Claude Code updates".into(), c.error.clone(), Some(check_now()))
+                }
+                (_, c) => match c.at {
+                    Some(at) => (
+                        ok(),
+                        format!("Claude Code {version} is up to date"),
+                        Some(format!("Checked {}", ago(at))),
+                        Some(check_now()),
+                    ),
+                    None => (ok(), format!("Claude Code {version}"), Some("Not checked yet".into()), Some(check_now())),
+                },
+            };
+        let waiting = matches!(self.cli_update, UpdateState::Available { .. });
+        status_box(lead, title, detail, action, waiting, t)
+    }
+}
+
+/// Where an update stands: a lead icon, a line, an optional detail, and the action that fits.
+fn status_box(
+    lead: AnyElement,
+    title: String,
+    detail: Option<String>,
+    action: Option<AnyElement>,
+    highlight: bool,
+    t: &Palette,
+) -> impl IntoElement + use<> {
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .px_3()
+        .py_2p5()
+        .rounded_md()
+        .border_1()
+        .border_color(if highlight { t.accent } else { t.border_variant })
+        .bg(t.panel)
+        .child(lead)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(div().text_sm().child(title))
+                .children(detail.map(|d| div().text_xs().text_color(t.text_muted).child(d))),
+        )
+        .children(action)
 }
 
 /// One fact: a label, its value, and an "open folder" button for paths.
@@ -263,7 +346,7 @@ fn info_row(
     folder: Option<PathBuf>,
     t: &Palette,
     cx: &mut Context<KynexApp>,
-) -> impl IntoElement + use<> {
+) -> gpui::Div {
     div()
         .flex()
         .items_center()
