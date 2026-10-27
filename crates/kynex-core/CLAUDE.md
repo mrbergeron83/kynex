@@ -10,4 +10,4 @@ Kynex's logic without UI. Rules for this crate:
 - Every module gets `#[cfg(test)] mod tests` next to the code. Tests that run the real
   `claude` CLI are `#[ignore]` (they use quota); everything else must run offline.
 - OS-specific code goes behind `#[cfg(...)]` / `cfg!(...)` with a fallback for the others.
-- Check with `./check.ps1 -Core` from the repo root (seconds; no gpui build).
+- Check with `./scripts/check.ps1 -Core` from the repo root (seconds; no gpui build).

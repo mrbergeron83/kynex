@@ -67,9 +67,9 @@ jobs:
       - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-about
-      # Fails if a dependency's license isn't accepted in about.toml.
+      # Fails if a dependency's license isn't accepted in packaging/about.toml.
       - name: Third-party licenses
-        run: cargo about generate about.hbs -o THIRD-PARTY-LICENSES.txt
+        run: cargo about generate -c packaging/about.toml packaging/about.hbs -o THIRD-PARTY-LICENSES.txt
       - name: Package
         run: |
           mkdir dist pkg

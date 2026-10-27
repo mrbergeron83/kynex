@@ -1,6 +1,6 @@
 # cargo-deny: checks every dependency in Cargo.lock. Runs in the Security workflow.
 #   cargo deny check
-# The license list matches about.toml (what the release archives may ship).
+# The license list matches packaging/about.toml (what the release archives may ship).
 
 [graph]
 all-features = true
@@ -32,7 +32,7 @@ allow = [
 ]
 confidence-threshold = 0.9
 
-# Our own crates (publish = false) are under LICENSE.md, not third-party.
+# Our own crates (publish = false) are under LICENSE, not third-party.
 [licenses.private]
 ignore = true
 

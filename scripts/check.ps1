@@ -3,14 +3,15 @@
 # dx is serving. Exit code 0 means every step passed. Leaves the caller's shell
 # as it found it (location and environment).
 #
-# Usage: ./check.ps1          check everything
-#        ./check.ps1 -Fix     format and apply clippy's fixes first
-#        ./check.ps1 -Core    only kynex-core (no gpui, seconds)
+# Usage: ./scripts/check.ps1          check everything
+#        ./scripts/check.ps1 -Fix     format and apply clippy's fixes first
+#        ./scripts/check.ps1 -Core    only kynex-core (no gpui, seconds)
 
 param([switch]$Fix, [switch]$Core)
 
 $ErrorActionPreference = 'Stop'
-$target = @('--target-dir', (Join-Path $PSScriptRoot 'target/claude'))
+$root = Split-Path $PSScriptRoot
+$target = @('--target-dir', (Join-Path $root 'target/claude'))
 $scope = if ($Core) { @('-p', 'kynex-core') } else { @('--workspace') }
 # Inherited from dx when run inside Kynex; cargo only warns about it.
 $makeflags = $env:CARGO_MAKEFLAGS
@@ -27,7 +28,7 @@ function Step([string]$name, [string[]]$cargoArgs) {
     return $true
 }
 
-Push-Location $PSScriptRoot
+Push-Location $root
 try {
     $steps = @()
     if ($Fix) {

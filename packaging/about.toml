@@ -1,6 +1,6 @@
 # cargo-about: collects the license of every crate linked into Kynex, so the release
 # archives can ship them (THIRD-PARTY-LICENSES.txt, rendered from about.hbs).
-#   cargo about generate about.hbs -o THIRD-PARTY-LICENSES.txt
+#   cargo about generate -c packaging/about.toml packaging/about.hbs -o THIRD-PARTY-LICENSES.txt
 # A dependency under a license not listed here fails the release; check it's
 # compatible with distributing Kynex under GPL-3.0-or-later before adding it.
 accepted = [
