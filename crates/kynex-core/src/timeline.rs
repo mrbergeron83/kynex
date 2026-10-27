@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 use crate::fmt;
 use crate::session::{Item, PermState};
+use crate::tasks::Status;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StepKind {
@@ -15,6 +16,8 @@ pub enum StepKind {
     Agent,
     Plan,
     Prompt,
+    /// A background task ended.
+    Task,
     Error,
 }
 
@@ -85,6 +88,13 @@ pub fn turns(items: &[Item]) -> Vec<Turn> {
                     PermState::Denied(_) => format!("Denied {tool}"),
                 };
                 push(&mut turn.steps, Step { item: ix, kind: StepKind::Prompt, label });
+            }
+            Item::Task(n) if n.status != Status::Event => {
+                let (kind, label) = match n.status {
+                    Status::Failed => (StepKind::Error, format!("Task failed: {}", clip(&n.summary, 70))),
+                    _ => (StepKind::Task, clip(&n.summary, 80)),
+                };
+                push(&mut turn.steps, Step { item: ix, kind, label });
             }
             Item::Error(e) => {
                 push(&mut turn.steps, Step { item: ix, kind: StepKind::Error, label: clip(e, 80) });

@@ -303,6 +303,7 @@ impl KynexApp {
                 StepKind::Agent => (Icon::Play, t.text_muted),
                 StepKind::Plan => (Icon::Check, t.info),
                 StepKind::Prompt => (Icon::Shield, t.warning),
+                StepKind::Task => (Icon::Check, t.success),
                 StepKind::Error => (Icon::Dot, t.error),
             };
             div()

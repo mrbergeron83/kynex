@@ -13,6 +13,7 @@
 //! | `session_groups.rs` | session groups and the archive, their menus          |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `terminal_dock.rs`  | the project's terminal panel under the conversation  |
+//! | `tasks.rs`          | background tasks: running strip, ended rows, toast   |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
 //! | `transcript.rs`     | the conversation list and how each item draws        |
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
@@ -54,6 +55,7 @@ mod settings;
 mod setup;
 mod slash;
 mod state;
+mod tasks;
 mod terminal_dock;
 mod timeline;
 mod title_bar;
@@ -165,6 +167,8 @@ pub struct KynexApp {
     update_checking: bool,
     /// The small "update available" toast under the title bar.
     update_toast: bool,
+    /// A background task ended in a session that isn't shown.
+    task_toast: Option<tasks::TaskToast>,
     /// Mouse-wheel turns made smooth for every scroll area.
     wheel: SmoothWheel,
     /// The About Kynex modal is open; the installed Claude Code version, once read.
@@ -312,6 +316,7 @@ impl KynexApp {
             update_checked: None,
             update_checking: false,
             update_toast: false,
+            task_toast: None,
             wheel: SmoothWheel::default(),
             about_open: false,
             claude_version: None,
@@ -334,6 +339,8 @@ impl KynexApp {
         let mut reports = Vec::new();
         // Folders whose files may have just changed: a turn ended or a tool call finished.
         let mut touched = HashSet::new();
+        // Background tasks that just ended, for a toast if their session isn't shown.
+        let mut ended = Vec::new();
         for s in self.all_sessions_mut() {
             let before = s.wants_you();
             let (was_busy, seen) = (s.busy, s.items.len());
@@ -346,6 +353,11 @@ impl KynexApp {
             if (was_busy && !s.busy) || finished_tool {
                 touched.insert(s.cwd.clone());
             }
+            for item in s.items.get(seen..).into_iter().flatten() {
+                if let session::Item::Task(n) = item {
+                    ended.push((s.uid, n.clone()));
+                }
+            }
             if let Some(init) = s.take_init() {
                 reports.push((s.cwd.clone(), init));
             }
@@ -356,6 +368,7 @@ impl KynexApp {
             models::reported(init.models, cx);
         }
         self.refresh_worktrees(&touched, cx);
+        self.toast_new_tasks(ended);
         if called && let Some(handle) = cx.windows().first().copied() {
             cx.defer(move |cx| {
                 handle
@@ -376,10 +389,11 @@ impl KynexApp {
     fn restart_idle(&mut self) {
         self.restart_when_idle.retain(|path| {
             let Some(live) = self.code.get_mut(path) else { return false };
-            for s in live.sessions.iter_mut().filter(|s| !s.busy) {
+            // A restart would also stop background tasks; wait for those too.
+            for s in live.sessions.iter_mut().filter(|s| !s.busy && !s.has_tasks()) {
                 s.kill();
             }
-            live.busy()
+            live.busy() || live.sessions.iter().any(Session::has_tasks)
         });
     }
 
@@ -509,6 +523,7 @@ impl Render for KynexApp {
         let settings = self.render_settings(window, cx);
         let notice = self.render_notice(cx);
         let toast = self.render_update_toast(cx);
+        let task_toast = self.render_task_toast(cx);
         let about = self.render_about(window, cx);
         let git_modal = self.render_git_modal(window, cx);
         div()
@@ -585,6 +600,7 @@ impl Render for KynexApp {
             .child(main)
             .children(notice)
             .children(toast)
+            .children(task_toast)
             .children(git_modal)
             .children(settings)
             .children(about)

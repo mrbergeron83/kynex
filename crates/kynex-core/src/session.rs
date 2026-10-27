@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 use crate::commands::SlashCommand;
 use crate::queue::Queue;
+use crate::tasks::{self, Tasks};
 use crate::{project, wsl};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -78,6 +79,8 @@ pub enum Item {
         tools: usize,
         files: Vec<String>,
     },
+    /// A background task ended (or a Monitor saw something); Claude's turn about it follows.
+    Task(tasks::Notice),
     Error(String),
 }
 
@@ -157,6 +160,8 @@ pub struct Session {
     pub mode: project::Mode,
     /// Messages written while Claude works; the next goes when a turn ends.
     pub queue: Queue,
+    /// Background tasks running in this session's process.
+    pub tasks: Tasks,
     /// Set by the UI so it hears about new events; a no-op until then.
     pub wake: Wake,
     child: Option<Child>,
@@ -202,6 +207,7 @@ impl Session {
             context: ContextUse::default(),
             mode,
             queue: Queue::default(),
+            tasks: Tasks::default(),
             wake: Arc::new(|| {}),
             child: None,
             stdin: None,
@@ -274,6 +280,8 @@ impl Session {
         }
         if v["type"] == "user" && !written_by_cli(&v) {
             self.replay_user(&v["message"]["content"]);
+        } else if let Some(n) = v["message"]["content"].as_str().and_then(tasks::parse_notification) {
+            self.items.push(Item::Task(n));
         }
         self.handle(v);
     }
@@ -526,6 +534,12 @@ impl Session {
         self.stdin = None;
         self.rx = None;
         self.busy = false;
+        self.tasks.clear();
+    }
+
+    /// Whether background tasks are running, which closing the process would stop.
+    pub fn has_tasks(&self) -> bool {
+        !self.tasks.running.is_empty()
     }
 
     /// Drain pending events from the process. Call when woken.
@@ -572,6 +586,14 @@ impl Session {
             "system" if v["subtype"] == "compact_boundary" => {
                 self.context.tokens = v["compact_metadata"]["post_tokens"].as_u64().unwrap_or(0);
             }
+            // A task that ended shows in the transcript, and the session wants
+            // you even if Claude's turn about it says nothing.
+            "system" => {
+                if let Some(notice) = self.tasks.apply(&v) {
+                    self.items.push(Item::Task(notice));
+                    self.finished = true;
+                }
+            }
             "assistant" => {
                 // Subagents' replies have their own context; only the main thread's counts.
                 // Synthetic ones (a slash command's answer, an error) carry no real usage.
@@ -611,9 +633,12 @@ impl Session {
             "user" => {
                 for block in v["message"]["content"].as_array().into_iter().flatten() {
                     if block["type"] == "tool_result" {
+                        let id = block["tool_use_id"].as_str().unwrap_or("").to_string();
+                        let content = tool_result_text(&block["content"]);
+                        self.tasks.tool_result(&id, &content);
                         self.items.push(Item::ToolResult {
-                            id: block["tool_use_id"].as_str().unwrap_or("").to_string(),
-                            content: tool_result_text(&block["content"]),
+                            id,
+                            content,
                             is_error: block["is_error"].as_bool().unwrap_or(false),
                         });
                     }
@@ -1157,6 +1182,23 @@ mod tests {
             .filter_map(|i| if let Item::User { text, .. } = i { Some(text.as_str()) } else { None })
             .collect();
         assert_eq!(said, ["check CI"]);
+        // Each notification is a row of its own instead.
+        assert_eq!(s.items.iter().filter(|i| matches!(i, Item::Task(n) if n.task_id == "b1")).count(), 2);
+    }
+
+    #[test]
+    fn a_background_task_ending_wants_you() {
+        let mut s = Session::new(Kind::Code, std::env::temp_dir());
+        s.handle(json!({ "type": "system", "subtype": "task_started", "task_id": "b1", "tool_use_id": "toolu_1",
+            "description": "Watch CI", "task_type": "local_bash" }));
+        s.handle(json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "toolu_1",
+            "content": "Command running in background with ID: b1. Output is being written to: /tmp/b1.output. You will be notified when it completes." }] } }));
+        assert!(s.has_tasks() && !s.wants_you());
+        assert_eq!(s.tasks.running[0].output_file, Some(PathBuf::from("/tmp/b1.output")));
+        s.handle(json!({ "type": "system", "subtype": "task_notification", "task_id": "b1", "tool_use_id": "toolu_1",
+            "status": "completed", "output_file": "/tmp/b1.output", "summary": "Background command \"Watch CI\" completed (exit code 0)" }));
+        assert!(!s.has_tasks() && s.wants_you());
+        assert!(matches!(s.items.last(), Some(Item::Task(n)) if n.status == tasks::Status::Completed));
     }
 
     #[test]

@@ -61,7 +61,9 @@ impl Live {
         let active = self.current().map(|s| s.uid);
         let mut closed = Vec::new();
         self.sessions.retain(|s| {
-            let keep = Some(s.uid) == active || s.busy || s.waiting() || s.finished || !s.queue.is_empty();
+            // Closing the process would also stop its background tasks.
+            let keep =
+                Some(s.uid) == active || s.busy || s.waiting() || s.finished || !s.queue.is_empty() || s.has_tasks();
             if !keep {
                 closed.push(s.uid);
             }
@@ -113,6 +115,17 @@ mod tests {
         let mut live = Live::default();
         let mut a = session();
         a.queue.push("later".into(), Vec::new());
+        let a_uid = a.uid;
+        live.show(a);
+        assert!(live.show(session()).is_empty());
+        assert_eq!(live.sessions[0].uid, a_uid);
+    }
+
+    #[test]
+    fn background_tasks_keep_a_session_open() {
+        let mut live = Live::default();
+        let mut a = session();
+        a.tasks.apply(&serde_json::json!({ "subtype": "task_started", "task_id": "b1", "task_type": "local_bash" }));
         let a_uid = a.uid;
         live.show(a);
         assert!(live.show(session()).is_empty());
