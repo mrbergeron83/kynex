@@ -2,7 +2,8 @@
 #   irm https://raw.githubusercontent.com/mrbergeron83/kynex/main/install.ps1 | iex
 #
 # Downloads the latest release, checks it against SHA256SUMS, unpacks it into
-# %LOCALAPPDATA%\Programs\kynex and adds Start menu and desktop shortcuts.
+# %LOCALAPPDATA%\Programs\kynex, adds Start menu and desktop shortcuts, and puts
+# a `knx` command on the user PATH.
 # KYNEX_VERSION=v0.2.0 picks a release, KYNEX_INSTALL_DIR another folder.
 
 # A script block, so `irm | iex` doesn't leave these settings in the caller's session.
@@ -48,6 +49,27 @@
         $link.TargetPath = $exe
         $link.WorkingDirectory = $dir
         $link.Save()
+    }
+
+    # `knx` from any terminal: a shim that starts Kynex without holding the console.
+    Set-Content (Join-Path $dir 'knx.cmd') "@start `"`" `"%~dp0kynex.exe`" %*" -Encoding Ascii
+    # Edit the raw registry value so %VARS% in the user PATH stay unexpanded.
+    $envKey = (Get-Item 'HKCU:\').OpenSubKey('Environment', $true)
+    try {
+        $path = $envKey.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+        if (($path -split ';') -notcontains $dir) {
+            $kind = if ($path -match '%') { 'ExpandString' } else { 'String' }
+            $path = $path.TrimEnd(';')
+            $envKey.SetValue('Path', $(if ($path) { "$path;$dir" } else { $dir }), $kind)
+            # Tell Explorer the environment changed, so terminals opened from now on see the new PATH.
+            Add-Type -Namespace Kynex -Name Win32 -MemberDefinition '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);'
+            $result = [UIntPtr]::Zero
+            [Kynex.Win32]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result) | Out-Null
+            $env:Path = "$env:Path;$dir"
+            Write-Host "Added $dir to your PATH; open a new terminal to use 'knx'."
+        }
+    } finally {
+        $envKey.Close()
     }
 
     Write-Host "Kynex installed to $dir"

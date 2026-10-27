@@ -13,9 +13,21 @@ Windows (PowerShell, no admin needed; run it again to update):
 irm https://raw.githubusercontent.com/mrbergeron83/kynex/main/install.ps1 | iex
 ```
 
-It installs the latest release to `%LOCALAPPDATA%\Programs\kynex` and adds Start menu
-and desktop shortcuts. macOS and Linux builds are on the
-[releases page](https://github.com/mrbergeron83/kynex/releases) (unsigned for now).
+macOS (Apple silicon) and Linux (x86_64), no sudo needed; run it again to update:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mrbergeron83/kynex/main/install.sh | sh
+```
+
+Both install the latest release and add a `knx` command to start Kynex from a terminal:
+
+- **Windows:** `%LOCALAPPDATA%\Programs\kynex`, Start menu and desktop shortcuts, `knx`
+  on your PATH.
+- **macOS:** `~/Applications/Kynex.app` (Launchpad, Spotlight), `knx` in `~/.local/bin`.
+- **Linux:** `~/.local/share/kynex`, an app menu entry, `knx` in `~/.local/bin`.
+
+Builds are unsigned for now; they're also on the
+[releases page](https://github.com/mrbergeron83/kynex/releases).
 
 ## Features (milestone 1)
 
