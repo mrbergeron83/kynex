@@ -3,14 +3,14 @@
 
 use std::time::Duration;
 
-use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
+use gpui::{AnyElement, Context, FontWeight, Hsla, div, prelude::*, px};
 use kynex_core::cli::{self, UpdateState};
 
 use super::{KynexApp, models};
-use crate::theme::theme;
+use crate::theme::{Palette, theme};
 use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, outline_button, primary_button, spinner};
 
-const CLI_CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+pub(super) const CLI_CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Getting the `claude` CLI ready to run sessions, without leaving Kynex.
 pub enum Setup {
@@ -397,22 +397,31 @@ impl KynexApp {
             UpdateState::Updating { .. } => div().into_any_element(),
             _ => dismiss().into_any_element(),
         };
-        Some(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .pl_2()
-                .pr_1()
-                .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(t.border_variant)
-                .bg(t.panel)
-                .child(lead)
-                .child(div().flex_1().min_w_0().text_xs().text_color(color).child(text))
-                .child(actions)
-                .into_any_element(),
-        )
+        Some(update_strip(lead, text, color, actions, &t))
     }
+}
+
+/// A one-line strip above the composer: an update offer, its progress or its outcome.
+pub(super) fn update_strip(
+    lead: AnyElement,
+    text: String,
+    color: Hsla,
+    actions: AnyElement,
+    t: &Palette,
+) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .pl_2()
+        .pr_1()
+        .py_1()
+        .rounded_md()
+        .border_1()
+        .border_color(t.border_variant)
+        .bg(t.panel)
+        .child(lead)
+        .child(div().flex_1().min_w_0().text_xs().text_color(color).child(text))
+        .child(actions)
+        .into_any_element()
 }

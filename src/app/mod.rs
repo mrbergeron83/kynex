@@ -20,8 +20,10 @@
 //! | `menus.rs`          | popup menus                                          |
 //! | `settings.rs`       | the project's Claude settings modal                  |
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
+//! | `app_update.rs`     | Kynex updating itself from its GitHub releases       |
 //! | `models.rs`         | the model list                                       |
 
+mod app_update;
 mod composer;
 mod keys;
 mod menus;
@@ -103,6 +105,8 @@ pub struct KynexApp {
     resizing_terminal: bool,
     /// Whether a newer Claude Code is out, or being installed.
     cli_update: UpdateState,
+    /// Kynex's own update, shown in the same strip style as the CLI's.
+    app_update: UpdateState,
     /// Whether the CLI is installed and signed in; until it is, a setup screen
     /// takes the workspace's place.
     setup: Setup,
@@ -130,6 +134,7 @@ impl KynexApp {
         })
         .detach();
         Self::watch_cli_updates(cx);
+        Self::watch_app_updates(cx);
 
         let mut chat = match saved.chat_session_id.clone() {
             Some(id) => Session::resume(Kind::Chat, chat_dir(), id),
@@ -209,6 +214,7 @@ impl KynexApp {
             resizing_sessions: false,
             resizing_terminal: false,
             cli_update: UpdateState::Idle,
+            app_update: UpdateState::Idle,
             setup: Setup::Checking,
             login_code,
             focus: cx.focus_handle(),

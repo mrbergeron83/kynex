@@ -13,4 +13,5 @@ pub mod project;
 pub mod session;
 pub mod terminal;
 pub mod titles;
+pub mod update;
 pub mod wsl;
