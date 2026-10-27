@@ -7,6 +7,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Background tasks** (`run_in_background` commands, background agents, Monitors): the ones
+  still running show over the message box with how long they've run, and **Watch** streams a
+  task's output live in the terminal panel. When one ends, the transcript gets a row with its
+  status, summary, run time and an **Output** button, the session lights up and the taskbar
+  flashes as when a turn ends, and a toast says so if the session isn't shown (click it to go
+  there). Reopened sessions show these rows too.
 - **Jump to latest**: a button over the transcript when it's scrolled up, and in the timeline's
   header, glides back to the end and follows new output again.
 - Timeline turns fold: a chevron opens or closes a turn's steps, and **Collapse all** /
@@ -26,6 +32,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Switching away from a session, or changing a project's rules, no longer closes a session
+  whose background tasks are still running (which stopped them).
 - A reopened session no longer shows the CLI's background-task notices
   (`<task-notification>…`) as messages you sent.
 - The transcript follows new output again after you glide back down to the end, instead of
