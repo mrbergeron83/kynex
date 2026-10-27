@@ -14,7 +14,7 @@
   <a href="https://github.com/mrbergeron83/kynex/actions/workflows/security.yml"><img src="https://github.com/mrbergeron83/kynex/actions/workflows/security.yml/badge.svg?branch=main" alt="Security"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/mrbergeron83/kynex"><img src="https://api.scorecard.dev/projects/github.com/mrbergeron83/kynex/badge" alt="OpenSSF Scorecard"></a>
   <a href="https://github.com/mrbergeron83/kynex/releases/latest"><img src="https://img.shields.io/github/v/release/mrbergeron83/kynex?include_prereleases&sort=semver" alt="Release"></a>
-  <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-PolyForm%20Strict%201.0.0-blue" alt="License: PolyForm Strict 1.0.0"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" alt="License: GPL-3.0-or-later"></a>
 </p>
 
 Kynex drives your installed `claude` CLI over its stream-json protocol, so it uses whatever
