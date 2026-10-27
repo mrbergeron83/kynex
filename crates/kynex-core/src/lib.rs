@@ -6,6 +6,8 @@ pub mod attach;
 pub mod cli;
 pub mod commands;
 pub mod fmt;
+#[doc(hidden)]
+pub mod fuzz;
 pub mod git;
 pub mod groups;
 pub mod history;

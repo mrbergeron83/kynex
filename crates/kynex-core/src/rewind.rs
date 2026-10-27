@@ -66,7 +66,7 @@ pub(crate) fn branch(log: &str) -> Vec<Value> {
 }
 
 /// A log timestamp, UTC like `2026-10-27T15:57:20.276Z`; fractions are dropped.
-fn parse_time(s: &str) -> Option<SystemTime> {
+pub(crate) fn parse_time(s: &str) -> Option<SystemTime> {
     let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
     let (y, m, d) = (n(0..4)?, n(5..7)?, n(8..10)?);
     let secs = n(11..13)? * 3600 + n(14..16)? * 60 + n(17..19)?;

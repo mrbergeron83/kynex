@@ -1,0 +1,121 @@
+f8c2758489e8617814b02654a2373bc717d5a8a2f8c2758a7283d363f25b44960c4288c2bd19b86fb76dc3a 77f5eac3811e99b7b2f44cae7fdedbd29dde19ccdev1793142681HEAD -> main, origin/main, origin/HEADOne dark logo everywhere; new-group button in the Sessions header (#68)dev@example.comTwo small UI polish items, packaged together.
+
+## One dark logo (Fixes #67)
+- `src/ui/mark.rs` draws the housing, rim, knob and pointer in the dark
+mark's fixed colours (`mark-dark.svg`) whatever the theme. The lamp
+keeps the theme's state colours; the working pulse uses the knob's
+petrol so it matches the mark. The mark carries its own dark housing, so
+it reads on a light title bar (Kynex Light).
+- README shows `mark-dark.svg` only; `mark-light.svg` removed;
+`docs/design/branding.md` describes one master with its fixed hex
+colours.
+- App icons (`assets/icons/make-icons.py`) already came from the dark
+mark; nothing to change there.
+
+## New-group button (Fixes #56)
+- A Lucide `folder-plus` icon in `src/ui/mod.rs`, and a button beside
+**+** in the Sessions header.
+- `KynexApp::new_group` (`src/app/session_groups.rs`) adds an empty
+group (`add_group("")` → "New group") and opens its name in place via
+`start_rename`.
+
+CHANGELOG updated. `./scripts/check.ps1` passes.
+77f5eac3811e99b7b2f44cae7fdedbd29dde19cc77f5eaca7283d363f25b44960c4288c2bd19b86fb76dc3amber1793142133ui-polish-logo-groupsOne dark logo everywhere; a new-group button in the Sessions headerdev@example.com- The live mark draws with the dark mark's fixed colours under every
+  theme; the lamp keeps its state colours, working glows in the knob's
+  petrol. README shows mark-dark.svg only, mark-light.svg is gone and
+  branding.md describes one master.
+- A folder-plus button beside + in the Sessions header adds an empty
+  group and opens its name for editing in place.
+
+Fixes #67
+Fixes #56
+
+a7283d363f25b44960c4288c2bd19b86fb76dc3aa7283d392dde4b691335b2d580f8b2fe3cae35e841e251e 280e7f0b26fe82010c33cfe4edd9dfbce4b59b1cdev1793141975Background tasks: watch them live, see when they end (#66)dev@example.comFixes #63
+Fixes #3
+
+## What
+
+Background tasks (`run_in_background` Bash / PowerShell, background
+agents, Monitors) are now visible from start to finish.
+
+- **Running** (#3): a strip over the message box lists the session's
+running tasks (kind, description, elapsed time, an agent's latest tool).
+**Watch** streams the task's output file into the terminal panel
+(`Get-Content -Wait` on Windows, `tail -F` elsewhere).
+- **Ended** (#63): a transcript row where the notification arrives
+(status icon, the CLI's summary such as `Background command "…"
+completed (exit code 0)`, run time, and an **Output** button). The turn
+also gets a timeline step, and a failed task shows as an error step.
+- **Attention**: an ending marks the session finished, so its lamp
+lights and the taskbar flashes or the Dock bounces as when a turn ends,
+even if Claude's reply is empty. If the session isn't shown, a toast
+says so; click it to go to that session.
+- **Replay**: reopened sessions turn the logged `<task-notification>`
+entries into the same rows.
+- **Fix**: `Live::prune` and the restart after a rules change used to
+close idle sessions that weren't shown, which killed their background
+tasks. Sessions with running tasks now stay open.
+
+## How
+
+- `kynex-core/src/tasks.rs` (new, tested): `Tasks` tracks running tasks
+from the `system` messages `task_started` / `task_updated` /
+`task_progress` / `task_notification`, takes the output path from the
+background command's tool result, and parses logged
+`<task-notification>` XML. A Monitor event (no status) leaves the task
+running. Foreground agents and `skip_transcript` notices stay out.
+- `session.rs`: `Item::Task(Notice)`, `Session::tasks`, `has_tasks()`.
+- `src/app/tasks.rs` (new): the strip, the row, and the toast.
+
+## Not verified
+
+The live `system` task messages and their fields come from reading the
+CLI bundle (2.1.x), not from a captured run. The log format was checked
+against real session logs. Worth a quick manual check in a dev instance:
+ask Claude for a `run_in_background` command, then confirm the strip,
+Watch, the ended row and the toast in a second session.
+
+`./scripts/check.ps1` passes.
+280e7f0b26fe82010c33cfe4edd9dfbce4b59b1c280e7f092dde4b691335b2d580f8b2fe3cae35e841e251ember1793141461background-tasksShow background tasks: running strip with live output, ended rows, toastdev@example.comThe CLI reports background tasks over stream-json as system messages
+(task_started / task_updated / task_progress / task_notification); session
+logs keep the <task-notification> text instead. kynex-core/tasks.rs tracks
+the running ones per session and turns each ending into an Item::Task.
+
+- Running tasks show over the composer; Watch streams the output file in the
+  terminal panel (Get-Content -Wait on Windows, tail -F elsewhere).
+- An ended task gets a transcript row (status, summary, run time, Output),
+  a timeline step, marks the session finished (lamp + taskbar flash), and a
+  toast when its session isn't shown.
+- Sessions with running tasks are no longer pruned or restarted, which
+  killed their tasks.
+
+Fixes #63
+Fixes #3
+
+92dde4b691335b2d580f8b2fe3cae35e841e251e92dde4bdcb4a99867c9e95ccd5657d8853ebd25b29c9324 e064d826d509ca3873d1c3e6a2709b147fabc2d7dev1793140918Timeline polish and keyboard scrolling: full height, folding, jump to latest, Page Up/Down (#64)dev@example.comBundles the timeline and transcript-scrolling issues, which touch the
+same code (`follow_tail` and the glide in `transcript.rs`, the timeline
+header, the main layout).
+
+- **#57**: gliding down onto the end of the transcript (wheel or a jump)
+turns tail-following back on, so a growing reply no longer runs off the
+bottom (`Thread::glide_frame`).
+- **#58**: the timeline is a full-height column beside a column holding
+the transcript and the composer, down to the terminal dock
+(`KynexApp::render`).
+- **#59**: each turn has a chevron to fold its steps; **Collapse all /
+Expand all** in the header. The rule lives in
+`kynex_core::timeline::Fold` (tested): until you choose, the latest turn
+and the one in view are open.
+- **#60**: **Jump to latest** in the timeline header and as a floating
+button over the transcript while it's scrolled up; hidden when already
+following.
+- **#65**: Page Up / Page Down (even while typing), Ctrl+Home /
+Ctrl+End, and Home / End and ↑ / ↓ when the message box doesn't use them
+scroll the transcript, gliding like the wheel. Rebindable in
+`keymap.json`; the terminal still gets these keys.
+
+Fixes #57
+Fixes #58
+Fixes #59
+Fixes #60
+Fixes #65

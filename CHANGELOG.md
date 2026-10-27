@@ -43,6 +43,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   letting a growing reply run off the bottom.
 - The timeline runs the full height of the window beside the transcript, with the message box
   under the transcript only.
+- The Git view no longer crashes Kynex on unusual git output: file names with accented or other
+  non-ASCII characters in certain places, very short status entries, or huge line counts and
+  hunk numbers. Found by the new fuzz tests.
 
 ## [0.0.4] - 2026-10-27
 

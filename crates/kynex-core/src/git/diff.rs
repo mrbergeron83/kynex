@@ -83,10 +83,10 @@ pub fn diff_stat(root: &Path, untracked: &[&str]) -> Result<(usize, usize), Stri
 }
 
 /// Sums `git diff --numstat`: `<added>\t<removed>\t<path>` per file, `-` for binary.
-fn parse_numstat(s: &str) -> (usize, usize) {
+pub(crate) fn parse_numstat(s: &str) -> (usize, usize) {
     s.lines().fold((0, 0), |(added, removed), line| {
         let mut cols = line.split('\t').map(|n| n.parse::<usize>().unwrap_or(0));
-        (added + cols.next().unwrap_or(0), removed + cols.next().unwrap_or(0))
+        (added.saturating_add(cols.next().unwrap_or(0)), removed.saturating_add(cols.next().unwrap_or(0)))
     })
 }
 
@@ -110,7 +110,7 @@ fn untracked_diff(path: &str, bytes: Vec<u8>) -> FileDiff {
 }
 
 /// Parses `git diff` / `git show` output (one or more files).
-pub(super) fn parse(s: &str) -> Vec<FileDiff> {
+pub(crate) fn parse(s: &str) -> Vec<FileDiff> {
     let mut files: Vec<FileDiff> = Vec::new();
     // Lines left in the current hunk, old side and new side.
     let (mut old_left, mut new_left) = (0u32, 0u32);
@@ -131,21 +131,21 @@ pub(super) fn parse(s: &str) -> Vec<FileDiff> {
             let (old, new) = match kind {
                 LineKind::Added => {
                     new_left = new_left.saturating_sub(1);
-                    new_no += 1;
+                    new_no = new_no.saturating_add(1);
                     f.added += 1;
                     (None, Some(new_no))
                 }
                 LineKind::Removed => {
                     old_left = old_left.saturating_sub(1);
-                    old_no += 1;
+                    old_no = old_no.saturating_add(1);
                     f.removed += 1;
                     (Some(old_no), None)
                 }
                 LineKind::Context => {
                     old_left = old_left.saturating_sub(1);
                     new_left = new_left.saturating_sub(1);
-                    old_no += 1;
-                    new_no += 1;
+                    old_no = old_no.saturating_add(1);
+                    new_no = new_no.saturating_add(1);
                     (Some(old_no), Some(new_no))
                 }
                 LineKind::NoNewline => (None, None),
@@ -209,8 +209,7 @@ fn range(s: &str) -> (u32, u32) {
 /// The path from `a/x b/x` in a `diff --git` line; the `+++`, `rename` and
 /// `---` lines that follow override it where present.
 fn git_line_path(rest: &str) -> String {
-    let half = rest.len() / 2;
-    let b = &rest[half..];
+    let b = rest.get(rest.len() / 2..).unwrap_or("");
     b.strip_prefix(" b/").or_else(|| rest.rsplit_once(" b/").map(|(_, p)| p)).unwrap_or(rest).to_string()
 }
 
@@ -291,6 +290,24 @@ Binary files /dev/null and b/logo.png differ
     fn sums_numstat() {
         assert_eq!(parse_numstat("3\t1\tsrc/a.rs\n-\t-\tlogo.png\n10\t0\tnew file.rs\n"), (13, 1));
         assert_eq!(parse_numstat(""), (0, 0));
+        // Found by fuzzing: counts that overflow when summed.
+        let max = usize::MAX;
+        assert_eq!(parse_numstat(&format!("{max}\t{max}\n1\t1\n")), (max, max));
+    }
+
+    /// Line numbers past `u32::MAX` stop there rather than overflowing.
+    #[test]
+    fn huge_hunk_start_saturates() {
+        let files = parse("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -4294967295 +4294967295 @@\n a\n-b\n+c\n");
+        let line = files[0].hunks[0].lines.last().unwrap();
+        assert_eq!(line.new, Some(u32::MAX));
+    }
+
+    /// Found by fuzzing: the middle of a `diff --git` line inside a multi-byte character.
+    #[test]
+    fn git_line_path_with_multibyte_middle() {
+        assert_eq!(git_line_path("éa"), "éa");
+        assert_eq!(git_line_path("a/é b/é"), "é");
     }
 
     #[test]

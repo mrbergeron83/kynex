@@ -136,7 +136,7 @@ impl Drop for Login {
 }
 
 /// Drops terminal escapes (colours, OSC 8 hyperlinks, which also repeat the URL).
-fn strip_escapes(s: &str) -> String {
+pub(crate) fn strip_escapes(s: &str) -> String {
     let mut out = String::new();
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -161,7 +161,7 @@ fn strip_escapes(s: &str) -> String {
     out
 }
 
-fn last_line(bytes: &[u8]) -> Option<String> {
+pub(crate) fn last_line(bytes: &[u8]) -> Option<String> {
     let text = strip_escapes(&String::from_utf8_lossy(bytes));
     text.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string())
 }
@@ -246,7 +246,7 @@ pub fn update() -> Result<String, String> {
 }
 
 /// `major.minor.patch`, ignoring any pre-release or build suffix.
-fn parse(v: &str) -> Option<(u64, u64, u64)> {
+pub(crate) fn parse(v: &str) -> Option<(u64, u64, u64)> {
     let core = v.trim().split(['-', '+']).next()?;
     let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
     let version = (parts.next()??, parts.next()??, parts.next()??);

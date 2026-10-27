@@ -36,7 +36,7 @@ pub fn branches(root: &Path) -> Result<Vec<Branch>, String> {
     Ok(parse(&s))
 }
 
-fn parse(s: &str) -> Vec<Branch> {
+pub(crate) fn parse(s: &str) -> Vec<Branch> {
     let mut local = Vec::new();
     let mut remote = Vec::new();
     for line in s.lines() {

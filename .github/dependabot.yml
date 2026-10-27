@@ -29,3 +29,12 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  # The ClusterFuzzLite build image, pinned by digest.
+  - package-ecosystem: docker
+    directory: /.clusterfuzzlite
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    labels: [dependencies, ci]

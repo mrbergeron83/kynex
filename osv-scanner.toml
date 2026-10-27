@@ -1,0 +1,39 @@
+# OSV-Scanner (run by OpenSSF Scorecard): advisories we knowingly accept.
+#
+# Only "unmaintained" RustSec notices deep in gpui's dependency tree belong
+# here: none has a fixed version, and none is a known vulnerability. cargo-deny
+# passes them the same way (`unmaintained = "workspace"` in deny.toml).
+# A real vulnerability is never ignored; it gets fixed or an issue.
+#
+# Each entry expires so it gets re-checked: when one does, see whether a newer
+# gpui-pre drops the crate, then remove the entry or push the date out.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+ignoreUntil = 2027-01-31T00:00:00Z
+reason = "paste: unmaintained, transitive via gpui, no fix available"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0206"
+ignoreUntil = 2027-01-31T00:00:00Z
+reason = "rustybuzz: unmaintained, transitive via gpui, no fix available"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0192"
+ignoreUntil = 2027-01-31T00:00:00Z
+reason = "ttf-parser: unmaintained, transitive via gpui, no fix available"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0371"
+ignoreUntil = 2027-01-31T00:00:00Z
+reason = "zbus_names: unmaintained, transitive via gpui (Linux), no fix available"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0370"
+ignoreUntil = 2027-01-31T00:00:00Z
+reason = "zvariant: unmaintained, transitive via gpui (Linux), no fix available"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0372"
+ignoreUntil = 2027-01-31T00:00:00Z
+reason = "zvariant_derive: unmaintained, transitive via gpui (Linux), no fix available"

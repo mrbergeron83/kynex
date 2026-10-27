@@ -1,0 +1,80 @@
+# Fuzz targets for kynex-core's parsers (cargo-fuzz, nightly). Its own
+# workspace, so the normal build and ./scripts/check.ps1 never see it.
+#
+#   cargo +nightly fuzz run git_diff            from crates/kynex-core
+#   cargo +nightly fuzz list
+#
+# The Fuzz action runs them on demand with ClusterFuzzLite (.clusterfuzzlite/,
+# .github/workflows/fuzz.yml).
+
+[package]
+name = "kynex-core-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+kynex-core = { path = ".." }
+libfuzzer-sys = "0.4"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "stream_json"
+path = "fuzz_targets/stream_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transcript"
+path = "fuzz_targets/transcript.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_status"
+path = "fuzz_targets/git_status.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_diff"
+path = "fuzz_targets/git_diff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_log"
+path = "fuzz_targets/git_log.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_branch"
+path = "fuzz_targets/git_branch.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_worktree"
+path = "fuzz_targets/git_worktree.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "versions"
+path = "fuzz_targets/versions.rs"
+test = false
+doc = false
+bench = false

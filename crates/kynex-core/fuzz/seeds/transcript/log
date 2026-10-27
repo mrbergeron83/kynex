@@ -1,0 +1,11 @@
+{"type":"summary","summary":"x","leafUuid":"a3"}
+{"type":"custom-title","customTitle":"Fix the parser"}
+{"type":"ai-title","aiTitle":"Parser fixes"}
+{"type":"user","uuid":"u1","parentUuid":null,"timestamp":"2026-10-27T09:19:00.000Z","sessionId":"s1","message":{"role":"user","content":"Fix the diff parser"}}
+{"type":"user","uuid":"m1","parentUuid":"u1","isMeta":true,"message":{"role":"user","content":"<command-name>/model</command-name>"}}
+{"type":"assistant","uuid":"a1","parentUuid":"m1","timestamp":"2026-10-27T09:19:05.123Z","message":{"model":"claude-opus-5-5","content":[{"type":"text","text":"On it."},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"src/git/diff.rs"}}]}}
+{"type":"user","uuid":"r1","parentUuid":"a1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"fn parse() {}"}]}}
+{"type":"user","uuid":"u2","parentUuid":"r1","timestamp":"2026-10-27T09:20:00Z","message":{"role":"user","content":[{"type":"text","text":"and this"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]}}
+{"type":"user","uuid":"n1","parentUuid":"u2","message":{"role":"user","content":"<task-notification><task-id>b1</task-id><status>completed</status><summary>Build finished</summary></task-notification>"}}
+{"type":"file-history-snapshot","messageId":"u2","snapshot":{"trackedFileBackups":{"src/a.rs":{"backupFileName":"x@v1"}}}}
+{"type":"assistant","uuid":"a3","parentUuid":"n1","message":{"content":[{"type":"text","text":"Done."}]}}

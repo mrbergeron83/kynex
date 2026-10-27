@@ -43,7 +43,15 @@ cargo run --release                          # plain release run
 cargo check --target-dir target/claude       # type-check without touching the dev build
 cargo test -p kynex-core -- --ignored        # live round-trip against the real claude CLI (uses quota)
 cargo deny check                             # advisories, licenses, sources (deny.toml), as CI's Security workflow
+cd crates/kynex-core; cargo +nightly fuzz run git_diff   # fuzz a parser (targets: cargo +nightly fuzz list)
 ```
+
+Fuzzing (`crates/kynex-core/fuzz/`, its own workspace; the Fuzz action runs it in CI on demand) needs
+`cargo install cargo-fuzz`, and on Windows the MSVC ASan runtime on `PATH`
+(`…\VC\Tools\MSVC\<ver>\bin\HostX64\x64`); `-s none` doesn't link there. A parser that panics
+on some input gets fixed, and the input becomes a unit test. New parsers of outside text get an
+entry in `kynex_core::fuzz` and a target. `osv-scanner.toml` lists the unmaintained-crate
+advisories we accept from gpui's tree, each with an expiry; never add a real vulnerability.
 
 One-time setup: `cargo install dioxus-cli@0.7.10 --locked`, and `claude` logged in.
 

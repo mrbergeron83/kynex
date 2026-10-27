@@ -1,0 +1,9 @@
+worktree /src/kynex
+HEAD 77f5eac0000000000000000000000000000000000
+branch refs/heads/main
+
+worktree /src/kynex-wt
+HEAD a7283d30000000000000000000000000000000000
+detached
+prunable gitdir file points to non-existent location
+
