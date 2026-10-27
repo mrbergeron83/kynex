@@ -12,11 +12,29 @@ use super::KynexApp;
 use super::state::Active;
 use crate::ui::selectable;
 
-actions!(kynex, [OpenProject, NextTab, PrevTab, ToggleSessions, CycleMode, Interrupt, CopySelection, ToggleTerminal]);
+actions!(
+    kynex,
+    [
+        OpenProject,
+        NextTab,
+        PrevTab,
+        ToggleSessions,
+        CycleMode,
+        Interrupt,
+        CopySelection,
+        ToggleTerminal,
+        SearchHistory,
+        StashDraft,
+        PickModel,
+        ExpandTools,
+        EditInEditor
+    ]
+);
 
-/// Workspace shortcuts and their defaults. `<data dir>/keymap.json` overrides
-/// them by name, e.g. `{ "interrupt": "ctrl-c" }`; an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 7] = [
+/// Workspace shortcuts and their defaults, Claude Code's where it has one.
+/// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
+/// an empty string unbinds one.
+const SHORTCUTS: [(&str, &str); 12] = [
     ("open_project", "secondary-o"),
     ("next_tab", "ctrl-tab"),
     ("prev_tab", "ctrl-shift-tab"),
@@ -24,7 +42,16 @@ const SHORTCUTS: [(&str, &str); 7] = [
     ("toggle_terminal", "ctrl-`"),
     ("cycle_mode", "shift-tab"),
     ("interrupt", "escape"),
+    ("search_history", "ctrl-r"),
+    ("stash_draft", "ctrl-s"),
+    ("pick_model", "alt-p"),
+    // Claude Code's Ctrl+O; Ctrl+O already opens a project outside macOS.
+    ("expand_tools", if cfg!(target_os = "macos") { "ctrl-o" } else { "ctrl-shift-o" }),
+    ("edit_in_editor", "ctrl-g"),
 ];
+
+/// The keys above a terminal sends to its shell instead (see `terminal::view`).
+pub const SHELL_KEYS: [&str; 4] = ["ctrl-r", "ctrl-s", "ctrl-g", "alt-p"];
 
 pub fn bind_keys(cx: &mut App) {
     let path = data_dir().join("keymap.json");
@@ -65,6 +92,11 @@ pub fn bind_keys(cx: &mut App) {
             "toggle_sessions" => KeyBinding::new(keys, ToggleSessions, c),
             "toggle_terminal" => KeyBinding::new(keys, ToggleTerminal, c),
             "cycle_mode" => KeyBinding::new(keys, CycleMode, c),
+            "search_history" => KeyBinding::new(keys, SearchHistory, c),
+            "stash_draft" => KeyBinding::new(keys, StashDraft, c),
+            "pick_model" => KeyBinding::new(keys, PickModel, c),
+            "expand_tools" => KeyBinding::new(keys, ExpandTools, c),
+            "edit_in_editor" => KeyBinding::new(keys, EditInEditor, c),
             _ => KeyBinding::new(keys, Interrupt, c),
         });
     }
@@ -139,6 +171,44 @@ impl KynexApp {
         let Some(s) = self.session_mut().filter(|s| s.kind == Kind::Code) else { return };
         let next = Mode::ALL.iter().position(|m| *m == s.mode).map_or(0, |i| (i + 1) % Mode::ALL.len());
         s.set_mode(Mode::ALL[next]);
+        cx.notify();
+    }
+
+    /// Ctrl+R in the composer: search what you've sent.
+    pub(super) fn search_history(&mut self, _: &SearchHistory, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.composer_focused(window, cx) {
+            return cx.propagate();
+        }
+        self.start_history_search(cx);
+    }
+
+    /// Ctrl+S in the composer: stash the draft, or bring it back.
+    pub(super) fn stash_action(&mut self, _: &StashDraft, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.composer_focused(window, cx) {
+            return cx.propagate();
+        }
+        self.toggle_stash(cx);
+    }
+
+    /// Alt+P: the model picker, above the composer; the draft stays.
+    pub(super) fn pick_model(&mut self, _: &PickModel, _: &mut Window, cx: &mut Context<Self>) {
+        self.open_model_menu(cx);
+    }
+
+    /// Ctrl+G in the composer: write the message in your editor.
+    pub(super) fn edit_in_editor_action(&mut self, _: &EditInEditor, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.composer_focused(window, cx) {
+            return cx.propagate();
+        }
+        self.edit_in_editor(cx);
+    }
+
+    /// Claude Code's Ctrl+O: every tool call in the transcript open, or all closed again.
+    pub(super) fn expand_tools(&mut self, _: &ExpandTools, _: &mut Window, cx: &mut Context<Self>) {
+        self.expand_tools = !self.expand_tools;
+        for th in self.threads.values() {
+            th.list.remeasure();
+        }
         cx.notify();
     }
 

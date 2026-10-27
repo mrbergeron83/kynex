@@ -26,6 +26,8 @@ impl KynexApp {
         let busy = self.session_mut().is_some_and(|s| s.busy);
         let text = self.composer.read(cx).text().trim().to_string();
         self.slash.dismissed = None;
+        self.last_esc = None;
+        self.remember_sent(&text, cx);
         // Built-ins Kynex runs itself (`/clear`, `/model`…) work even mid-reply.
         if self.attachments.is_empty() && self.run_command(&text, cx) {
             self.composer.update(cx, |c, cx| c.set_text("", cx));
@@ -145,7 +147,11 @@ impl KynexApp {
         let update = self.render_cli_update(cx);
         let queued = self.render_queue(cx);
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
-        let popup = if self.prompt.is_none() { self.render_slash(cx) } else { None };
+        let popup = match () {
+            _ if self.prompt.is_some() => None,
+            _ if self.history_searching() => self.render_history_search(cx),
+            _ => self.render_slash(cx),
+        };
         let this = cx.entity().downgrade();
         let shell = |child: AnyElement, focused: bool, needs_you: bool| {
             div().w_full().flex().justify_center().px_6().pb_4().pt_1().child(
@@ -211,8 +217,13 @@ impl KynexApp {
             }
         });
         let in_project = matches!(self.saved.active, Active::Project(_));
-        let placeholder =
-            if in_project { "Ask Claude Code to do something in this project…" } else { "Message Claude…" };
+        let placeholder = if self.history_searching() {
+            "Search what you've sent…"
+        } else if in_project {
+            "Ask Claude Code to do something in this project…"
+        } else {
+            "Message Claude…"
+        };
         self.composer.update(cx, |c, _| c.set_placeholder(placeholder));
         let focused = self.composer.read(cx).is_focused(window);
         let has_message = !self.composer.read(cx).text().trim().is_empty() || !self.attachments.is_empty();
@@ -282,39 +293,52 @@ impl KynexApp {
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
         };
 
-        // While the slash-command popup is open it takes the keys first.
+        // While the history search or the slash-command popup is open it takes the keys first.
         let body = div()
             .flex()
             .flex_col()
             .gap_2()
             .capture_action(cx.listener(|this, _: &input::Up, _, cx| {
-                if this.slash_move(false, cx) {
+                if this.history_search_move(false, cx) || this.slash_move(false, cx) {
                     cx.stop_propagation();
                 }
             }))
-            // The field passes ↑ on from its first line: take the queue back, as in Claude Code.
+            // The field passes ↑ / ↓ on from its first / last line: the queue
+            // comes back, then earlier messages, as in Claude Code.
             .on_action(cx.listener(|this, _: &input::Up, _, cx| {
-                if !this.take_back_queue(cx) {
+                if !this.history_up(cx) {
                     cx.propagate();
                 }
             }))
             .capture_action(cx.listener(|this, _: &input::Down, _, cx| {
-                if this.slash_move(true, cx) {
+                if this.history_search_move(true, cx) || this.slash_move(true, cx) {
                     cx.stop_propagation();
                 }
             }))
+            .on_action(cx.listener(|this, _: &input::Down, _, cx| {
+                if !this.history_down(cx) {
+                    cx.propagate();
+                }
+            }))
             .capture_action(cx.listener(|this, _: &input::Enter, window, cx| {
-                if this.slash_accept(true, window, cx) {
+                if this.history_searching() {
+                    this.take_history_match(cx);
+                    cx.stop_propagation();
+                } else if this.slash_accept(true, window, cx) {
                     cx.stop_propagation();
                 }
             }))
             .capture_action(cx.listener(|this, _: &Interrupt, _, cx| {
-                if this.slash_dismiss(cx) {
+                if this.cancel_history_search(cx) || this.slash_dismiss(cx) || this.double_esc(cx) {
                     cx.stop_propagation();
                 }
             }))
             .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 let k = &ev.keystroke;
+                if k.key == "tab" && !k.modifiers.modified() && this.history_searching() {
+                    this.take_history_match(cx);
+                    return cx.stop_propagation();
+                }
                 if k.key == "tab" && !k.modifiers.modified() && this.slash_accept(false, window, cx) {
                     cx.stop_propagation();
                 }

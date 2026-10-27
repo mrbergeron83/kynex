@@ -13,9 +13,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
   takes them back to edit, and clicking one edits just that one.
 - Shift+Tab on a permission prompt allows the action for the rest of the session, as in
   Claude Code.
+- More of Claude Code's keys in the message box: ↑ / ↓ go through what you've sent in the
+  project, Ctrl+R searches it, Ctrl+S stashes the draft (again on an empty box brings it
+  back), Esc Esc clears it, Ctrl+G writes it in your editor (`$VISUAL` / `$EDITOR`, else
+  Notepad / TextEdit), Ctrl+J adds a line, and Alt+P opens the model picker. Ctrl+Shift+O
+  (Ctrl+O on macOS) opens every tool call in the transcript. All of them can be rebound in
+  `keymap.json`.
 
 ### Changed
 
+- The slash-command popup is full on the first `/`, right after a restart too: each project's
+  list is saved, and sessions refresh it as they start instead of Kynex running an extra
+  `claude` process (and again every minute). The model picker's list is saved the same way.
 - A quieter transcript: each tool result folds into its call (open the call to see it, and a
   failed call is marked), edits no longer echo "updated successfully", and a run of tool calls
   collapses to one summary row, e.g. "Edited app.rs ×3, read 2 files  +22 −6". While Claude

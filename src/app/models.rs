@@ -1,7 +1,8 @@
 //! The model picker's list: the account's own models from the CLI, with a short
-//! built-in list until (or unless) that arrives.
+//! built-in list until (or unless) that arrives. Every session reports the list
+//! as it starts; the last one is saved, so after a restart it's there at once.
 
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::{Context, prelude::*};
@@ -13,14 +14,18 @@ use super::KynexApp;
 const MODELS: [(&str, &str); 5] =
     [("", "Default"), ("opus", "Opus"), ("fable", "Fable"), ("sonnet", "Sonnet"), ("haiku", "Haiku")];
 
-/// The models the account can use, fetched once from the CLI. Kept in a static
-/// rather than on `KynexApp` so it doesn't change the app's layout.
-static MODEL_LIST: OnceLock<Vec<ModelInfo>> = OnceLock::new();
+/// The models the account can use, as the CLI last reported them. Kept in a
+/// static rather than on `KynexApp` so it doesn't change the app's layout.
+static MODEL_LIST: Mutex<Option<Vec<ModelInfo>>> = Mutex::new(None);
 static MODELS_FETCHING: AtomicBool = AtomicBool::new(false);
+
+fn known() -> Option<Vec<ModelInfo>> {
+    MODEL_LIST.lock().ok()?.clone()
+}
 
 /// The list to offer: the CLI's, or the built-in one.
 pub fn models() -> Vec<ModelInfo> {
-    MODEL_LIST.get().cloned().unwrap_or_else(|| {
+    known().unwrap_or_else(|| {
         MODELS
             .iter()
             .map(|(id, name)| ModelInfo {
@@ -36,7 +41,7 @@ pub fn models() -> Vec<ModelInfo> {
 /// The entry for a saved model choice (`""` is the CLI's default).
 pub fn current_model(saved: &str) -> Option<ModelInfo> {
     let value = if saved.is_empty() { "default" } else { saved };
-    MODEL_LIST.get()?.iter().find(|m| m.value == value).cloned()
+    known()?.into_iter().find(|m| m.value == value)
 }
 
 /// The composer's label for a saved choice. The default shows what it resolves
@@ -54,27 +59,50 @@ pub fn model_label(saved: &str) -> String {
 
 /// Lets a fetch that failed (say, while the CLI was missing) run again.
 pub fn retry_fetch() {
-    if MODEL_LIST.get().is_none() {
+    if known().is_none() {
         MODELS_FETCHING.store(false, Ordering::SeqCst);
     }
 }
 
-/// Starts the one background fetch of the model list; repaints when it lands.
-/// If it fails the built-in short list stays.
+/// Loads the saved list once, or if there's none asks the CLI; repaints when it
+/// lands. If both fail the built-in short list stays until a session reports one.
 pub fn fetch_models(cx: &mut Context<KynexApp>) {
     if MODELS_FETCHING.swap(true, Ordering::SeqCst) {
         return;
     }
     cx.spawn(async move |this, cx| {
-        let result = cx.background_spawn(async { session::list_models() }).await;
+        let result = cx
+            .background_spawn(async {
+                let saved = session::saved_models();
+                if saved.is_empty() { session::list_models() } else { Ok(saved) }
+            })
+            .await;
         match result {
-            Ok(list) if !list.is_empty() => {
-                let _ = MODEL_LIST.set(list);
+            // A session may have reported a fresher list meanwhile.
+            Ok(list) => {
+                if let Ok(mut known) = MODEL_LIST.lock() {
+                    known.get_or_insert(list);
+                }
             }
-            Ok(_) => eprintln!("kynex: claude reported no models"),
             Err(e) => eprintln!("kynex: couldn't list models: {e}"),
         }
         this.update(cx, |_, cx| cx.notify()).ok();
+    })
+    .detach();
+}
+
+/// A session's fresh list: shown from now on, and saved for the next start.
+pub fn reported(list: Vec<ModelInfo>, cx: &mut Context<KynexApp>) {
+    if list.is_empty() || known().as_ref() == Some(&list) {
+        return;
+    }
+    if let Ok(mut known) = MODEL_LIST.lock() {
+        *known = Some(list.clone());
+    }
+    cx.background_spawn(async move {
+        if let Err(e) = session::save_models(&list) {
+            eprintln!("kynex: {e}");
+        }
     })
     .detach();
 }

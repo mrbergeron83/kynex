@@ -25,7 +25,7 @@ impl KynexApp {
         let Some(session) = self.active_session() else { return div().into_any_element() };
         let (key, busy) = (session.uid, session.busy);
         let first = run.first();
-        let open = self.open_runs.contains(&(key, first));
+        let open = self.expand_tools || self.open_runs.contains(&(key, first));
         let pending = busy && run.calls.iter().any(|c| c.result.is_none());
         let failed = run
             .calls
@@ -89,7 +89,7 @@ impl KynexApp {
         });
         let running = session.busy && result.is_none();
         let failed = result.is_some_and(|(_, _, e)| e);
-        let expanded = self.expanded.contains(&(key, ix));
+        let expanded = self.expand_tools || self.expanded.contains(&(key, ix));
         let parsed = serde_json::from_str::<serde_json::Value>(input).ok();
         // Claude's description of the call reads as prose; a bare command or path stays mono.
         let described =

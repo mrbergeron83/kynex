@@ -8,6 +8,7 @@ pub mod commands;
 pub mod fmt;
 pub mod git;
 pub mod groups;
+pub mod history;
 pub mod live;
 pub mod open;
 pub mod paths;
