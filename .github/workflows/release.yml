@@ -7,7 +7,8 @@
 #
 # Assets are plain archives named kynex-<target>.<zip|tar.gz> plus SHA256SUMS;
 # keep those names stable, an installer or updater will look them up. Each
-# archive gets a signed build provenance attestation; check one with
+# archive gets a signed build provenance attestation, also published as
+# kynex.intoto.jsonl; check one with
 #   gh attestation verify kynex-x86_64-pc-windows-msvc.zip --repo mrbergeron83/kynex
 name: Release
 
@@ -107,8 +108,15 @@ jobs:
         working-directory: dist
         run: sha256sum * > SHA256SUMS
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        id: attest
         with:
           subject-checksums: dist/SHA256SUMS
+      # The signed provenance also ships as a release asset, so it can be checked
+      # offline and tools like OpenSSF Scorecard see the release as signed.
+      - name: Provenance asset
+        env:
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE" dist/kynex.intoto.jsonl
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
