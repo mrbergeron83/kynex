@@ -29,6 +29,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   box, and names the project on a new conversation. It's picked from the folder automatically;
   choose another or turn it off by right-clicking the project's tab, or under Claude settings →
   Appearance.
+- The branch chips above a conversation show what's changed there (`3 files +42 −7`) and how
+  far the branch is ahead of / behind its upstream, refreshed as each tool call and turn ends
+  and when you come back to Kynex. Clicking one opens that worktree's Git view in a modal over
+  the conversation, with **Open as tab** to keep it.
 
 ### Changed
 
@@ -51,6 +55,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Restart after an update opens the new version on Windows instead of just closing Kynex.
 - Question prompts show which option you picked: its row is highlighted, with a check mark
   for single-choice questions and a ticked box for multi-select.
+- The Code / Git switch no longer jumps sideways when you change views: the sessions panel
+  stays in the Git view, and picking a session there goes back to the conversation.
 
 ## [0.0.3] - 2026-10-27
 

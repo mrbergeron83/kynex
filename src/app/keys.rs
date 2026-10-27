@@ -241,10 +241,12 @@ impl KynexApp {
 
     pub(super) fn key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
-        if k.key == "escape" && (self.menu.is_some() || self.settings.is_some() || self.about_open) {
-            if self.menu.take().is_none() {
-                self.settings = None;
-                self.about_open = false;
+        if k.key == "escape"
+            && (self.menu.is_some() || self.settings.is_some() || self.about_open || self.git_modal.is_some())
+        {
+            // The topmost one closes: a menu, then settings or About, then the Git modal.
+            if self.menu.take().is_none() && self.settings.take().is_none() && !std::mem::take(&mut self.about_open) {
+                self.close_git_modal(cx);
             }
             cx.notify();
             cx.stop_propagation();
