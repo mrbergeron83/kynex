@@ -15,6 +15,7 @@
 //! | `terminal_dock.rs`  | the project's terminal panel under the conversation  |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
 //! | `transcript.rs`     | the conversation list and how each item draws        |
+//! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
@@ -47,6 +48,7 @@ mod state;
 mod terminal_dock;
 mod title_bar;
 mod titles;
+mod tool_rows;
 mod toolbar;
 mod transcript;
 mod workspace;
@@ -98,6 +100,8 @@ pub struct KynexApp {
     threads: HashMap<Key, Thread>,
     /// Tool calls and results opened up in the transcript.
     expanded: HashSet<(Key, usize)>,
+    /// Runs of tool calls opened up, by their first call's index.
+    open_runs: HashSet<(Key, usize)>,
     composer: Entity<TextInput>,
     new_rule: Entity<TextInput>,
     attachments: Vec<Attachment>,
@@ -236,6 +240,7 @@ impl KynexApp {
             terminals: HashMap::new(),
             threads: HashMap::new(),
             expanded: HashSet::new(),
+            open_runs: HashSet::new(),
             composer,
             new_rule,
             attachments: Vec::new(),

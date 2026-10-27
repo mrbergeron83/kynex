@@ -264,6 +264,20 @@ mod tests {
     }
 
     #[test]
+    fn picking_again_replaces_a_single_pick() {
+        let mut f = form(false);
+        f.choose(0);
+        assert!(f.picked(0, 0));
+        assert!(!f.complete(), "the second question is still open");
+        f.go_to(0);
+        f.choose(1);
+        assert!(f.picked(0, 1) && !f.picked(0, 0));
+        assert_eq!(f.answer(0).as_deref(), Some("Password"));
+        f.choose(1);
+        assert!(f.complete());
+    }
+
+    #[test]
     fn submitting_early_shows_the_open_question() {
         let mut f = form(false);
         f.go_to(2);

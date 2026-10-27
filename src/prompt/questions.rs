@@ -78,6 +78,7 @@ impl PromptView {
             let focused = self.form.cursor == n;
             let picked = self.form.picked(q, n);
             choice_row(SharedString::from(format!("q{q}-{n}")), n, focused, t)
+                .when(picked, |d| d.bg(t.element))
                 .when(question.multi, |d| d.child(div().h(px(20.)).flex().items_center().child(check_box(picked, t))))
                 .child(
                     div()
@@ -85,9 +86,15 @@ impl PromptView {
                         .flex_col()
                         .child(
                             div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
                                 .text_sm()
                                 .when(picked && !question.multi && !focused, |d| d.text_color(t.success))
-                                .child(option.label.clone()),
+                                .child(option.label.clone())
+                                .when(picked && !question.multi, |d| {
+                                    d.child(icon(Icon::Check, t.success).size(px(12.)))
+                                }),
                         )
                         .when(!option.description.is_empty(), |d| {
                             d.child(div().text_xs().text_color(t.text_muted).child(option.description.clone()))

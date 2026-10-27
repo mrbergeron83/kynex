@@ -1,5 +1,6 @@
 //! The conversation: a virtualized `gpui::list` per session that follows the
-//! tail while a reply streams, and how each [`Item`] draws.
+//! tail while a reply streams, and how each [`Item`] draws. The list's rows
+//! come from `kynex_core::transcript::rows`; tool calls draw in `tool_rows.rs`.
 
 use std::rc::Rc;
 
@@ -9,6 +10,7 @@ use gpui::{
 };
 use kynex_core::live::Key;
 use kynex_core::session::{Item, Kind, PermState};
+use kynex_core::transcript::{self, Row};
 use kynex_core::{commands, fmt};
 
 use super::KynexApp;
@@ -22,10 +24,12 @@ use crate::ui::{Icon, Tooltip, icon};
 /// The transcript and composer's column width.
 pub const THREAD_WIDTH: Pixels = px(780.);
 
-/// The transcript list for one conversation, and how much of it it has seen.
+/// The transcript list for one conversation, its rows, and how many items
+/// they were laid out from.
 pub struct Thread {
     pub list: ListState,
-    count: usize,
+    rows: Vec<Row>,
+    items: usize,
 }
 
 impl KynexApp {
@@ -50,21 +54,26 @@ impl KynexApp {
                 .into_any_element();
         }
         let Some(key) = key else { return div().into_any_element() };
+        // Lay the rows out again when items come or go; only the rows that
+        // changed (usually the last few) are measured again.
+        let stale = self.threads.get(&key).is_none_or(|t| t.items != count);
+        let rows = stale.then(|| self.active_session().map(|s| transcript::rows(&s.items)).unwrap_or_default());
         let thread = self.threads.entry(key).or_insert_with(|| {
             let list = ListState::new(0, ListAlignment::Top, px(1000.));
             list.set_follow_mode(FollowMode::Tail);
-            Thread { list, count: 0 }
+            Thread { list, rows: Vec::new(), items: 0 }
         });
-        if count < thread.count {
-            thread.list.reset(count);
-        } else if count > thread.count {
-            thread.list.splice(thread.count..thread.count, count - thread.count);
+        if let Some(rows) = rows {
+            let same = thread.rows.iter().zip(&rows).take_while(|(a, b)| a == b).count();
+            thread.list.splice(same..thread.rows.len(), rows.len() - same);
+            thread.rows = rows;
+            thread.items = count;
         }
-        // The last item grows while a reply streams in.
-        if busy && count > 0 {
-            thread.list.remeasure_items(count - 1..count);
+        // The last row grows while a reply streams in.
+        let n = thread.rows.len();
+        if busy && n > 0 {
+            thread.list.remeasure_items(n - 1..n);
         }
-        thread.count = count;
         let state = thread.list.clone();
         list(state, cx.processor(|this, ix, window, cx| this.render_item(ix, window, cx)))
             .flex_1()
@@ -81,30 +90,59 @@ impl KynexApp {
         }
     }
 
-    fn render_item(&mut self, ix: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// Measures row `row` of `key`'s transcript again, after it opened or closed.
+    pub(super) fn remeasure_row(&self, key: Key, row: usize) {
+        if let Some(th) = self.threads.get(&key) {
+            th.list.remeasure_items(row..row + 1);
+        }
+    }
+
+    fn render_item(&mut self, row: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let Some(key) = self.active_key() else { return div().into_any_element() };
+        let Some(thread) = self.threads.get(&key) else { return div().into_any_element() };
+        let last = row + 1 == thread.rows.len();
+        // Tool traffic sits tight together; messages get room to breathe.
+        let (body, compact) = match thread.rows.get(row).cloned() {
+            Some(Row::Tools(run)) => {
+                let live = last && self.active_session().is_some_and(|s| s.busy);
+                (self.render_run(&run, row, live, cx), true)
+            }
+            Some(Row::Item(ix)) => {
+                let compact = self.active_session().is_some_and(|s| {
+                    matches!(s.items.get(ix), Some(Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking))
+                });
+                (self.render_entry(ix, row, cx), compact)
+            }
+            None => return div().into_any_element(),
+        };
+        div()
+            .w_full()
+            .flex()
+            .justify_center()
+            .px_6()
+            .map(|d| if compact { d.py_0p5() } else { d.py_2() })
+            .child(div().w_full().max_w(THREAD_WIDTH).child(body))
+            .into_any_element()
+    }
+
+    /// Item `ix` drawn on its own, as transcript row `row`.
+    fn render_entry(&mut self, ix: usize, row: usize, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let Some(session) = self.active_session() else { return div().into_any_element() };
         let key = session.uid;
         let session_kind = session.kind;
         let Some(item) = session.items.get(ix) else { return div().into_any_element() };
         let expanded = self.expanded.contains(&(key, ix));
-        // Tool traffic sits tight together; messages get room to breathe.
-        let compact =
-            matches!(item, Item::ToolUse { .. } | Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking);
-        let toggle = {
-            cx.listener(move |this, _, _, cx| {
-                let k = (key, ix);
-                if !this.expanded.remove(&k) {
-                    this.expanded.insert(k);
-                }
-                if let Some(th) = this.threads.get(&key) {
-                    th.list.remeasure_items(ix..ix + 1);
-                }
-                cx.notify();
-            })
-        };
+        let toggle = cx.listener(move |this, _, _, cx| {
+            let k = (key, ix);
+            if !this.expanded.remove(&k) {
+                this.expanded.insert(k);
+            }
+            this.remeasure_row(key, row);
+            cx.notify();
+        });
 
-        let body: AnyElement = match item {
+        match item {
             Item::User { text, images } => div()
                 .flex()
                 .flex_col()
@@ -192,63 +230,10 @@ impl KynexApp {
             Item::Thinking => {
                 div().text_sm().italic().text_color(t.text_placeholder).child("Thinking…").into_any_element()
             }
-            Item::ToolUse { name, summary, input } => {
-                let parsed = serde_json::from_str::<serde_json::Value>(input).ok();
-                // Claude's description of the call reads as prose; a bare command or path stays mono.
-                let described =
-                    parsed.as_ref().is_some_and(|v| v["description"].as_str().is_some_and(|d| !d.trim().is_empty()));
-                // File edits show how many lines they change, and open as a diff.
-                let stat = parsed.as_ref().and_then(|v| prompt::diff_stat(name, v));
-                let stat_el = stat.filter(|&(add, del)| add + del > 0).map(|(add, del)| {
-                    div()
-                        .flex()
-                        .flex_none()
-                        .gap_1()
-                        .font_family(mono())
-                        .text_xs()
-                        .when(add > 0, |d| d.child(div().text_color(t.success).child(format!("+{add}"))))
-                        .when(del > 0, |d| d.child(div().text_color(t.error).child(format!("−{del}"))))
-                });
-                // A call with a time limit (Bash's `timeout`, in ms) says how long it may run.
-                let timeout = parsed.as_ref().and_then(|v| v["timeout"].as_u64()).filter(|&ms| ms > 0).map(|ms| {
-                    div()
-                        .id(("tool-timeout", ix))
-                        .flex_none()
-                        .text_xs()
-                        .text_color(t.text_placeholder)
-                        .child(format!("max {}", fmt::limit(ms)))
-                        .tooltip(Tooltip::text(format!("Will run for at most {}", fmt::limit(ms))))
-                });
-                let summary_el = div().flex_1().min_w_0().truncate().child(summary.clone());
-                let summary_el = if described {
-                    summary_el.text_sm().text_color(t.text)
-                } else {
-                    summary_el.font_family(mono()).text_xs().text_color(t.text_muted)
-                };
-                let head = disclosure_row(("tool", ix), expanded, &t)
-                    .child(icon(Icon::Terminal, t.text_muted).size_3())
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_xs()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(t.text_muted)
-                            .child(name.clone()),
-                    )
-                    .child(summary_el)
-                    .children(timeout)
-                    .children(stat_el)
-                    .on_click(toggle);
-                let body = match parsed.filter(|_| expanded && stat.is_some()) {
-                    Some(v) => {
-                        Some(diff_box(("tool-diff", ix).into(), prompt::preview(name, &v, &t), &t).into_any_element())
-                    }
-                    None => expanded
-                        .then(|| code_box(("tool-body", ix).into(), input.clone(), (key, ix), &t).into_any_element()),
-                };
-                div().flex().flex_col().child(head).children(body).into_any_element()
-            }
-            Item::ToolResult { content, is_error } => {
+            // Calls are laid out in runs, drawn by `render_run`.
+            Item::ToolUse { .. } => div().into_any_element(),
+            // A result whose call isn't known.
+            Item::ToolResult { content, is_error, .. } => {
                 let first: String = content.lines().next().unwrap_or("").chars().take(160).collect();
                 let color = if *is_error { t.error } else { t.text_placeholder };
                 let head = disclosure_row(("result", ix), expanded, &t)
@@ -317,19 +302,11 @@ impl KynexApp {
                 .text_color(t.error)
                 .child(selectable(key, Spot::new(ix, 0), e.clone(), t.selection))
                 .into_any_element(),
-        };
-        div()
-            .w_full()
-            .flex()
-            .justify_center()
-            .px_6()
-            .map(|d| if compact { d.py_0p5() } else { d.py_2() })
-            .child(div().w_full().max_w(THREAD_WIDTH).child(body))
-            .into_any_element()
+        }
     }
 }
 
-fn disclosure_row(id: impl Into<gpui::ElementId>, expanded: bool, t: &Palette) -> gpui::Stateful<gpui::Div> {
+pub(super) fn disclosure_row(id: impl Into<gpui::ElementId>, expanded: bool, t: &Palette) -> gpui::Stateful<gpui::Div> {
     let hover = t.hover;
     div()
         .id(id)
@@ -345,7 +322,7 @@ fn disclosure_row(id: impl Into<gpui::ElementId>, expanded: bool, t: &Palette) -
 }
 
 /// A file edit drawn as a diff, in the same frame as [`code_box`].
-fn diff_box<E: IntoElement>(id: gpui::ElementId, diff: E, t: &Palette) -> impl IntoElement + use<E> {
+pub(super) fn diff_box<E: IntoElement>(id: gpui::ElementId, diff: E, t: &Palette) -> impl IntoElement + use<E> {
     div()
         .id(id)
         .ml_6()
@@ -362,7 +339,12 @@ fn diff_box<E: IntoElement>(id: gpui::ElementId, diff: E, t: &Palette) -> impl I
 }
 
 /// A tool's input or output, selectable as item `item` of transcript `group`.
-fn code_box(id: gpui::ElementId, text: String, (group, item): (Key, usize), t: &Palette) -> impl IntoElement + use<> {
+pub(super) fn code_box(
+    id: gpui::ElementId,
+    text: String,
+    (group, item): (Key, usize),
+    t: &Palette,
+) -> impl IntoElement + use<> {
     let text = selectable(group, Spot::new(item, 0), text, t.selection);
     div()
         .id(id)

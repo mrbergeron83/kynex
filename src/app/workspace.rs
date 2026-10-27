@@ -142,6 +142,7 @@ impl KynexApp {
             self.threads.remove(k);
         }
         self.expanded.retain(|(k, _)| !closed.contains(k));
+        self.open_runs.retain(|(k, _)| !closed.contains(k));
         self.forget_drafts(closed);
     }
 
