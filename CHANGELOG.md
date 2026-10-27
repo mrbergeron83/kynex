@@ -46,6 +46,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Restart after an update opens the new version on Windows instead of just closing Kynex.
 - Question prompts show which option you picked: its row is highlighted, with a check mark
   for single-choice questions and a ticked box for multi-select.
+- The Code / Git switch no longer jumps sideways when you change views: the sessions panel
+  stays in the Git view, and picking a session there goes back to the conversation.
 
 ## [0.0.3] - 2026-10-27
 

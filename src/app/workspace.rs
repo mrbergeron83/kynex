@@ -97,6 +97,18 @@ impl KynexApp {
         self.live_mut()?.current_mut()
     }
 
+    /// Puts the active project back on its conversation, for picking a session
+    /// in the sessions panel while the Git view is up.
+    pub(super) fn show_code_view(&mut self) {
+        if let Active::Project(i) = self.saved.active
+            && let Some(p) = self.saved.projects.get_mut(i)
+            && p.view != View::Code
+        {
+            p.view = View::Code;
+            self.save();
+        }
+    }
+
     /// Shows `s` in the active tab. Sessions it replaces keep running if
     /// they're working; idle ones close.
     pub(super) fn open_session(&mut self, mut s: Session) {
