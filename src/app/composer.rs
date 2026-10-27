@@ -49,7 +49,7 @@ impl KynexApp {
             s.send(text, atts);
         }
         self.composer.update(cx, |c, cx| c.set_text("", cx));
-        self.follow_tail();
+        self.follow_tail(cx);
         cx.notify();
     }
 
@@ -62,7 +62,7 @@ impl KynexApp {
             }
             s.send("/compact".into(), Vec::new());
         }
-        self.follow_tail();
+        self.follow_tail(cx);
         cx.notify();
     }
 

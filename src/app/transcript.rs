@@ -3,12 +3,14 @@
 //! come from `kynex_core::transcript::rows`; tool calls draw in `tool_rows.rs`.
 
 use std::rc::Rc;
+use std::time::Instant;
 
 use gpui::{
-    AnyElement, App, Context, FollowMode, FontWeight, ListAlignment, ListState, Pixels, Window, div, img, list,
-    prelude::*, px,
+    AnyElement, App, Context, FollowMode, FontWeight, ListAlignment, ListState, Pixels, ScrollDelta, ScrollEvent,
+    Window, div, img, list, prelude::*, px,
 };
 use kynex_core::live::Key;
+use kynex_core::motion::Glide;
 use kynex_core::session::{Item, Kind, PermState};
 use kynex_core::transcript::{self, Row};
 use kynex_core::{commands, fmt};
@@ -31,10 +33,49 @@ pub struct Thread {
     pub list: ListState,
     rows: Vec<Row>,
     items: usize,
+    /// Smooth scrolling in progress, and when its last frame ran.
+    glide: Glide,
+    last_frame: Option<Instant>,
+    /// Gliding to the end: follow new output once there.
+    follow_after: bool,
+}
+
+/// How far one wheel line scrolls, as gpui's own list does.
+const WHEEL_LINE: f32 = 20.;
+
+impl Thread {
+    /// How far down the list is scrolled, in pixels.
+    fn offset(&self) -> f32 {
+        -f32::from(self.list.scroll_px_offset_for_scrollbar().y)
+    }
+
+    /// Moves the list this frame's share of the glide, stopping at either end.
+    fn glide_frame(&mut self) {
+        let now = Instant::now();
+        // The first frame after a notch: assume one 120 Hz frame went by.
+        let dt = self.last_frame.map_or(1. / 120., |t| now.duration_since(t).as_secs_f32());
+        self.last_frame = Some(now);
+        let step = self.glide.step(dt);
+        let (offset, max) = (self.offset(), f32::from(self.list.max_offset_for_scrollbar().y));
+        let moved = (offset + step).clamp(0., max.max(0.)) - offset;
+        if moved != 0. {
+            self.list.scroll_by(px(moved));
+        }
+        if moved != step {
+            self.glide.stop();
+        }
+        if !self.glide.is_moving() {
+            self.last_frame = None;
+            if std::mem::take(&mut self.follow_after) {
+                self.list.scroll_to_end();
+                self.list.set_follow_mode(FollowMode::Tail);
+            }
+        }
+    }
 }
 
 impl KynexApp {
-    pub(super) fn render_thread(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let key = self.active_key();
         let count = self.active_session().map_or(0, |s| s.items.len());
@@ -62,7 +103,7 @@ impl KynexApp {
         let thread = self.threads.entry(key).or_insert_with(|| {
             let list = ListState::new(0, ListAlignment::Top, px(1000.));
             list.set_follow_mode(FollowMode::Tail);
-            Thread { list, rows: Vec::new(), items: 0 }
+            Thread { list, rows: Vec::new(), items: 0, glide: Glide::default(), last_frame: None, follow_after: false }
         });
         if let Some(rows) = rows {
             let same = thread.rows.iter().zip(&rows).take_while(|(a, b)| a == b).count();
@@ -75,6 +116,10 @@ impl KynexApp {
         if busy && n > 0 {
             thread.list.remeasure_items(n - 1..n);
         }
+        if thread.glide.is_moving() {
+            thread.glide_frame();
+            window.request_animation_frame();
+        }
         let state = thread.list.clone();
         let uid = self.active_session().map_or(0, |s| s.uid as usize);
         let thread = list(state, cx.processor(|this, ix, window, cx| this.render_item(ix, window, cx)))
@@ -86,11 +131,41 @@ impl KynexApp {
     }
 
     /// Scrolls the shown transcript to the bottom and follows new output.
-    pub(super) fn follow_tail(&self) {
-        if let Some(t) = self.active_key().and_then(|k| self.threads.get(&k)) {
+    /// Glides there when animating; jumps when motion is reduced or the
+    /// distance isn't known yet.
+    pub(super) fn follow_tail(&mut self, cx: &mut Context<Self>) {
+        let reduce = cx.reduce_motion();
+        let Some(t) = self.active_key().and_then(|k| self.threads.get_mut(&k)) else { return };
+        let (offset, max) = (t.offset(), f32::from(t.list.max_offset_for_scrollbar().y));
+        if reduce || max <= offset {
+            t.glide.stop();
             t.list.scroll_to_end();
             t.list.set_follow_mode(FollowMode::Tail);
+        } else {
+            t.glide.stop();
+            t.glide.push(max - offset);
+            t.follow_after = true;
+            cx.notify();
         }
+    }
+
+    /// A mouse-wheel turn over the transcript: glide instead of jumping a
+    /// notch at a time. Touchpads report exact pixels and scroll 1:1, and
+    /// with motion reduced the list scrolls itself as before.
+    fn wheel(&mut self, key: Key, ev: &ScrollEvent, cx: &mut Context<Self>) {
+        let ScrollDelta::Lines(lines) = ev.delta else { return };
+        if cx.reduce_motion() || lines.y == 0. {
+            return;
+        }
+        let Some(t) = self.threads.get_mut(&key) else { return };
+        cx.stop_propagation();
+        t.follow_after = false;
+        // Lines up (positive) scroll the content back towards the top.
+        t.glide.push(-lines.y * WHEEL_LINE);
+        if lines.y > 0. {
+            t.list.pause_following_tail();
+        }
+        cx.notify();
     }
 
     /// Measures row `row` of `key`'s transcript again, after it opened or closed.
@@ -119,12 +194,15 @@ impl KynexApp {
             None => return div().into_any_element(),
         };
         div()
+            .id(("row", row))
             .w_full()
             .flex()
             .justify_center()
             .px_6()
             .map(|d| if compact { d.py_0p5() } else { d.py_2() })
             .child(div().w_full().max_w(THREAD_WIDTH).child(body))
+            // After any scroll box inside the row, before the list itself.
+            .on_scroll(cx.listener(move |this, ev: &ScrollEvent, _, cx| this.wheel(key, ev, cx)))
             .into_any_element()
     }
 

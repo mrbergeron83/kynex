@@ -36,6 +36,50 @@ impl Motion {
     }
 }
 
+/// Smooth scrolling: a mouse-wheel notch adds its distance, and each frame
+/// moves part of what's left, so the view glides there and slows as it
+/// arrives. Time-based: the same path at 60 and 240 Hz.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Glide {
+    /// Pixels still to scroll; positive is down.
+    remaining: f32,
+}
+
+impl Glide {
+    /// How quickly it closes the gap: about 95% of the way in three of these.
+    const TIME_CONSTANT: f32 = 0.05;
+
+    /// Adds a wheel notch's (or a jump's) distance, in pixels.
+    pub fn push(&mut self, distance: f32) {
+        // Turning the wheel the other way drops what was left the old way.
+        if self.remaining * distance < 0. {
+            self.remaining = 0.;
+        }
+        self.remaining += distance;
+    }
+
+    /// The pixels to scroll this frame, `dt` seconds after the last.
+    pub fn step(&mut self, dt: f32) -> f32 {
+        let part = 1. - (-dt.max(0.) / Self::TIME_CONSTANT).exp();
+        let mut moved = self.remaining * part;
+        // The last half pixel lands at once rather than creeping.
+        if (self.remaining - moved).abs() < 0.5 {
+            moved = self.remaining;
+        }
+        self.remaining -= moved;
+        moved
+    }
+
+    pub fn is_moving(&self) -> bool {
+        self.remaining != 0.
+    }
+
+    /// Stops where it is: the view hit an end, or you grabbed it.
+    pub fn stop(&mut self) {
+        self.remaining = 0.;
+    }
+}
+
 /// Whether the operating system asks apps for less motion: Windows' "Animation
 /// effects" off, macOS' "Reduce motion" on, or GNOME's animations off. Anything
 /// unreadable counts as no. Blocks (it may run `defaults` or `gsettings`).
@@ -75,6 +119,53 @@ mod tests {
         assert!(!Motion::System.reduce(false));
         assert!(!Motion::On.reduce(true));
         assert!(Motion::Off.reduce(false));
+    }
+
+    /// Runs a glide for `seconds` at `hz`, returning the distance covered.
+    fn glide_for(push: f32, seconds: f32, hz: f32) -> f32 {
+        let mut g = Glide::default();
+        g.push(push);
+        let frames = (seconds * hz).round() as usize;
+        (0..frames).map(|_| g.step(1. / hz)).sum()
+    }
+
+    #[test]
+    fn glides_the_same_at_any_refresh_rate() {
+        // Whole numbers of 60 Hz frames, so both rates run for the same time.
+        for seconds in [2. / 60., 3. / 60., 6. / 60.] {
+            let (slow, fast) = (glide_for(100., seconds, 60.), glide_for(100., seconds, 240.));
+            assert!((slow - fast).abs() < 1., "{seconds}s: {slow} at 60 Hz, {fast} at 240 Hz");
+        }
+        // Eases out: most of the way early, then slows.
+        let early = glide_for(100., 0.05, 240.);
+        assert!(early > 55. && early < 75., "{early}");
+    }
+
+    #[test]
+    fn glides_all_the_way_then_rests() {
+        let mut g = Glide::default();
+        g.push(120.);
+        let mut total = 0.;
+        for _ in 0..240 {
+            total += g.step(1. / 240.);
+        }
+        assert!((total - 120.).abs() < 1e-3, "{total}");
+        assert!(!g.is_moving());
+        assert_eq!(g.step(1. / 240.), 0.);
+    }
+
+    #[test]
+    fn turning_back_drops_the_rest_and_stop_stops() {
+        let mut g = Glide::default();
+        g.push(100.);
+        g.step(1. / 60.);
+        g.push(-40.);
+        let total: f32 = (0..120).map(|_| g.step(1. / 60.)).sum();
+        assert!((total + 40.).abs() < 1e-3, "{total}");
+        g.push(80.);
+        g.push(80.);
+        g.stop();
+        assert!(!g.is_moving());
     }
 
     #[test]

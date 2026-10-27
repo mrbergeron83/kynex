@@ -431,7 +431,7 @@ impl Render for KynexApp {
                         .bg(t.editor)
                         .child(self.render_toolbar(cx))
                         .children(self.render_session_header(cx))
-                        .child(self.render_thread(cx))
+                        .child(self.render_thread(window, cx))
                         .child(self.render_composer(window, cx))
                         .children(self.render_terminal_dock(window, cx)),
                 )
