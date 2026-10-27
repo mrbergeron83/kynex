@@ -11,6 +11,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   timeline, Git view, settings, menus and terminal too. A notch also goes about twice as far,
   like a browser. Touchpads still scroll 1:1, and with animations off a notch moves at once.
 
+### Fixed
+
+- A reopened session no longer shows the CLI's background-task notices
+  (`<task-notification>…`) as messages you sent.
+
 ## [0.0.4] - 2026-10-27
 
 ### Added
