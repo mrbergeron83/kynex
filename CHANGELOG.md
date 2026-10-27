@@ -12,6 +12,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Timeline turns fold: a chevron opens or closes a turn's steps, and **Collapse all** /
   **Expand all** in the header does every turn. Until you choose, only the latest turn and the
   one in view are open.
+- Scroll the conversation from the keyboard: Page Up / Page Down a page at a time, even while
+  typing; Ctrl+Home / Ctrl+End (Cmd on macOS) to the start or the end, which follows new output
+  again; and Home / End and ↑ / ↓ when the message box isn't focused. Rebind them with
+  `page_up`, `page_down`, `scroll_top` and `scroll_bottom` in `keymap.json`. In the terminal
+  these keys still go to the shell.
 
 ### Fixed
 

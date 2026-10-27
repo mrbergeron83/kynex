@@ -6,8 +6,8 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, App, Context, FollowMode, FontWeight, ListAlignment, ListState, Pixels, ScrollDelta, ScrollEvent,
-    Window, div, img, list, prelude::*, px,
+    AnyElement, App, Context, FollowMode, FontWeight, ListAlignment, ListOffset, ListState, Pixels, ScrollDelta,
+    ScrollEvent, Window, div, img, list, prelude::*, px,
 };
 use kynex_core::live::Key;
 use kynex_core::motion::Glide;
@@ -17,7 +17,7 @@ use kynex_core::transcript::{self, Row};
 use kynex_core::{commands, fmt};
 
 use super::KynexApp;
-use super::state::Active;
+use super::state::{Active, View};
 use crate::markdown;
 use crate::prompt;
 use crate::theme::{Palette, label_font, mono, theme};
@@ -43,6 +43,18 @@ pub struct Thread {
 
 /// How far one wheel line scrolls, as gpui's own list does.
 const WHEEL_LINE: f32 = 20.;
+
+/// How far ↑ / ↓ scroll the transcript, as a browser's arrow keys do.
+const ARROW_STEP: f32 = 40.;
+
+/// A keyboard scroll of the transcript; signs are -1 up, 1 down.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Scroll {
+    Line(f32),
+    Page(f32),
+    Top,
+    Bottom,
+}
 
 impl Thread {
     /// Following new output at the bottom, or gliding there to.
@@ -211,6 +223,45 @@ impl KynexApp {
             t.follow_after = true;
             cx.notify();
         }
+    }
+
+    /// Page Up / Page Down, Home / End, ↑ / ↓: scrolls the shown transcript,
+    /// gliding like the wheel. A page keeps a little of the last one in view;
+    /// reaching the end follows new output again.
+    pub(super) fn scroll_keys(&mut self, by: Scroll, cx: &mut Context<Self>) {
+        // Not under the Git view or a modal: those keys are theirs.
+        let covered = self.git_modal.is_some() || self.settings.is_some() || self.about_open;
+        if covered || self.active_project().is_some_and(|p| p.view == View::Git) {
+            return cx.propagate();
+        }
+        if by == Scroll::Bottom {
+            return self.follow_tail(cx);
+        }
+        let reduce = cx.reduce_motion();
+        let Some(t) = self.active_key().and_then(|k| self.threads.get_mut(&k)) else { return cx.propagate() };
+        let page = f32::from(t.list.viewport_bounds().size.height) - 2. * ARROW_STEP;
+        let distance = match by {
+            Scroll::Line(dir) => dir * ARROW_STEP,
+            Scroll::Page(dir) => dir * page.max(ARROW_STEP),
+            Scroll::Top | Scroll::Bottom => -t.offset(),
+        };
+        if distance < 0. {
+            t.list.pause_following_tail();
+        }
+        t.follow_after = false;
+        if reduce {
+            t.glide.stop();
+            if by == Scroll::Top {
+                t.list.scroll_to(ListOffset { item_ix: 0, offset_in_item: px(0.) });
+            } else {
+                let max = f32::from(t.list.max_offset_for_scrollbar().y);
+                let offset = t.offset();
+                t.list.scroll_by(px((offset + distance).clamp(0., max.max(0.)) - offset));
+            }
+        } else {
+            t.glide.push(distance);
+        }
+        cx.notify();
     }
 
     /// A mouse-wheel turn over the transcript: glide instead of jumping a

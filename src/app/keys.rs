@@ -32,14 +32,20 @@ actions!(
         Rewind,
         ToggleTimeline,
         PrevTurn,
-        NextTurn
+        NextTurn,
+        PageUp,
+        PageDown,
+        ScrollTop,
+        ScrollBottom,
+        LineUp,
+        LineDown
     ]
 );
 
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 16] = [
+const SHORTCUTS: [(&str, &str); 20] = [
     ("open_project", "secondary-o"),
     ("next_tab", "ctrl-tab"),
     ("prev_tab", "ctrl-shift-tab"),
@@ -60,7 +66,17 @@ const SHORTCUTS: [(&str, &str); 16] = [
     // The timeline's turns, previous and next.
     ("prev_turn", "alt-up"),
     ("next_turn", "alt-down"),
+    // Scrolling the transcript, even while typing; Home / End and ↑ / ↓ also
+    // do when the message box doesn't have them (see `TRANSCRIPT_KEYS`).
+    ("page_up", "pageup"),
+    ("page_down", "pagedown"),
+    ("scroll_top", "secondary-home"),
+    ("scroll_bottom", "secondary-end"),
 ];
+
+/// Keys that scroll the transcript when nothing focused (the message box, a
+/// prompt) uses them, on top of the rebindable ones above.
+const TRANSCRIPT_KEYS: [&str; 4] = ["home", "end", "up", "down"];
 
 const ESC_ESC: &str = "escape escape";
 
@@ -72,7 +88,8 @@ pub(super) fn esc_esc_rewinds() -> bool {
 }
 
 /// The keys above a terminal sends to its shell instead (see `terminal::view`).
-pub const SHELL_KEYS: [&str; 4] = ["ctrl-r", "ctrl-s", "ctrl-g", "alt-p"];
+pub const SHELL_KEYS: [&str; 12] =
+    ["ctrl-r", "ctrl-s", "ctrl-g", "alt-p", "pageup", "pagedown", "ctrl-home", "ctrl-end", "home", "end", "up", "down"];
 
 pub fn bind_keys(cx: &mut App) {
     let path = data_dir().join("keymap.json");
@@ -129,7 +146,19 @@ pub fn bind_keys(cx: &mut App) {
             "toggle_timeline" => KeyBinding::new(keys, ToggleTimeline, c),
             "prev_turn" => KeyBinding::new(keys, PrevTurn, c),
             "next_turn" => KeyBinding::new(keys, NextTurn, c),
+            "page_up" => KeyBinding::new(keys, PageUp, c),
+            "page_down" => KeyBinding::new(keys, PageDown, c),
+            "scroll_top" => KeyBinding::new(keys, ScrollTop, c),
+            "scroll_bottom" => KeyBinding::new(keys, ScrollBottom, c),
             _ => KeyBinding::new(keys, Interrupt, c),
+        });
+    }
+    for key in TRANSCRIPT_KEYS {
+        bindings.push(match key {
+            "home" => KeyBinding::new(key, ScrollTop, c),
+            "end" => KeyBinding::new(key, ScrollBottom, c),
+            "up" => KeyBinding::new(key, LineUp, c),
+            _ => KeyBinding::new(key, LineDown, c),
         });
     }
     // Copies text selected in the transcript; the composer has its own Ctrl+C.
