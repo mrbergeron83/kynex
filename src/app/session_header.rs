@@ -1,4 +1,4 @@
-//! The strip above the transcript: what this session is (its first message),
+//! The strip above the transcript: what this session is (its name),
 //! where it runs (branch, and whether that's a separate worktree), how many
 //! turns it has taken, what it has cost and how full its context is.
 
@@ -15,14 +15,12 @@ impl KynexApp {
     pub(super) fn render_session_header(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
         let s = self.active_session()?;
+        // Its name; until that comes, the first words of its first message,
+        // quieter, since the whole message is right below.
         let name = s.session_id.as_deref().and_then(|id| self.session_name(id));
-        let title = name.or_else(|| {
-            s.items.iter().find_map(|i| match i {
-                Item::User { text, .. } if !text.is_empty() => {
-                    Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
-                }
-                _ => None,
-            })
+        let stand_in = s.items.iter().find_map(|i| match i {
+            Item::User { text, .. } if !text.trim().is_empty() => Some(fmt::first_words(text, 8)),
+            _ => None,
         });
         let turns = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
         let (cost, kind, cwd, context, busy) = (s.total_cost, s.kind, s.cwd.clone(), s.context, s.busy);
@@ -98,9 +96,14 @@ impl KynexApp {
                 Some(f) if f >= 0.7 => t.warning,
                 _ => t.text_placeholder,
             };
-            let label = match context.window {
-                Some(w) => format!("{} / {}", fmt::tokens(context.tokens), fmt::tokens(w)),
+            // The percentage; the tokens are in the tooltip.
+            let tokens = match context.window {
+                Some(w) => format!("{} / {} tokens", fmt::tokens(context.tokens), fmt::tokens(w)),
                 None => format!("{} tokens", fmt::tokens(context.tokens)),
+            };
+            let label = match fraction {
+                Some(f) => format!("{:.0}%", f * 100.0),
+                None => tokens.clone(),
             };
             let can_compact = !busy && fraction.is_some_and(|f| f >= 0.5);
             let hover = t.hover;
@@ -129,7 +132,7 @@ impl KynexApp {
                 .child(label)
                 .map(|d| {
                     let what = match fraction {
-                        Some(f) => format!("Context {:.0}% full", f * 100.0),
+                        Some(f) => format!("Context {:.0}% full: {tokens}", f * 100.0),
                         None => "Context in use".to_string(),
                     };
                     if can_compact {
@@ -165,16 +168,14 @@ impl KynexApp {
                 .px_3()
                 .border_b_1()
                 .border_color(t.border_variant)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_sm()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(if title.is_some() { t.text } else { t.text_placeholder })
-                        .child(title.unwrap_or_else(|| "New session".into())),
-                )
+                .child({
+                    let title = div().flex_1().min_w_0().truncate().text_sm();
+                    match (name, stand_in) {
+                        (Some(name), _) => title.font_weight(FontWeight::MEDIUM).text_color(t.text).child(name),
+                        (None, Some(words)) => title.text_color(t.text_muted).child(words),
+                        (None, None) => title.text_color(t.text_placeholder).child("New session"),
+                    }
+                })
                 .children(place)
                 .children(working)
                 .children(servers)
