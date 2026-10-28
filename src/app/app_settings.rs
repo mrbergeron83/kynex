@@ -17,6 +17,7 @@ use super::settings::{heading, radio, settings_modal, settings_nav};
 use crate::theme::{self, Palette, THEMES, Theme, mono, theme};
 use crate::ui::{Icon, icon, outline_button};
 
+#[derive(Clone)]
 pub struct AppSettingsView {
     section: usize,
     /// What the `claude` in use says its version is, once asked.
@@ -118,9 +119,10 @@ impl KynexApp {
 
     pub(super) fn render_app_settings(
         &mut self,
+        leaving: Option<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement + use<>> {
+    ) -> Option<gpui::AnyElement> {
         let view = self.app_settings.as_ref()?;
         let t = theme(cx).clone();
         let section = view.section.min(SECTIONS.len() - 1);
@@ -142,7 +144,7 @@ impl KynexApp {
         let footer = format!("Stored in {}", data_dir().join("state.json").display());
         let close = |this: &mut Self| this.app_settings = None;
         let (nav, content) = (nav.into_any_element(), content.into_any_element());
-        Some(settings_modal("Settings", None, nav, content, footer, close, window.viewport_size(), cx))
+        Some(settings_modal(("Settings", None), nav, content, footer, close, window.viewport_size(), leaving, cx))
     }
 
     fn render_general(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {

@@ -19,7 +19,9 @@ use super::state::{Active, View};
 use super::transcript::THREAD_WIDTH;
 use super::{KynexApp, models};
 use crate::theme::{Palette, theme};
-use crate::ui::motion::{self, fade_in, pop_in};
+use crate::ui::completions::completions;
+use crate::ui::ease_height::ease_height;
+use crate::ui::motion::{self, fade, fade_in, pop};
 use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, input, spinner};
 
 impl KynexApp {
@@ -150,12 +152,30 @@ impl KynexApp {
         let running = self.render_running_tasks(cx);
         let handoff = self.render_handoff(cx);
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
+        self.slash.shown = None;
         let popup = match () {
             _ if self.prompt.is_some() => None,
             _ if self.rewinding() => self.render_rewind(cx),
             _ if self.history_searching() => self.render_history_search(cx),
             _ => self.render_slash(cx),
         };
+        // The slash-command list plays out when it closes; the others just go.
+        let slash = self.slash.shown.clone();
+        let slash_leaving = self.exits.slash.track(slash.as_ref(), window, cx);
+        let (popup, popup_leaving) = match (popup, slash_leaving) {
+            (Some(p), _) => (Some(p), None),
+            (None, Some(((items, selected), t))) => {
+                let list = completions(&items, selected, "", cx, |_, _, _| {});
+                (Some(list.w_full().max_w(px(560.)).into_any_element()), Some(t))
+            }
+            (None, None) => (None, None),
+        };
+        // A prompt that just closed fades out over the composer it hands back.
+        let prompt = self.prompt.as_ref().map(|p| p.view.clone());
+        let prompt_out = self.exits.prompt.track(prompt.as_ref(), window, cx).map(|(view, gone)| {
+            let layer = div().absolute().inset_0().p_3().rounded_lg().overflow_hidden().bg(t.panel).child(view);
+            fade("prompt-out", layer, motion::QUICK, Some(gone))
+        });
         let this = cx.entity().downgrade();
         let colour = self.active_colour(&t);
         let shell = |child: AnyElement, focused: bool, needs_you: bool| {
@@ -188,10 +208,11 @@ impl KynexApp {
                             )
                             .when_some(popup, |d, popup| {
                                 // Slash commands, history search, rewind: rise into place above the box.
-                                d.child(deferred(pop_in(
+                                d.child(deferred(pop(
                                     "composer-popup-in",
                                     div().absolute().bottom_full().left_0().w_full().pb_1().child(popup),
                                     px(4.),
+                                    popup_leaving,
                                 )))
                             })
                             .p_3()
@@ -207,7 +228,9 @@ impl KynexApp {
                             })
                             .bg(t.panel)
                             .shadow_sm()
-                            .child(child),
+                            // Grows and shrinks with its text, a prompt's turn, attachments: eased.
+                            .child(ease_height("composer-ease", child))
+                            .children(prompt_out),
                     ),
             )
         };

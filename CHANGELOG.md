@@ -5,6 +5,23 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- When Claude finishes a turn, the transcript glides to the end of it, even if you'd scrolled
+  up mid-turn.
+- Menus, modals, the image viewer, the sessions and terminal panels, the slash-command list and
+  a closing prompt animate out as they close, as they did coming in. They take no clicks on the
+  way out, and Animations off still removes them at once.
+- Hover and selection backgrounds on buttons, menu items, session, commit and file rows fade
+  instead of flipping.
+- Opening a tool block or result, growing the composer, and folding a timeline turn ease to
+  the new height instead of shoving everything below in one frame.
+
+### Fixed
+
+- The transcript no longer jumps back to the start of a reply (or an earlier message) on its
+  own while a reply streams or the session's rows are rebuilt.
+
 ## [0.0.5] - 2026-10-27
 
 ### Added

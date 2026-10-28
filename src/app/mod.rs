@@ -29,6 +29,7 @@
 //! | `slash.rs`          | the slash-command popup, and built-ins Kynex runs   |
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
+//! | `leaving.rs`        | menus, modals and panels animating out as they close |
 //! | `settings.rs`       | the project's Claude settings modal                  |
 //! | `app_settings.rs`   | the app's Settings modal: CLI, shell, appearance     |
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
@@ -48,6 +49,7 @@ mod git_modal;
 mod handoff;
 mod history;
 mod keys;
+mod leaving;
 mod menus;
 mod models;
 mod prompts;
@@ -165,6 +167,8 @@ pub struct KynexApp {
     restart_when_idle: HashSet<PathBuf>,
     prompt: Option<ActivePrompt>,
     menu: Option<OpenMenu>,
+    /// What's animating out after it closed: menus, modals, panels.
+    exits: leaving::Exits,
     resizing_sessions: bool,
     resizing_terminal: bool,
     /// Whether a newer Claude Code is out, or being installed.
@@ -321,6 +325,7 @@ impl KynexApp {
             restart_when_idle: HashSet::new(),
             prompt: None,
             menu: None,
+            exits: Default::default(),
             resizing_sessions: false,
             resizing_terminal: false,
             cli_update: UpdateState::Idle,
@@ -354,6 +359,9 @@ impl KynexApp {
         let mut touched = HashSet::new();
         // Background tasks that just ended, for a toast if their session isn't shown.
         let mut ended = Vec::new();
+        // The shown session finishing a turn scrolls to its end; others keep their place.
+        let shown = self.active_key();
+        let mut shown_ended = false;
         for s in self.all_sessions_mut() {
             let before = s.wants_you();
             let (was_busy, seen) = (s.busy, s.items.len());
@@ -366,6 +374,7 @@ impl KynexApp {
             if (was_busy && !s.busy) || finished_tool {
                 touched.insert(s.cwd.clone());
             }
+            shown_ended |= was_busy && !s.busy && Some(s.uid) == shown;
             for item in s.items.get(seen..).into_iter().flatten() {
                 if let session::Item::Task(n) = item {
                     ended.push((s.uid, n.clone()));
@@ -379,6 +388,9 @@ impl KynexApp {
         for (cwd, init) in reports {
             self.commands_reported(cwd, init.commands, cx);
             models::reported(init.models, cx);
+        }
+        if let Some(key) = shown.filter(|_| shown_ended) {
+            self.turn_ended(key);
         }
         self.refresh_worktrees(&touched, cx);
         self.toast_new_tasks(ended);
@@ -477,7 +489,7 @@ impl Render for KynexApp {
                 .flex()
                 .flex_1()
                 .min_h_0()
-                .children(self.render_sessions_column(cx))
+                .children(self.render_sessions_column(window, cx))
                 .child(
                     div()
                         .flex()
@@ -499,7 +511,7 @@ impl Render for KynexApp {
                 .flex()
                 .flex_1()
                 .min_h_0()
-                .children(self.render_sessions_column(cx))
+                .children(self.render_sessions_column(window, cx))
                 .child(
                     div()
                         .flex()
@@ -532,15 +544,18 @@ impl Render for KynexApp {
                 .into_any_element()
         };
 
-        let menu = self.render_menu(cx);
-        let settings = self.render_settings(window, cx);
-        let app_settings = self.render_app_settings(window, cx);
+        let menu = self.draw_leaving(|s| &mut s.menu, |e| &mut e.menu, window, cx, |s, l, _, cx| s.render_menu(l, cx));
+        let settings = self.draw_leaving(|s| &mut s.settings, |e| &mut e.settings, window, cx, Self::render_settings);
+        let app_settings =
+            self.draw_leaving(|s| &mut s.app_settings, |e| &mut e.app_settings, window, cx, Self::render_app_settings);
         let notice = self.render_notice(cx);
         let toast = self.render_update_toast(cx);
         let task_toast = self.render_task_toast(cx);
         let about = self.render_about(window, cx);
-        let git_modal = self.render_git_modal(window, cx);
-        let viewer = self.render_image_viewer();
+        let git_modal =
+            self.draw_leaving(|s| &mut s.git_modal, |e| &mut e.git_modal, window, cx, Self::render_git_modal);
+        let viewer =
+            self.draw_leaving(|s| &mut s.viewer, |e| &mut e.viewer, window, cx, |s, l, _, _| s.render_image_viewer(l));
         div()
             .id("workspace")
             .key_context("Workspace")

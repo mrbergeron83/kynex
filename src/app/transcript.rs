@@ -21,8 +21,10 @@ use super::state::{Active, View};
 use crate::markdown;
 use crate::prompt;
 use crate::theme::{Palette, label_font, mono, theme};
+use crate::ui::ease_height::ease_height;
 use crate::ui::motion::{self, fade_in, pop_in};
 use crate::ui::selectable::{Spot, selectable};
+use crate::ui::wash::wash;
 use crate::ui::{Icon, Tooltip, ghost_button, icon};
 
 /// The transcript and composer's column width.
@@ -39,6 +41,8 @@ pub struct Thread {
     last_frame: Option<Instant>,
     /// Gliding to the end: follow new output once there.
     follow_after: bool,
+    /// A turn just finished here while shown: go to its end.
+    turn_ended: bool,
 }
 
 /// How far ↑ / ↓ scroll the transcript, as a browser's arrow keys do.
@@ -78,9 +82,14 @@ impl Thread {
     /// Follows a streaming reply by gliding: gpui's tail following pins the
     /// end on every layout, so the text jumps up as the last row grows. Instead
     /// the view holds where it is through the layout, and glides down by what
-    /// was added on the frames after.
-    fn trail(&mut self) {
+    /// was added on the frames after. Once the reply is done (`busy` false)
+    /// it glides the rest of the way and follows plainly again.
+    fn trail(&mut self, busy: bool) {
         if self.list.is_following_tail() {
+            if !busy {
+                self.follow_after = false;
+                return;
+            }
             // Swap the "past the end" anchor for the same spot as an offset,
             // which layout leaves alone.
             let max = self.list.max_offset_for_scrollbar().y;
@@ -94,6 +103,10 @@ impl Thread {
         let gap = max - offset - self.glide.remaining();
         if gap > 0.5 {
             self.glide.push(gap);
+        } else if !busy && !self.glide.is_moving() {
+            self.follow_after = false;
+            self.list.scroll_to_end();
+            self.list.set_follow_mode(FollowMode::Tail);
         }
     }
 
@@ -170,11 +183,26 @@ impl KynexApp {
         let thread = self.threads.entry(key).or_insert_with(|| {
             let list = ListState::new(0, ListAlignment::Top, px(1000.));
             list.set_follow_mode(FollowMode::Tail);
-            Thread { list, rows: Vec::new(), items: 0, glide: Glide::default(), last_frame: None, follow_after: false }
+            Thread {
+                list,
+                rows: Vec::new(),
+                items: 0,
+                glide: Glide::default(),
+                last_frame: None,
+                follow_after: false,
+                turn_ended: false,
+            }
         });
         if let Some(rows) = rows {
             let same = thread.rows.iter().zip(&rows).take_while(|(a, b)| a == b).count();
+            let top = thread.list.logical_scroll_top();
             thread.list.splice(same..thread.rows.len(), rows.len() - same);
+            // gpui moves a view anchored inside a replaced row to that row's
+            // top, so a reply being read or trailed jumped to its start (#88).
+            // The row is the same one continued: keep the view where it was.
+            if !thread.list.is_following_tail() && (same..thread.rows.len().min(rows.len())).contains(&top.item_ix) {
+                thread.list.scroll_to(top);
+            }
             thread.rows = rows;
             thread.items = count;
         }
@@ -183,10 +211,17 @@ impl KynexApp {
         if busy && n > 0 {
             thread.list.remeasure_items(n - 1..n);
         }
-        if busy && !cx.reduce_motion() {
-            thread.trail();
+        // A turn finished: its end is where to look, even if you'd scrolled
+        // up mid-turn to read earlier output.
+        if std::mem::take(&mut thread.turn_ended) && !thread.at_latest() {
+            thread.glide.stop();
+            thread.follow_after = true;
+        }
+        if (busy || thread.follow_after) && !cx.reduce_motion() {
+            thread.trail(busy);
         } else if thread.follow_after && !thread.glide.is_moving() {
-            // The reply ended while trailing it: back to plain following.
+            // The reply ended while trailing it, or motion is reduced: back
+            // to plain following.
             thread.follow_after = false;
             thread.list.scroll_to_end();
             thread.list.set_follow_mode(FollowMode::Tail);
@@ -295,6 +330,14 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// A turn finished in `key`'s session while it's shown; its transcript
+    /// goes to the end on the next frame.
+    pub(super) fn turn_ended(&mut self, key: Key) {
+        if let Some(t) = self.threads.get_mut(&key) {
+            t.turn_ended = true;
+        }
+    }
+
     /// Scrolling by hand (wheels glide in `ui::smooth_scroll`) takes over from
     /// a glide to the end or to a timeline step; the list scrolls itself.
     fn scrolled(&mut self, key: Key) {
@@ -337,7 +380,12 @@ impl KynexApp {
             .justify_center()
             .px_6()
             .map(|d| if compact { d.py_0p5() } else { d.py_2() })
-            .child(div().w_full().max_w(THREAD_WIDTH).child(body))
+            // Tool blocks and results ease as they open or shut; messages, which
+            // stream, follow the reply's own glide instead.
+            .child(div().w_full().max_w(THREAD_WIDTH).map(|d| match compact {
+                true => d.child(ease_height(("row-ease", row), body)),
+                false => d.child(body),
+            }))
             .on_scroll(cx.listener(move |this, _: &ScrollEvent, _, _| this.scrolled(key)));
         // Lit up for a moment when the timeline jumps here.
         self.flash_row(key, row, el, &t)
@@ -534,7 +582,8 @@ pub(super) fn disclosure_row(id: impl Into<gpui::ElementId>, expanded: bool, t: 
         .px_1()
         .rounded_md()
         .cursor_pointer()
-        .hover(move |s| s.bg(hover))
+        .relative()
+        .child(wash(hover, None))
         .child(icon(if expanded { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_placeholder).size_3())
 }
 

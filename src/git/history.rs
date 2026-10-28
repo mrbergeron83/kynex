@@ -7,6 +7,7 @@ use kynex_core::git::{Commit, Ref, RefKind};
 use super::{GitView, Selection};
 use crate::theme::{Palette, mono, theme};
 use crate::ui::Tooltip;
+use crate::ui::wash::row_wash;
 
 impl GitView {
     pub(super) fn render_history(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -56,8 +57,8 @@ fn commit_row(i: usize, c: &Commit, selected: bool, t: &Palette, cx: &mut Contex
         .px_2()
         .rounded_md()
         .cursor_pointer()
-        .when(selected, |d| d.bg(t.active))
-        .when(!selected, |d| d.hover(move |s| s.bg(hover)))
+        .relative()
+        .child(row_wash(selected, hover, t.active))
         .child(
             div().flex().items_center().gap_1().min_w_0().children(c.refs.iter().map(|r| ref_badge(r, t))).child(
                 div()

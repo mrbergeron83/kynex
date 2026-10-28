@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use gpui::{Anchor, AnyElement, Context, MouseButton, MouseDownEvent, SharedString, div, prelude::*, px};
+use gpui::{Anchor, AnyElement, Context, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px};
 use kynex_core::fmt::ago;
 use kynex_core::live::Key;
 use kynex_core::session::{self, Item, Kind, Session, SessionInfo};
@@ -15,7 +15,8 @@ use super::keys::ToggleSessions;
 use super::menus::Menu;
 use super::session_groups::DraggedSession;
 use crate::theme::{Palette, theme};
-use crate::ui::motion::grow_width;
+use crate::ui::motion::grow;
+use crate::ui::wash::row_wash;
 use crate::ui::{Icon, Lamp, Tooltip, divider, ghost_button, icon, icon_button, lamp, section_label};
 
 /// Past sessions for the active conversation's folder, re-read when the folder
@@ -43,13 +44,15 @@ struct OpenSession {
 
 impl KynexApp {
     /// The panel with its drag-to-resize right edge, or nothing while collapsed.
-    pub(super) fn render_sessions_column(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
-        if self.saved.sessions_collapsed {
+    pub(super) fn render_sessions_column(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let open = !self.saved.sessions_collapsed;
+        let leaving = self.exits.sessions.track_flag(open, window, cx);
+        if !open && leaving.is_none() {
             return None;
         }
         let t = theme(cx).clone();
-        // Slides open when shown (Ctrl+B); the width is the dragged one after that.
-        Some(grow_width(
+        // Slides open when shown (Ctrl+B) and shut when hidden; the width is the dragged one.
+        Some(grow(
             "sessions-in",
             div()
                 .relative()
@@ -78,6 +81,7 @@ impl KynexApp {
                         ),
                 ),
             self.saved.sessions_width,
+            leaving,
         ))
     }
 
@@ -352,8 +356,8 @@ fn session_row(
         .rounded_md()
         .cursor_pointer()
         .text_sm()
-        .when(current, |d| d.bg(t.active))
-        .when(!current, |d| d.hover(move |s| s.bg(hover)))
+        .relative()
+        .child(row_wash(current, hover, t.active))
         .child(div().flex_1().min_w_0().truncate().text_color(if current { t.text } else { t.text_muted }).child(title))
         .when_some(when, |d, w| d.child(div().flex_none().text_xs().text_color(t.text_placeholder).child(w)))
 }

@@ -15,6 +15,7 @@ use kynex_core::transcript::row_of;
 use super::KynexApp;
 use super::keys::{NextTurn, PrevTurn, ToggleTimeline};
 use crate::theme::{Palette, theme};
+use crate::ui::ease_height::ease_height;
 use crate::ui::{Icon, Tooltip, icon, icon_button, section_label};
 
 const WIDTH: f32 = 260.;
@@ -327,6 +328,8 @@ impl KynexApp {
                 .on_click(cx.listener(move |this, _, _, cx| this.jump_to_item(item, cx)))
         });
 
-        div().flex().flex_col().pb_1().child(head).when(open, |d| d.children(steps)).into_any_element()
+        // Folding open or shut eases, rather than shoving the turns below.
+        let turn = div().flex().flex_col().pb_1().child(head).when(open, |d| d.children(steps));
+        ease_height(("timeline-turn-ease", n), turn).into_any_element()
     }
 }

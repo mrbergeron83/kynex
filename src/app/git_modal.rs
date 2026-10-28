@@ -10,7 +10,7 @@ use kynex_core::git::Worktree;
 use super::KynexApp;
 use crate::git::GitView;
 use crate::theme::{mono, theme};
-use crate::ui::motion::{self, fade_in, pop_in};
+use crate::ui::motion::{self, fade, pop};
 use crate::ui::{Icon, Tooltip, icon, icon_button, outline_button};
 
 impl KynexApp {
@@ -38,7 +38,12 @@ impl KynexApp {
         self.worktrees.values().find_map(|w| w.read(cx).at(path).cloned())
     }
 
-    pub(super) fn render_git_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn render_git_modal(
+        &mut self,
+        leaving: Option<f32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let path = self.git_modal.clone()?;
         let t = theme(cx).clone();
         let vp = window.viewport_size();
@@ -103,23 +108,21 @@ impl KynexApp {
             .child(header)
             .child(div().flex_1().min_h_0().child(git));
 
-        Some(
-            fade_in(
-                "git-modal-fade",
-                div()
-                    .id("git-modal-backdrop")
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(gpui::black().opacity(0.45))
-                    .occlude()
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_git_modal(cx)))
-                    .child(pop_in("git-modal-in", card, px(8.))),
-                motion::QUICK,
-            )
-            .into_any_element(),
-        )
+        Some(fade(
+            "git-modal-fade",
+            div()
+                .id("git-modal-backdrop")
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::black().opacity(0.45))
+                .occlude()
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_git_modal(cx)))
+                .child(pop("git-modal-in", card, px(8.), leaving)),
+            motion::QUICK,
+            leaving,
+        ))
     }
 }

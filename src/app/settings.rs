@@ -5,7 +5,8 @@
 use std::path::PathBuf;
 
 use gpui::{
-    Anchor, ClickEvent, Context, FontWeight, MouseButton, PathPromptOptions, SharedString, Window, div, prelude::*, px,
+    Anchor, AnyElement, ClickEvent, Context, FontWeight, MouseButton, PathPromptOptions, SharedString, Window, div,
+    prelude::*, px,
 };
 use kynex_core::paths::project_name;
 use kynex_core::project::{self, ClaudeSettings, Mode, Permissions};
@@ -13,9 +14,10 @@ use kynex_core::project::{self, ClaudeSettings, Mode, Permissions};
 use super::KynexApp;
 use super::menus::Menu;
 use crate::theme::{Palette, mono, theme};
-use crate::ui::motion::{self, fade_in, pop_in};
+use crate::ui::motion::{self, fade, pop};
 use crate::ui::{Icon, Tooltip, icon, icon_button, menu_item, outline_button};
 
+#[derive(Clone)]
 pub struct SettingsView {
     pub path: PathBuf,
     pub perms: Permissions,
@@ -130,9 +132,10 @@ impl KynexApp {
 
     pub(super) fn render_settings(
         &mut self,
+        leaving: Option<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement + use<>> {
+    ) -> Option<AnyElement> {
         let view = self.settings.as_ref()?;
         let t = theme(cx).clone();
         const SECTIONS: [&str; 3] = ["Permissions", "Model", "Appearance"];
@@ -333,24 +336,25 @@ impl KynexApp {
         let footer = format!("Stored in {}", project::dir(&path).display());
         let close = |this: &mut Self| this.settings = None;
         let (nav, content) = (nav.into_any_element(), content.into_any_element());
-        Some(settings_modal("Claude settings", Some(project_name(&path)), nav, content, footer, close, vp, cx))
+        let title = ("Claude settings", Some(project_name(&path)));
+        Some(settings_modal(title, nav, content, footer, close, vp, leaving, cx))
     }
 }
 
 /// The frame both settings modals share: a title bar with a close button,
 /// sections down the side, the section's content and where it's stored.
-/// Clicking outside or the close button runs `close`.
+/// Clicking outside or the close button runs `close`; `leaving` while it plays out.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn settings_modal(
-    title: &'static str,
-    subtitle: Option<String>,
+    (title, subtitle): (&'static str, Option<String>),
     nav: gpui::AnyElement,
     content: gpui::AnyElement,
     footer: String,
     close: fn(&mut KynexApp),
     vp: gpui::Size<gpui::Pixels>,
+    leaving: Option<f32>,
     cx: &mut Context<KynexApp>,
-) -> impl IntoElement + use<> {
+) -> AnyElement {
     let t = theme(cx).clone();
     let card = div()
         .id("settings-card")
@@ -402,7 +406,7 @@ pub(super) fn settings_modal(
             ),
         );
 
-    fade_in(
+    fade(
         "settings-fade",
         div()
             .id("modal-backdrop")
@@ -420,8 +424,9 @@ pub(super) fn settings_modal(
                     cx.notify();
                 }),
             )
-            .child(pop_in("settings-in", card, px(8.))),
+            .child(pop("settings-in", card, px(8.), leaving)),
         motion::QUICK,
+        leaving,
     )
 }
 

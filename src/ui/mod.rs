@@ -2,12 +2,14 @@
 //! `RenderOnce`-style builders over `div`, styled from the theme global.
 
 pub mod completions;
+pub mod ease_height;
 pub mod image_viewer;
 pub mod input;
 pub mod mark;
 pub mod motion;
 pub mod selectable;
 pub mod smooth_scroll;
+pub mod wash;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -22,6 +24,7 @@ use gpui::{
 use kynex_core::fmt::Mods;
 
 use crate::theme::{label_font, theme, ui_font};
+use wash::wash;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
@@ -237,8 +240,9 @@ pub fn ghost_button(id: impl Into<ElementId>, cx: &App) -> Stateful<gpui::Div> {
         .text_sm()
         .text_color(t.text)
         .cursor_pointer()
-        .hover(move |s| s.bg(hover))
+        .relative()
         .active(move |s| s.bg(active))
+        .child(wash(hover, None))
 }
 
 pub fn icon_button(id: impl Into<ElementId>, which: Icon, cx: &App) -> Stateful<gpui::Div> {
@@ -254,8 +258,9 @@ pub fn icon_button(id: impl Into<ElementId>, which: Icon, cx: &App) -> Stateful<
         .size(px(24.))
         .rounded_md()
         .cursor_pointer()
-        .hover(move |s| s.bg(hover))
+        .relative()
         .active(move |s| s.bg(active))
+        .child(wash(hover, None))
         .child(icon(which, t.text_muted))
 }
 
@@ -296,7 +301,8 @@ pub fn outline_button(id: impl Into<ElementId>, label: impl Into<SharedString>, 
         .text_sm()
         .text_color(t.text)
         .cursor_pointer()
-        .hover(move |s| s.bg(hover))
+        .relative()
+        .child(wash(hover, None))
         .child(label.into())
 }
 
@@ -484,8 +490,8 @@ pub fn menu_item(
         .text_sm()
         .text_color(t.text)
         .cursor_pointer()
-        .hover(move |s| s.bg(hover))
-        .when(selected, |d| d.bg(t.active))
+        .relative()
+        .child(wash(hover, selected.then_some(t.active)))
         .child(div().flex_1().truncate().child(label.into()))
         .when(selected, |d| d.child(icon(Icon::Check, t.text_muted)))
 }
