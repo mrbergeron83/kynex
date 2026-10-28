@@ -20,8 +20,17 @@ use crate::ui::{Icon, icon, outline_button};
 #[derive(Clone)]
 pub struct AppSettingsView {
     section: usize,
-    /// What the `claude` in use says its version is, once asked.
-    version: Option<Result<String, String>>,
+    /// The `claude` in use and what it says its version is, once asked.
+    cli: Option<CliInfo>,
+}
+
+/// Found off the UI thread when the modal opens, so no frame searches PATH.
+#[derive(Clone)]
+struct CliInfo {
+    program: PathBuf,
+    /// The picked `claude` is gone, so the one found is used.
+    missing: bool,
+    version: Result<String, String>,
 }
 
 const SECTIONS: [&str; 3] = ["General", "Appearance", "Keyboard"];
@@ -33,19 +42,26 @@ impl KynexApp {
         }
         self.settings = None;
         self.extensions = None;
-        self.app_settings = Some(AppSettingsView { section: 0, version: None });
+        self.app_settings = Some(AppSettingsView { section: 0, cli: None });
         self.read_cli_version(cx);
         cx.notify();
     }
 
-    /// Asks the `claude` in use for its version, off the UI thread.
+    /// Finds the `claude` in use and asks it for its version, off the UI thread.
     fn read_cli_version(&mut self, cx: &mut Context<Self>) {
-        let program = cli::program();
+        let picked = self.saved.cli_path.clone();
         cx.spawn(async move |this, cx| {
-            let version = cx.background_spawn(async move { cli::version_of(&program) }).await;
+            let info = cx
+                .background_spawn(async move {
+                    let program = cli::program();
+                    let missing = picked.is_some_and(|p| !p.is_file());
+                    let version = cli::version_of(&program);
+                    CliInfo { program, missing, version }
+                })
+                .await;
             this.update(cx, |this, cx| {
                 if let Some(s) = &mut this.app_settings {
-                    s.version = Some(version);
+                    s.cli = Some(info);
                 }
                 cx.notify();
             })
@@ -61,7 +77,7 @@ impl KynexApp {
         self.saved.cli_path = path;
         self.save();
         if let Some(s) = &mut self.app_settings {
-            s.version = None;
+            s.cli = None;
         }
         self.read_cli_version(cx);
         self.check_setup(cx);
@@ -151,9 +167,10 @@ impl KynexApp {
     fn render_general(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
         let view = self.app_settings.as_ref();
         let picked = self.saved.cli_path.clone();
-        let program = cli::program();
-        let missing = picked.as_ref().is_some_and(|p| !p.is_file());
-        let version = match view.and_then(|v| v.version.as_ref()) {
+        let info = view.and_then(|v| v.cli.as_ref());
+        let program = info.map(|i| i.program.display().to_string()).unwrap_or_else(|| "Looking for claude…".into());
+        let missing = info.is_some_and(|i| i.missing);
+        let version = match info.map(|i| &i.version) {
             None => ("Checking…".to_string(), t.text_placeholder),
             Some(Ok(v)) => (format!("Claude Code {v}"), t.text_muted),
             Some(Err(e)) => (e.clone(), t.error),
@@ -178,7 +195,7 @@ impl KynexApp {
                     .border_1()
                     .border_color(t.border_variant)
                     .bg(t.editor)
-                    .child(div().font_family(mono()).text_sm().truncate().child(program.display().to_string()))
+                    .child(div().font_family(mono()).text_sm().truncate().child(program))
                     .child(div().text_xs().text_color(version.1).child(version.0))
                     .when(missing, |d| {
                         let p = picked.clone().unwrap_or_default();

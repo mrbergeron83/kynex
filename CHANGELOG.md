@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Smoother scrolling and streaming: no frame reads files or searches PATH any more (the
+  composer's effort label, task output buttons, the CLI path in Settings), and the timeline
+  only goes over the messages that changed instead of the whole session every frame.
+
 ## [0.0.6] - 2026-10-28
 
 ### Added

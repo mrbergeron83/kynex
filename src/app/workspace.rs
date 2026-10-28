@@ -152,6 +152,7 @@ impl KynexApp {
     fn forget(&mut self, closed: &[Key]) {
         for k in closed {
             self.threads.remove(k);
+            self.timelines.remove(k);
         }
         self.expanded.retain(|(k, _)| !closed.contains(k));
         self.open_runs.retain(|(k, _)| !closed.contains(k));

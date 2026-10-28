@@ -27,6 +27,11 @@ pub struct TaskToast {
 impl KynexApp {
     /// Shows a task's output in the project's terminal; `follow` keeps streaming it.
     fn show_task_output(&mut self, path: &Path, follow: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // Checked here, not when the button draws, so no frame touches the disk.
+        if !path.is_file() {
+            self.notice = Some(format!("The task's output is gone: {}", path.display()));
+            return cx.notify();
+        }
         let (kind, command) = tasks::output_command(path, follow);
         self.run_in_terminal(kind, command, window, cx);
     }
@@ -123,7 +128,7 @@ impl KynexApp {
     pub(super) fn render_task_notice(&self, ix: usize, n: &Notice, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let (which, color, label) = status_look(n.status, &t);
-        let output = n.output_file.clone().filter(|p| self.active_project().is_some() && p.is_file());
+        let output = n.output_file.clone().filter(|_| self.active_project().is_some());
         let open: Option<AnyElement> = output.map(|path: PathBuf| {
             let follow = n.status == Status::Event;
             ghost_button(("task-output", ix), cx)
