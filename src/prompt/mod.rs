@@ -30,7 +30,7 @@ use crate::ui::{Icon, icon};
 pub use preview::{diff_stat, preview, title};
 use preview::{rules_label, session_label};
 
-actions!(prompt, [SelectPrev, SelectNext, Confirm, Cancel, NextTab, PrevTab]);
+actions!(prompt, [SelectPrev, SelectNext, Confirm, Cancel, Tab, NextTab, PrevTab]);
 
 const CONTEXT: &str = "Prompt";
 
@@ -41,7 +41,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("down", SelectNext, c),
         KeyBinding::new("enter", Confirm, c),
         KeyBinding::new("escape", Cancel, c),
-        KeyBinding::new("tab", NextTab, c),
+        KeyBinding::new("tab", Tab, c),
         KeyBinding::new("shift-tab", PrevTab, c),
         KeyBinding::new("right", NextTab, c),
         KeyBinding::new("left", PrevTab, c),
@@ -59,7 +59,8 @@ pub struct Request {
     pub kind: Kind,
 }
 
-pub struct PromptAnswer(pub Answer);
+/// The answer, and a comment that goes to Claude with a yes (Tab on it).
+pub struct PromptAnswer(pub Answer, pub String);
 
 impl EventEmitter<PromptAnswer> for PromptView {}
 
@@ -72,6 +73,9 @@ pub struct PromptView {
     selected: usize,
     feedback: Entity<TextInput>,
     choices: Vec<(String, Answer)>,
+    /// The choice whose comment field Tab opened, and that field.
+    commenting: Option<usize>,
+    comment: Entity<TextInput>,
     /// `AskUserQuestion`: where you are and what's picked, and each
     /// question's "Type something" field.
     form: Form,
@@ -88,13 +92,21 @@ impl PromptView {
         cx.subscribe_in(&feedback, window, |this, input, ev, _, cx| match ev {
             InputEvent::Submit => {
                 let text = input.read(cx).text().to_string();
-                cx.emit(PromptAnswer(Answer::Deny(text)));
+                cx.emit(PromptAnswer(Answer::Deny(text), String::new()));
             }
             InputEvent::Changed => {
                 this.selected = this.choices.len();
                 cx.notify();
             }
             _ => {}
+        })
+        .detach();
+
+        let comment = cx.new(|cx| TextInput::new(cx).placeholder("Add a comment for Claude"));
+        cx.subscribe_in(&comment, window, |this, _, ev, window, cx| {
+            if let (InputEvent::Submit, Some(n)) = (ev, this.commenting) {
+                this.pick(n, window, cx);
+            }
         })
         .detach();
 
@@ -149,7 +161,7 @@ impl PromptView {
 
         let focus = cx.focus_handle();
         focus.focus(window, cx);
-        Self { req, queued: 0, focus, selected: 0, feedback, choices, form, other }
+        Self { req, queued: 0, focus, selected: 0, feedback, choices, commenting: None, comment, form, other }
     }
 
     fn is_questions(&self) -> bool {
@@ -157,15 +169,19 @@ impl PromptView {
     }
 
     fn typing(&self, window: &Window, cx: &App) -> bool {
-        self.feedback.read(cx).is_focused(window) || self.other.iter().any(|o| o.read(cx).is_focused(window))
+        self.feedback.read(cx).is_focused(window)
+            || self.comment.read(cx).is_focused(window)
+            || self.other.iter().any(|o| o.read(cx).is_focused(window))
     }
 
     /// Puts the caret in the field the cursor is on, or takes it out again.
     fn sync_focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         let field = if self.is_questions() {
             self.form.on_other_row().then(|| self.other.get(self.form.tab)).flatten()
+        } else if self.selected == self.choices.len() {
+            Some(&self.feedback)
         } else {
-            (self.selected == self.choices.len()).then_some(&self.feedback)
+            (self.commenting == Some(self.selected)).then_some(&self.comment)
         };
         let handle = field.map_or_else(|| self.focus.clone(), |f| f.read(cx).focus_handle(cx));
         if !handle.is_focused(window) {
@@ -176,23 +192,26 @@ impl PromptView {
     /// Acts on what a key or click did to the question form.
     fn follow(&mut self, step: Step, window: &mut Window, cx: &mut Context<Self>) {
         match step {
-            Step::Submit => cx.emit(PromptAnswer(Answer::Questions(self.form.answers()))),
-            Step::Cancel => cx.emit(PromptAnswer(Answer::Deny(String::new()))),
+            Step::Submit => cx.emit(PromptAnswer(Answer::Questions(self.form.answers()), String::new())),
+            Step::Cancel => cx.emit(PromptAnswer(Answer::Deny(String::new()), String::new())),
             Step::Moved | Step::Type => self.sync_focus(window, cx),
         }
         cx.notify();
     }
 
-    /// Picks choice `n`. The "No" row opens its field first; picked again (or
-    /// Enter in the field) it says no, with whatever was typed.
+    /// Picks choice `n`, with its comment if Tab opened one. The "No" row opens
+    /// its field first; picked again (or Enter in the field) it says no, with
+    /// whatever was typed.
     fn pick(&mut self, n: usize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, answer)) = self.choices.get(n) {
-            cx.emit(PromptAnswer(answer.clone()));
+            let comment =
+                if self.commenting == Some(n) { self.comment.read(cx).text().to_string() } else { String::new() };
+            cx.emit(PromptAnswer(answer.clone(), comment));
         } else if self.selected != n {
             self.selected = n;
             self.sync_focus(window, cx);
         } else {
-            cx.emit(PromptAnswer(Answer::Deny(self.feedback.read(cx).text().to_string())));
+            cx.emit(PromptAnswer(Answer::Deny(self.feedback.read(cx).text().to_string()), String::new()));
         }
         cx.notify();
     }
@@ -203,6 +222,7 @@ impl PromptView {
             return self.follow(step, window, cx);
         }
         self.selected = self.selected.saturating_sub(1);
+        self.commenting = None;
         self.sync_focus(window, cx);
         cx.notify();
     }
@@ -213,6 +233,7 @@ impl PromptView {
             return self.follow(step, window, cx);
         }
         self.selected = (self.selected + 1).min(self.choices.len());
+        self.commenting = None;
         self.sync_focus(window, cx);
         cx.notify();
     }
@@ -226,8 +247,24 @@ impl PromptView {
         }
     }
 
-    fn cancel(&mut self, _: &Cancel, _: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(PromptAnswer(Answer::Deny(String::new())));
+    /// Esc closes an open comment field; otherwise it says no and stops the turn.
+    fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if self.commenting.take().is_some() {
+            self.sync_focus(window, cx);
+            return cx.notify();
+        }
+        cx.emit(PromptAnswer(Answer::Deny(String::new()), String::new()));
+    }
+
+    /// Tab moves between questions; as in Claude Code, on a yes it opens a
+    /// comment for Claude to go with it (the "No" row's field is open already).
+    fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_questions() || self.selected >= self.choices.len() {
+            return self.next_tab(&NextTab, window, cx);
+        }
+        self.commenting = Some(self.selected);
+        self.sync_focus(window, cx);
+        cx.notify();
     }
 
     fn next_tab(&mut self, _: &NextTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -350,9 +387,12 @@ impl PromptView {
         let t = theme(cx).clone();
         let no = self.choices.len();
         let rows = self.choices.iter().enumerate().map(|(n, (label, _))| {
+            let commenting = self.commenting == Some(n);
             choice_row(("choice", n), n, self.selected == n, &t)
-                .child(div().text_sm().child(label.clone()))
-                .on_click(cx.listener(move |this, _, window, cx| this.pick(n, window, cx)))
+                .child(div().flex_none().text_sm().child(if commenting { format!("{label},") } else { label.clone() }))
+                .when(commenting, |d| d.child(div().flex_1().text_sm().text_color(t.text).child(self.comment.clone())))
+                // A click in the open comment field places the caret; Enter answers.
+                .when(!commenting, |d| d.on_click(cx.listener(move |this, _, window, cx| this.pick(n, window, cx))))
         });
         let no_label = match self.req.tool.as_str() {
             "ExitPlanMode" => "No, keep planning (esc)",
@@ -375,7 +415,14 @@ impl PromptView {
                     .child(no_body)
                     .on_click(cx.listener(move |this, _, window, cx| this.pick(no, window, cx))),
             )
-            .child(hint("↑↓ Enter or 1–9 to choose · Esc to say no and stop", cx))
+            .child(hint(
+                if self.commenting.is_some() {
+                    "Enter to answer with the comment · Esc to close it"
+                } else {
+                    "↑↓ Enter or 1–9 to choose · Tab to add a comment · Esc to say no and stop"
+                },
+                cx,
+            ))
     }
 }
 
@@ -399,6 +446,7 @@ impl Render for PromptView {
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::tab))
             .on_action(cx.listener(Self::next_tab))
             .on_action(cx.listener(Self::prev_tab))
             .on_key_down(cx.listener(Self::key_down))

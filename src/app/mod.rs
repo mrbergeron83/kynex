@@ -30,6 +30,7 @@
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
 //! | `settings.rs`       | the project's Claude settings modal                  |
+//! | `app_settings.rs`   | the app's Settings modal: CLI, shell, appearance     |
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
 //! | `app_update.rs`     | Kynex updating itself: checks, the update toast      |
 //! | `about.rs`          | the About Kynex modal: version, paths, updates       |
@@ -38,6 +39,7 @@
 //! | `viewer.rs`         | images opened over the window, thumbnails            |
 
 mod about;
+mod app_settings;
 mod app_update;
 mod appearance;
 mod composer;
@@ -157,6 +159,8 @@ pub struct KynexApp {
     naming_tried: HashSet<String>,
     /// The project settings being edited; the modal is open while this is set.
     settings: Option<SettingsView>,
+    /// The app's own Settings modal, while open.
+    app_settings: Option<app_settings::AppSettingsView>,
     /// Projects whose rules changed mid-reply; their process restarts once it's idle.
     restart_when_idle: HashSet<PathBuf>,
     prompt: Option<ActivePrompt>,
@@ -313,6 +317,7 @@ impl KynexApp {
             naming: None,
             naming_tried: HashSet::new(),
             settings: None,
+            app_settings: None,
             restart_when_idle: HashSet::new(),
             prompt: None,
             menu: None,
@@ -529,6 +534,7 @@ impl Render for KynexApp {
 
         let menu = self.render_menu(cx);
         let settings = self.render_settings(window, cx);
+        let app_settings = self.render_app_settings(window, cx);
         let notice = self.render_notice(cx);
         let toast = self.render_update_toast(cx);
         let task_toast = self.render_task_toast(cx);
@@ -548,6 +554,7 @@ impl Render for KynexApp {
             .text_color(t.text)
             .text_sm()
             .on_action(cx.listener(Self::open_project))
+            .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(Self::next_tab))
             .on_action(cx.listener(Self::prev_tab))
             .on_action(cx.listener(Self::toggle_sessions))
@@ -612,6 +619,7 @@ impl Render for KynexApp {
             .children(task_toast)
             .children(git_modal)
             .children(settings)
+            .children(app_settings)
             .children(about)
             .children(menu)
             .children(viewer)

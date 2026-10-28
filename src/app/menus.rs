@@ -81,6 +81,18 @@ impl KynexApp {
                         .into_any_element(),
                 );
                 items.push(
+                    menu_item("kynex-settings", "Settings", false, cx)
+                        .children(
+                            crate::ui::shortcut(&super::keys::OpenSettings, cx)
+                                .map(|k| div().flex_none().text_xs().text_color(t.text_placeholder).child(k)),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.menu = None;
+                            this.open_app_settings(cx);
+                        }))
+                        .into_any_element(),
+                );
+                items.push(
                     menu_item("kynex-check-cli", "Check for Claude Code updates", false, cx)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.menu = None;
@@ -152,11 +164,8 @@ impl KynexApp {
                     items.push(
                         menu_item(("theme", n), *name, self.saved.theme == th, cx)
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.saved.theme = th;
                                 this.menu = None;
-                                this.save();
-                                theme::set(th, cx);
-                                cx.refresh_windows();
+                                this.set_theme(th, cx);
                             }))
                             .into_any_element(),
                     );
@@ -183,11 +192,8 @@ impl KynexApp {
                     items.push(
                         menu_item(("motion", n), m.label(), self.saved.motion == m, cx)
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.saved.motion = m;
                                 this.menu = None;
-                                this.save();
-                                crate::ui::motion::apply(m, cx);
-                                cx.notify();
+                                this.set_motion(m, cx);
                             }))
                             .into_any_element(),
                     );

@@ -41,6 +41,7 @@ impl KynexApp {
         key: Key,
         request_id: String,
         answer: session::Answer,
+        comment: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -50,7 +51,7 @@ impl KynexApp {
             let ix =
                 s.items.iter().position(|i| matches!(i, Item::Permission { request_id: r, .. } if *r == request_id));
             if let Some(ix) = ix {
-                rules = s.answer_permission(ix, answer);
+                rules = s.answer_permission_with(ix, answer, comment);
                 cwd = Some(s.cwd.clone());
             }
         }
@@ -90,8 +91,8 @@ impl KynexApp {
             let view = cx.new(|cx| PromptView::new(req, window, cx));
             let sub = cx.subscribe_in(&view, window, {
                 let id = id.clone();
-                move |this, _, PromptAnswer(answer), window, cx| {
-                    this.answer(key, id.clone(), answer.clone(), window, cx)
+                move |this, _, PromptAnswer(answer, comment), window, cx| {
+                    this.answer(key, id.clone(), answer.clone(), comment, window, cx)
                 }
             });
             self.prompt = Some(ActivePrompt { key, id, view, _sub: sub });

@@ -477,6 +477,32 @@ impl Session {
     /// to save in the project's settings; the live process gets them right away
     /// as session rules, and later processes get them from the saved settings.
     pub fn answer_permission(&mut self, index: usize, answer: Answer) -> Vec<String> {
+        self.answer_permission_with(index, answer, "")
+    }
+
+    /// [`Self::answer_permission`] with a comment on a yes ("yes, but use the
+    /// staging config"). The CLI's allow response has no field for one, so it
+    /// goes as a user message right behind the answer; the CLI takes messages
+    /// that arrive mid-turn in at the next step, so Claude reads it before it
+    /// carries on. A comment on a no is [`Answer::Deny`]'s feedback.
+    pub fn answer_permission_with(&mut self, index: usize, answer: Answer, comment: &str) -> Vec<String> {
+        let comment = comment.trim();
+        let pending = matches!(self.items.get(index), Some(Item::Permission { state: PermState::Pending, .. }));
+        let allows = pending && !matches!(answer, Answer::Deny(_));
+        let rules = self.answer_inner(index, answer);
+        if allows
+            && !comment.is_empty()
+            && let Some(Item::Permission { state: PermState::Allowed(note), .. }) = self.items.get_mut(index)
+        {
+            note.push_str(&format!(" · “{comment}”"));
+            self.write(json!({ "type": "user", "message": { "role": "user", "content": [
+                { "type": "text", "text": comment }
+            ] } }));
+        }
+        rules
+    }
+
+    fn answer_inner(&mut self, index: usize, answer: Answer) -> Vec<String> {
         let Some(Item::Permission { request_id, tool, input, suggestions, state, .. }) = self.items.get_mut(index)
         else {
             return Vec::new();
@@ -1220,6 +1246,28 @@ mod tests {
     }
 
     #[test]
+    fn a_comment_rides_along_with_a_yes() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        let ask = |id: &str| {
+            json!({ "type": "control_request", "request_id": id,
+                "request": { "subtype": "can_use_tool", "tool_name": "Bash", "input": {} } })
+        };
+        s.handle(ask("a"));
+        s.handle(ask("b"));
+        s.answer_permission_with(0, Answer::Once, "  use the staging config ");
+        let Some(Item::Permission { state, .. }) = s.items.first() else { panic!() };
+        assert!(*state == PermState::Allowed("allowed · “use the staging config”".into()));
+        // Blank comments add nothing.
+        s.answer_permission_with(1, Answer::Once, "  ");
+        let Some(Item::Permission { state, .. }) = s.items.get(1) else { panic!() };
+        assert!(*state == PermState::Allowed("allowed".into()));
+        // A second answer changes nothing.
+        s.answer_permission_with(0, Answer::Once, "again");
+        let Some(Item::Permission { state, .. }) = s.items.first() else { panic!() };
+        assert!(*state == PermState::Allowed("allowed · “use the staging config”".into()));
+    }
+
+    #[test]
     fn mcp_servers_and_server_wide_allow() {
         let mut s = Session::new(Kind::Chat, std::env::temp_dir());
         s.handle(json!({ "type": "system", "subtype": "init",
@@ -1507,6 +1555,40 @@ mod tests {
         assert!(asked(&s) > 0, "manual mode should ask");
         assert!(!project.join("made2").exists(), "denied mkdir shouldn't run");
 
+        s.kill();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A comment on a yes reaches Claude within the same turn. Run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn comment_on_a_yes_live() {
+        let root = std::env::temp_dir().join(format!("kynex-comment-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        unsafe { std::env::set_var("KYNEX_DATA_DIR", root.join("data")) };
+        let mut s = Session::new(Kind::Code, root.clone());
+        s.model = "haiku".into();
+        s.mode = project::Mode::Manual;
+        s.send(
+            "Run this exact command with the Bash tool: mkdir made . Then reply with one short sentence.".into(),
+            Vec::new(),
+        );
+        let start = Instant::now();
+        while s.busy && start.elapsed() < Duration::from_secs(120) {
+            s.poll();
+            if let Some(i) =
+                s.items.iter().position(|i| matches!(i, Item::Permission { state: PermState::Pending, .. }))
+            {
+                s.answer_permission_with(i, Answer::Once, "Also end your reply with the word BANANA.");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let results = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
+        let text: String =
+            s.items.iter().filter_map(|i| if let Item::Assistant(t) = i { Some(t.as_str()) } else { None }).collect();
+        assert!(root.join("made").is_dir(), "allowed mkdir should run");
+        assert_eq!(results, 1, "the comment should join the running turn");
+        assert!(text.contains("BANANA"), "got: {text:?}");
         s.kill();
         let _ = std::fs::remove_dir_all(&root);
     }

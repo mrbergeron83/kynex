@@ -7,6 +7,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Settings** (the gear in the title bar, Ctrl+, / Cmd+,), apart from a project's Claude
+  settings: the `claude` CLI to use (found automatically, or one you pick, with the version it
+  reports), the shell a new terminal opens, theme, fonts and animations, and a shortcut to
+  `keymap.json`.
+- **Comments on a yes**: Tab on a permission prompt's Yes opens a field in place, and what you
+  type goes to Claude with the answer ("yes, but use the staging config"); Esc closes it.
 - **Browser and MCP tools in words**: MCP calls read as what they do (`Edge · Click "Sign in"`,
   `Edge · Open https://…`) instead of `mcp__playwright-edge__browser_click {…}`, and a run of
   them folds to `Edge: 14 actions (3 screenshots)`. Their permission prompts ask the same way

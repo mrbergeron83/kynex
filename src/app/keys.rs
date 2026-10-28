@@ -38,15 +38,17 @@ actions!(
         ScrollTop,
         ScrollBottom,
         LineUp,
-        LineDown
+        LineDown,
+        OpenSettings
     ]
 );
 
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 20] = [
+const SHORTCUTS: [(&str, &str); 21] = [
     ("open_project", "secondary-o"),
+    ("open_settings", "secondary-,"),
     ("next_tab", "ctrl-tab"),
     ("prev_tab", "ctrl-shift-tab"),
     ("toggle_sessions", "secondary-b"),
@@ -132,6 +134,7 @@ pub fn bind_keys(cx: &mut App) {
         };
         bindings.push(match name {
             "open_project" => KeyBinding::new(keys, OpenProject, c),
+            "open_settings" => KeyBinding::new(keys, OpenSettings, c),
             "next_tab" => KeyBinding::new(keys, NextTab, c),
             "prev_tab" => KeyBinding::new(keys, PrevTab, c),
             "toggle_sessions" => KeyBinding::new(keys, ToggleSessions, c),
@@ -179,6 +182,10 @@ impl KynexApp {
         self.pick_project(cx);
     }
 
+    pub(super) fn open_settings_action(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
+        self.open_app_settings(cx);
+    }
+
     fn tab_count(&self) -> usize {
         self.saved.projects.len() + 1
     }
@@ -217,7 +224,11 @@ impl KynexApp {
     /// Esc by default: closes an open menu or the settings modal first, then
     /// stops a running reply. Otherwise the key goes on to whoever else wants it.
     pub(super) fn interrupt_action(&mut self, _: &Interrupt, _: &mut Window, cx: &mut Context<Self>) {
-        if self.menu.take().is_some() || self.settings.take().is_some() || self.cancel_rename() {
+        if self.menu.take().is_some()
+            || self.settings.take().is_some()
+            || self.app_settings.take().is_some()
+            || self.cancel_rename()
+        {
             return cx.notify();
         }
         if self.active_session().is_some_and(|s| s.busy) {
@@ -287,10 +298,18 @@ impl KynexApp {
             return;
         }
         if k.key == "escape"
-            && (self.menu.is_some() || self.settings.is_some() || self.about_open || self.git_modal.is_some())
+            && (self.menu.is_some()
+                || self.settings.is_some()
+                || self.app_settings.is_some()
+                || self.about_open
+                || self.git_modal.is_some())
         {
             // The topmost one closes: a menu, then settings or About, then the Git modal.
-            if self.menu.take().is_none() && self.settings.take().is_none() && !std::mem::take(&mut self.about_open) {
+            if self.menu.take().is_none()
+                && self.settings.take().is_none()
+                && self.app_settings.take().is_none()
+                && !std::mem::take(&mut self.about_open)
+            {
                 self.close_git_modal(cx);
             }
             cx.notify();
