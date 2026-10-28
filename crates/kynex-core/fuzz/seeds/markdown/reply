@@ -1,0 +1,21 @@
+# Plan
+
+Some **bold**, *italic*, ~~gone~~ and `code` with a [link](https://example.com).
+
+1. First
+2. Second
+   - nested [x] item
+   - [ ] task
+
+> A quote
+> > nested
+
+| a | b |
+|:--|--:|
+| 1 | 2 |
+
+```powershell
+./scripts/check.ps1
+```
+
+---

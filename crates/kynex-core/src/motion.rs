@@ -85,6 +85,11 @@ impl Glide {
         self.remaining != 0.
     }
 
+    /// Pixels still to scroll.
+    pub fn remaining(&self) -> f32 {
+        self.remaining
+    }
+
     /// Stops where it is: the view hit an end, or you grabbed it.
     pub fn stop(&mut self) {
         self.remaining = 0.;

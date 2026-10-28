@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::session::{Kind, Session};
-use crate::{cli, commands, git, rewind, session, tasks, update};
+use crate::{cli, commands, git, markdown, rewind, session, tasks, update};
 
 /// The CLI's stream-json output, one event per line, as a live session reads it.
 pub fn stream_json(text: &str) {
@@ -64,6 +64,11 @@ pub fn git_worktree(text: &str) {
     let _ = git::worktree::parse_left_right(text);
 }
 
+/// Claude's replies, as markdown.
+pub fn markdown(text: &str) {
+    let _ = markdown::parse(text);
+}
+
 /// Versions and update info: `claude --version` and installer output, npm and
 /// GitHub release info, `SHA256SUMS`, typed slash commands.
 pub fn versions(bytes: &[u8]) {
@@ -95,6 +100,7 @@ mod tests {
             git_log(t);
             git_branch(t);
             git_worktree(t);
+            markdown(t);
             versions(t.as_bytes());
         }
     }

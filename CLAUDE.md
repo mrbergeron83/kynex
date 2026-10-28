@@ -80,6 +80,7 @@ A cargo workspace with two crates:
   - `groups.rs` — session groups and the archive in the sessions panel (`sessions.json` per project)
   - `timeline.rs` — a session's turns and their notable steps, for the timeline panel;
     `transcript.rs` lays items out as transcript rows (tool runs folded) and maps between them
+  - `markdown.rs` — markdown (pulldown-cmark) parsed into plain blocks the app draws
   - `motion.rs` — the Animations setting, the OS's "reduce motion", `Glide` (smooth,
     time-based scrolling) and `Wheel` (wheel notches as gliding pixel steps)
   - `git/` — everything git, parsed from machine formats: `status`, `diff` (hunks with line
@@ -100,7 +101,8 @@ A cargo workspace with two crates:
   - `prompt/` — `PromptView`: permission / plan / question prompts in the composer's place,
     Claude Code-style (cursor, numbered choices, a tab per question); `questions.rs` draws the
     questions, whose state is `kynex_core::questions::Form`; `preview.rs` has titles and diffs
-  - `markdown.rs` — markdown to gpui elements (pulldown-cmark), re-parsed per render
+  - `markdown.rs` — `kynex_core::markdown` blocks to gpui elements; parses are cached per
+    message, so frames only draw
   - `git/` — the Git view (`GitView` entity): top bar with branch picker and fetch / pull / push,
     Changes tab (commit box, staged / unstaged files), History tab, diff viewer; the table at the
     top of `git/mod.rs` lists the files

@@ -75,6 +75,28 @@ impl Thread {
         true
     }
 
+    /// Follows a streaming reply by gliding: gpui's tail following pins the
+    /// end on every layout, so the text jumps up as the last row grows. Instead
+    /// the view holds where it is through the layout, and glides down by what
+    /// was added on the frames after.
+    fn trail(&mut self) {
+        if self.list.is_following_tail() {
+            // Swap the "past the end" anchor for the same spot as an offset,
+            // which layout leaves alone.
+            let max = self.list.max_offset_for_scrollbar().y;
+            self.list.scroll_to(ListOffset { item_ix: 0, offset_in_item: px(0.) });
+            self.list.scroll_by(max);
+            self.follow_after = true;
+        } else if !self.follow_after {
+            return;
+        }
+        let (offset, max) = (self.offset(), f32::from(self.list.max_offset_for_scrollbar().y));
+        let gap = max - offset - self.glide.remaining();
+        if gap > 0.5 {
+            self.glide.push(gap);
+        }
+    }
+
     /// Moves the list this frame's share of the glide, stopping at either end.
     fn glide_frame(&mut self) {
         let now = Instant::now();
@@ -160,6 +182,14 @@ impl KynexApp {
         let n = thread.rows.len();
         if busy && n > 0 {
             thread.list.remeasure_items(n - 1..n);
+        }
+        if busy && !cx.reduce_motion() {
+            thread.trail();
+        } else if thread.follow_after && !thread.glide.is_moving() {
+            // The reply ended while trailing it: back to plain following.
+            thread.follow_after = false;
+            thread.list.scroll_to_end();
+            thread.list.set_follow_mode(FollowMode::Tail);
         }
         if thread.glide.is_moving() {
             thread.glide_frame();

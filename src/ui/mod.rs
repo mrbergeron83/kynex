@@ -199,6 +199,14 @@ impl AssetSource for Assets {
     }
 }
 
+/// `logical` pixels rounded to a whole number of device pixels (at least one),
+/// for things painted by hand: gpui snaps each edge of a quad on its own, so a
+/// 1.5px caret would be 1 or 2 device pixels wide depending on where it sits.
+pub fn device_px(logical: f32, window: &Window) -> Pixels {
+    let scale = window.scale_factor();
+    px((logical * scale).round().max(1.) / scale)
+}
+
 pub fn icon(icon: Icon, color: Hsla) -> gpui::Svg {
     svg().path(icon.path()).size_4().flex_none().text_color(color)
 }
