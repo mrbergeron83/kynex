@@ -1,7 +1,9 @@
-//! The account's usage limits: the rolling 5-hour window and the weekly cap.
-//! The CLI reports both in a stream-json `rate_limit_event` on every turn, for
-//! every session, so the newest report wins; it's kept in `usage.json` so the
-//! title bar has something to show before the first turn after a start.
+//! The account's usage limits: the rolling 5-hour window, the weekly cap, and
+//! Fable's own weekly cap. The CLI reports them in a stream-json
+//! `rate_limit_event` on every turn, for every session, so the newest report
+//! wins; it's kept in `usage.json` so the title bar has something to show
+//! before the first turn after a start. Only Fable turns carry Fable's window,
+//! so a report without it keeps the last one seen.
 //! API-key accounts have no such limits and get no reports, so nothing shows.
 
 use std::path::PathBuf;
@@ -17,6 +19,9 @@ pub const NEAR: f64 = 0.8;
 pub struct Limits {
     pub five_hour: Option<Window>,
     pub seven_day: Option<Window>,
+    /// Fable's weekly cap, apart from the other two (`seven_day_overage_included`).
+    #[serde(default)]
+    pub fable: Option<Window>,
     /// Paying for use past the limits.
     #[serde(default)]
     pub overage: bool,
@@ -80,19 +85,27 @@ pub fn parse(v: &Value) -> Option<Limits> {
     let limits = Limits {
         five_hour: window("five_hour"),
         seven_day: window("seven_day"),
+        fable: window("seven_day_overage_included"),
         overage: info["isUsingOverage"].as_bool().unwrap_or(false),
     };
-    (limits.five_hour.is_some() || limits.seven_day.is_some()).then_some(limits)
+    (limits.five_hour.is_some() || limits.seven_day.is_some() || limits.fable.is_some()).then_some(limits)
 }
 
 impl Limits {
-    /// Both windows as of `now`.
+    /// Every window as of `now`.
     pub fn at(&self, now: u64) -> Self {
         Limits {
             five_hour: self.five_hour.map(|w| w.at(now)),
             seven_day: self.seven_day.map(|w| w.at(now)),
+            fable: self.fable.map(|w| w.at(now)),
             overage: self.overage,
         }
+    }
+
+    /// A newer report over these: it wins, except that one from a turn on
+    /// another model doesn't carry Fable's window, so the last one stays.
+    pub fn then(self, newer: Limits) -> Limits {
+        Limits { fable: newer.fable.or(self.fable), ..newer }
     }
 
     /// One line per window, for the tooltip: "5-hour: 42% used, resets in 2h 10m".
@@ -105,6 +118,7 @@ impl Limits {
         let mut lines: Vec<String> = Vec::new();
         lines.extend(self.five_hour.map(|w| line("5-hour", w)));
         lines.extend(self.seven_day.map(|w| line("Weekly", w)));
+        lines.extend(self.fable.map(|w| line("Fable weekly", w)));
         if self.overage {
             lines.push("Using extra usage".into());
         }
@@ -159,6 +173,38 @@ mod tests {
                 "five_hour": { "utilization": five, "resetsAt": 1000, "status": status },
                 "seven_day": { "utilization": 0.53, "resetsAt": 90_000, "status": "allowed" }
             } } })
+    }
+
+    fn fable_event(used: f64) -> Value {
+        json!({ "type": "rate_limit_event", "rate_limit_info": { "unifiedWindows": {
+            "five_hour": { "utilization": 0.5, "resetsAt": 1000, "status": "allowed" },
+            "seven_day": { "utilization": 0.6, "resetsAt": 90_000, "status": "allowed" },
+            "seven_day_overage_included": { "utilization": used, "resetsAt": 90_000, "status": "allowed" }
+        } } })
+    }
+
+    #[test]
+    fn parses_fables_window() {
+        let l = parse(&fable_event(0.04)).unwrap();
+        assert_eq!(l.fable, Some(Window { used: 0.04, resets_at: 90_000, limited: false }));
+        assert!(parse(&event(0.1, "allowed")).unwrap().fable.is_none());
+        assert!(l.describe(0).ends_with("Fable weekly: 4% used, resets in 1d 1h"));
+    }
+
+    #[test]
+    fn a_report_without_fable_keeps_its_window() {
+        let fable = parse(&fable_event(0.04)).unwrap();
+        let later = fable.clone().then(parse(&event(0.7, "allowed")).unwrap());
+        assert_eq!(later.five_hour.unwrap().used, 0.7, "the newer report wins");
+        assert_eq!(later.fable, fable.fable);
+        let newer = later.then(parse(&fable_event(0.1)).unwrap());
+        assert_eq!(newer.fable.unwrap().used, 0.1);
+    }
+
+    #[test]
+    fn reads_usage_saved_before_fable() {
+        let l: Limits = serde_json::from_str(r#"{"five_hour":null,"seven_day":null}"#).unwrap();
+        assert!(l.fable.is_none());
     }
 
     #[test]

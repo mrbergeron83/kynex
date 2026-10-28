@@ -38,6 +38,10 @@ impl KynexApp {
 
     /// A session's process reported the account's limits; kept for the next start.
     pub(super) fn limits_reported(&mut self, limits: Limits, cx: &mut Context<Self>) {
+        let limits = match &self.usage {
+            Some(older) => older.clone().then(limits),
+            None => limits,
+        };
         if self.usage.as_ref() == Some(&limits) {
             return;
         }
@@ -47,7 +51,8 @@ impl KynexApp {
     }
 
     /// The account's 5-hour and weekly windows side by side, "5h ▬ 42%  7d ▬ 53%",
-    /// with reset times in the tooltip. Each turns amber close to its limit, and
+    /// then Fable's own weekly one once a Fable turn has reported it, with reset
+    /// times in the tooltip. Each turns amber close to its limit, and
     /// red with the wait once it's hit.
     pub(super) fn render_usage(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
@@ -78,7 +83,7 @@ impl KynexApp {
                 ))
                 .child(div().text_color(color).child(text))
         };
-        let meters: Vec<_> = [("5h", limits.five_hour), ("7d", limits.seven_day)]
+        let meters: Vec<_> = [("5h", limits.five_hour), ("7d", limits.seven_day), ("Fable", limits.fable)]
             .into_iter()
             .filter_map(|(name, w)| Some(meter(name, w?)))
             .collect();
