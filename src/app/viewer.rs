@@ -12,7 +12,7 @@ use super::KynexApp;
 use crate::theme::theme;
 use crate::ui::Tooltip;
 use crate::ui::image_viewer::ImageViewer;
-use crate::ui::motion::{self, fade_in};
+use crate::ui::motion::{self, fade};
 
 impl KynexApp {
     pub(super) fn open_image(&mut self, image: Arc<Image>, window: &mut Window, cx: &mut Context<Self>) {
@@ -29,10 +29,10 @@ impl KynexApp {
         }
     }
 
-    pub(super) fn render_image_viewer(&self) -> Option<AnyElement> {
+    pub(super) fn render_image_viewer(&self, leaving: Option<f32>) -> Option<AnyElement> {
         let viewer = self.viewer.clone()?;
         let id = ("viewer-in", viewer.entity_id().as_u64() as usize);
-        Some(fade_in(id, div().absolute().inset_0().child(viewer), motion::QUICK).into_any_element())
+        Some(fade(id, div().absolute().inset_0().child(viewer), motion::QUICK, leaving))
     }
 
     /// Thumbnails of `images` that open in the viewer, `max_h` tall at most.

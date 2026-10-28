@@ -9,7 +9,7 @@ use kynex_core::update;
 
 use super::{KynexApp, models};
 use crate::theme::{self, DEFAULT_CODE_FONT, DEFAULT_UI_FONT, SUGGESTED_CODE_FONTS, SUGGESTED_UI_FONTS, THEMES, theme};
-use crate::ui::motion::pop_in;
+use crate::ui::motion::pop;
 use crate::ui::{Icon, Tooltip, divider, icon, menu_item, popover};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -33,6 +33,7 @@ pub enum FontRole {
     Code,
 }
 
+#[derive(Clone)]
 pub struct OpenMenu {
     which: Menu,
     at: Point<Pixels>,
@@ -50,7 +51,8 @@ impl KynexApp {
         cx.notify();
     }
 
-    pub(super) fn render_menu(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+    /// The open menu; `leaving` while it plays out after closing.
+    pub(super) fn render_menu(&mut self, leaving: Option<f32>, cx: &mut Context<Self>) -> Option<AnyElement> {
         let open = self.menu.as_ref()?;
         let (which, at, anchor) = (open.which.clone(), open.at, open.anchor);
         let t = theme(cx).clone();
@@ -331,26 +333,30 @@ impl KynexApp {
             Menu::Session(id) => items = self.session_menu_items(id, cx),
             Menu::Group(i) => items = self.group_menu_items(*i, cx),
         }
-        Some(deferred(
-            anchored().position(at).anchor(anchor).snap_to_window_with_margin(px(8.)).child(pop_in(
-                SharedString::from(format!("menu-in-{which:?}")),
-                popover(cx)
-                    .min_w(px(if which == Menu::Theme { 300. } else { 200. }))
-                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                        this.menu = None;
-                        cx.notify();
-                    }))
-                    .map(|d| {
-                        if scroll {
-                            d.w(px(280.))
-                                .child(div().id("menu-scroll").max_h(px(420.)).overflow_y_scroll().children(items))
-                        } else {
-                            d.children(items)
-                        }
-                    }),
-                // Drops down into place.
-                px(-4.),
-            )),
-        ))
+        Some(
+            deferred(
+                anchored().position(at).anchor(anchor).snap_to_window_with_margin(px(8.)).child(pop(
+                    SharedString::from(format!("menu-in-{which:?}")),
+                    popover(cx)
+                        .min_w(px(if which == Menu::Theme { 300. } else { 200. }))
+                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                            this.menu = None;
+                            cx.notify();
+                        }))
+                        .map(|d| {
+                            if scroll {
+                                d.w(px(280.))
+                                    .child(div().id("menu-scroll").max_h(px(420.)).overflow_y_scroll().children(items))
+                            } else {
+                                d.children(items)
+                            }
+                        }),
+                    // Drops down into place.
+                    px(-4.),
+                    leaving,
+                )),
+            )
+            .into_any_element(),
+        )
     }
 }

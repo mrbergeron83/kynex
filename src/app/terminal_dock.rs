@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{Context, Entity, Focusable, MouseButton, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, Entity, Focusable, MouseButton, Window, div, prelude::*, px};
 use kynex_core::terminal::ShellKind;
 
 use super::KynexApp;
@@ -12,7 +12,7 @@ use super::keys::ToggleTerminal;
 use super::state::{Active, View};
 use crate::terminal::{PanelEvent, TerminalPanel};
 use crate::theme::theme;
-use crate::ui::motion::{self, fade_in};
+use crate::ui::motion::{self, fade};
 
 /// The panel never shrinks below this, nor squeezes the conversation below it.
 const MIN_HEIGHT: f32 = 120.;
@@ -87,25 +87,23 @@ impl KynexApp {
     }
 
     /// The panel and its resize handle, when it's open in a project.
-    pub(super) fn render_terminal_dock(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement + use<>> {
-        if !self.saved.terminal_open {
+    pub(super) fn render_terminal_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let open = self.saved.terminal_open;
+        let leaving = self.exits.terminal.track_flag(open, window, cx);
+        if !open && leaving.is_none() {
             return None;
         }
         let cwd = self.terminal_cwd()?;
         let panel = self.terminal_panel(&cwd, cx);
         // Restored as open from last time: start a shell on first show.
-        if panel.read(cx).is_empty() {
+        if open && panel.read(cx).is_empty() {
             panel.update(cx, |p, cx| p.ensure_open(window, cx));
         }
         let t = theme(cx).clone();
         let max = (f32::from(window.viewport_size().height) - MIN_CONVERSATION).max(MIN_HEIGHT);
         let height = self.saved.terminal_height.clamp(MIN_HEIGHT, max);
-        // Fades in rather than growing, so the shell isn't resized on every frame.
-        Some(fade_in(
+        // Fades in and out rather than growing, so the shell isn't resized on every frame.
+        Some(fade(
             "terminal-in",
             div().relative().flex_none().h(px(height)).border_t_1().border_color(t.border).child(panel).child(
                 // Drag the top edge to resize.
@@ -127,6 +125,7 @@ impl KynexApp {
                     ),
             ),
             motion::NORMAL,
+            leaving,
         ))
     }
 

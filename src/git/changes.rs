@@ -7,6 +7,7 @@ use kynex_core::git::{self, Change, FileStatus};
 use super::diff_view::split_path;
 use super::{GitView, Selection};
 use crate::theme::{Palette, mono, theme};
+use crate::ui::wash::row_wash;
 use crate::ui::{Icon, Tooltip, icon, icon_button, section_label};
 
 impl GitView {
@@ -263,8 +264,8 @@ impl GitView {
             .pr_1()
             .rounded_md()
             .cursor_pointer()
-            .when(selected, |d| d.bg(t.active))
-            .when(!selected, |d| d.hover(move |s| s.bg(hover)))
+            .relative()
+            .child(row_wash(selected, hover, t.active))
             .child(letter(change, &t))
             .child(
                 div()

@@ -34,6 +34,8 @@ pub(super) struct Slash {
     pub(super) dismissed: Option<String>,
     /// The composer's bounds as last drawn, for menus a command opens.
     pub(super) composer: Option<Bounds<Pixels>>,
+    /// The list as drawn this frame, kept to play it out when it closes.
+    pub(super) shown: Option<(Rc<Vec<Completion>>, usize)>,
 }
 
 /// A folder's commands as far as Kynex knows them.
@@ -164,14 +166,16 @@ impl KynexApp {
         if matches.is_empty() && !loading {
             return None;
         }
-        let items: Vec<Completion> = matches
+        let items: Rc<Vec<Completion>> = matches
             .iter()
             .map(|c| Completion {
                 label: format!("/{}", c.name).into(),
                 hint: c.argument_hint.clone().into(),
                 detail: c.description.lines().next().unwrap_or("").to_string().into(),
             })
-            .collect();
+            .collect::<Vec<_>>()
+            .into();
+        self.slash.shown = Some((items.clone(), self.slash.selected));
         let this = cx.entity().downgrade();
         let list = completions(&items, self.slash.selected, "Loading commands…", cx, move |i, window, cx| {
             this.update(cx, |this, cx| this.take_slash(i, false, window, cx)).ok();

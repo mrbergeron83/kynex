@@ -10,6 +10,7 @@ use super::popover;
 use crate::theme::{mono, theme};
 
 /// One row: what's inserted, what it takes after it, and what it does.
+#[derive(Clone)]
 pub struct Completion {
     pub label: SharedString,
     pub hint: SharedString,
@@ -43,8 +44,8 @@ pub fn completions(
             .rounded_md()
             .text_sm()
             .cursor_pointer()
-            .hover(move |s| s.bg(hover))
-            .when(i == selected, |d| d.bg(t.active))
+            .relative()
+            .child(super::wash::wash(hover, (i == selected).then_some(t.active)))
             .child(div().flex_none().font_family(mono()).text_color(t.text).child(c.label.clone()))
             .when(!c.hint.is_empty(), |d| {
                 d.child(

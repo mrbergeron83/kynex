@@ -26,6 +26,7 @@ use kynex_core::git::{self, Branch, Change, Commit, CommitDetail, Status};
 use self::diff_view::DiffState;
 use crate::theme::theme;
 use crate::ui::input::{InputEvent, TextInput};
+use crate::ui::wash::row_wash;
 use crate::ui::{Icon, icon, icon_button};
 
 /// How often the working tree is re-read while the view exists.
@@ -370,8 +371,9 @@ impl Render for GitView {
                 .text_sm()
                 .cursor_pointer()
                 .text_color(if selected { t.text } else { t.text_muted })
-                .when(selected, |d| d.bg(t.active).font_weight(FontWeight::MEDIUM))
-                .when(!selected, |d| d.hover(move |s| s.bg(hover)))
+                .when(selected, |d| d.font_weight(FontWeight::MEDIUM))
+                .relative()
+                .child(row_wash(selected, hover, t.active))
                 .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.tab = tab;
