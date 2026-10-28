@@ -37,6 +37,7 @@
 //! | `app_update.rs`     | Kynex updating itself: checks, the update toast      |
 //! | `about.rs`          | the About Kynex modal: version, paths, updates       |
 //! | `extensions.rs`     | the Extensions modal: MCP servers, plugins           |
+//! | `extensions_add.rs` | its Add server panel: browser preset, your own       |
 //! | `appearance.rs`     | each project's colour: title bar, tab, composer      |
 //! | `models.rs`         | the model list                                       |
 //! | `viewer.rs`         | images opened over the window, thumbnails            |
@@ -48,6 +49,7 @@ mod appearance;
 mod composer;
 mod drafts;
 mod extensions;
+mod extensions_add;
 mod git_modal;
 mod handoff;
 mod history;

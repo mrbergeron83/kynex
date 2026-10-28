@@ -192,7 +192,7 @@ pub enum UpdateState {
 /// npm publishes the CLI's release channels (`latest`, `stable`) as dist-tags.
 const DIST_TAGS: &str = "https://registry.npmjs.org/-/package/@anthropic-ai/claude-code/dist-tags";
 
-fn command(program: impl AsRef<OsStr>) -> Command {
+pub(crate) fn command(program: impl AsRef<OsStr>) -> Command {
     let mut cmd = Command::new(program);
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]

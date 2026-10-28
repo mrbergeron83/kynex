@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::session::{Kind, Session};
-use crate::{cli, commands, extensions, git, markdown, rewind, session, tasks, update};
+use crate::{cli, commands, extensions, git, markdown, mcp_config, rewind, session, tasks, update};
 
 /// The CLI's stream-json output, one event per line, as a live session reads it.
 pub fn stream_json(text: &str) {
@@ -104,6 +104,15 @@ pub fn claude_config(text: &str) {
     let _ = extensions::parse_mcp_json(&v);
 }
 
+/// What's typed into the Add server form, and `claude mcp list`'s output.
+pub fn mcp_config(text: &str) {
+    let (name, what) = text.split_once('\n').unwrap_or((text, text));
+    if let Ok(server) = mcp_config::NewServer::parse(name, mcp_config::Scope::Local, what) {
+        let _ = server.add_args();
+    }
+    let _ = mcp_config::parse_list(text);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +133,7 @@ mod tests {
             markdown(t);
             versions(t.as_bytes());
             claude_config(t);
+            mcp_config(t);
         }
         claude_config(
             r#"{"mcpServers":{"a":{"command":"x","args":[1]}},"projects":{"/work/app":{}},"plugins":{"p":[{}]}}"#,

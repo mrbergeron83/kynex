@@ -400,6 +400,7 @@ pub(super) fn settings_modal(
                 div()
                     .id("settings-body")
                     .flex_1()
+                    .min_w_0()
                     .overflow_y_scroll()
                     .p_5()
                     .child(content)

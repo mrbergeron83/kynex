@@ -92,3 +92,10 @@ path = "fuzz_targets/claude_config.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "mcp_config"
+path = "fuzz_targets/mcp_config.rs"
+test = false
+doc = false
+bench = false

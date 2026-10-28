@@ -16,6 +16,7 @@ pub mod history;
 pub mod live;
 pub mod markdown;
 pub mod mcp;
+pub mod mcp_config;
 pub mod motion;
 pub mod open;
 pub mod paths;
