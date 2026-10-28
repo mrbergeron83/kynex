@@ -18,6 +18,7 @@ use gpui::{
 };
 use serde_json::Value;
 
+use kynex_core::mcp;
 use kynex_core::project::{self, Mode};
 use kynex_core::questions::{Form, Step};
 use kynex_core::session::{Answer, Kind};
@@ -129,6 +130,11 @@ impl PromptView {
                 let mut choices = vec![("Yes".to_string(), Answer::Once)];
                 if let Some(label) = session_label(&req.suggestions) {
                     choices.push((label, Answer::Session));
+                }
+                // An MCP server's tools at once, so 30 clicks aren't 30 prompts.
+                if let Some((server, _)) = mcp::split(&req.tool) {
+                    let label = mcp::server_label(server);
+                    choices.push((format!("Yes, and allow all {label} actions this session"), Answer::Server));
                 }
                 let rules = project::suggested_rules(&req.suggestions);
                 if req.kind == Kind::Code && !rules.is_empty() {

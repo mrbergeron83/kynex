@@ -17,6 +17,9 @@ pub fn stream_json(text: &str) {
             s.handle(v);
         }
     }
+    let _ = crate::mcp::handoff(&s.items);
+    let _ = crate::mcp::health(&s.mcp);
+    let _ = crate::transcript::rows(&s.items);
 }
 
 /// A Claude Code transcript on disk: replayed into a session, listed, rewound.

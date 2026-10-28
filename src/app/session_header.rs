@@ -3,9 +3,9 @@
 //! turns it has taken, what it has cost and how full its context is.
 
 use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
-use kynex_core::fmt;
 use kynex_core::git::Worktree;
 use kynex_core::session::{Item, Kind};
+use kynex_core::{fmt, mcp};
 
 use super::KynexApp;
 use crate::theme::{Palette, mono, theme};
@@ -26,6 +26,7 @@ impl KynexApp {
         });
         let turns = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
         let (cost, kind, cwd, context, busy) = (s.total_cost, s.kind, s.cwd.clone(), s.context, s.busy);
+        let servers = mcp_status(&s.mcp, &t);
 
         let place = if kind == Kind::Code { self.worktrees(&cwd, cx).read(cx).at(&cwd).cloned() } else { None };
         // Where a project session runs: its branch, flagged when it's a linked
@@ -176,6 +177,7 @@ impl KynexApp {
                 )
                 .children(place)
                 .children(working)
+                .children(servers)
                 .children(meter)
                 .when(!stats.is_empty(), |d| {
                     d.child(
@@ -190,6 +192,44 @@ impl KynexApp {
                 .into_any_element(),
         )
     }
+}
+
+/// The session's MCP servers as a dot: green when all connected, amber while
+/// one connects or needs auth, red when one failed; hovering lists them.
+fn mcp_status(servers: &[mcp::Server], t: &Palette) -> Option<AnyElement> {
+    let health = mcp::health(servers)?;
+    let color = match health {
+        mcp::Health::Ok => t.success,
+        mcp::Health::Waiting => t.warning,
+        mcp::Health::Failed => t.error,
+    };
+    let list = servers
+        .iter()
+        .filter(|s| s.status != mcp::Status::Disabled)
+        .map(|s| format!("{} ({}): {}", mcp::server_label(&s.name), s.name, s.status.label()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let title = match health {
+        mcp::Health::Ok => "MCP servers connected",
+        mcp::Health::Waiting => "Some MCP servers are connecting or need auth",
+        mcp::Health::Failed => "An MCP server failed; Claude can't use its tools",
+    };
+    Some(
+        div()
+            .id("session-mcp")
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_1()
+            .px_1p5()
+            .h(px(20.))
+            .text_xs()
+            .text_color(t.text_muted)
+            .child(div().size(px(6.)).rounded_full().bg(color))
+            .child("MCP")
+            .tooltip(Tooltip::with_meta(title, list))
+            .into_any_element(),
+    )
 }
 
 /// A worktree's uncommitted changes and distance from its upstream, for a

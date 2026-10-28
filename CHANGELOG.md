@@ -7,6 +7,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Browser and MCP tools in words**: MCP calls read as what they do (`Edge · Click "Sign in"`,
+  `Edge · Open https://…`) instead of `mcp__playwright-edge__browser_click {…}`, and a run of
+  them folds to `Edge: 14 actions (3 screenshots)`. Their permission prompts ask the same way
+  (`Click "Delete repository" in Edge?`) and offer **allow all Edge actions this session**.
+- When Claude drives a browser and stops to ask you to log in, pass MFA or accept something, a
+  banner above the message box says it's waiting for you, with the latest screenshot and a
+  **Continue** button.
+- An **MCP** dot in the session header: green when the session's MCP servers connected, amber
+  while one connects or needs auth, red when one failed; hover to see each server's status.
 - **Image viewer**: click an image in the transcript or an attachment in the message box to see
   it over the window, fitted; zoom with the wheel or + / − about the pointer, drag to pan, 0 to
   fit again and 1 for actual size, Esc or a click beside it to close. Removing an attachment is

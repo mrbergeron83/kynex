@@ -118,6 +118,8 @@ pub enum Answer {
     Session,
     /// Allow, and save the rule in the project's Kynex settings.
     Project,
+    /// Allow every tool of this MCP server until this process ends.
+    Server,
     /// Approve a plan (`ExitPlanMode`) and build it in this mode.
     Plan(project::Mode),
     /// Answers to `AskUserQuestion`: question text → the chosen label(s), comma-separated.
@@ -181,6 +183,8 @@ pub struct Session {
     pub queue: Queue,
     /// Background tasks running in this session's process.
     pub tasks: Tasks,
+    /// The MCP servers its process reported when it started, and how they're doing.
+    pub mcp: Vec<crate::mcp::Server>,
     /// Set by the UI so it hears about new events; a no-op until then.
     pub wake: Wake,
     child: Option<Child>,
@@ -227,6 +231,7 @@ impl Session {
             mode,
             queue: Queue::default(),
             tasks: Tasks::default(),
+            mcp: Vec::new(),
             wake: Arc::new(|| {}),
             child: None,
             stdin: None,
@@ -508,6 +513,21 @@ impl Session {
                     PermState::Allowed(note.into()),
                 )
             }
+            Answer::Server => {
+                // `mcp__<server>` with no tool covers all of that server's tools.
+                let rule = crate::mcp::server_rule(tool).unwrap_or_else(|| tool.clone());
+                let updates = json!([{
+                    "type": "addRules",
+                    "rules": [{ "toolName": rule }],
+                    "behavior": "allow",
+                    "destination": "session",
+                }]);
+                let label = crate::mcp::split(tool).map_or_else(|| tool.clone(), |(s, _)| crate::mcp::server_label(s));
+                (
+                    json!({ "behavior": "allow", "updatedInput": input, "updatedPermissions": updates }),
+                    PermState::Allowed(format!("all {label} actions allowed this session")),
+                )
+            }
             Answer::Plan(mode) => {
                 plan_mode = Some(mode);
                 (
@@ -622,6 +642,8 @@ impl Session {
             "system" if v["subtype"] == "compact_boundary" => {
                 self.context.tokens = v["compact_metadata"]["post_tokens"].as_u64().unwrap_or(0);
             }
+            // Each process start reports its MCP servers and whether they connected.
+            "system" if v["subtype"] == "init" => self.mcp = crate::mcp::servers(&v),
             // A task that ended shows in the transcript, and the session wants
             // you even if Claude's turn about it says nothing.
             "system" => {
@@ -1103,7 +1125,8 @@ fn tool_summary(name: &str, input: &Value) -> String {
         "WebFetch" => "url",
         "WebSearch" => "query",
         "Task" | "Agent" => "description",
-        _ => "",
+        // MCP calls read as what they do: "Click “Sign in”".
+        _ => return crate::mcp::describe(name, input).map(|(_, target)| target).unwrap_or_default(),
     };
     let s = input[field].as_str().unwrap_or("");
     let first = s.lines().next().unwrap_or("");
@@ -1194,6 +1217,23 @@ mod tests {
         // An answer after the fact changes nothing.
         assert!(s.answer_permission(1, Answer::Once).is_empty());
         assert!(states(&s)[1] == PermState::Denied("cancelled".into()));
+    }
+
+    #[test]
+    fn mcp_servers_and_server_wide_allow() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        s.handle(json!({ "type": "system", "subtype": "init",
+            "mcp_servers": [{ "name": "playwright-edge", "status": "failed" }] }));
+        assert_eq!(s.mcp[0].status, crate::mcp::Status::Failed);
+        s.handle(json!({ "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": "t",
+            "name": "mcp__playwright-edge__browser_click", "input": { "element": "Sign in" } }] } }));
+        let Some(Item::ToolUse { summary, .. }) = s.items.last() else { panic!("no call") };
+        assert_eq!(summary, "\u{201c}Sign in\u{201d}");
+        s.handle(json!({ "type": "control_request", "request_id": "r", "request": {
+            "subtype": "can_use_tool", "tool_name": "mcp__playwright-edge__browser_click", "input": {} } }));
+        s.answer_permission(1, Answer::Server);
+        let Some(Item::Permission { state, .. }) = s.items.last() else { panic!("no prompt") };
+        assert!(*state == PermState::Allowed("all Edge actions allowed this session".into()));
     }
 
     #[test]

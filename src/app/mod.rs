@@ -22,6 +22,7 @@
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
+//! | `handoff.rs`        | "waiting for you in the browser" banner, Continue    |
 //! | `history.rs`        | ↑ / ↓ history, Ctrl+R search, stash, Esc Esc, editor |
 //! | `rewind.rs`         | rewind to an earlier message: conversation and files |
 //! | `timeline.rs`       | the session's turns and steps beside the transcript  |
@@ -42,6 +43,7 @@ mod appearance;
 mod composer;
 mod drafts;
 mod git_modal;
+mod handoff;
 mod history;
 mod keys;
 mod menus;
