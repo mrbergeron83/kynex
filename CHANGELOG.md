@@ -21,6 +21,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   toasts over the top-right controls. They close on their own (errors wait for you), pause
   while you point at them or are away, show three at a time, and several background tasks
   ending in one session merge into one.
+- Quieter while Claude works: the "Working…" strip above the composer and the stop square
+  in the Stop button are gone; the lamps, Stop's spinner and the running step say it.
 
 ### Added
 

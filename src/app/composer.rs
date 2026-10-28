@@ -3,11 +3,10 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use gpui::{
-    Anchor, Animation, AnimationExt, AnyElement, ClickEvent, Context, ExternalPaths, Focusable, Image, ImageFormat,
-    KeyDownEvent, PathPromptOptions, SharedString, Window, canvas, deferred, div, img, prelude::*, px,
+    Anchor, AnyElement, ClickEvent, Context, ExternalPaths, Focusable, Image, ImageFormat, KeyDownEvent,
+    PathPromptOptions, SharedString, Window, canvas, deferred, div, img, prelude::*, px,
 };
 use kynex_core::attach::{is_image, prepare_image};
 use kynex_core::project::{self, Mode};
@@ -20,7 +19,7 @@ use super::menus::Menu;
 use super::state::{Active, View};
 use super::transcript::THREAD_WIDTH;
 use super::{KynexApp, models};
-use crate::theme::{Palette, theme};
+use crate::theme::theme;
 use crate::ui::completions::completions;
 use crate::ui::ease_height::ease_height;
 use crate::ui::motion::{self, fade, fade_in, pop};
@@ -149,10 +148,6 @@ impl KynexApp {
 
     pub(super) fn render_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
-        // At a glance: is Claude working, waiting on you, or idle?
-        let waiting = self.prompt.is_some();
-        let working = !waiting && self.active_session().is_some_and(|s| s.busy);
-        let status = (working || waiting).then(|| working_bar(working, &t));
         let update = self.render_cli_update(cx);
         let queued = self.render_queue(cx);
         let running = self.render_running_tasks(cx);
@@ -193,7 +188,6 @@ impl KynexApp {
                     .flex_col()
                     .gap_1p5()
                     .children(update)
-                    .children(status)
                     .children(running)
                     .children(handoff)
                     .children(queued)
@@ -356,7 +350,6 @@ impl KynexApp {
                 .cursor_pointer()
                 .hover(|s| s.bg(t.hover))
                 .child(spinner("busy", t.accent, px(14.)))
-                .child(icon(Icon::Stop, t.text).size_3())
                 .child("Stop")
                 .tooltip(Tooltip::with_meta("Interrupt Claude", "Esc · change it in keymap.json"))
                 .on_click(cx.listener(|this, _, _, cx| this.interrupt(cx)))
@@ -492,33 +485,4 @@ impl KynexApp {
             );
         shell(body.into_any_element(), focused, false)
     }
-}
-
-/// The strip above the composer: a label and a track with a sliding accent
-/// while Claude works, or a steady warning-coloured one while it waits for you.
-fn working_bar(working: bool, t: &Palette) -> AnyElement {
-    let color = if working { t.accent } else { t.warning };
-    let label = div()
-        .flex()
-        .items_center()
-        .gap_1p5()
-        .text_xs()
-        .text_color(color)
-        .child(if working {
-            spinner("working-spin", color, px(12.)).into_any_element()
-        } else {
-            icon(Icon::Dot, color).size_2().into_any_element()
-        })
-        .child(if working { "Working…" } else { "Waiting for you" });
-    let track = div().relative().w_full().h(px(2.)).rounded_full().overflow_hidden().bg(t.border_variant);
-    let track = if working {
-        track.child(div().absolute().top_0().h_full().w(gpui::relative(0.3)).rounded_full().bg(color).with_animation(
-            "working-slide",
-            Animation::new(Duration::from_millis(1400)).repeat().with_easing(gpui::ease_in_out),
-            |bar, delta| bar.left(gpui::relative(delta * 1.3 - 0.3)),
-        ))
-    } else {
-        track.child(div().size_full().bg(color.opacity(0.6)))
-    };
-    div().flex().flex_col().gap_1().px_1().child(label).child(track).into_any_element()
 }
