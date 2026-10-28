@@ -84,11 +84,11 @@ impl KynexApp {
             return div().into_any_element();
         };
         let result = call.result.and_then(|r| match session.items.get(r) {
-            Some(Item::ToolResult { content, is_error, .. }) => Some((r, content, *is_error)),
+            Some(Item::ToolResult { content, images, is_error, .. }) => Some((r, content, images, *is_error)),
             _ => None,
         });
         let running = session.busy && result.is_none();
-        let failed = result.is_some_and(|(_, _, e)| e);
+        let failed = result.is_some_and(|(_, _, _, e)| e);
         let expanded = self.expand_tools || self.expanded.contains(&(key, ix));
         let parsed = serde_json::from_str::<serde_json::Value>(input).ok();
         // Claude's description of the call reads as prose; a bare command or path stays mono.
@@ -116,7 +116,7 @@ impl KynexApp {
             _ => None,
         });
         // A failure stays visible collapsed: a marker, with the error's first line.
-        let error_mark = result.filter(|_| failed).map(|(_, content, _)| {
+        let error_mark = result.filter(|_| failed).map(|(_, content, _, _)| {
             let first: String = content.lines().next().unwrap_or("").chars().take(160).collect();
             div()
                 .id(("tool-error", ix))
@@ -165,6 +165,16 @@ impl KynexApp {
             .children(stat_lines.filter(|&(add, del)| add + del > 0).map(|(add, del)| stat(add, del, &t)))
             .on_click(toggle);
         let mut body: Vec<AnyElement> = Vec::new();
+        // Pictures it returned (a screenshot, a `Read` of an image) show even folded.
+        if let Some((r, _, images, _)) = result.filter(|(_, _, images, _)| !images.is_empty()) {
+            body.push(
+                div()
+                    .pl_6()
+                    .pt_1()
+                    .child(self.thumbnails(("result-images", r).into(), images, 160., cx))
+                    .into_any_element(),
+            );
+        }
         if expanded {
             match parsed.filter(|_| stat_lines.is_some()) {
                 Some(v) => {
@@ -172,7 +182,7 @@ impl KynexApp {
                 }
                 None => body.push(code_box(("tool-body", ix).into(), input.clone(), (key, ix), &t).into_any_element()),
             }
-            if let Some((r, content, _)) = result.filter(|&(_, _, e)| shows_result(name, e)) {
+            if let Some((r, content, _, _)) = result.filter(|&(_, _, _, e)| shows_result(name, e)) {
                 body.push(code_box(("result-body", r).into(), content.clone(), (key, r), &t).into_any_element());
             }
         }

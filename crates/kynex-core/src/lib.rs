@@ -29,3 +29,4 @@ pub mod titles;
 pub mod transcript;
 pub mod update;
 pub mod wsl;
+pub mod zoom;

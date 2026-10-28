@@ -34,6 +34,7 @@
 //! | `about.rs`          | the About Kynex modal: version, paths, updates       |
 //! | `appearance.rs`     | each project's colour: title bar, tab, composer      |
 //! | `models.rs`         | the model list                                       |
+//! | `viewer.rs`         | images opened over the window, thumbnails            |
 
 mod about;
 mod app_update;
@@ -63,6 +64,7 @@ mod titles;
 mod tool_rows;
 mod toolbar;
 mod transcript;
+mod viewer;
 mod workspace;
 mod worktrees;
 
@@ -97,6 +99,7 @@ use worktrees::Worktrees;
 use crate::git::GitView;
 use crate::terminal::TerminalPanel;
 use crate::theme::{theme, ui_font};
+use crate::ui::image_viewer::ImageViewer;
 use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::motion::{self, fade_in, pop_in};
 use crate::ui::smooth_scroll::SmoothWheel;
@@ -171,6 +174,8 @@ pub struct KynexApp {
     task_toast: Option<tasks::TaskToast>,
     /// Mouse-wheel turns made smooth for every scroll area.
     wheel: SmoothWheel,
+    /// An image opened over the window.
+    viewer: Option<Entity<ImageViewer>>,
     /// The About Kynex modal is open; the installed Claude Code version, once read.
     about_open: bool,
     claude_version: Option<String>,
@@ -318,6 +323,7 @@ impl KynexApp {
             update_toast: false,
             task_toast: None,
             wheel: SmoothWheel::default(),
+            viewer: None,
             about_open: false,
             claude_version: None,
             cli_check: CliCheck::default(),
@@ -526,6 +532,7 @@ impl Render for KynexApp {
         let task_toast = self.render_task_toast(cx);
         let about = self.render_about(window, cx);
         let git_modal = self.render_git_modal(window, cx);
+        let viewer = self.render_image_viewer();
         div()
             .id("workspace")
             .key_context("Workspace")
@@ -605,5 +612,6 @@ impl Render for KynexApp {
             .children(settings)
             .children(about)
             .children(menu)
+            .children(viewer)
     }
 }

@@ -7,6 +7,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Image viewer**: click an image in the transcript or an attachment in the message box to see
+  it over the window, fitted; zoom with the wheel or + / − about the pointer, drag to pan, 0 to
+  fit again and 1 for actual size, Esc or a click beside it to close. Removing an attachment is
+  now the × that shows on hover.
+- Images Claude gets from tools (a `Read` of a picture, a browser screenshot from an MCP server)
+  show as thumbnails under the call instead of as text, and reopened sessions show the images
+  you sent instead of "[N image(s)]".
 - **Background tasks** (`run_in_background` commands, background agents, Monitors): the ones
   still running show over the message box with how long they've run, and **Watch** streams a
   task's output live in the terminal panel. When one ends, the transcript gets a row with its

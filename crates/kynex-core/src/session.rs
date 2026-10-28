@@ -32,6 +32,23 @@ pub enum Kind {
 /// opaque so this crate needn't depend on the UI toolkit.
 pub type Preview = Arc<dyn std::any::Any + Send + Sync>;
 
+/// Makes a [`Preview`] from an image's media type and bytes. The app sets one
+/// at startup, so images read back from logs and tool results show too.
+pub type MakePreview = fn(&str, Vec<u8>) -> Option<Preview>;
+
+static MAKE_PREVIEW: OnceLock<MakePreview> = OnceLock::new();
+
+/// Sets how images found in messages become previews; the first call wins.
+pub fn set_preview_maker(make: MakePreview) {
+    let _ = MAKE_PREVIEW.set(make);
+}
+
+/// Previews of the images among `content`'s blocks, if the app makes them.
+fn previews_in(content: &Value) -> Vec<Preview> {
+    let Some(make) = MAKE_PREVIEW.get() else { return Vec::new() };
+    crate::attach::images_in(content).into_iter().filter_map(|i| make(&i.media_type, i.bytes)).collect()
+}
+
 pub struct Attachment {
     pub media_type: String,
     pub base64: String,
@@ -59,6 +76,8 @@ pub enum Item {
         /// The `tool_use_id` of the call this answers.
         id: String,
         content: String,
+        /// Images it returned: a `Read` of a picture, a browser screenshot.
+        images: Vec<Preview>,
         is_error: bool,
     },
     /// A `can_use_tool` request. `tool` is the tool's name (`Bash`, `mcp__x__y`),
@@ -287,7 +306,7 @@ impl Session {
     }
 
     fn replay_user(&mut self, content: &Value) {
-        let (text, images) = match content {
+        let (text, sent) = match content {
             Value::String(t) => (t.clone(), 0),
             Value::Array(blocks) => (
                 blocks.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n"),
@@ -295,13 +314,16 @@ impl Session {
             ),
             _ => return,
         };
-        if text.is_empty() && images == 0 {
+        if text.is_empty() && sent == 0 {
             return;
         }
         // A slash command is logged in `<command-name>` wrappers; show it as typed.
         let text = crate::commands::unwrap(&text).unwrap_or(text);
-        let text = if images > 0 { format!("[{images} image(s)] {text}") } else { text };
-        self.items.push(Item::User { text, images: Vec::new() });
+        let images = previews_in(content);
+        // Images that can't be shown are at least counted.
+        let missing = sent.saturating_sub(images.len());
+        let text = if missing > 0 { format!("[{missing} image(s)] {text}") } else { text };
+        self.items.push(Item::User { text, images });
     }
 
     pub fn is_running(&self) -> bool {
@@ -653,6 +675,7 @@ impl Session {
                         self.items.push(Item::ToolResult {
                             id,
                             content,
+                            images: previews_in(&block["content"]),
                             is_error: block["is_error"].as_bool().unwrap_or(false),
                         });
                     }
@@ -1261,6 +1284,26 @@ mod tests {
             "status": "completed", "output_file": "/tmp/b1.output", "summary": "Background command \"Watch CI\" completed (exit code 0)" }));
         assert!(!s.has_tasks() && s.wants_you());
         assert!(matches!(s.items.last(), Some(Item::Task(n)) if n.status == tasks::Status::Completed));
+    }
+
+    #[test]
+    fn images_in_logs_and_tool_results_get_previews() {
+        // Previews here say what they were made from.
+        set_preview_maker(|mt, bytes| Some(Arc::new(format!("{mt} {}", bytes.len()))));
+        let said = |p: &Preview| p.clone().downcast::<String>().unwrap().to_string();
+        let image = |data: &str| json!({ "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": data } });
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        // "AAAA" is three bytes; "!" isn't base64, so that one is only counted.
+        s.replay_user(&json!([image("AAAA"), image("!"), { "type": "text", "text": "see" }]));
+        let Some(Item::User { text, images }) = s.items.last() else { panic!() };
+        assert_eq!(text, "[1 image(s)] see");
+        assert_eq!(images.iter().map(said).collect::<Vec<_>>(), ["image/png 3"]);
+
+        s.handle(json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "t",
+            "content": [{ "type": "text", "text": "shot" }, image("AAAAAAAA")] }] } }));
+        let Some(Item::ToolResult { content, images, .. }) = s.items.last() else { panic!() };
+        assert_eq!(content, "shot");
+        assert_eq!(images.iter().map(said).collect::<Vec<_>>(), ["image/png 6"]);
     }
 
     #[test]
