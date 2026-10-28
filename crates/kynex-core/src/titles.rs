@@ -32,10 +32,8 @@ pub fn stored(id: &str) -> Option<String> {
 pub fn remember(id: &str, title: &str) {
     let Ok(mut map) = store().lock() else { return };
     map.insert(id.to_string(), title.to_string());
-    if let Ok(s) = serde_json::to_string_pretty(&*map) {
-        let _ = std::fs::create_dir_all(data_dir());
-        let _ = std::fs::write(data_dir().join("titles.json"), s);
-    }
+    let _ = std::fs::create_dir_all(data_dir());
+    let _ = crate::project::write_json(&data_dir().join("titles.json"), &*map);
 }
 
 /// Asks a small model for a title for a conversation that opened with

@@ -186,6 +186,8 @@ impl KynexApp {
         self.forget(&closed);
         self.git.remove(&p.path);
         self.worktrees.remove(&p.path);
+        // Dropping the panel ends its shells.
+        self.terminals.remove(&p.path);
         self.saved.active = match self.saved.active {
             Active::Project(a) if a > i => Active::Project(a - 1),
             Active::Project(a) if a == i && i > 0 => Active::Project(i - 1),

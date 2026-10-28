@@ -146,7 +146,7 @@ impl Form {
     /// Shows tab `tab`, with the cursor on its first pick (or its typed text).
     pub fn go_to(&mut self, tab: usize) -> Step {
         let tabs = self.questions.len() + usize::from(self.has_tabs());
-        self.tab = tab.min(tabs - 1);
+        self.tab = tab.min(tabs.saturating_sub(1));
         self.cursor = match self.picks.get(self.tab) {
             Some(p) if !self.other[self.tab].trim().is_empty() && p.is_empty() => self.other_row(self.tab),
             Some(p) => p.first().copied().unwrap_or(0),
@@ -239,6 +239,15 @@ mod tests {
             { "header": "Extras", "question": "What else?", "multiSelect": multi_second,
               "options": [{ "label": "Logs" }, { "label": "Metrics" }] }
         ] }))
+    }
+
+    #[test]
+    fn a_form_without_questions_survives_tabbing() {
+        let mut f = Form::parse(&json!({ "questions": "not a list" }));
+        f.next_tab();
+        f.go_to(5);
+        assert_eq!(f.tab, 0);
+        assert!(f.current().is_none());
     }
 
     #[test]

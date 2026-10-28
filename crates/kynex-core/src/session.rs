@@ -11,7 +11,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use serde_json::{Value, json};
 
@@ -365,8 +365,7 @@ impl Session {
         let stdin = child.stdin.take().unwrap();
         let (tx, rx) = channel();
 
-        spawn_reader(stdout, tx.clone(), self.wake.clone(), true);
-        spawn_reader(stderr, tx, self.wake.clone(), false);
+        spawn_readers(stdout, stderr, tx, self.wake.clone());
 
         self.child = Some(child);
         self.stdin = Some(Arc::new(Mutex::new(stdin)));
@@ -535,6 +534,20 @@ impl Session {
         self.rx = None;
         self.busy = false;
         self.tasks.clear();
+        // Nobody is left to answer them.
+        self.cancel_permissions(|_| true);
+    }
+
+    /// Marks the pending permission prompts `which` picks as cancelled.
+    fn cancel_permissions(&mut self, which: impl Fn(&str) -> bool) {
+        for item in &mut self.items {
+            if let Item::Permission { request_id, state, .. } = item
+                && *state == PermState::Pending
+                && which(request_id)
+            {
+                *state = PermState::Denied("cancelled".into());
+            }
+        }
     }
 
     /// Whether background tasks are running, which closing the process would stop.
@@ -546,6 +559,7 @@ impl Session {
     pub fn poll(&mut self) {
         let Some(rx) = &self.rx else { return };
         let events: Vec<Event> = rx.try_iter().collect();
+        let mut exited = false;
         for ev in events {
             match ev {
                 Event::Line(v) => self.handle(v),
@@ -554,14 +568,14 @@ impl Session {
                         self.items.push(Item::Error(s));
                     }
                 }
-                Event::Exited => {
-                    if self.busy {
-                        self.items.push(Item::Error("claude process exited".into()));
-                    }
-                    self.kill();
-                    return;
-                }
+                Event::Exited => exited = true,
             }
+        }
+        if exited {
+            if self.busy {
+                self.items.push(Item::Error("claude process exited".into()));
+            }
+            self.kill();
         }
     }
 
@@ -658,6 +672,11 @@ impl Session {
                     state: PermState::Pending,
                 });
             }
+            // The CLI dropped a request it sent, e.g. on an interrupt.
+            "control_cancel_request" => {
+                let id = v["request_id"].as_str().unwrap_or("");
+                self.cancel_permissions(|r| r == id);
+            }
             "result" => {
                 if let Some(models) = v["modelUsage"].as_object()
                     && let Ok(mut known) = windows().lock()
@@ -739,29 +758,46 @@ impl Drop for Session {
     }
 }
 
-fn spawn_reader(stream: impl std::io::Read + Send + 'static, tx: Sender<Event>, wake: Wake, stdout: bool) {
+/// Reads the process's stdout and stderr on two threads. `Exited` goes out once
+/// stdout closes and stderr has had its say, so the reason a process died
+/// (a bad `--model`, a failed `--resume`) arrives before it.
+fn spawn_readers(
+    stdout: impl std::io::Read + Send + 'static,
+    stderr: impl std::io::Read + Send + 'static,
+    tx: Sender<Event>,
+    wake: Wake,
+) {
+    // Dropped when the stderr thread ends.
+    let (stderr_open, stderr_done) = channel::<()>();
+    let (err_tx, err_wake) = (tx.clone(), wake.clone());
     thread::spawn(move || {
-        for line in BufReader::new(stream).lines() {
+        let _open = stderr_open;
+        for line in BufReader::new(stderr).lines() {
             let Ok(line) = line else { break };
-            let ev = if stdout {
-                match serde_json::from_str(&line) {
-                    Ok(v) => Event::Line(v),
-                    Err(_) => continue,
-                }
-            } else {
-                Event::Stderr(line)
-            };
-            if tx.send(ev).is_err() {
+            if err_tx.send(Event::Stderr(line)).is_err() {
+                return;
+            }
+            err_wake();
+        }
+    });
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            let Ok(v) = serde_json::from_str(&line) else { continue };
+            if tx.send(Event::Line(v)).is_err() {
                 return;
             }
             wake();
         }
-        if stdout {
-            let _ = tx.send(Event::Exited);
-            wake();
-        }
+        // A grandchild that inherited stderr can hold it open; don't wait on it for long.
+        let _ = stderr_done.recv_timeout(STDERR_GRACE);
+        let _ = tx.send(Event::Exited);
+        wake();
     });
 }
+
+/// How long `Exited` waits for stderr to close after stdout has.
+const STDERR_GRACE: Duration = Duration::from_millis(500);
 
 /// A past Claude Code conversation in some directory.
 #[derive(Clone)]
@@ -908,9 +944,7 @@ pub fn saved_models() -> Vec<ModelInfo> {
 pub fn save_models(models: &[ModelInfo]) -> Result<(), String> {
     let dir = crate::paths::data_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't create {}: {e}", dir.display()))?;
-    let path = dir.join("models.json");
-    let s = serde_json::to_string_pretty(models).map_err(|e| e.to_string())?;
-    std::fs::write(&path, s).map_err(|e| format!("Couldn't save {}: {e}", path.display()))
+    project::write_json(&dir.join("models.json"), &models)
 }
 
 /// The models in an `initialize` response.
@@ -1109,6 +1143,34 @@ mod tests {
             state: PermState::Pending,
         });
         assert!(s.wants_you());
+    }
+
+    #[test]
+    fn prompts_are_cancelled_when_their_request_or_process_goes() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        let ask = |id: &str| {
+            json!({ "type": "control_request", "request_id": id,
+                "request": { "subtype": "can_use_tool", "tool_name": "Bash", "input": {} } })
+        };
+        s.handle(ask("a"));
+        s.handle(ask("b"));
+        s.handle(json!({ "type": "control_cancel_request", "request_id": "a" }));
+        let states = |s: &Session| -> Vec<PermState> {
+            s.items
+                .iter()
+                .filter_map(|i| match i {
+                    Item::Permission { state, .. } => Some(state.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert!(states(&s) == [PermState::Denied("cancelled".into()), PermState::Pending]);
+        assert!(s.waiting());
+        s.kill();
+        assert!(!s.waiting());
+        // An answer after the fact changes nothing.
+        assert!(s.answer_permission(1, Answer::Once).is_empty());
+        assert!(states(&s)[1] == PermState::Denied("cancelled".into()));
     }
 
     #[test]
