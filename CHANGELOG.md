@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-10-27
+
 ### Added
 
 - **Settings** (the gear in the title bar, Ctrl+, / Cmd+,), apart from a project's Claude
@@ -214,7 +216,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/mrbergeron83/kynex/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/mrbergeron83/kynex/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/mrbergeron83/kynex/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/mrbergeron83/kynex/compare/v0.0.1...v0.0.2
