@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use gpui::{
     Anchor, Animation, AnimationExt, AnyElement, ClickEvent, Context, ExternalPaths, Focusable, Image, ImageFormat,
-    KeyDownEvent, PathPromptOptions, Window, canvas, deferred, div, img, prelude::*, px,
+    KeyDownEvent, PathPromptOptions, SharedString, Window, canvas, deferred, div, img, prelude::*, px,
 };
 use kynex_core::attach::{is_image, prepare_image};
 use kynex_core::project::{self, ClaudeSettings, Mode};
@@ -249,20 +249,55 @@ impl KynexApp {
         let attachments =
             div().flex().flex_wrap().gap_2().children(self.attachments.iter().enumerate().map(|(i, a)| {
                 let preview = a.preview.clone().downcast::<Image>().ok();
+                let group = SharedString::from(format!("attachment-{i}"));
                 div()
-                    .id(("attachment", i))
-                    .rounded_md()
-                    .border_1()
-                    .border_color(t.border)
-                    .overflow_hidden()
-                    .cursor_pointer()
-                    .hover(|s| s.opacity(0.7))
-                    .children(preview.map(|p| img(p).h(px(56.)).max_w(px(120.))))
-                    .tooltip(Tooltip::text("Click to remove"))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.attachments.remove(i);
-                        cx.notify();
-                    }))
+                    .group(group.clone())
+                    .relative()
+                    .child(
+                        div()
+                            .id(("attachment", i))
+                            .rounded_md()
+                            .border_1()
+                            .border_color(t.border)
+                            .overflow_hidden()
+                            .cursor_pointer()
+                            .children(preview.clone().map(|p| img(p).h(px(56.)).max_w(px(120.))))
+                            .tooltip(Tooltip::text("Click to view"))
+                            .when_some(preview, |d, p| {
+                                d.on_click(
+                                    cx.listener(move |this, _, window, cx| this.open_image(p.clone(), window, cx)),
+                                )
+                            }),
+                    )
+                    // Removing it is the small × that shows on hover.
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(-6.))
+                            .right(px(-6.))
+                            .invisible()
+                            .group_hover(group, |s| s.visible())
+                            .child(
+                                div()
+                                    .id(("remove-attachment", i))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .size(px(18.))
+                                    .rounded_full()
+                                    .border_1()
+                                    .border_color(t.border)
+                                    .bg(t.panel)
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(t.hover))
+                                    .child(icon(Icon::Close, t.text_muted).size_3())
+                                    .tooltip(Tooltip::text("Remove"))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.attachments.remove(i);
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
             }));
 
         // While Claude works, a written message can be queued beside the stop button.

@@ -197,7 +197,7 @@ mod tests {
     }
 
     fn result(is_error: bool) -> Item {
-        Item::ToolResult { id: String::new(), content: String::new(), is_error }
+        Item::ToolResult { id: String::new(), content: String::new(), images: Vec::new(), is_error }
     }
 
     fn sample() -> Vec<Item> {

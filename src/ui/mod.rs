@@ -2,6 +2,7 @@
 //! `RenderOnce`-style builders over `div`, styled from the theme global.
 
 pub mod completions;
+pub mod image_viewer;
 pub mod input;
 pub mod mark;
 pub mod motion;

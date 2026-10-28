@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use gpui::{
     AnyElement, App, Context, FollowMode, FontWeight, ListAlignment, ListOffset, ListState, Pixels, ScrollEvent,
-    Window, div, img, list, prelude::*, px,
+    Window, div, list, prelude::*, px,
 };
 use kynex_core::live::Key;
 use kynex_core::motion::Glide;
@@ -227,7 +227,7 @@ impl KynexApp {
     /// reaching the end follows new output again.
     pub(super) fn scroll_keys(&mut self, by: Scroll, cx: &mut Context<Self>) {
         // Not under the Git view or a modal: those keys are theirs.
-        let covered = self.git_modal.is_some() || self.settings.is_some() || self.about_open;
+        let covered = self.git_modal.is_some() || self.settings.is_some() || self.about_open || self.viewer.is_some();
         if covered || self.active_project().is_some_and(|p| p.view == View::Git) {
             return cx.propagate();
         }
@@ -337,17 +337,7 @@ impl KynexApp {
                 .border_1()
                 .border_color(t.border_variant)
                 .bg(t.element)
-                .when(!images.is_empty(), |d| {
-                    // Previews are the `gpui::Image`s the composer attached.
-                    let images = images.iter().filter_map(|i| i.clone().downcast::<gpui::Image>().ok());
-                    d.child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap_2()
-                            .children(images.map(|i| img(i).max_h(px(120.)).max_w(px(240.)).rounded_md())),
-                    )
-                })
+                .when(!images.is_empty(), |d| d.child(self.thumbnails(("user-images", ix).into(), images, 120., cx)))
                 .when(!text.is_empty(), |d| match commands::parse(text) {
                     // A slash command: its name as a chip, then whatever it was given.
                     Some((name, args)) => d.child(
@@ -417,7 +407,7 @@ impl KynexApp {
             // Calls are laid out in runs, drawn by `render_run`.
             Item::ToolUse { .. } => div().into_any_element(),
             // A result whose call isn't known.
-            Item::ToolResult { content, is_error, .. } => {
+            Item::ToolResult { content, images, is_error, .. } => {
                 let first: String = content.lines().next().unwrap_or("").chars().take(160).collect();
                 let color = if *is_error { t.error } else { t.text_placeholder };
                 let head = disclosure_row(("result", ix), expanded, &t)
@@ -437,6 +427,14 @@ impl KynexApp {
                     .flex()
                     .flex_col()
                     .child(head)
+                    .when(!images.is_empty(), |d| {
+                        d.child(div().pl_6().pt_1().child(self.thumbnails(
+                            ("result-images", ix).into(),
+                            images,
+                            160.,
+                            cx,
+                        )))
+                    })
                     .when(expanded, |d| d.child(code_box(("result-body", ix).into(), content.clone(), (key, ix), &t)))
                     .into_any_element()
             }

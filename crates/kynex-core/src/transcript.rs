@@ -224,7 +224,7 @@ mod tests {
     }
 
     fn result(id: &str, is_error: bool) -> Item {
-        Item::ToolResult { id: id.into(), content: "ok".into(), is_error }
+        Item::ToolResult { id: id.into(), content: "ok".into(), images: Vec::new(), is_error }
     }
 
     fn edit(id: &str, path: &str) -> Item {

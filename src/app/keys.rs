@@ -280,6 +280,12 @@ impl KynexApp {
 
     pub(super) fn key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
+        // An image over everything closes first (it has the focus, so usually closes itself).
+        if k.key == "escape" && self.viewer.is_some() {
+            self.close_image(window, cx);
+            cx.stop_propagation();
+            return;
+        }
         if k.key == "escape"
             && (self.menu.is_some() || self.settings.is_some() || self.about_open || self.git_modal.is_some())
         {

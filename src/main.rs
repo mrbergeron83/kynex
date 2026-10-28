@@ -24,6 +24,8 @@ fn main() {
     if let Err(e) = kynex_core::process::tie_children_to_kynex() {
         eprintln!("kynex: {e}; child processes may outlive Kynex");
     }
+    // Images read back from logs and tool results are shown as gpui images.
+    kynex_core::session::set_preview_maker(ui::image_viewer::preview);
     gpui_platform::application().with_assets(ui::Assets).run(|cx: &mut App| {
         let saved = app::Saved::load();
         theme::set(saved.theme, cx);
