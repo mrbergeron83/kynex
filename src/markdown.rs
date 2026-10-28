@@ -1,16 +1,18 @@
-//! Markdown to gpui elements, via pulldown-cmark. Cheap enough to redo on every
-//! render of a visible message, which keeps streaming replies simple: the text
-//! grows, the next frame parses it again.
+//! Markdown to gpui elements. The text is parsed into blocks by
+//! `kynex_core::markdown` once per change and cached; every render (a streaming
+//! reply, each frame of a scroll or an animation) only draws the blocks.
 
-use std::ops::Range;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{BuildHasher, RandomState};
 use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, ClipboardItem, ElementId, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
     UnderlineStyle, Window, div, prelude::*, px,
 };
+use kynex_core::markdown::{self, Block, Doc, Inline, ListItem, TableRow};
 use kynex_core::terminal::ShellKind;
-use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::theme::{Palette, mono, theme};
 use crate::ui::selectable::{Spot, selectable};
@@ -30,79 +32,50 @@ pub fn render(
     run: Option<RunCommand>,
     cx: &App,
 ) -> AnyElement {
-    let mut b = Builder::new(id.into(), theme(cx).clone(), cx);
-    b.select = (group, item);
-    b.run = run;
-    let options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
-    for event in Parser::new_ext(src, options) {
-        b.event(event);
-    }
-    b.finish()
+    let doc = parsed(group, item, src);
+    let mut b = Builder { id: id.into(), p: theme(cx).clone(), cx, counter: 0, select: (group, item), blocks: 0, run };
+    let blocks = b.blocks(&doc);
+    div().flex().flex_col().gap_2().children(blocks).into_any_element()
 }
 
-enum Container {
-    Root,
-    Quote,
-    List { next: Option<u64> },
-    Item,
-    Table { alignments: Vec<Alignment>, rows: Vec<(bool, Vec<AnyElement>)> },
-    Row { head: bool, cells: Vec<AnyElement> },
-    Cell,
+/// Parsed messages by selection group and item, with a hash of their text.
+type Cache = HashMap<(u64, usize), (u64, Rc<Doc>)>;
+
+thread_local! {
+    static PARSED: RefCell<(RandomState, Cache)> = RefCell::default();
 }
 
-struct Frame {
-    kind: Container,
-    children: Vec<AnyElement>,
-}
-
-#[derive(Default)]
-struct Inline {
-    text: String,
-    highlights: Vec<(Range<usize>, HighlightStyle)>,
-    fonts: Vec<(Range<usize>, SharedString)>,
-    links: Vec<(Range<usize>, String)>,
+/// `src` parsed, from the cache while it's unchanged.
+fn parsed(group: u64, item: usize, src: &str) -> Rc<Doc> {
+    PARSED.with_borrow_mut(|(hasher, cache)| {
+        let hash = hasher.hash_one(src);
+        if let Some((h, doc)) = cache.get(&(group, item))
+            && *h == hash
+        {
+            return doc.clone();
+        }
+        // Old sessions' messages: dropped wholesale now and then, parsed again if shown.
+        if cache.len() >= 4096 {
+            cache.clear();
+        }
+        let doc = Rc::new(markdown::parse(src));
+        cache.insert((group, item), (hash, doc.clone()));
+        doc
+    })
 }
 
 struct Builder<'a> {
     id: ElementId,
     p: Palette,
     cx: &'a App,
-    stack: Vec<Frame>,
-    inline: Inline,
-    bold: usize,
-    italic: usize,
-    strike: usize,
-    link: Option<String>,
-    heading: Option<HeadingLevel>,
-    code: Option<(String, String)>,
     counter: usize,
-    /// Selection group and item, and the next block's number in it.
+    /// Selection group and item, and the last block's number in it.
     select: (u64, usize),
     blocks: usize,
     run: Option<RunCommand>,
 }
 
-impl<'a> Builder<'a> {
-    fn new(id: ElementId, p: Palette, cx: &'a App) -> Self {
-        Self {
-            id,
-            p,
-            cx,
-            stack: vec![Frame { kind: Container::Root, children: Vec::new() }],
-            inline: Inline::default(),
-            bold: 0,
-            italic: 0,
-            strike: 0,
-            link: None,
-            heading: None,
-            code: None,
-            counter: 0,
-            select: (0, 0),
-            blocks: 0,
-            run: None,
-        }
-    }
-
+impl Builder<'_> {
     fn next_id(&mut self, what: &'static str) -> ElementId {
         self.counter += 1;
         ElementId::NamedChild(std::sync::Arc::new(self.id.clone()), format!("{what}-{}", self.counter).into())
@@ -114,87 +87,27 @@ impl<'a> Builder<'a> {
         Spot::new(self.select.1, self.blocks)
     }
 
-    fn push_block(&mut self, el: AnyElement) {
-        self.stack.last_mut().unwrap().children.push(el);
+    fn blocks(&mut self, doc: &[Block]) -> Vec<AnyElement> {
+        doc.iter().map(|b| self.block(b)).collect()
     }
 
-    fn event(&mut self, event: Event) {
-        if let Some((_, code)) = &mut self.code {
-            match event {
-                Event::Text(t) => return code.push_str(&t),
-                Event::End(TagEnd::CodeBlock) => {}
-                _ => return,
-            }
-        }
-        match event {
-            Event::Start(tag) => self.start(tag),
-            Event::End(tag) => self.end(tag),
-            Event::Text(t) => self.text(&t, false),
-            Event::Code(t) => self.text(&t, true),
-            Event::InlineHtml(t) | Event::Html(t) => self.text(&t, false),
-            Event::SoftBreak => self.text(" ", false),
-            Event::HardBreak => self.text("\n", false),
-            Event::Rule => {
-                let rule = div().my_2().h(px(1.)).w_full().bg(self.p.border_variant).into_any_element();
-                self.push_block(rule);
-            }
-            Event::TaskListMarker(done) => self.text(if done { "☑ " } else { "☐ " }, false),
-            Event::FootnoteReference(t) => self.text(&format!("[{t}]"), false),
-            _ => {}
-        }
-    }
-
-    fn start(&mut self, tag: Tag) {
-        match tag {
-            Tag::Heading { level, .. } => {
-                self.flush();
-                self.heading = Some(level);
-            }
-            Tag::CodeBlock(kind) => {
-                self.flush();
-                let lang = match kind {
-                    CodeBlockKind::Fenced(l) => l.split([',', ' ']).next().unwrap_or("").to_string(),
-                    CodeBlockKind::Indented => String::new(),
+    fn block(&mut self, block: &Block) -> AnyElement {
+        match block {
+            Block::Paragraph(inline) => div().child(self.inline(inline)).into_any_element(),
+            Block::Heading(level, inline) => {
+                let size = match level {
+                    1 => px(20.),
+                    2 => px(17.),
+                    3 => px(15.),
+                    _ => px(14.),
                 };
-                self.code = Some((lang, String::new()));
+                let body = self.inline(inline);
+                div().pt_1().text_size(size).text_color(self.p.text).child(body).into_any_element()
             }
-            Tag::BlockQuote(_) => self.open(Container::Quote),
-            Tag::List(start) => {
-                self.flush();
-                self.open(Container::List { next: start });
-            }
-            Tag::Item => self.open(Container::Item),
-            Tag::Table(alignments) => {
-                self.flush();
-                self.open(Container::Table { alignments, rows: Vec::new() });
-            }
-            Tag::TableHead => self.open(Container::Row { head: true, cells: Vec::new() }),
-            Tag::TableRow => self.open(Container::Row { head: false, cells: Vec::new() }),
-            Tag::TableCell => self.open(Container::Cell),
-            Tag::Emphasis => self.italic += 1,
-            Tag::Strong => self.bold += 1,
-            Tag::Strikethrough => self.strike += 1,
-            Tag::Link { dest_url, .. } => self.link = Some(dest_url.to_string()),
-            Tag::Image { dest_url, .. } => self.link = Some(dest_url.to_string()),
-            _ => {}
-        }
-    }
-
-    fn end(&mut self, tag: TagEnd) {
-        match tag {
-            TagEnd::Paragraph => self.flush(),
-            TagEnd::Heading(_) => {
-                self.flush();
-                self.heading = None;
-            }
-            TagEnd::CodeBlock => {
-                let (lang, code) = self.code.take().unwrap_or_default();
-                let el = self.code_block(lang, code);
-                self.push_block(el);
-            }
-            TagEnd::BlockQuote(_) => {
-                let children = self.close();
-                let quote = div()
+            Block::Code { lang, code } => self.code_block(lang, code),
+            Block::Quote(doc) => {
+                let children = self.blocks(doc);
+                div()
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -203,144 +116,68 @@ impl<'a> Builder<'a> {
                     .border_color(self.p.border)
                     .text_color(self.p.text_muted)
                     .children(children)
-                    .into_any_element();
-                self.push_block(quote);
+                    .into_any_element()
             }
-            TagEnd::List(_) => {
-                let children = self.close();
-                let list = div().flex().flex_col().gap_1().children(children).into_any_element();
-                self.push_block(list);
+            Block::List(items) => {
+                let items: Vec<_> = items.iter().map(|i| self.list_item(i)).collect();
+                div().flex().flex_col().gap_1().children(items).into_any_element()
             }
-            TagEnd::Item => {
-                self.flush();
-                let children = self.close();
-                let marker = match &mut self.stack.last_mut().unwrap().kind {
-                    Container::List { next: Some(n) } => {
-                        *n += 1;
-                        format!("{}.", *n - 1)
-                    }
-                    _ => "•".to_string(),
-                };
-                let item = div()
-                    .flex()
-                    .gap_2()
-                    .child(div().flex_none().min_w(px(14.)).text_color(self.p.text_muted).child(marker))
-                    .child(div().flex().flex_col().gap_1().flex_1().min_w_0().children(children))
-                    .into_any_element();
-                self.push_block(item);
-            }
-            TagEnd::TableCell => {
-                self.flush();
-                let children = self.close();
-                if let Some(Frame { kind: Container::Row { cells, .. }, .. }) = self.stack.last_mut() {
-                    cells.push(div().flex().flex_col().children(children).into_any_element());
-                }
-            }
-            TagEnd::TableHead | TagEnd::TableRow => {
-                let frame = self.stack.pop().unwrap();
-                if let (Container::Row { head, cells }, Some(Frame { kind: Container::Table { rows, .. }, .. })) =
-                    (frame.kind, self.stack.last_mut())
-                {
-                    rows.push((head, cells));
-                }
-            }
-            TagEnd::Table => {
-                let frame = self.stack.pop().unwrap();
-                if let Container::Table { alignments, rows } = frame.kind {
-                    let el = self.table(alignments, rows);
-                    self.push_block(el);
-                }
-            }
-            TagEnd::Emphasis => self.italic = self.italic.saturating_sub(1),
-            TagEnd::Strong => self.bold = self.bold.saturating_sub(1),
-            TagEnd::Strikethrough => self.strike = self.strike.saturating_sub(1),
-            TagEnd::Link | TagEnd::Image => self.link = None,
-            _ => {}
+            Block::Table { columns, rows } => self.table(*columns, rows),
+            Block::Rule => div().my_2().h(px(1.)).w_full().bg(self.p.border_variant).into_any_element(),
         }
     }
 
-    fn open(&mut self, kind: Container) {
-        self.flush();
-        self.stack.push(Frame { kind, children: Vec::new() });
+    fn list_item(&mut self, item: &ListItem) -> AnyElement {
+        let children = self.blocks(&item.blocks);
+        div()
+            .flex()
+            .gap_2()
+            .child(div().flex_none().min_w(px(14.)).text_color(self.p.text_muted).child(item.marker.clone()))
+            .child(div().flex().flex_col().gap_1().flex_1().min_w_0().children(children))
+            .into_any_element()
     }
 
-    fn close(&mut self) -> Vec<AnyElement> {
-        self.flush();
-        if self.stack.len() > 1 { self.stack.pop().unwrap().children } else { Vec::new() }
-    }
-
-    fn text(&mut self, t: &str, code: bool) {
-        if t.is_empty() {
-            return;
-        }
-        let start = self.inline.text.len();
-        self.inline.text.push_str(t);
-        let range = start..self.inline.text.len();
-        let mut style = HighlightStyle::default();
-        let mut styled = false;
-        if self.bold > 0 || self.heading.is_some() {
-            style.font_weight = Some(FontWeight::SEMIBOLD);
-            styled = true;
-        }
-        if self.italic > 0 {
-            style.font_style = Some(FontStyle::Italic);
-            styled = true;
-        }
-        if self.strike > 0 {
-            style.strikethrough = Some(StrikethroughStyle { thickness: px(1.), color: None });
-            styled = true;
-        }
-        if code {
-            style.background_color = Some(self.p.element);
-            self.inline.fonts.push((range.clone(), mono()));
-            styled = true;
-        }
-        if let Some(url) = &self.link {
-            style.color = Some(self.p.accent);
-            style.underline = Some(UnderlineStyle { thickness: px(1.), color: Some(self.p.accent), wavy: false });
-            self.inline.links.push((range.clone(), url.clone()));
-            styled = true;
-        }
-        if styled {
-            self.inline.highlights.push((range, style));
-        }
-    }
-
-    /// Turns the gathered inline text into one wrapped paragraph block.
-    fn flush(&mut self) {
-        if self.inline.text.is_empty() {
-            return;
-        }
-        let inline = std::mem::take(&mut self.inline);
+    /// One wrapped run of styled, selectable text.
+    fn inline(&mut self, inline: &Inline) -> AnyElement {
         let spot = self.next_spot();
-        let (highlights, fonts) = (inline.highlights, inline.fonts);
-        let body = selectable(self.select.0, spot, inline.text, self.p.selection)
-            .styled(|t| t.with_highlights(highlights).with_font_family_overrides(fonts))
-            .links(inline.links)
-            .into_any_element();
-        let block = match self.heading {
-            Some(level) => {
-                let size = match level {
-                    HeadingLevel::H1 => px(20.),
-                    HeadingLevel::H2 => px(17.),
-                    HeadingLevel::H3 => px(15.),
-                    _ => px(14.),
-                };
-                div().pt_1().text_size(size).text_color(self.p.text).child(body).into_any_element()
+        let mut highlights = Vec::new();
+        let mut fonts: Vec<(_, SharedString)> = Vec::new();
+        let mut links = Vec::new();
+        for span in &inline.spans {
+            let mut style = HighlightStyle::default();
+            if span.style.bold {
+                style.font_weight = Some(FontWeight::SEMIBOLD);
             }
-            None => div().child(body).into_any_element(),
-        };
-        self.push_block(block);
+            if span.style.italic {
+                style.font_style = Some(FontStyle::Italic);
+            }
+            if span.style.strike {
+                style.strikethrough = Some(StrikethroughStyle { thickness: px(1.), color: None });
+            }
+            if span.style.code {
+                style.background_color = Some(self.p.element);
+                fonts.push((span.range.clone(), mono()));
+            }
+            if let Some(url) = &span.link {
+                style.color = Some(self.p.accent);
+                style.underline = Some(UnderlineStyle { thickness: px(1.), color: Some(self.p.accent), wavy: false });
+                links.push((span.range.clone(), url.clone()));
+            }
+            highlights.push((span.range.clone(), style));
+        }
+        selectable(self.select.0, spot, inline.text.clone(), self.p.selection)
+            .styled(|t| t.with_highlights(highlights).with_font_family_overrides(fonts))
+            .links(links)
+            .into_any_element()
     }
 
-    fn code_block(&mut self, lang: String, code: String) -> AnyElement {
-        let code = code.trim_end_matches('\n').to_string();
+    fn code_block(&mut self, lang: &str, code: &str) -> AnyElement {
         let copy_id = self.next_id("copy");
         let scroll_id = self.next_id("code");
-        let to_copy = code.clone();
+        let to_copy = code.to_string();
         // Suggested shell commands get a play button; it stays visible so it's found.
-        let play = ShellKind::for_lang(&lang).zip(self.run.clone()).map(|(shell, run)| {
-            let command = code.clone();
+        let play = ShellKind::for_lang(lang).zip(self.run.clone()).map(|(shell, run)| {
+            let command = code.to_string();
             let success = self.p.success;
             div()
                 .id(self.next_id("run"))
@@ -359,7 +196,7 @@ impl<'a> Builder<'a> {
                 .on_click(move |_, window, cx| run(shell, command.clone(), window, cx))
         });
         let has_play = play.is_some();
-        let text = selectable(self.select.0, self.next_spot(), code, self.p.selection);
+        let text = selectable(self.select.0, self.next_spot(), code.to_string(), self.p.selection);
         let p = &self.p;
         div()
             .group("code")
@@ -390,7 +227,9 @@ impl<'a> Builder<'a> {
                     .gap_1()
                     .invisible()
                     .group_hover("code", |s| s.visible())
-                    .when(!lang.is_empty(), |d| d.child(div().text_xs().text_color(p.text_placeholder).child(lang)))
+                    .when(!lang.is_empty(), |d| {
+                        d.child(div().text_xs().text_color(p.text_placeholder).child(lang.to_string()))
+                    })
                     .child(
                         icon_button(copy_id, Icon::Copy, self.cx).tooltip(Tooltip::text("Copy")).on_click(
                             move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(to_copy.clone())),
@@ -401,10 +240,13 @@ impl<'a> Builder<'a> {
             .into_any_element()
     }
 
-    fn table(&mut self, alignments: Vec<Alignment>, rows: Vec<(bool, Vec<AnyElement>)>) -> AnyElement {
+    fn table(&mut self, columns: usize, rows: &[TableRow]) -> AnyElement {
         let id = self.next_id("table");
+        let rows: Vec<_> = rows
+            .iter()
+            .map(|row| (row.head, row.cells.iter().take(columns).map(|c| self.blocks(c)).collect::<Vec<_>>()))
+            .collect();
         let p = &self.p;
-        let columns = alignments.len().max(1);
         div()
             .id(id)
             .overflow_x_scroll()
@@ -414,24 +256,11 @@ impl<'a> Builder<'a> {
                         .flex()
                         .when(i > 0, |d| d.border_t_1().border_color(p.border_variant))
                         .when(head, |d| d.bg(p.element).font_weight(FontWeight::SEMIBOLD))
-                        .children(
-                            cells
-                                .into_iter()
-                                .take(columns)
-                                .map(|c| div().flex_1().min_w(px(80.)).px_2().py_1().child(c)),
-                        )
+                        .children(cells.into_iter().map(|c| {
+                            div().flex_1().min_w(px(80.)).px_2().py_1().child(div().flex().flex_col().children(c))
+                        }))
                 }),
             ))
             .into_any_element()
-    }
-
-    fn finish(mut self) -> AnyElement {
-        self.flush();
-        while self.stack.len() > 1 {
-            let frame = self.stack.pop().unwrap();
-            self.stack.last_mut().unwrap().children.extend(frame.children);
-        }
-        let root = self.stack.pop().unwrap();
-        div().flex().flex_col().gap_2().children(root.children).into_any_element()
     }
 }

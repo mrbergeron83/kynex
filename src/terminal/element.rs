@@ -11,6 +11,7 @@ use kynex_core::terminal::{CursorStyle, Palette, Rgb, Size};
 
 use super::view::TerminalView;
 use crate::theme::{Palette as Theme, mono, theme};
+use crate::ui::device_px;
 
 pub const FONT_SIZE: Pixels = px(13.);
 /// Space between the grid and the panel's edges.
@@ -35,11 +36,12 @@ pub struct Prepaint {
     line_height: Pixels,
 }
 
-/// The cell size for the terminal font.
+/// The cell size for the terminal font. Rows are a whole number of device
+/// pixels tall, so at 125% or 175% every line sits the same distance apart.
 pub fn cell_size(window: &mut Window) -> gpui::Size<Pixels> {
     let font_id = window.text_system().resolve_font(&font(mono()));
     let width = window.text_system().advance(font_id, FONT_SIZE, 'm').map_or(px(8.), |s| s.width);
-    size(width, (FONT_SIZE * 1.4).round())
+    size(width, device_px(f32::from(FONT_SIZE) * 1.4, window))
 }
 
 impl IntoElement for TerminalElement {
@@ -154,10 +156,11 @@ impl Element for TerminalElement {
             let at = origin + point(cell.width * c.column as f32, cell.height * c.line as f32);
             let color = hsla(palette.cursor);
             let block = Bounds::new(at, cell);
+            let bar = device_px(2., window);
             match (c.style, self.focused) {
-                (CursorStyle::Beam, _) => fill(Bounds::new(at, size(px(2.), cell.height)), color),
+                (CursorStyle::Beam, _) => fill(Bounds::new(at, size(bar, cell.height)), color),
                 (CursorStyle::Underline, _) => {
-                    fill(Bounds::new(at + point(px(0.), cell.height - px(2.)), size(cell.width, px(2.))), color)
+                    fill(Bounds::new(at + point(px(0.), cell.height - bar), size(cell.width, bar)), color)
                 }
                 (CursorStyle::Block, true) => fill(block, color.opacity(0.75)),
                 _ => outline(block, color, gpui::BorderStyle::Solid),

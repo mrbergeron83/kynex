@@ -13,6 +13,7 @@ pub mod git;
 pub mod groups;
 pub mod history;
 pub mod live;
+pub mod markdown;
 pub mod mcp;
 pub mod motion;
 pub mod open;

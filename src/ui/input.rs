@@ -804,7 +804,8 @@ impl Element for TextElement {
         if input.content.is_empty() || range.is_empty() {
             let offset = if input.content.is_empty() { 0 } else { input.cursor_offset() };
             let p = layout.position_for_offset(offset);
-            cursor = Some(fill(Bounds::new(bounds.origin + p, size(px(1.5), lh)), theme(cx).accent));
+            let width = crate::ui::device_px(1.5, window);
+            cursor = Some(fill(Bounds::new(bounds.origin + p, size(width, lh)), theme(cx).accent));
         } else {
             // One rectangle per visual line the selection touches.
             let start = layout.position_for_offset(range.start);

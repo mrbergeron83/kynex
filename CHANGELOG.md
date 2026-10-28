@@ -54,8 +54,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Mouse-wheel scrolling glides everywhere, not just in the conversation: the sessions panel,
   timeline, Git view, settings, menus and terminal too. A notch also goes about twice as far,
   like a browser. Touchpads still scroll 1:1, and with animations off a notch moves at once.
+- A streaming reply glides down as it grows instead of jumping a line at a time.
+- Scrolling and animating a long conversation is lighter: a message's markdown is parsed once
+  per change rather than on every frame.
 
 ### Fixed
+
+- At 125% or 175% display scaling, the message box's caret and the terminal's cursor no longer
+  change width as they move, and terminal lines are evenly spaced.
 
 - macOS: Kynex opened from Finder or the Dock finds a `claude`, `pwsh` or `code` installed with
   Homebrew or npm; it takes PATH from your login shell, as editors do.
