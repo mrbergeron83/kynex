@@ -6,6 +6,7 @@ pub mod attach;
 pub mod cli;
 pub mod commands;
 pub mod env_path;
+pub mod extensions;
 pub mod fmt;
 #[doc(hidden)]
 pub mod fuzz;
@@ -15,6 +16,7 @@ pub mod history;
 pub mod live;
 pub mod markdown;
 pub mod mcp;
+pub mod mcp_config;
 pub mod motion;
 pub mod open;
 pub mod paths;

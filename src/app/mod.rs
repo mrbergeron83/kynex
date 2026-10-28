@@ -36,6 +36,8 @@
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
 //! | `app_update.rs`     | Kynex updating itself: checks, the update toast      |
 //! | `about.rs`          | the About Kynex modal: version, paths, updates       |
+//! | `extensions.rs`     | the Extensions modal: MCP servers, plugins           |
+//! | `extensions_add.rs` | its Add server panel: browser preset, your own       |
 //! | `appearance.rs`     | each project's colour: title bar, tab, composer      |
 //! | `models.rs`         | the model list                                       |
 //! | `viewer.rs`         | images opened over the window, thumbnails            |
@@ -46,6 +48,8 @@ mod app_update;
 mod appearance;
 mod composer;
 mod drafts;
+mod extensions;
+mod extensions_add;
 mod git_modal;
 mod handoff;
 mod history;
@@ -165,6 +169,8 @@ pub struct KynexApp {
     settings: Option<SettingsView>,
     /// The app's own Settings modal, while open.
     app_settings: Option<app_settings::AppSettingsView>,
+    /// The Extensions modal: MCP servers and plugins in the active folder.
+    extensions: Option<extensions::ExtensionsView>,
     /// Projects whose rules changed mid-reply; their process restarts once it's idle.
     restart_when_idle: HashSet<PathBuf>,
     prompt: Option<ActivePrompt>,
@@ -327,6 +333,7 @@ impl KynexApp {
             naming_tried: HashSet::new(),
             settings: None,
             app_settings: None,
+            extensions: None,
             restart_when_idle: HashSet::new(),
             prompt: None,
             menu: None,
@@ -560,6 +567,8 @@ impl Render for KynexApp {
         let settings = self.draw_leaving(|s| &mut s.settings, |e| &mut e.settings, window, cx, Self::render_settings);
         let app_settings =
             self.draw_leaving(|s| &mut s.app_settings, |e| &mut e.app_settings, window, cx, Self::render_app_settings);
+        let extensions =
+            self.draw_leaving(|s| &mut s.extensions, |e| &mut e.extensions, window, cx, Self::render_extensions);
         let notice = self.render_notice(cx);
         let toast = self.render_update_toast(cx);
         let task_toast = self.render_task_toast(cx);
@@ -647,6 +656,7 @@ impl Render for KynexApp {
             .children(git_modal)
             .children(settings)
             .children(app_settings)
+            .children(extensions)
             .children(about)
             .children(menu)
             .children(viewer)

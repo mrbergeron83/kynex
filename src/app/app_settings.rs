@@ -32,6 +32,7 @@ impl KynexApp {
             return cx.notify();
         }
         self.settings = None;
+        self.extensions = None;
         self.app_settings = Some(AppSettingsView { section: 0, version: None });
         self.read_cli_version(cx);
         cx.notify();

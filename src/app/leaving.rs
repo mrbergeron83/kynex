@@ -9,6 +9,7 @@ use gpui::{AnyElement, Context, Entity, Window};
 
 use super::KynexApp;
 use super::app_settings::AppSettingsView;
+use super::extensions::ExtensionsView;
 use super::menus::OpenMenu;
 use super::settings::SettingsView;
 use crate::prompt::PromptView;
@@ -21,6 +22,7 @@ pub(super) struct Exits {
     pub menu: Leaving<OpenMenu>,
     pub settings: Leaving<SettingsView>,
     pub app_settings: Leaving<AppSettingsView>,
+    pub extensions: Leaving<ExtensionsView>,
     pub about: Leaving<()>,
     pub git_modal: Leaving<PathBuf>,
     pub viewer: Leaving<Entity<ImageViewer>>,
@@ -38,6 +40,7 @@ impl Default for Exits {
             menu: Leaving::new(QUICK),
             settings: Leaving::new(QUICK),
             app_settings: Leaving::new(QUICK),
+            extensions: Leaving::new(QUICK),
             about: Leaving::new(QUICK),
             git_modal: Leaving::new(QUICK),
             viewer: Leaving::new(QUICK),
