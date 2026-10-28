@@ -375,7 +375,7 @@ impl KynexApp {
         // in the background flashes the taskbar / bounces the Dock icon.
         let mut called = false;
         let mut reports = Vec::new();
-        let mut limits = None;
+        let mut limits: Option<kynex_core::usage::Limits> = None;
         // Folders whose files may have just changed: a turn ended or a tool call finished.
         let mut touched = HashSet::new();
         // Background tasks that just ended, for a toast if their session isn't shown.
@@ -405,7 +405,12 @@ impl KynexApp {
                 reports.push((s.cwd.clone(), init));
             }
             // The account's limits: whichever session reported last is newest.
-            limits = s.take_limits().or(limits);
+            if let Some(newer) = s.take_limits() {
+                limits = Some(match limits {
+                    Some(older) => older.then(newer),
+                    None => newer,
+                });
+            }
         }
         if let Some(limits) = limits {
             self.limits_reported(limits, cx);
