@@ -361,7 +361,7 @@ impl KynexApp {
         }
     }
 
-    fn render_item(&mut self, row: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_item(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(key) = self.active_key() else { return div().into_any_element() };
         let Some(thread) = self.threads.get(&key) else { return div().into_any_element() };
         let last = row + 1 == thread.rows.len();
@@ -373,9 +373,12 @@ impl KynexApp {
             }
             Some(Row::Item(ix)) => {
                 let compact = self.active_session().is_some_and(|s| {
-                    matches!(s.items.get(ix), Some(Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking))
+                    matches!(
+                        s.items.get(ix),
+                        Some(Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking(_))
+                    )
                 });
-                (self.render_entry(ix, row, cx), compact)
+                (self.render_entry(ix, row, window, cx), compact)
             }
             None => return div().into_any_element(),
         };
@@ -399,7 +402,7 @@ impl KynexApp {
     }
 
     /// Item `ix` drawn on its own, as transcript row `row`.
-    fn render_entry(&mut self, ix: usize, row: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_entry(&mut self, ix: usize, row: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let Some(session) = self.active_session() else { return div().into_any_element() };
         let key = session.uid;
@@ -490,8 +493,32 @@ impl KynexApp {
                     )
                     .into_any_element()
             }
-            Item::Thinking => {
-                div().text_sm().italic().text_color(t.text_placeholder).child("Thinking…").into_any_element()
+            // "Thinking… 4s" while it streams; after, "Thought for 6s", which
+            // opens to the text when the CLI shared it.
+            Item::Thinking(thought) => {
+                let label = div().text_xs().text_color(t.text_placeholder).child(thought.label());
+                if thought.is_live() {
+                    // The seconds count up while nothing else redraws.
+                    window.request_animation_frame();
+                    return label.italic().px_1().into_any_element();
+                }
+                if thought.text.trim().is_empty() {
+                    return label.px_1().into_any_element();
+                }
+                let head = disclosure_row(("thought", ix), expanded, &t).child(label).on_click(toggle);
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(head)
+                    .when(expanded, |d| {
+                        d.child(div().pl_6().pr_1().pt_1().text_sm().text_color(t.text_muted).child(selectable(
+                            key,
+                            Spot::new(ix, 0),
+                            thought.text.clone(),
+                            t.selection,
+                        )))
+                    })
+                    .into_any_element()
             }
             // Calls are laid out in runs, drawn by `render_run`.
             Item::ToolUse { .. } => div().into_any_element(),

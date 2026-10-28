@@ -15,6 +15,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   a code block scrolls the conversation instead of the code sideways.
 - Starting a new session or picking one in the sessions panel puts the cursor in the
   composer, or in the session's waiting prompt, so you can type right away.
+- Finished turns no longer say "Thinking…" forever: thinking counts up while it runs, then
+  reads "Thought for 6s", and opens to the thinking text when Claude Code shares it.
 
 ### Added
 
