@@ -13,6 +13,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - An "Update" pill in the title bar while a Kynex or Claude Code update waits, until it's
   installed, even after the toast is closed. It opens About Kynex. It replaces the dot by the
   Kynex menu.
+- An Extensions page (Kynex menu, or click the MCP dot in the session header) listing the
+  folder's MCP servers with where each is configured (user, local, project, plugin, claude.ai),
+  what it runs or connects to, and how it's doing, with a hint when one failed, needs signing in
+  or waits for approval. A Plugins tab shows installed plugins and whether they're on.
 
 ### Changed
 

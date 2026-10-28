@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::session::{Kind, Session};
-use crate::{cli, commands, git, markdown, rewind, session, tasks, update};
+use crate::{cli, commands, extensions, git, markdown, rewind, session, tasks, update};
 
 /// The CLI's stream-json output, one event per line, as a live session reads it.
 pub fn stream_json(text: &str) {
@@ -88,6 +88,22 @@ pub fn versions(bytes: &[u8]) {
     let _ = commands::unwrap(&text);
 }
 
+/// The CLI's config files: `~/.claude.json`, `.mcp.json`, settings, installed plugins.
+pub fn claude_config(text: &str) {
+    let Ok(v) = serde_json::from_str::<Value>(text) else { return };
+    let settings = [v.clone()];
+    for cwd in ["", "/", "C:/", "C:\\x\\", "/work/app"] {
+        let cwd = std::path::Path::new(cwd);
+        let servers = extensions::servers(&v, &v, &settings, cwd);
+        let _ = extensions::plugins(&v, &settings, cwd);
+        let live = crate::mcp::servers(&v);
+        for row in extensions::rows(&servers, &live) {
+            let _ = (row.label(), row.source.label(), row.transport.map(|t| t.detail()));
+        }
+    }
+    let _ = extensions::parse_mcp_json(&v);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,6 +123,10 @@ mod tests {
             git_worktree(t);
             markdown(t);
             versions(t.as_bytes());
+            claude_config(t);
         }
+        claude_config(
+            r#"{"mcpServers":{"a":{"command":"x","args":[1]}},"projects":{"/work/app":{}},"plugins":{"p":[{}]}}"#,
+        );
     }
 }

@@ -6,6 +6,7 @@ pub mod attach;
 pub mod cli;
 pub mod commands;
 pub mod env_path;
+pub mod extensions;
 pub mod fmt;
 #[doc(hidden)]
 pub mod fuzz;

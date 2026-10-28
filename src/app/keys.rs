@@ -227,6 +227,7 @@ impl KynexApp {
         if self.menu.take().is_some()
             || self.settings.take().is_some()
             || self.app_settings.take().is_some()
+            || self.extensions.take().is_some()
             || self.cancel_rename()
         {
             return cx.notify();
@@ -301,6 +302,7 @@ impl KynexApp {
             && (self.menu.is_some()
                 || self.settings.is_some()
                 || self.app_settings.is_some()
+                || self.extensions.is_some()
                 || self.about_open
                 || self.git_modal.is_some())
         {
@@ -308,6 +310,7 @@ impl KynexApp {
             if self.menu.take().is_none()
                 && self.settings.take().is_none()
                 && self.app_settings.take().is_none()
+                && self.extensions.take().is_none()
                 && !std::mem::take(&mut self.about_open)
             {
                 self.close_git_modal(cx);

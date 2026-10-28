@@ -103,6 +103,7 @@ impl KynexApp {
         let covered = self.menu.is_some()
             || self.settings.is_some()
             || self.app_settings.is_some()
+            || self.extensions.is_some()
             || self.about_open
             || self.git_modal.is_some()
             || self.viewer.is_some();

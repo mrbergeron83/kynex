@@ -95,6 +95,14 @@ impl KynexApp {
                         .into_any_element(),
                 );
                 items.push(
+                    menu_item("kynex-extensions", "Extensions", false, cx)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.menu = None;
+                            this.open_extensions(0, cx);
+                        }))
+                        .into_any_element(),
+                );
+                items.push(
                     menu_item("kynex-check-cli", "Check for Claude Code updates", false, cx)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.menu = None;

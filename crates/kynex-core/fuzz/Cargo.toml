@@ -85,3 +85,10 @@ path = "fuzz_targets/markdown.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "claude_config"
+path = "fuzz_targets/claude_config.rs"
+test = false
+doc = false
+bench = false

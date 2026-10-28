@@ -28,6 +28,7 @@ pub struct SettingsView {
 impl KynexApp {
     pub(super) fn open_settings(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.app_settings = None;
+        self.extensions = None;
         self.settings = Some(SettingsView {
             perms: Permissions::load(&path),
             claude: ClaudeSettings::load(&path),
