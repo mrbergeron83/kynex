@@ -1,9 +1,11 @@
 //! Which shell a terminal runs, and finding it on this machine.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+static DEFAULT: RwLock<Option<ShellKind>> = RwLock::new(None);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ShellKind {
     PowerShell,
     /// Git Bash on Windows; the user's login shell elsewhere.
@@ -14,6 +16,20 @@ impl ShellKind {
     /// PowerShell on Windows, the user's shell everywhere else.
     pub fn default_for_os() -> Self {
         if cfg!(windows) { ShellKind::PowerShell } else { ShellKind::Bash }
+    }
+
+    /// The shell a new terminal opens: the one picked with [`Self::set_default`],
+    /// else [`Self::default_for_os`].
+    pub fn default_shell() -> Self {
+        DEFAULT.read().ok().and_then(|d| *d).unwrap_or_else(Self::default_for_os)
+    }
+
+    /// Picks the shell new terminals open (the app settings' choice), or with
+    /// `None` goes back to the OS's.
+    pub fn set_default(kind: Option<Self>) {
+        if let Ok(mut d) = DEFAULT.write() {
+            *d = kind;
+        }
     }
 
     /// The shell that runs a fenced code block tagged `lang` (```bash, ```powershell…),
@@ -134,6 +150,18 @@ mod tests {
         assert_eq!(ShellKind::for_lang("ps1"), Some(ShellKind::PowerShell));
         assert_eq!(ShellKind::for_lang("rust"), None);
         assert_eq!(ShellKind::for_lang(""), None);
+    }
+
+    #[test]
+    fn a_picked_default_wins() {
+        let other = match ShellKind::default_for_os() {
+            ShellKind::PowerShell => ShellKind::Bash,
+            ShellKind::Bash => ShellKind::PowerShell,
+        };
+        ShellKind::set_default(Some(other));
+        assert_eq!(ShellKind::default_shell(), other);
+        ShellKind::set_default(None);
+        assert_eq!(ShellKind::default_shell(), ShellKind::default_for_os());
     }
 
     #[test]

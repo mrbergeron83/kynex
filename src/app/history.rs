@@ -102,6 +102,7 @@ impl KynexApp {
         // Esc closes a menu or modal first; that press isn't for the draft.
         let covered = self.menu.is_some()
             || self.settings.is_some()
+            || self.app_settings.is_some()
             || self.about_open
             || self.git_modal.is_some()
             || self.viewer.is_some();

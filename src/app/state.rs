@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use kynex_core::motion::Motion;
 use kynex_core::paths::data_dir;
+use kynex_core::terminal::ShellKind;
 use serde::{Deserialize, Serialize};
 
 use crate::theme::Theme;
@@ -65,6 +66,10 @@ pub struct Saved {
     pub sessions_collapsed: bool,
     pub sessions_width: f32,
     pub window: Option<WindowState>,
+    /// The `claude` to run instead of the one found on PATH (App settings).
+    pub cli_path: Option<PathBuf>,
+    /// The shell new terminals open; `None` is the OS's.
+    pub shell: Option<ShellKind>,
     /// A Claude Code release the user chose to skip; newer ones are offered again.
     pub skipped_cli_version: Option<String>,
     /// The terminal panel under the conversation is showing.
@@ -90,6 +95,8 @@ impl Default for Saved {
             sessions_collapsed: false,
             sessions_width: 260.,
             window: None,
+            cli_path: None,
+            shell: None,
             skipped_cli_version: None,
             terminal_open: false,
             terminal_height: 280.,

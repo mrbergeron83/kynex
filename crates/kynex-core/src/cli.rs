@@ -6,22 +6,35 @@
 
 use std::ffi::OsStr;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
-/// The `claude` to run: the one on PATH, else the native installer's location
-/// (`~/.local/bin`), which a fresh install puts it in before Kynex's PATH knows.
-pub fn program() -> PathBuf {
-    let exe = if cfg!(windows) { "claude.exe" } else { "claude" };
-    let on_path =
-        std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(exe).is_file()));
-    if !on_path
-        && let Some(local) = dirs::home_dir().map(|h| h.join(".local").join("bin").join(exe)).filter(|p| p.is_file())
-    {
-        return local;
+/// A `claude` picked in the app settings, for unusual installs.
+static OVERRIDE: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// Points every `claude` Kynex runs at `path`, or with `None` back to [`found`].
+pub fn set_program(path: Option<PathBuf>) {
+    if let Ok(mut o) = OVERRIDE.write() {
+        *o = path.filter(|p| !p.as_os_str().is_empty());
     }
-    PathBuf::from("claude")
+}
+
+/// The `claude` to run: the one picked with [`set_program`] while it exists,
+/// else the one [`found`].
+pub fn program() -> PathBuf {
+    let picked = OVERRIDE.read().ok().and_then(|o| o.clone());
+    picked.filter(|p| p.is_file()).unwrap_or_else(found)
+}
+
+/// The `claude` found on its own: the one on PATH, else the native installer's
+/// location (`~/.local/bin`), which a fresh install puts it in before Kynex's PATH knows.
+pub fn found() -> PathBuf {
+    let exe = if cfg!(windows) { "claude.exe" } else { "claude" };
+    let on_path = std::env::var_os("PATH")
+        .and_then(|paths| std::env::split_paths(&paths).map(|dir| dir.join(exe)).find(|p| p.is_file()));
+    let local = || dirs::home_dir().map(|h| h.join(".local").join("bin").join(exe)).filter(|p| p.is_file());
+    on_path.or_else(local).unwrap_or_else(|| PathBuf::from("claude"))
 }
 
 /// Whether the CLI can run sessions yet.
@@ -193,7 +206,12 @@ fn command(program: impl AsRef<OsStr>) -> Command {
 
 /// The installed CLI's version, from `claude --version` ("2.1.310 (Claude Code)").
 pub fn installed_version() -> Result<String, String> {
-    let out = command(program()).arg("--version").output().map_err(|e| format!("failed to start `claude`: {e}"))?;
+    version_of(&program())
+}
+
+/// The version `program` reports, from `<program> --version`.
+pub fn version_of(program: &Path) -> Result<String, String> {
+    let out = command(program).arg("--version").output().map_err(|e| format!("failed to start `claude`: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout);
     text.split_whitespace()
         .next()
@@ -284,6 +302,19 @@ mod tests {
         assert_eq!(strip_escapes(&line), format!("If the browser didn't open, visit: {url}\n"));
         assert_eq!(strip_escapes("\x1b[1;32mok\x1b[0m"), "ok");
         assert_eq!(strip_escapes("\x1b]8;;x\x07y\x1b]8;;\x07"), "y");
+    }
+
+    #[test]
+    fn a_picked_program_wins_while_it_exists() {
+        let picked = std::env::temp_dir().join(format!("kynex-claude-{}", std::process::id()));
+        std::fs::write(&picked, "").unwrap();
+        set_program(Some(picked.clone()));
+        assert_eq!(program(), picked);
+        std::fs::remove_file(&picked).unwrap();
+        assert_eq!(program(), found(), "a picked program that's gone falls back");
+        set_program(Some(PathBuf::new()));
+        assert_eq!(program(), found());
+        set_program(None);
     }
 
     #[test]

@@ -107,7 +107,7 @@ impl TerminalPanel {
     /// Makes sure there's a shell to look at.
     pub fn ensure_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.tabs.is_empty() {
-            self.open(ShellKind::default_for_os(), window, cx);
+            self.open(ShellKind::default_shell(), window, cx);
         }
     }
 

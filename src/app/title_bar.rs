@@ -1,5 +1,5 @@
 //! The custom title bar: app name, one tab per project (Chat first), the
-//! theme picker and the window buttons.
+//! theme picker, Settings and the window buttons.
 
 use gpui::{
     Anchor, AnyElement, ClickEvent, Context, FontWeight, Hsla, MouseButton, SharedString, Window, div, prelude::*, px,
@@ -8,7 +8,7 @@ use kynex_core::live::Live;
 use kynex_core::paths::project_name;
 
 use super::KynexApp;
-use super::keys::OpenProject;
+use super::keys::{OpenProject, OpenSettings};
 use super::menus::Menu;
 use crate::chrome::{self, TITLE_BAR_HEIGHT};
 use crate::theme::{THEMES, mix, theme};
@@ -88,6 +88,12 @@ impl KynexApp {
                     .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
                         this.open_menu(Menu::Theme, ev.position(), Anchor::TopRight, cx)
                     })),
+            )
+            .child(
+                icon_button("app-settings", Icon::Settings, cx)
+                    .mr_2()
+                    .tooltip(Tooltip::for_action("Settings", OpenSettings, ""))
+                    .on_click(cx.listener(|this, _, _, cx| this.open_app_settings(cx))),
             )
             .child(chrome::window_controls(window, cx))
     }

@@ -25,6 +25,7 @@ pub struct SettingsView {
 
 impl KynexApp {
     pub(super) fn open_settings(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.app_settings = None;
         self.settings = Some(SettingsView {
             perms: Permissions::load(&path),
             claude: ClaudeSettings::load(&path),
@@ -139,25 +140,16 @@ impl KynexApp {
         let path = view.path.clone();
         let vp = window.viewport_size();
 
-        let nav = div()
-            .flex()
-            .flex_col()
-            .gap_0p5()
-            .w(px(170.))
-            .flex_none()
-            .p_2()
-            .border_r_1()
-            .border_color(t.border_variant)
-            .children(SECTIONS.iter().enumerate().map(|(i, name)| {
-                menu_item(("settings-section", i), *name, false, cx).when(i == section, |d| d.bg(t.active)).on_click(
-                    cx.listener(move |this, _, _, cx| {
-                        if let Some(s) = &mut this.settings {
-                            s.section = i;
-                        }
-                        cx.notify();
-                    }),
-                )
-            }));
+        let nav = settings_nav(
+            &SECTIONS,
+            section,
+            |this, i| {
+                if let Some(s) = &mut this.settings {
+                    s.section = i;
+                }
+            },
+            cx,
+        );
 
         let content = match section {
             0 => {
@@ -338,78 +330,126 @@ impl KynexApp {
             _ => self.render_colour_picker(&path, &t, cx),
         };
 
-        let card = div()
-            .id("settings-card")
-            .occlude()
-            .flex()
-            .flex_col()
-            .w(px(760.).min(vp.width - px(80.)))
-            .h(px(560.).min(vp.height - px(100.)))
-            .rounded_lg()
-            .border_1()
-            .border_color(t.border)
-            .bg(t.elevated)
-            .shadow_lg()
-            .overflow_hidden()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap_2()
-                    .h(px(44.))
-                    .pl_4()
-                    .pr_2()
-                    .border_b_1()
-                    .border_color(t.border_variant)
-                    .child(icon(Icon::Settings, t.text_muted))
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Claude settings"))
-                    .child(div().text_sm().text_color(t.text_muted).child(project_name(&path)))
-                    .child(div().flex_1())
-                    .child(
-                        icon_button("close-settings", Icon::Close, cx)
-                            .tooltip(Tooltip::with_meta("Close", "Esc"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.settings = None;
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(
-                div().flex().flex_1().min_h_0().child(nav).child(
-                    div().id("settings-body").flex_1().overflow_y_scroll().p_5().child(content).child(
-                        div()
-                            .pt_6()
-                            .text_xs()
-                            .text_color(t.text_placeholder)
-                            .child(format!("Stored in {}", project::dir(&path).display())),
-                    ),
-                ),
-            );
-
-        Some(fade_in(
-            "settings-fade",
-            div()
-                .id("modal-backdrop")
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(gpui::black().opacity(0.45))
-                .occlude()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.settings = None;
-                        cx.notify();
-                    }),
-                )
-                .child(pop_in("settings-in", card, px(8.))),
-            motion::QUICK,
-        ))
+        let footer = format!("Stored in {}", project::dir(&path).display());
+        let close = |this: &mut Self| this.settings = None;
+        let (nav, content) = (nav.into_any_element(), content.into_any_element());
+        Some(settings_modal("Claude settings", Some(project_name(&path)), nav, content, footer, close, vp, cx))
     }
+}
+
+/// The frame both settings modals share: a title bar with a close button,
+/// sections down the side, the section's content and where it's stored.
+/// Clicking outside or the close button runs `close`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn settings_modal(
+    title: &'static str,
+    subtitle: Option<String>,
+    nav: gpui::AnyElement,
+    content: gpui::AnyElement,
+    footer: String,
+    close: fn(&mut KynexApp),
+    vp: gpui::Size<gpui::Pixels>,
+    cx: &mut Context<KynexApp>,
+) -> impl IntoElement + use<> {
+    let t = theme(cx).clone();
+    let card = div()
+        .id("settings-card")
+        .occlude()
+        .flex()
+        .flex_col()
+        .w(px(760.).min(vp.width - px(80.)))
+        .h(px(560.).min(vp.height - px(100.)))
+        .rounded_lg()
+        .border_1()
+        .border_color(t.border)
+        .bg(t.elevated)
+        .shadow_lg()
+        .overflow_hidden()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_2()
+                .h(px(44.))
+                .pl_4()
+                .pr_2()
+                .border_b_1()
+                .border_color(t.border_variant)
+                .child(icon(Icon::Settings, t.text_muted))
+                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(title))
+                .children(subtitle.map(|s| div().text_sm().text_color(t.text_muted).child(s)))
+                .child(div().flex_1())
+                .child(
+                    icon_button("close-settings", Icon::Close, cx)
+                        .tooltip(Tooltip::with_meta("Close", "Esc"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            close(this);
+                            cx.notify();
+                        })),
+                ),
+        )
+        .child(
+            div().flex().flex_1().min_h_0().child(nav).child(
+                div()
+                    .id("settings-body")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .p_5()
+                    .child(content)
+                    .child(div().pt_6().text_xs().text_color(t.text_placeholder).child(footer)),
+            ),
+        );
+
+    fade_in(
+        "settings-fade",
+        div()
+            .id("modal-backdrop")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::black().opacity(0.45))
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    close(this);
+                    cx.notify();
+                }),
+            )
+            .child(pop_in("settings-in", card, px(8.))),
+        motion::QUICK,
+    )
+}
+
+/// The sections down the side of a settings modal; clicking one runs `pick`.
+pub(super) fn settings_nav(
+    sections: &[&'static str],
+    current: usize,
+    pick: fn(&mut KynexApp, usize),
+    cx: &mut Context<KynexApp>,
+) -> impl IntoElement + use<> {
+    let t = theme(cx).clone();
+    div()
+        .flex()
+        .flex_col()
+        .gap_0p5()
+        .w(px(170.))
+        .flex_none()
+        .p_2()
+        .border_r_1()
+        .border_color(t.border_variant)
+        .children(sections.iter().enumerate().map(|(i, name)| {
+            menu_item(("settings-section", i), *name, false, cx).when(i == current, |d| d.bg(t.active)).on_click(
+                cx.listener(move |this, _, _, cx| {
+                    pick(this, i);
+                    cx.notify();
+                }),
+            )
+        }))
 }
 
 pub(super) fn heading(title: &'static str, help: &'static str, t: &Palette) -> impl IntoElement + use<> {
@@ -422,7 +462,7 @@ pub(super) fn heading(title: &'static str, help: &'static str, t: &Palette) -> i
         .child(div().text_xs().text_color(t.text_muted).child(help))
 }
 
-fn radio(selected: bool, t: &Palette) -> impl IntoElement + use<> {
+pub(super) fn radio(selected: bool, t: &Palette) -> impl IntoElement + use<> {
     div()
         .mt_0p5()
         .size(px(14.))

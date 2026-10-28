@@ -227,7 +227,11 @@ impl KynexApp {
     /// reaching the end follows new output again.
     pub(super) fn scroll_keys(&mut self, by: Scroll, cx: &mut Context<Self>) {
         // Not under the Git view or a modal: those keys are theirs.
-        let covered = self.git_modal.is_some() || self.settings.is_some() || self.about_open || self.viewer.is_some();
+        let covered = self.git_modal.is_some()
+            || self.settings.is_some()
+            || self.app_settings.is_some()
+            || self.about_open
+            || self.viewer.is_some();
         if covered || self.active_project().is_some_and(|p| p.view == View::Git) {
             return cx.propagate();
         }
