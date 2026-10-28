@@ -177,7 +177,9 @@ impl Tasks {
 /// `run_in_background` command's tool result.
 fn output_path(content: &str) -> Option<PathBuf> {
     let rest = content.split_once("Output is being written to: ")?.1;
-    let path = rest.split_once(". ").map_or(rest, |(p, _)| p).trim().trim_end_matches('.');
+    let rest = rest.lines().next().unwrap_or("");
+    // The path itself can hold ". ", as in `C:\Users\J. Doe\…`.
+    let path = rest.split_once(". You ").map_or(rest, |(p, _)| p).trim().trim_end_matches('.');
     (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
@@ -220,6 +222,19 @@ pub fn parse_notification(text: &str) -> Option<Notice> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn output_paths_may_hold_a_full_stop() {
+        let p = |s| output_path(s).map(|p| p.to_string_lossy().into_owned());
+        assert_eq!(
+            p(
+                "ID: b1. Output is being written to: C:\\Users\\J. Doe\\b1.output. You will be notified when it completes."
+            ),
+            Some("C:\\Users\\J. Doe\\b1.output".into())
+        );
+        assert_eq!(p("Output is being written to: /tmp/b2.output.\nMore"), Some("/tmp/b2.output".into()));
+        assert_eq!(p("Output is being written to: "), None);
+    }
 
     #[test]
     fn follows_a_background_command_to_its_end() {

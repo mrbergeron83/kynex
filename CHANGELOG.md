@@ -40,6 +40,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - macOS: Cmd+C / Cmd+V copy and paste in the terminal; Ctrl+C and Ctrl+V go to the shell.
 - Shortcut hints in tooltips show the keys actually bound: ⌘ on macOS, and your `keymap.json`
   rebinds.
+- Enter in an empty commit message no longer stages every change before failing.
+- Closing a terminal tab keeps showing the same shell, and focuses it, instead of jumping to
+  another; closing a project ends its shells.
+- A permission prompt reads as cancelled once Claude stops or drops the request, instead of
+  staying open with nothing to answer it.
+- When `claude` exits with an error, the reason it gives is shown, not just "claude process exited".
+- Session titles and the model list are saved safely: a crash mid-save no longer loses them.
+- **Watch** / **Output** find a background task's output when its path contains ". "
+  (e.g. a user folder named `J. Doe`).
 - Switching away from a session, or changing a project's rules, no longer closes a session
   whose background tasks are still running (which stopped them).
 - A reopened session no longer shows the CLI's background-task notices

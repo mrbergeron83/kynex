@@ -141,15 +141,20 @@ impl TerminalPanel {
         }
     }
 
-    fn close(&mut self, i: usize, cx: &mut Context<Self>) {
-        if i < self.tabs.len() {
-            self.tabs.remove(i);
+    fn close(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if i >= self.tabs.len() {
+            return;
         }
-        if self.active >= self.tabs.len() {
-            self.active = self.tabs.len().saturating_sub(1);
+        self.tabs.remove(i);
+        // A tab closed to the left shifts the shown one down; keep showing it.
+        if i < self.active {
+            self.active -= 1;
         }
+        self.active = self.active.min(self.tabs.len().saturating_sub(1));
         if self.tabs.is_empty() {
             cx.emit(PanelEvent::Hide);
+        } else {
+            self.focus_active(window, cx);
         }
         cx.notify();
     }
@@ -225,9 +230,9 @@ impl Render for TerminalPanel {
                             .group_hover("terminal-tab", |s| s.visible())
                             .when(active, |d| d.visible())
                             .tooltip(Tooltip::text("Close (ends the shell)"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
-                                this.close(i, cx);
+                                this.close(i, window, cx);
                             })),
                     )
                     .when_some(v.title(), |d, title| d.tooltip(Tooltip::text(title)))

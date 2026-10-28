@@ -289,6 +289,12 @@ impl GitView {
     fn commit(&mut self, cx: &mut Context<Self>) {
         let message = self.message.read(cx).text().to_string();
         let amend = self.amend;
+        // The same rule as the Commit button: Enter must not stage everything
+        // only for the commit to fail on an empty message.
+        let changed = self.status.as_ref().is_some_and(|s| s.staged().chain(s.unstaged()).next().is_some());
+        if message.trim().is_empty() || self.busy.is_some() || !(amend || changed) {
+            return;
+        }
         // Nothing staged: commit everything, like most git UIs do.
         let stage_all = self.status.as_ref().is_some_and(|s| s.staged().next().is_none());
         self.run(

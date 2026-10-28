@@ -80,7 +80,9 @@ pub(crate) fn save<T: Serialize>(project: &Path, file: &str, value: &T) -> Resul
     write_json(&dir.join(file), value)
 }
 
-fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
+/// Writes `value` to a temporary file beside `path`, then renames it over
+/// `path`, so a crash mid-write never leaves half a file behind.
+pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let s = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, s)
