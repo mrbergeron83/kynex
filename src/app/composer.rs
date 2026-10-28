@@ -148,6 +148,7 @@ impl KynexApp {
         let update = self.render_cli_update(cx);
         let queued = self.render_queue(cx);
         let running = self.render_running_tasks(cx);
+        let handoff = self.render_handoff(cx);
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
         let popup = match () {
             _ if self.prompt.is_some() => None,
@@ -168,6 +169,7 @@ impl KynexApp {
                     .children(update)
                     .children(status)
                     .children(running)
+                    .children(handoff)
                     .children(queued)
                     .child(
                         div()

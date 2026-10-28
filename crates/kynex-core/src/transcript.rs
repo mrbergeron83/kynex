@@ -168,7 +168,13 @@ fn summary(items: &[Item], calls: &[Call]) -> String {
             "Bash" | "PowerShell" => ("ran", "command", String::new()),
             "WebFetch" | "WebSearch" => ("looked up", "page", String::new()),
             "Task" | "Agent" => ("ran", "agent", String::new()),
-            _ => ("used", name.as_str(), String::new()),
+            // An MCP server's calls count together, screenshots marked: "Edge: 14 actions (3 screenshots)".
+            n => match crate::mcp::split(n) {
+                Some((server, tool)) => {
+                    ("mcp", server, if tool == "browser_take_screenshot" { "shot" } else { "" }.into())
+                }
+                None => ("used", n, String::new()),
+            },
         };
         match kinds.iter_mut().find(|k| k.0 == verb && k.1 == noun) {
             Some(k) => k.2.push(target),
@@ -188,6 +194,9 @@ fn summary(items: &[Item], calls: &[Call]) -> String {
             match (*noun, distinct.as_slice()) {
                 // Any tool's name reads as itself: "used Foo ×2".
                 (_, _) if *verb == "used" => times(format!("used {noun}"), n),
+                (server, _) if *verb == "mcp" => {
+                    crate::mcp::run_summary(server, n, targets.iter().filter(|t| *t == "shot").count())
+                }
                 ("file", [one]) if !one.is_empty() => times(format!("{verb} {one}"), n),
                 ("file", files) => format!("{verb} {}", count(files.len(), noun)),
                 _ => format!("{verb} {}", count(n, noun)),
@@ -327,7 +336,13 @@ mod tests {
             "Read 2 files, searched 2 patterns"
         );
         let mcp = call("a", "mcp__x__y", Value::Null);
-        assert_eq!(s(&[mcp, call("b", "mcp__x__y", Value::Null)]), "Used mcp__x__y ×2");
+        assert_eq!(s(&[mcp, call("b", "mcp__x__y", Value::Null)]), "X: 2 actions");
+        let browse = |id: &str, tool: &str| call(id, &format!("mcp__playwright-edge__browser_{tool}"), Value::Null);
+        assert_eq!(
+            s(&[browse("a", "navigate"), browse("b", "take_screenshot"), browse("c", "click")]),
+            "Edge: 3 actions (1 screenshot)"
+        );
+        assert_eq!(s(&[call("a", "Foo", Value::Null), call("b", "Foo", Value::Null)]), "Used Foo ×2");
         assert_eq!(s(&[call("a", "Task", Value::Null)]), "Ran an agent");
     }
 

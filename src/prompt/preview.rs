@@ -4,7 +4,7 @@
 use gpui::{div, prelude::*, px};
 use serde_json::Value;
 
-use kynex_core::project;
+use kynex_core::{mcp, project};
 
 use crate::theme::{Palette, mono};
 
@@ -22,10 +22,8 @@ pub fn title(tool: &str, input: &Value) -> String {
         }
         "ExitPlanMode" => "Ready to code? Here is Claude's plan:".into(),
         "AskUserQuestion" => "Claude has a question".into(),
-        _ => match tool.strip_prefix("mcp__").and_then(|t| t.split_once("__")) {
-            Some((server, name)) => format!("Allow Claude to use {name} from {server}?"),
-            None => format!("Allow Claude to use {tool}?"),
-        },
+        // MCP calls say what they'll do: `Click "Delete repository" in Edge?`.
+        _ => mcp::ask(tool, input).unwrap_or_else(|| format!("Allow Claude to use {tool}?")),
     }
 }
 
@@ -199,6 +197,10 @@ mod tests {
     fn titles_name_the_target() {
         assert_eq!(title("Edit", &json!({ "file_path": "C:\\src\\main.rs" })), "Make this edit to main.rs?");
         assert_eq!(title("mcp__github__create_issue", &json!({})), "Allow Claude to use create_issue from github?");
+        assert_eq!(
+            title("mcp__playwright-edge__browser_navigate", &json!({ "url": "https://x.dev" })),
+            "Open https://x.dev in Edge?"
+        );
     }
 
     #[test]

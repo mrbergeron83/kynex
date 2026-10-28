@@ -3,9 +3,9 @@
 //! one summary row ("Edited app.rs ×3, read 2 files") that opens to them.
 
 use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
-use kynex_core::fmt;
 use kynex_core::session::{Item, PermState};
 use kynex_core::transcript::{Call, Run, shows_result};
+use kynex_core::{fmt, mcp};
 
 use super::KynexApp;
 use super::transcript::{code_box, diff_box, disclosure_row};
@@ -91,6 +91,9 @@ impl KynexApp {
         let failed = result.is_some_and(|(_, _, _, e)| e);
         let expanded = self.expand_tools || self.expanded.contains(&(key, ix));
         let parsed = serde_json::from_str::<serde_json::Value>(input).ok();
+        // MCP tools by what they do, "Edge · Click", not `mcp__playwright-edge__browser_click`.
+        let label =
+            parsed.as_ref().and_then(|v| mcp::describe(name, v)).map_or_else(|| name.clone(), |(label, _)| label);
         // Claude's description of the call reads as prose; a bare command or path stays mono.
         let described =
             parsed.as_ref().is_some_and(|v| v["description"].as_str().is_some_and(|d| !d.trim().is_empty()));
@@ -150,14 +153,7 @@ impl KynexApp {
             } else {
                 icon(Icon::Terminal, t.text_muted).size_3().into_any_element()
             })
-            .child(
-                div()
-                    .flex_none()
-                    .text_xs()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(t.text_muted)
-                    .child(name.clone()),
-            )
+            .child(div().flex_none().text_xs().font_weight(FontWeight::MEDIUM).text_color(t.text_muted).child(label))
             .child(summary_el)
             .children(permission.map(|(note, color)| div().flex_none().text_xs().text_color(color).child(note)))
             .children(timeout)
