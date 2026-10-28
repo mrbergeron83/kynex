@@ -10,43 +10,44 @@ use kynex_core::fmt;
 use kynex_core::live::Key;
 use kynex_core::session::Item;
 use kynex_core::tasks::{self, Notice, Status};
+use kynex_core::toasts::{Action, Toast};
 
 use super::KynexApp;
 use super::state::{Active, View};
-use crate::chrome::TITLE_BAR_HEIGHT;
-use crate::theme::{Palette, mono, theme};
-use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, popover};
-
-/// "Background task finished" in a session you aren't looking at.
-pub struct TaskToast {
-    key: Key,
-    text: String,
-    failed: bool,
-}
+use crate::theme::{Palette, theme};
+use crate::ui::{Icon, Tooltip, ghost_button, icon};
 
 impl KynexApp {
     /// Shows a task's output in the project's terminal; `follow` keeps streaming it.
     fn show_task_output(&mut self, path: &Path, follow: bool, window: &mut Window, cx: &mut Context<Self>) {
         // Checked here, not when the button draws, so no frame touches the disk.
         if !path.is_file() {
-            self.notice = Some(format!("The task's output is gone: {}", path.display()));
+            self.toast(Toast::error(format!("The task's output is gone: {}", path.display())));
             return cx.notify();
         }
         let (kind, command) = tasks::output_command(path, follow);
         self.run_in_terminal(kind, command, window, cx);
     }
 
-    /// After a poll: a task that ended in a session that isn't shown gets a toast.
+    /// After a poll: each task that ended in a session that isn't shown gets a
+    /// toast; several in one session merge into one that counts them.
     pub(super) fn toast_new_tasks(&mut self, news: Vec<(Key, Notice)>) {
         let shown = self.active_key();
-        let Some((key, n)) = news.into_iter().rfind(|(k, n)| Some(*k) != shown && n.status != Status::Event) else {
-            return;
-        };
-        self.task_toast = Some(TaskToast { key, text: n.summary, failed: n.status == Status::Failed });
+        for (key, n) in news.into_iter().filter(|(k, n)| Some(*k) != shown && n.status != Status::Event) {
+            let session = self.session_title(key).unwrap_or_else(|| "another session".into());
+            let failed = n.status == Status::Failed;
+            let toast = if failed { Toast::error("") } else { Toast::success("") };
+            let toast = self.toast(toast.detail(n.summary).session(key).action(Action::GoToSession(key)));
+            let (count, what) = (toast.count, if failed { "failed" } else { "finished" });
+            toast.title = match count {
+                1 => format!("Background task {what} in {session}"),
+                n => format!("{n} background tasks {what} in {session}"),
+            };
+        }
     }
 
     /// Goes to an open session, in whichever tab it's in.
-    fn go_to_session(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn go_to_session(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) {
         let target = if self.chat.sessions.iter().any(|s| s.uid == key) {
             Some(Active::Chat)
         } else {
@@ -154,65 +155,6 @@ impl KynexApp {
             .children(n.duration_ms.map(|ms| div().flex_none().text_color(t.text_placeholder).child(fmt::duration(ms))))
             .children(open)
             .into_any_element()
-    }
-
-    /// The toast under the title bar when a task ends in another session; click to go there.
-    pub(super) fn render_task_toast(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let toast = self.task_toast.as_ref()?;
-        let t = theme(cx).clone();
-        let key = toast.key;
-        let (which, color) = if toast.failed { (Icon::Close, t.error) } else { (Icon::Check, t.success) };
-        let session = self.session_title(key).unwrap_or_else(|| "another session".into());
-        // Below the update toast when that's up too.
-        let top = if self.update_toast { px(56.) } else { px(8.) };
-        Some(
-            div()
-                .absolute()
-                .top(TITLE_BAR_HEIGHT + top)
-                .right_4()
-                .max_w(px(480.))
-                .child(
-                    popover(cx)
-                        .id("task-toast")
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .pl_3()
-                        .pr_1()
-                        .py_1()
-                        .cursor_pointer()
-                        .child(icon(which, color).size_3p5().flex_none())
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .min_w_0()
-                                .child(
-                                    div().text_sm().truncate().child(format!("Background task finished in {session}")),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .truncate()
-                                        .font_family(mono())
-                                        .text_color(t.text_muted)
-                                        .child(toast.text.clone()),
-                                ),
-                        )
-                        .child(icon_button("task-toast-close", Icon::Close, cx).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.task_toast = None;
-                                cx.notify();
-                            },
-                        )))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.task_toast = None;
-                            this.go_to_session(key, window, cx);
-                        })),
-                )
-                .into_any_element(),
-        )
     }
 
     /// An open session's name: its title, else its first message.

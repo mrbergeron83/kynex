@@ -16,6 +16,8 @@ use kynex_core::commands::{self, Action, Commands, SlashCommand};
 use kynex_core::project;
 use kynex_core::session::{Kind, Session};
 
+use kynex_core::toasts::Toast;
+
 use super::menus::Menu;
 use super::{KynexApp, models};
 use crate::ui::completions::{Completion, completions};
@@ -249,7 +251,9 @@ impl KynexApp {
             Action::Effort(e) => {
                 let project = self.active_session().filter(|s| s.kind == Kind::Code).map(|s| s.cwd.clone());
                 match project {
-                    None => self.notice = Some("Effort is set per project; chat has none.".into()),
+                    None => {
+                        self.toast(Toast::warning("Effort is set per project; chat has none."));
+                    }
                     Some(_) if e.is_empty() => self.open_menu_at_composer(Menu::Effort, cx),
                     Some(path) => {
                         match project::EFFORTS.iter().find(|(id, _)| !id.is_empty() && id.eq_ignore_ascii_case(&e)) {
@@ -257,7 +261,10 @@ impl KynexApp {
                             None => {
                                 let known: Vec<&str> =
                                     project::EFFORTS.iter().map(|e| e.0).filter(|e| !e.is_empty()).collect();
-                                self.notice = Some(format!("Unknown effort \"{e}\"; try {}.", known.join(", ")));
+                                self.toast(Toast::warning(format!(
+                                    "Unknown effort \"{e}\"; try {}.",
+                                    known.join(", ")
+                                )));
                             }
                         }
                     }
@@ -269,7 +276,9 @@ impl KynexApp {
                 self.save();
             }
             Action::TerminalOnly => {
-                self.notice = Some(format!("/{name} only works in the terminal CLI; Kynex has nothing to run it with."))
+                self.toast(Toast::warning(format!(
+                    "/{name} only works in the terminal CLI; Kynex has nothing to run it with."
+                )));
             }
         }
         cx.notify();

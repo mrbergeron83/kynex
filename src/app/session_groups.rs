@@ -11,6 +11,8 @@ use gpui::{
 };
 use kynex_core::groups::SessionGroups;
 
+use kynex_core::toasts::Toast;
+
 use super::KynexApp;
 use super::menus::Menu;
 use crate::theme::theme;
@@ -71,7 +73,7 @@ impl KynexApp {
         if *groups != before
             && let Err(e) = groups.save(cwd)
         {
-            self.notice = Some(e);
+            self.toast(Toast::error(e));
         }
     }
 

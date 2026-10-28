@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use gpui::{Context, FontWeight, div, prelude::*, px};
 use kynex_core::open::{Opener, open_project};
 
+use kynex_core::toasts::Toast;
+
 use super::KynexApp;
 use super::keys::{ToggleSessions, ToggleTerminal, ToggleTimeline};
 use super::state::{Active, View};
@@ -109,7 +111,7 @@ impl KynexApp {
     /// Opens a project folder in another app; a failure shows as a notice.
     pub(super) fn open_in(&mut self, opener: Opener, path: &std::path::Path) {
         if let Err(e) = open_project(opener, path) {
-            self.notice = Some(e);
+            self.toast(Toast::error(e));
         }
     }
 }

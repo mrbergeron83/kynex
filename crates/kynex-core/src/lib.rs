@@ -30,6 +30,7 @@ pub mod tasks;
 pub mod terminal;
 pub mod timeline;
 pub mod titles;
+pub mod toasts;
 pub mod transcript;
 pub mod update;
 pub mod usage;

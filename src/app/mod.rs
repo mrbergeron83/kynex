@@ -14,7 +14,8 @@
 //! | `session_groups.rs` | session groups and the archive, their menus          |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `terminal_dock.rs`  | the project's terminal panel under the conversation  |
-//! | `tasks.rs`          | background tasks: running strip, ended rows, toast   |
+//! | `tasks.rs`          | background tasks: running strip, ended rows          |
+//! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
 //! | `transcript.rs`     | the conversation list and how each item draws        |
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
@@ -73,6 +74,7 @@ mod terminal_dock;
 mod timeline;
 mod title_bar;
 mod titles;
+mod toasts;
 mod tool_rows;
 mod toolbar;
 mod transcript;
@@ -86,7 +88,6 @@ use std::sync::Arc;
 
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent, Window, WindowBounds, div, prelude::*,
-    px,
 };
 use kynex_core::cli::UpdateState;
 use kynex_core::live::{Key, Live};
@@ -113,9 +114,8 @@ use crate::terminal::TerminalPanel;
 use crate::theme::{theme, ui_font};
 use crate::ui::image_viewer::ImageViewer;
 use crate::ui::input::{InputEvent, TextInput};
-use crate::ui::motion::{self, fade_in, pop_in};
+use crate::ui::motion::{self, fade_in};
 use crate::ui::smooth_scroll::SmoothWheel;
-use crate::ui::{Icon, icon, icon_button, popover};
 
 pub struct KynexApp {
     saved: Saved,
@@ -161,7 +161,6 @@ pub struct KynexApp {
     drafts: HashMap<String, Draft>,
     draft_for: Option<(Key, String)>,
     slash: Slash,
-    notice: Option<String>,
     sessions: Option<SessionList>,
     /// Groups and the archive in the sessions panel.
     organize: Organize,
@@ -191,12 +190,14 @@ pub struct KynexApp {
     /// When Kynex last asked GitHub for a newer version, and whether it's asking now.
     update_checked: Option<std::time::SystemTime>,
     update_checking: bool,
-    /// The small "update available" toast under the title bar.
-    update_toast: bool,
     /// The account's usage limits, as the CLI last reported them (this run or the last).
     usage: Option<kynex_core::usage::Limits>,
-    /// A background task ended in a session that isn't shown.
-    task_toast: Option<tasks::TaskToast>,
+    /// The toasts in the corner, whether the pointer is on them, and whether
+    /// their clock is paused (that, or the window is in the background) or running.
+    toasts: kynex_core::toasts::Toasts,
+    toast_hover: bool,
+    toasts_paused: bool,
+    toasts_ticking: bool,
     /// Mouse-wheel turns made smooth for every scroll area.
     wheel: SmoothWheel,
     /// An image opened over the window.
@@ -295,6 +296,8 @@ impl KynexApp {
                 let folders: Vec<PathBuf> = this.worktrees.keys().cloned().collect();
                 this.refresh_worktrees(&folders, cx);
             }
+            // Toasts wait while you're away.
+            cx.notify();
         })
         .detach();
         cx.on_app_quit(|this, cx| {
@@ -332,7 +335,6 @@ impl KynexApp {
             drafts: HashMap::new(),
             draft_for: None,
             slash: Slash::default(),
-            notice: None,
             sessions: None,
             organize: Organize::new(group_name),
             confirm_delete: None,
@@ -351,9 +353,11 @@ impl KynexApp {
             app_update: UpdateState::Idle,
             update_checked: None,
             update_checking: false,
-            update_toast: false,
             usage: kynex_core::usage::Limits::load(),
-            task_toast: None,
+            toasts: Default::default(),
+            toast_hover: false,
+            toasts_paused: false,
+            toasts_ticking: false,
             wheel: SmoothWheel::default(),
             viewer: None,
             about_open: false,
@@ -452,29 +456,6 @@ impl KynexApp {
             live.busy() || live.sessions.iter().any(Session::has_tasks)
         });
     }
-
-    fn render_notice(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
-        let n = self.notice.clone()?;
-        let t = theme(cx).clone();
-        Some(
-            div().absolute().bottom_4().right_4().max_w(px(480.)).child(pop_in(
-                "notice-in",
-                popover(cx)
-                    .flex_row()
-                    .items_start()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .child(icon(Icon::Dot, t.warning).mt_0p5())
-                    .child(div().flex_1().text_sm().child(n))
-                    .child(icon_button("dismiss-notice", Icon::Close, cx).on_click(cx.listener(|this, _, _, cx| {
-                        this.notice = None;
-                        cx.notify();
-                    }))),
-                px(6.),
-            )),
-        )
-    }
 }
 
 impl Focusable for KynexApp {
@@ -502,6 +483,7 @@ impl Render for KynexApp {
         }
         self.sync_draft(cx);
         self.sync_prompt(window, cx);
+        self.sync_toasts(window, cx);
         self.load_project_settings();
         // Shortcuts (Esc, Ctrl+B…) only reach the workspace through the focused
         // element, so never leave the window with nothing focused.
@@ -509,6 +491,9 @@ impl Render for KynexApp {
             self.focus.focus(window, cx);
         }
 
+        // Toasts sit over the conversation, above the composer and the terminal
+        // dock; elsewhere (the Git view, setup) in the window's corner.
+        let mut toasts = self.render_toasts(cx);
         let main = if let Some(setup) = self.render_setup(cx) {
             setup
         } else if view == Some(View::Git) {
@@ -565,7 +550,20 @@ impl Render for KynexApp {
                                         .flex_col()
                                         .flex_1()
                                         .min_w_0()
-                                        .child(self.render_thread(window, cx))
+                                        .child(
+                                            div()
+                                                .relative()
+                                                .flex()
+                                                .flex_col()
+                                                .flex_1()
+                                                .min_h_0()
+                                                .child(self.render_thread(window, cx))
+                                                .children(
+                                                    toasts
+                                                        .take()
+                                                        .map(|t| div().absolute().bottom_2().right_4().child(t)),
+                                                ),
+                                        )
                                         .child(self.render_composer(window, cx)),
                                 )
                                 .children(self.render_timeline(cx)),
@@ -581,9 +579,6 @@ impl Render for KynexApp {
             self.draw_leaving(|s| &mut s.app_settings, |e| &mut e.app_settings, window, cx, Self::render_app_settings);
         let extensions =
             self.draw_leaving(|s| &mut s.extensions, |e| &mut e.extensions, window, cx, Self::render_extensions);
-        let notice = self.render_notice(cx);
-        let toast = self.render_update_toast(cx);
-        let task_toast = self.render_task_toast(cx);
         let about = self.render_about(window, cx);
         let git_modal =
             self.draw_leaving(|s| &mut s.git_modal, |e| &mut e.git_modal, window, cx, Self::render_git_modal);
@@ -662,9 +657,7 @@ impl Render for KynexApp {
             .child(self.wheel.listener())
             .child(self.render_title_bar(window, cx))
             .child(main)
-            .children(notice)
-            .children(toast)
-            .children(task_toast)
+            .children(toasts.map(|t| div().absolute().bottom_4().right_4().child(t)))
             .children(git_modal)
             .children(settings)
             .children(app_settings)

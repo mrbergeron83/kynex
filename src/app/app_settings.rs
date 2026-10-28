@@ -11,6 +11,8 @@ use kynex_core::open::Opener;
 use kynex_core::paths::data_dir;
 use kynex_core::terminal::ShellKind;
 
+use kynex_core::toasts::Toast;
+
 use super::KynexApp;
 use super::menus::{FontRole, Menu};
 use super::settings::{heading, radio, settings_modal, settings_nav};
@@ -128,7 +130,7 @@ impl KynexApp {
         if !path.exists()
             && let Err(e) = std::fs::write(&path, "{}\n")
         {
-            self.notice = Some(format!("Couldn't create {}: {e}", path.display()));
+            self.toast(Toast::error(format!("Couldn't create {}: {e}", path.display())));
             return cx.notify();
         }
         cx.open_with_system(&path);

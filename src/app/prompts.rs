@@ -9,6 +9,8 @@ use kynex_core::live::Key;
 use kynex_core::project::Permissions;
 use kynex_core::session::{self, Item, PermState};
 
+use kynex_core::toasts::Toast;
+
 use super::KynexApp;
 use crate::prompt::{PromptAnswer, PromptView, Request};
 
@@ -28,7 +30,7 @@ impl KynexApp {
         let mut perms = Permissions::load(cwd);
         if perms.allow(rules) {
             if let Err(e) = perms.save(cwd) {
-                self.notice = Some(e);
+                self.toast(Toast::error(e));
             }
             if let Some(s) = &mut self.settings {
                 s.perms = perms;

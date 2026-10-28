@@ -17,6 +17,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   composer, or in the session's waiting prompt, so you can type right away.
 - Finished turns no longer say "Thinking…" forever: thinking counts up while it runs, then
   reads "Thought for 6s", and opens to the thinking text when Claude Code shares it.
+- Notifications are one compact stack at the bottom right, above the composer, instead of
+  toasts over the top-right controls. They close on their own (errors wait for you), pause
+  while you point at them or are away, show three at a time, and several background tasks
+  ending in one session merge into one.
 
 ### Added
 

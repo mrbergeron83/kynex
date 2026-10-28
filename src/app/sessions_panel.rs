@@ -10,6 +10,8 @@ use kynex_core::fmt::ago;
 use kynex_core::live::Key;
 use kynex_core::session::{self, Item, Kind, Session, SessionInfo};
 
+use kynex_core::toasts::Toast;
+
 use super::KynexApp;
 use super::keys::ToggleSessions;
 use super::menus::Menu;
@@ -272,7 +274,7 @@ impl KynexApp {
                                 this.close_open(uid);
                             }
                             if let Err(e) = session::delete_session(&cwd3, &del_id) {
-                                this.notice = Some(e);
+                                this.toast(Toast::error(e));
                             }
                             this.drafts.remove(&del_id);
                             if this.saved.drafts.remove(&del_id).is_some() {

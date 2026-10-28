@@ -13,6 +13,8 @@ use kynex_core::attach::{is_image, prepare_image};
 use kynex_core::project::{self, Mode};
 use kynex_core::session::{Attachment, Kind};
 
+use kynex_core::toasts::Toast;
+
 use super::keys::{CycleMode, Interrupt};
 use super::menus::Menu;
 use super::state::{Active, View};
@@ -104,7 +106,9 @@ impl KynexApp {
         } else if is_image(&path) {
             match std::fs::read(&path) {
                 Ok(bytes) => self.attach_bytes(&bytes, cx),
-                Err(e) => self.notice = Some(format!("Couldn't read image {}: {e}", path.display())),
+                Err(e) => {
+                    self.toast(Toast::error(format!("Couldn't read image {}: {e}", path.display())));
+                }
             }
         } else {
             self.composer.update(cx, |c, cx| {
@@ -136,7 +140,9 @@ impl KynexApp {
                 base64: png.base64,
                 preview: Arc::new(Image::from_bytes(ImageFormat::Png, png.bytes)),
             }),
-            Err(e) => self.notice = Some(e),
+            Err(e) => {
+                self.toast(Toast::error(e));
+            }
         }
         cx.notify();
     }
