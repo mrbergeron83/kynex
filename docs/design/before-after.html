@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Kynex · before / after</title>
+<style>
+  /* The bundled fonts, when this page is opened from the repo; system fallbacks otherwise. */
+  @font-face { font-family: "IBM Plex Sans"; src: url("../../assets/fonts/IBMPlexSans-Regular.ttf"); font-weight: 400; }
+  @font-face { font-family: "IBM Plex Sans"; src: url("../../assets/fonts/IBMPlexSans-Medium.ttf"); font-weight: 500; }
+  @font-face { font-family: "IBM Plex Sans"; src: url("../../assets/fonts/IBMPlexSans-SemiBold.ttf"); font-weight: 600; }
+  @font-face { font-family: "Hubot Sans Expanded"; src: url("../../assets/fonts/HubotSansExpanded-SemiBold.ttf"); font-weight: 600; }
+  @font-face { font-family: "Hubot Sans Expanded"; src: url("../../assets/fonts/HubotSansExpanded-ExtraBold.ttf"); font-weight: 800; }
+  @font-face { font-family: "JetBrains Mono"; src: url("../../assets/fonts/JetBrainsMono-Regular.ttf"); font-weight: 400; }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #0a0a09; color: #e5e2df; font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; }
+  .controls { position: sticky; top: 0; z-index: 20; display: flex; gap: 18px; align-items: center; padding: 10px 20px; border-bottom: 1px solid #222; background: #0f0e0c; font-size: 13px; color: #a7a4a0; }
+  .controls .title { font: 800 12px "Hubot Sans Expanded", sans-serif; letter-spacing: .14em; color: #e5e2df; margin-right: 6px; }
+  .seg { display: inline-flex; border: 1px solid #33312e; border-radius: 6px; overflow: hidden; }
+  .seg button { background: none; border: 0; color: #a7a4a0; padding: 4px 10px; font: inherit; cursor: pointer; }
+  .seg button.on { background: #2e2c29; color: #e5e2df; }
+  label.chk { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  .controls .hint { margin-left: auto; color: #777471; }
+  #stage { display: flex; gap: 28px; padding: 28px; justify-content: center; align-items: flex-start; }
+  .frame { display: flex; flex-direction: column; gap: 10px; }
+  .frame h2 { margin: 0; font: 600 11px "Hubot Sans Expanded", sans-serif; letter-spacing: .14em; text-transform: uppercase; color: #a7a4a0; display: flex; gap: 10px; align-items: baseline; }
+  .frame h2 span { font: 400 12px "IBM Plex Sans", sans-serif; letter-spacing: 0; text-transform: none; color: #777471; }
+
+  /* ---------- the window ---------- */
+  .app { width: 1280px; height: 800px; position: relative; overflow: hidden; display: flex; flex-direction: column; background: var(--editor); color: var(--text); font-size: 14px; line-height: 1.45; border: 1px solid var(--border); border-radius: 8px; }
+  .app[data-theme=dark] { --title:#0f0e0c; --panel:#151412; --editor:#1b1917; --elevated:#22201e; --border:#33312e; --border2:#282624; --text:#e5e2df; --muted:#a7a4a0; --ph:#777471; --accent:#77becf; --on-accent:#0f0e0c; --hover:#252421; --active:#2e2c29; --element:#22201e; --selection:#18323a; --ok:#6fc082; --warn:#f2af48; --err:#e8796c; --add:#1a321f; --del:#3f221f; --pc:#d86e6e; --title-tint:#2f1d1c; --kw:#cf9a74; --str:#9fc48a; --ty:#9ec6d4; --num:#d9b36a; --cm:#777471; --fn:#e5e2df; --shadow: 0 8px 24px rgba(0,0,0,.45); }
+  .app[data-theme=light] { --title:#e8e6e3; --panel:#f0edea; --editor:#f9f7f5; --elevated:#fefcfa; --border:#d4d2cf; --border2:#e2dfdc; --text:#292622; --muted:#5d5a56; --ph:#888682; --accent:#07657d; --on-accent:#ffffff; --hover:#e8e6e3; --active:#dedcd9; --element:#f0edea; --selection:#d7ecf4; --ok:#348f4f; --warn:#d78c00; --err:#c8443a; --add:#d9f3dd; --del:#ffe3de; --pc:#a52727; --title-tint:#d9bcba; --kw:#a4542a; --str:#3f7f2f; --ty:#07657d; --num:#8a6a12; --cm:#888682; --fn:#292622; --shadow: 0 8px 24px rgba(40,30,20,.18); }
+  .mono { font-family: "JetBrains Mono", Consolas, monospace; }
+  .xs { font-size: 12px; }
+  .muted { color: var(--muted); }
+  .ph { color: var(--ph); }
+  .ic { flex: none; }
+  .label { font: 600 10.5px "Hubot Sans Expanded", sans-serif; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .ibtn { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--muted); flex: none; }
+  .ibtn.on { background: var(--active); color: var(--text); }
+  .ghost { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 6px; color: var(--muted); white-space: nowrap; }
+  .lamp { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .lamp.idle { border: 1px solid var(--ph); }
+  .lamp.working { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+  .lamp.needs { background: var(--warn); }
+  .lamp.done { background: var(--ok); }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+  .spin { animation: spin .9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg) } }
+
+  /* title bar */
+  .titlebar { height: 36px; flex: none; display: flex; align-items: center; padding-left: 10px; background: var(--title-tint); border-bottom: 2px solid var(--pc); }
+  .brand { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px 0 4px; margin-right: 8px; border-radius: 6px; }
+  .wordmark { font: 800 10.5px "Hubot Sans Expanded", sans-serif; letter-spacing: .12em; color: var(--muted); }
+  .tabs { display: flex; align-items: center; gap: 2px; }
+  .tab { display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 6px; color: var(--muted); white-space: nowrap; }
+  .tab.on { background: var(--active); color: var(--text); }
+  .drag { flex: 1; height: 100%; }
+  .usage { display: flex; align-items: center; gap: 12px; margin-right: 8px; padding: 0 6px; font-size: 12px; }
+  .usage .m { display: flex; align-items: center; gap: 6px; }
+  .usage .track { width: 28px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+  .usage .track i { display: block; height: 100%; background: var(--accent); }
+  .winctl { display: flex; height: 100%; }
+  .winctl div { width: 46px; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+
+  /* body */
+  .body { flex: 1; min-height: 0; display: flex; }
+  .sessions { width: 260px; flex: none; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--border); position: relative; }
+  .sessions .head { height: 36px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 12px; }
+  .sessions .head .label { flex: 1; }
+  .slist { flex: 1; min-height: 0; overflow: hidden; padding: 0 6px 4px; position: relative; }
+  .srow { display: flex; align-items: center; gap: 4px; height: 30px; padding: 0 4px 0 8px; border-radius: 6px; color: var(--muted); }
+  .srow .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .srow.cur { color: var(--text); background: var(--active); }
+  .after .srow.cur { background: var(--selection); }
+  .after .srow { height: 28px; }
+  .group { padding: 12px 8px 4px; }
+  .group:first-child { padding-top: 6px; }
+  .sfoot { flex: none; border-top: 1px solid var(--border2); padding: 6px; }
+  .sfoot .ghost { width: 100%; }
+
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--editor); }
+  .toolbar { height: 36px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 8px; border-bottom: 1px solid var(--border2); }
+  .segbtn { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 6px; color: var(--muted); }
+  .segbtn.on { background: var(--active); color: var(--text); }
+  .toolbar .path { flex: 1; min-width: 0; padding: 0 8px; font-size: 12px; color: var(--ph); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .header { height: 32px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border2); }
+  .header .title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--border2); font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .chip.plain { border-color: transparent; }
+  .meter { width: 36px; height: 4px; border-radius: 2px; background: var(--border2); overflow: hidden; }
+  .meter i { display: block; height: 100%; background: var(--ph); }
+  .mcp { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+
+  /* transcript */
+  /* The list follows its tail, so the window shows the end of the conversation and cuts the top. */
+  .thread { flex: 1; min-height: 0; position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding: 8px 24px 0; }
+  .col { width: 100%; max-width: 780px; display: flex; flex-direction: column; flex: none; }
+  .after .col { max-width: 820px; }
+  .row { padding: 8px 0; }
+  .row.compact { padding: 2px 0; }
+  .user { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border2); background: var(--element); }
+  .after .user { border-color: transparent; }
+  .thinking { font-style: italic; color: var(--ph); }
+  .thought { display: flex; align-items: center; gap: 6px; height: 22px; font-size: 12px; color: var(--ph); }
+  .p { margin: 0; }
+  code.inl { font-family: "JetBrains Mono", Consolas, monospace; font-size: 12.5px; background: var(--element); padding: 0 3px; border-radius: 3px; }
+  .after code.inl { background: var(--element); }
+  .trow { display: flex; align-items: center; gap: 6px; height: 22px; padding: 0 4px; border-radius: 6px; }
+  .trow .sum { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .trow .name { font-size: 12px; font-weight: 500; color: var(--muted); }
+  .trow .cmd { font-family: "JetBrains Mono", Consolas, monospace; font-size: 12px; color: var(--muted); }
+  .nest { padding-left: 16px; display: flex; flex-direction: column; }
+  .stat { display: inline-flex; gap: 4px; font-family: "JetBrains Mono", Consolas, monospace; font-size: 12px; }
+  .add { color: var(--ok); } .del { color: var(--err); }
+  .box { margin: 4px 0 0 24px; border-radius: 6px; border: 1px solid var(--border2); background: var(--panel); overflow: hidden; }
+  .before .box { padding: 8px; }
+  .diff { font-family: "JetBrains Mono", Consolas, monospace; font-size: 12px; line-height: 1.5; }
+  .diff .l { display: flex; white-space: pre; }
+  .diff .l.a { background: var(--add); } .diff .l.d { background: var(--del); }
+  .diff .n { width: 34px; flex: none; text-align: right; padding-right: 10px; color: var(--ph); user-select: none; }
+  .diff .s { width: 14px; flex: none; color: var(--muted); }
+  .diff .c { flex: 1; min-width: 0; }
+  .diff .hunk { color: var(--ph); padding: 2px 0 2px 48px; }
+  .codeblock { position: relative; border-radius: 6px; border: 1px solid var(--border2); background: var(--element); }
+  .codeblock pre { margin: 0; padding: 8px 12px; font-family: "JetBrains Mono", Consolas, monospace; font-size: 13px; line-height: 1.5; overflow: hidden; }
+  .codeblock .tools { position: absolute; top: 4px; right: 4px; display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ph); }
+  .after .codeblock .lang { position: absolute; top: 6px; right: 12px; font-size: 11px; color: var(--ph); }
+  .k { color: var(--kw); } .s { color: var(--str); } .ty { color: var(--ty); } .nu { color: var(--num); } .cm { color: var(--cm); font-style: italic; } .fn { color: var(--fn); }
+  .result { display: flex; align-items: center; gap: 6px; padding: 4px 4px 0; font-size: 12px; color: var(--muted); }
+  .turnend { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--ph); padding: 6px 0 2px; }
+  .turnend hr { flex: 1; border: 0; border-top: 1px solid var(--border2); margin: 0; }
+  .turnend .files { display: flex; gap: 4px; }
+  .turnend .f { font-family: "JetBrains Mono", Consolas, monospace; font-size: 11px; padding: 0 6px; height: 18px; display: inline-flex; align-items: center; border-radius: 4px; background: var(--element); color: var(--muted); }
+  .scrollbar { position: absolute; top: 6px; bottom: 6px; right: 3px; width: 4px; }
+  .scrollbar i { position: absolute; left: 0; right: 0; border-radius: 2px; background: var(--ph); opacity: .55; }
+
+  /* composer */
+  .compose { flex: none; display: flex; flex-direction: column; align-items: center; padding: 4px 24px 16px; }
+  .compose .col { gap: 6px; }
+  .workbar { display: flex; flex-direction: column; gap: 4px; padding: 0 4px; }
+  .workbar .lbl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--accent); }
+  .workbar .track { position: relative; height: 2px; border-radius: 1px; background: var(--border2); overflow: hidden; }
+  .workbar .track i { position: absolute; top: 0; height: 100%; width: 30%; border-radius: 1px; background: var(--accent); animation: slide 1.4s ease-in-out infinite; }
+  @keyframes slide { from { left: -30% } to { left: 100% } }
+  .cbox { position: relative; padding: 12px; border-radius: 8px; border: 1px solid var(--pc); background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.2); display: flex; flex-direction: column; gap: 8px; }
+  .cbox .text { min-height: 22px; color: var(--ph); }
+  .cbox .text b { color: var(--text); font-weight: 400; }
+  .cbox .text .caret { display: inline-block; width: 1px; height: 16px; background: var(--text); vertical-align: -3px; margin-left: 1px; }
+  .cbox .bar { display: flex; align-items: center; gap: 4px; }
+  .cbox .bar .sp { flex: 1; }
+  .stopbtn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border); }
+  .sendbtn { width: 26px; height: 26px; border-radius: 6px; background: var(--accent); color: var(--on-accent); display: inline-flex; align-items: center; justify-content: center; }
+  .popup { position: absolute; left: 0; right: 0; bottom: 100%; padding-bottom: 4px; }
+  .pop { border-radius: 8px; border: 1px solid var(--border); background: var(--elevated); box-shadow: var(--shadow); padding: 4px; }
+  .crow { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 8px; border-radius: 6px; font-size: 13px; }
+  .crow.sel { background: var(--active); }
+  .crow .d { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12px; }
+
+  /* dock */
+  .dock { flex: none; position: relative; border-top: 1px solid var(--border); display: flex; flex-direction: column; background: var(--editor); }
+  .dock .tabsbar { height: 32px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 8px; border-bottom: 1px solid var(--border2); }
+  .dock .ttab { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 6px; background: var(--active); font-size: 13px; }
+  .dock .term { flex: 1; padding: 8px 12px; font-family: "JetBrains Mono", Consolas, monospace; font-size: 13px; color: var(--text); position: relative; }
+  .dock .exited { position: absolute; right: 10px; bottom: 8px; font: 12px "IBM Plex Sans", sans-serif; color: var(--muted); background: var(--elevated); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; }
+  .dock.strip { height: 28px; flex-direction: row; align-items: center; gap: 8px; padding: 0 10px; font-size: 12px; color: var(--muted); }
+  .dock.strip .mono { color: var(--text); }
+
+  /* overlays */
+  .toast { position: absolute; display: flex; align-items: flex-start; gap: 8px; width: 360px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--elevated); box-shadow: var(--shadow); font-size: 13px; }
+  .toast .m2 { font-family: "JetBrains Mono", Consolas, monospace; font-size: 12px; color: var(--muted); }
+  .before .toast { top: 44px; right: 12px; }
+  /* After: one line, bottom-right, above the composer's row of controls; it never covers Stop or the header. */
+  .after .toast { right: 16px; bottom: 112px; width: auto; max-width: 460px; align-items: center; padding: 4px 6px 4px 10px; border-radius: 999px; font-size: 12px; }
+  .after .toast .m1 { white-space: nowrap; }
+  .after .toast .m2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+  .after .toast .ibtn { width: 20px; height: 20px; }
+  .palette { position: absolute; inset: 0; background: rgba(0,0,0,.25); display: flex; justify-content: center; padding-top: 120px; }
+  .palette .pop { width: 560px; align-self: flex-start; padding: 6px; }
+  .palette .q { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border-bottom: 1px solid var(--border2); margin-bottom: 4px; color: var(--text); }
+  .palette .q .caret { display: inline-block; width: 1px; height: 16px; background: var(--text); }
+  .palette .grp { padding: 8px 10px 2px; }
+  .palette .crow { height: 28px; }
+  .palette .crow .k { margin-left: auto; font: 11px "JetBrains Mono", monospace; color: var(--ph); }
+
+  /* notes: a badge pinned to the element it talks about, in the margin beside it */
+  [data-note]:not(.toast):not(.scrollbar) { position: relative; }
+  .note { position: absolute; left: -28px; top: 2px; width: 18px; height: 18px; border-radius: 50%; background: #f2af48; color: #0f0e0c; font: 600 11px "IBM Plex Sans", sans-serif; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px rgba(0,0,0,.4); z-index: 5; line-height: 1; }
+  .usage .note { left: -26px; top: 3px; }
+  .sessions .head .note { left: 88px; top: 9px; }
+  .header .note { left: auto; right: 418px; top: 7px; }
+  .user .note { top: 9px; }
+  .codeblock .note { top: 9px; }
+  .cbox .note { top: 13px; }
+  .dock.strip .note { left: auto; right: 64px; top: 5px; }
+  .toast .note { left: -26px; top: 5px; }
+  .scrollbar .note { left: -26px; top: 42%; }
+  .toolbar .ibtn .note { left: -16px; top: 3px; }
+  .legend { width: 1280px; columns: 2; column-gap: 28px; font-size: 13px; color: #a7a4a0; margin: 0; padding: 0 0 0 24px; }
+  .legend li { break-inside: avoid; margin-bottom: 6px; }
+  .legend li::marker { color: #f2af48; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="controls">
+  <span class="title">KYNEX</span>
+  <span>before / after</span>
+  <span class="seg" id="mode">
+    <button data-v="side" class="on">Side by side</button>
+    <button data-v="before">Before</button>
+    <button data-v="after">After</button>
+  </span>
+  <span class="seg" id="theme">
+    <button data-t="dark" class="on">Dark</button>
+    <button data-t="light">Light</button>
+  </span>
+  <label class="chk"><input type="checkbox" id="notes" checked> Numbered notes</label>
+  <label class="chk"><input type="checkbox" id="atfile"> @file completion</label>
+  <label class="chk"><input type="checkbox" id="palette"> Ctrl+K palette</label>
+  <span class="hint">1280 × 800 each · the "before" is drawn from the 0.0.6 source and a screenshot; the "after" is the proposal</span>
+</div>
+<div id="stage"></div>
+
+<script>
+// ---------- icons (the app's Lucide-style set, 24 grid, stroke 1.75) ----------
+const I = {
+  message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  folderPlus: '<path d="M12 10v6M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  settings: '<path d="M20 7h-9M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
+  panelLeft: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
+  branch: '<path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  terminal: '<path d="m4 17 6-6-6-6M12 19h8"/>',
+  code: '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>',
+  chevDown: '<path d="m6 9 6 6 6-6"/>',
+  chevRight: '<path d="m9 18 6-6-6-6"/>',
+  chevUp: '<path d="m18 15-6-6-6 6"/>',
+  paperclip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  arrowUp: '<path d="m5 12 7-7 7 7M12 19V5"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/>',
+  loader: '<path d="M21 12a9 9 0 1 1-6.22-8.56"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  close: '<path d="M18 6 6 18M6 6l12 12"/>',
+  copy: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/>',
+  play: '<path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z" fill="currentColor"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  timeline: '<circle cx="6" cy="5" r="1.5"/><circle cx="6" cy="12" r="1.5"/><circle cx="6" cy="19" r="1.5"/><path d="M6 6.5v4M6 13.5v4M11 5h9M11 12h9M11 19h6"/>',
+  minimize: '<path d="M5 12h14"/>',
+  maximize: '<rect x="5" y="5" width="14" height="14" rx="1.5"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+};
+const ic = (n, s = 16, cls = '') => `<svg class="ic ${cls}" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${I[n]}</svg>`;
+const spinner = (s = 12) => `<span style="display:inline-flex;color:var(--accent)">${ic('loader', s, 'spin')}</span>`;
+const mark = (size, lamp) => `<svg width="${size}" height="${size}" viewBox="0 0 100 100" style="flex:none"><rect width="100" height="100" rx="20" fill="#0f0e0c"/><rect x=".75" y=".75" width="98.5" height="98.5" rx="19.25" fill="none" stroke="#33312e" stroke-width="1.5"/><circle cx="50" cy="54" r="31" fill="#77becf"/><rect x="47" y="27" width="6" height="21" rx="3" fill="#22201e" transform="rotate(38 50 54)"/>${lamp ? `<circle cx="21" cy="20" r="6" fill="${lamp}" class="lamp working" style="transform-origin:21px 20px"/>` : ''}</svg>`;
+const lamp = (state) => state && state !== 'idle' ? `<i class="lamp ${state}"></i>` : '';
+
+// ---------- a tiny Rust highlighter, enough for a mockup ----------
+const KW = new Set('pub struct impl fn let self Self use mut return match if else for in const where as true false mod crate super ref move dyn'.split(' '));
+function hl(src) {
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  return src.split('\n').map(line => {
+    const c = line.indexOf('//');
+    let code = line, comment = '';
+    if (c >= 0) { code = line.slice(0, c); comment = line.slice(c); }
+    let out = code.replace(/("(?:[^"\\]|\\.)*")|(\b\d+(?:\.\d+)?\b)|(\b[A-Z][A-Za-z0-9_]*\b)|(\b[a-z_][a-z0-9_]*\b)(?=\s*[!(])|(\b[a-z_][a-z0-9_]*\b)/g,
+      (m, str, num, ty, call, id) => {
+        if (str) return `<span class="s">${esc(str)}</span>`;
+        if (num) return `<span class="nu">${num}</span>`;
+        if (ty) return `<span class="ty">${ty}</span>`;
+        if (call) return KW.has(call) ? `<span class="k">${call}</span>` : `<span class="fn">${call}</span>`;
+        if (id) return KW.has(id) ? `<span class="k">${id}</span>` : esc(id);
+        return esc(m);
+      });
+    return out + (comment ? `<span class="cm">${esc(comment)}</span>` : '');
+  }).join('\n');
+}
+const plain = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+
+// ---------- the data both windows draw ----------
+const projects = [
+  { name: 'Chat', icon: 'message' },
+  { name: 'kynex', icon: 'folder', on: true, colour: 'var(--pc)', lamp: 'working' },
+  { name: 'otto', icon: 'folder' },
+  { name: 'azure', icon: 'folder' },
+];
+const sessions = [
+  { t: 'Overlay scrollbar for the transcript', when: '', state: 'working', cur: true, day: 'Today' },
+  { t: 'Focus the composer on session switch', when: '9m ago', day: 'Today' },
+  { t: 'Release 0.0.6 merge and tag', when: '11m ago', state: 'done', day: 'Today' },
+  { t: 'Next-step planning', when: '18m ago', day: 'Today' },
+  { t: 'Scratchpad session browser', when: '1h ago', day: 'Today' },
+  { t: 'Screenshot tool hang investigation', when: '20h ago', day: 'Yesterday' },
+  { t: 'Group issues into a PR and link it', when: '21h ago', day: 'Yesterday' },
+  { t: 'Global usage tracking', when: '22h ago', day: 'Yesterday' },
+  { t: 'Release prep and publish', when: '23h ago', day: 'Yesterday' },
+  { t: 'Auto-scroll to the end on turn end', when: '1d ago', day: 'Yesterday' },
+  { t: 'Tackle issues 46 and 48', when: '2d ago', day: 'This week' },
+  { t: 'Implement issue group and open PR', when: '2d ago', day: 'This week' },
+  { t: 'Pick issues and open a linked PR', when: '3d ago', day: 'This week' },
+  { t: 'Smooth high-refresh scrolling', when: '3d ago', day: 'This week' },
+  { t: 'Choosing the next target', when: '4d ago', day: 'This week' },
+  { t: 'Custom project colours', when: '6d ago', day: 'Earlier' },
+  { t: 'Chat session grouping cleanup', when: '8d ago', day: 'Earlier' },
+  { t: 'Native-style prompt UI for questions', when: '9d ago', day: 'Earlier' },
+  { t: 'Session timeline spike', when: '12d ago', day: 'Earlier' },
+  { t: 'First worktree experiments', when: '2w ago', day: 'Earlier' },
+];
+const firstMessage = 'Add a thin overlay scrollbar to the transcript and the sessions list. It should fade in on scroll and stay out of the way otherwise, like Zed\u2019s.';
+const secondMessage = 'Now make it fade 800 ms after the last scroll, and keep it while the mouse is over the track.';
+const codeSample = `pub struct ScrollState {
+    /// Where the thumb sits and how tall it is, as fractions of the track.
+    pub offset: f32,
+    pub extent: f32,
+    last_moved: Instant,
+}
+
+impl ScrollState {
+    pub fn visible(&self) -> bool {
+        self.last_moved.elapsed() < Duration::from_millis(800)
+    }
+}`;
+const diffA = [
+  ['h', '@@ -0,0 +1,14 @@'],
+  ['a', 1, '/// A 4 px thumb that fades in on scroll or hover and out again'],
+  ['a', 2, '/// 800 ms after the last one; it never takes room from the content.'],
+  ['a', 3, 'pub fn scrollbar(id: impl Into<ElementId>, state: &ScrollState, cx: &App) -> impl IntoElement {'],
+  ['a', 4, '    let t = theme(cx);'],
+  ['a', 5, '    let (top, height) = state.thumb();'],
+  ['a', 6, '    div()'],
+  ['a', 7, '        .id(id)'],
+  ['a', 8, '        .absolute()'],
+  ['a', 9, '        .right_0()'],
+  ['a', 10, '        .top_0()'],
+  ['a', 11, '        .bottom_0()'],
+  ['a', 12, '        .w(px(8.))'],
+  ['a', 13, '        .child(div().absolute().right(px(2.)).top(top).h(height).w(px(4.)).rounded_full().bg(t.text_placeholder.opacity(0.5)))'],
+  ['a', 14, '}'],
+];
+const diffB = [
+  ['h', '@@ -214,6 +214,7 @@'],
+  [' ', 214, '            .min_h_0()'],
+  [' ', 215, '            // Switching sessions fades the new one in instead of swapping in one frame.'],
+  [' ', 216, '            .child(fade_in(("thread-in", uid), thread, motion::NORMAL))'],
+  ['a', 217, '            .child(scrollbar(("thread-bar", uid), &scroll, cx))'],
+  [' ', 218, '            .when(!at_latest, |d| d.child(self.render_jump_to_latest(uid, &t, cx)))'],
+];
+function diff(lines, highlight) {
+  return `<div class="diff">${lines.map(l => {
+    if (l[0] === 'h') return `<div class="hunk">${plain(l[1])}</div>`;
+    const cls = l[0] === 'a' ? 'a' : l[0] === 'd' ? 'd' : '';
+    const sign = l[0] === 'a' ? '+' : l[0] === 'd' ? '−' : ' ';
+    const body = highlight ? hl(l[2]) : plain(l[2]);
+    return `<div class="l ${cls}">${highlight ? `<span class="n">${l[1]}</span>` : ''}<span class="s">${sign}</span><span class="c">${body}</span></div>`;
+  }).join('')}</div>`;
+}
+
+// ---------- pieces ----------
+function titleBar(v, theme) {
+  const tabs = projects.map(p => `<div class="tab ${p.on ? 'on' : ''}"><span style="color:${p.colour || 'currentColor'};display:inline-flex">${ic(p.icon, 14)}</span>${p.name}${lamp(p.lamp)}</div>`).join('');
+  const usage = `<div class="usage" data-note="1"><div class="m"><span class="ph">5h</span><span class="track"><i style="width:42%"></i></span><span class="muted">42%</span></div><div class="m"><span class="ph">7d</span><span class="track"><i style="width:53%"></i></span><span class="muted">53%</span></div></div>`;
+  const themeBtn = v === 'before' ? `<div class="ghost" style="margin-right:8px">${theme === 'dark' ? 'Kynex Dark' : 'Kynex Light'}${ic('chevDown', 12)}</div>` : '';
+  return `<div class="titlebar">
+    <div class="brand">${mark(22, 'var(--accent)')}<span class="wordmark">KYNEX</span></div>
+    <div class="tabs">${tabs}</div>
+    <div class="ibtn" style="margin-left:4px">${ic('plus')}</div>
+    <div class="drag"></div>
+    ${usage}${themeBtn}
+    <div class="ibtn" style="margin-right:8px">${ic('settings')}</div>
+    <div class="winctl"><div>${ic('minimize', 14)}</div><div>${ic('maximize', 14)}</div><div>${ic('close', 14)}</div></div>
+  </div>`;
+}
+
+function sessionsPanel(v) {
+  const head = `<div class="head" data-note="2"><span class="label">Sessions</span>${v === 'after' ? `<div class="ibtn">${ic('search')}</div>` : ''}<div class="ibtn">${ic('folderPlus')}</div><div class="ibtn">${ic('plus')}</div><div class="ibtn">${ic('panelLeft')}</div></div>`;
+  let rows = '';
+  if (v === 'before') {
+    rows = sessions.map(s => `<div class="srow ${s.cur ? 'cur' : ''}"><span class="t">${s.t}</span>${s.when && !s.state ? `<span class="xs ph">${s.when}</span>` : ''}${s.state ? lamp(s.state) : '<i class="lamp idle"></i>'}</div>`).join('');
+  } else {
+    let day = '';
+    for (const s of sessions) {
+      if (s.day !== day) { day = s.day; rows += `<div class="group label">${day}</div>`; }
+      rows += `<div class="srow ${s.cur ? 'cur' : ''}"><span class="t">${s.t}</span>${lamp(s.state)}</div>`;
+    }
+  }
+  const bar = v === 'after' ? `<div class="scrollbar"><i style="top:0;height:62%"></i></div>` : '';
+  const foot = v === 'before' ? `<div class="sfoot"><div class="ghost">${ic('settings')}Claude settings</div></div>` : '';
+  return `<div class="sessions">${head}<div class="slist">${rows}${bar}</div>${foot}</div>`;
+}
+
+function toolbar(v) {
+  return `<div class="toolbar">
+    <div class="segbtn on">${ic('message', 14)}Code</div><div class="segbtn">${ic('branch', 14)}Git</div>
+    <div class="path mono">C:\\Users\\you\\repos\\kynex</div>
+    ${v === 'after' ? `<div class="ibtn" data-note="13" title="Claude settings for this project">${ic('shield')}</div>` : ''}
+    <div class="ibtn">${ic('timeline')}</div><div class="ibtn">${ic('code')}</div><div class="ibtn">${ic('folder')}</div><div class="ibtn">${ic('terminal')}</div>
+  </div>`;
+}
+
+function header(v) {
+  if (v === 'before') {
+    return `<div class="header"><span class="title">${firstMessage}</span>
+      <span class="chip plain"><i class="mcp"></i>MCP</span>
+      <span class="chip plain mono"><span class="meter"><i style="width:38%"></i></span>76k / 200k</span>
+      <span class="xs ph mono">2 turns · $0.081</span></div>`;
+  }
+  return `<div class="header" data-note="3"><span class="title">Overlay scrollbar for the transcript</span>
+    <span class="chip">${ic('branch', 12)}release/v0.0.6 <span class="stat"><span class="add">+54</span><span class="del">−1</span></span></span>
+    <span class="chip plain"><i class="mcp"></i>MCP</span>
+    <span class="chip plain mono"><span class="meter"><i style="width:38%"></i></span>38%</span>
+    <span class="xs ph mono">2 turns · $0.08</span></div>`;
+}
+
+function transcript(v) {
+  const before = v === 'before';
+  const user = (t, note) => `<div class="row"><div class="user" ${note ? `data-note="${note}"` : ''}>${t}</div></div>`;
+  const thinking = (secs, note) => before
+    ? `<div class="row compact"><div class="thinking">Thinking…</div></div>`
+    : `<div class="row compact"><div class="thought" ${note ? `data-note="${note}"` : ''}>${ic('chevRight', 12)}Thought for ${secs}s</div></div>`;
+  const para = html => `<div class="row"><p class="p">${html}</p></div>`;
+  const trow = (chev, glyph, name, sum, extra = '', note = '') => `<div class="trow" ${note ? `data-note="${note}"` : ''}><span class="ph" style="display:inline-flex">${ic(chev, 12)}</span>${glyph}${name ? `<span class="name">${name}</span>` : ''}<span class="sum ${name ? 'cmd' : ''}">${sum}</span>${extra}</div>`;
+  const termGlyph = `<span class="muted" style="display:inline-flex">${ic('terminal', 12)}</span>`;
+  const editGlyph = `<span class="muted" style="display:inline-flex">${ic('edit', 12)}</span>`;
+
+  let out = '';
+  out += user(firstMessage);
+  out += thinking(6);
+  out += para(`I\u2019ll add a <code class="inl">Scrollbar</code> element in <code class="inl">src/ui/</code> after Zed\u2019s: a 4 px thumb that fades in on scroll and while the pointer is over the track, drawn over the content so it never takes room from it.`);
+  // A run of reads, folded.
+  out += `<div class="row compact">${before
+    ? trow('chevRight', termGlyph, '', 'Ran 3 commands, read 4 files')
+    : trow('chevRight', '', '', '<span class="muted">Ran 3 commands, read 4 files</span>')}</div>`;
+  // The edits, open.
+  if (before) {
+    out += `<div class="row compact">
+      ${trow('chevDown', termGlyph, '', 'Edited scrollbar.rs, transcript.rs', `<span class="stat"><span class="add">+54</span><span class="del">−1</span></span>`)}
+      <div class="nest">
+        ${trow('chevDown', termGlyph, 'Write', 'src/ui/scrollbar.rs', `<span class="stat"><span class="add">+48</span></span>`)}
+        <div class="box">${diff(diffA, false)}</div>
+        ${trow('chevRight', termGlyph, 'Edit', 'src/app/transcript.rs', `<span class="stat"><span class="add">+6</span><span class="del">−1</span></span>`)}
+      </div></div>`;
+  } else {
+    out += `<div class="row compact">
+      ${trow('chevDown', '', '', '<span class="muted">Edited <span class="mono xs">scrollbar.rs</span>, <span class="mono xs">transcript.rs</span></span>', `<span class="stat"><span class="add">+54</span><span class="del">−1</span></span>`)}
+      <div class="nest">
+        <div class="trow">${editGlyph}<span class="sum cmd">src/ui/scrollbar.rs</span><span class="stat"><span class="add">+48</span></span></div>
+        <div class="box">${diff(diffA, true)}</div>
+        <div class="trow" style="margin-top:4px">${editGlyph}<span class="sum cmd">src/app/transcript.rs</span><span class="stat"><span class="add">+6</span><span class="del">−1</span></span></div>
+      </div></div>`;
+  }
+  out += para(`The thumb\u2019s position and height come from one small state the list already knows, so nothing is measured twice:`);
+  out += `<div class="row"><div class="codeblock" data-note="7"><pre>${before ? plain(codeSample) : hl(codeSample)}</pre>${before ? `<div class="tools"><span>rust</span><span class="ibtn">${ic('copy', 14)}</span></div>` : `<span class="lang">rust</span>`}</div></div>`;
+  // End of the turn.
+  out += before
+    ? `<div class="result"><span style="color:var(--ok);display:inline-flex">${ic('check', 14)}</span><span style="color:var(--ok);font-weight:500">Finished</span><span>1m 42s · 7 tools · edited 2 files · $0.08</span></div>`
+    : `<div class="turnend" data-note="8"><hr><span>1m 42s · $0.08</span><span class="files"><span class="f">scrollbar.rs</span><span class="f">transcript.rs</span></span><hr></div>`;
+  // Second turn, live.
+  out += user(secondMessage, 4);
+  out += thinking(3, 5);
+  out += para(`Adding an idle timer to <code class="inl">ScrollState</code> and a hover flag on the track; the thumb now stays at full opacity while hovered.`);
+  out += `<div class="row compact">${before
+    ? `${trow('chevRight', spinner(12), '', 'Ran 2 commands')}<div class="nest">${trow('chevRight', spinner(12), 'Bash', 'cargo check --target-dir target/claude', '<span class="xs ph">max 2m</span>')}</div>`
+    : `${trow('chevRight', spinner(12), '', '<span class="muted">Ran 2 commands</span>', '', 6)}<div class="nest"><div class="trow" style="padding-left:22px"><span class="sum cmd">cargo check --target-dir target/claude</span><span class="xs ph">12s</span></div></div>`}</div>`;
+  const bar = before ? '' : `<div class="scrollbar" data-note="12"><i style="top:30%;height:48%"></i></div>`;
+  return `<div class="thread"><div class="col">${out}</div>${bar}</div>`;
+}
+
+function composer(v, opts) {
+  const before = v === 'before';
+  const workbar = before ? `<div class="workbar"><div class="lbl">${spinner(12)}Working…</div><div class="track"><i></i></div></div>` : '';
+  const text = opts.atfile && !before
+    ? `<div class="text"><b>Also wire it into the Git view’s file list, see @comp</b><span class="caret"></span></div>`
+    : `<div class="text">Ask Claude Code to do something in this project…</div>`;
+  const popup = opts.atfile && !before ? `<div class="popup"><div class="pop">
+      <div class="crow sel">${ic('file', 14)}<span class="mono" style="font-size:12.5px">src/app/<b>comp</b>oser.rs</span><span class="d">the message box, pickers, send / stop</span></div>
+      <div class="crow">${ic('file', 14)}<span class="mono" style="font-size:12.5px">src/ui/<b>comp</b>letions.rs</span><span class="d">the popup list of completions</span></div>
+      <div class="crow">${ic('file', 14)}<span class="mono" style="font-size:12.5px">crates/kynex-core/src/<b>comp</b>act.rs</span><span class="d"></span></div>
+      <div class="crow" style="height:22px"><span class="xs ph">↑↓ to pick · Tab or Enter to insert · typed @ opens this</span></div>
+    </div></div>` : '';
+  const model = before
+    ? `<div class="ghost">Fable 5.1${ic('chevDown', 12)}</div><div class="ghost">Max effort${ic('chevDown', 12)}</div><div class="ghost">Auto${ic('chevDown', 12)}</div>`
+    : `<div class="ghost">Fable 5.1 · max${ic('chevDown', 12)}</div><div class="ghost">Auto${ic('chevDown', 12)}</div>`;
+  const stop = before
+    ? `<div class="stopbtn">${spinner(14)}${ic('stop', 12)}Stop</div>`
+    : `<div class="stopbtn">${spinner(14)}Stop</div>`;
+  return `<div class="compose"><div class="col">${workbar}
+    <div class="cbox" data-note="9">${popup}${text}<div class="bar"><div class="ibtn">${ic('paperclip')}</div>${model}<div class="sp"></div>${stop}</div></div>
+  </div></div>`;
+}
+
+function dock(v) {
+  if (v === 'before') {
+    return `<div class="dock" style="height:280px">
+      <div class="tabsbar"><div class="ttab">${ic('terminal', 14)}PowerShell <span class="xs muted">exited</span>${ic('close', 12)}</div><div class="ibtn">${ic('plus')}</div><div style="flex:1"></div><div class="ibtn">${ic('chevDown')}</div></div>
+      <div class="term">PS C:\\Users\\you\\repos\\kynex&gt; <span style="display:inline-block;width:7px;height:15px;border:1px solid var(--text);vertical-align:-3px"></span><div class="exited">Process exited · press Enter to restart</div></div>
+    </div>`;
+  }
+  return `<div class="dock strip" data-note="10">${ic('terminal', 14)}<span class="mono">PowerShell</span><span>exited · Enter to restart</span><div style="flex:1"></div><div class="ibtn">${ic('plus')}</div><div class="ibtn">${ic('chevUp')}</div></div>`;
+}
+
+function toast(v) {
+  if (v === 'before') {
+    return `<div class="toast"><span style="color:var(--ok);display:inline-flex;margin-top:2px">${ic('check', 14)}</span><div style="flex:1;min-width:0"><div>Background task finished in another session</div><div class="m2">List docs, assets and any built binaries</div></div><span class="ibtn">${ic('close', 14)}</span></div>`;
+  }
+  return `<div class="toast" data-note="11"><span style="color:var(--ok);display:inline-flex">${ic('check', 14)}</span><span class="m1">Task finished in <b style="font-weight:500">Release 0.0.6</b></span><span class="m2">List docs, assets and any built binaries</span><span class="ibtn">${ic('close', 12)}</span></div>`;
+}
+
+function paletteOverlay() {
+  const row = (icon, label, detail, key, sel) => `<div class="crow ${sel ? 'sel' : ''}">${ic(icon, 14)}<span>${label}</span><span class="d">${detail}</span>${key ? `<span class="k">${key}</span>` : ''}</div>`;
+  return `<div class="palette"><div class="pop">
+    <div class="q">${ic('search', 14)}<span>scroll</span><span class="caret"></span><span class="d" style="margin-left:auto;color:var(--ph);font-size:12px">sessions, projects, actions</span></div>
+    <div class="grp label">Sessions · kynex</div>
+    ${row('message', 'Overlay scrollbar for the transcript', 'today · working', '', true)}
+    ${row('message', 'Auto-scroll to the end on turn end', 'yesterday', '')}
+    ${row('message', 'Smooth high-refresh scrolling', '3 days ago', '')}
+    <div class="grp label">Actions</div>
+    ${row('arrowUp', 'Scroll to the top', '', 'Ctrl+Home')}
+    ${row('terminal', 'Toggle the terminal', '', 'Ctrl+\`')}
+    ${row('plus', 'New session', '', 'Ctrl+N')}
+  </div></div>`;
+}
+
+const NOTES = [
+  [1, 'Title bar: the theme picker moves to Settings (it is already there). The bar keeps the tabs, the usage meters, Settings and the window buttons.'],
+  [2, 'Sessions: grouped by day; no idle rings or "9m ago" on every row (the time is in the tooltip). A lamp only when a session is working, waiting or just finished. Search with Ctrl+K.'],
+  [3, 'Session header: the session\u2019s short name, not its whole first message repeated above that message; one row of quiet chips (branch and changes, MCP, context, turns and cost).'],
+  [4, 'Your messages: a tinted block without a frame.'],
+  [5, '"Thought for 6s" folds and stays out of the way; today "Thinking\u2026" stays as a line forever.'],
+  [6, 'Tool runs: one chevron and one line; no terminal icon on every row. Edits open to a numbered, highlighted diff.'],
+  [7, 'Code blocks: syntax highlighting (there is none today); the copy and run buttons show on hover.'],
+  [8, 'End of a turn: a rule with the time, cost and the files touched (click one for its diff) instead of a "Finished" line.'],
+  [9, 'Composer: one working indicator (the Stop button) instead of four at once; effort folds into the model chip.'],
+  [10, 'Terminal: an exited shell collapses to a strip and the conversation gets its 280 px back; Enter restarts it.'],
+  [11, 'Toasts sit bottom-right over the margin, never over the header (issue #107).'],
+  [12, 'Overlay scrollbars on the transcript and the sessions list (none anywhere today): a 4 px thumb that fades after 800 ms.'],
+  [13, 'The reading column grows to 820 px; the project\u2019s Claude settings move from a bottom button to a toolbar icon.'],
+];
+function app(v, theme, opts) {
+  const html = `<div class="app ${v}" data-theme="${theme}">
+    ${titleBar(v, theme)}
+    <div class="body">${sessionsPanel(v)}<div class="main">${toolbar(v)}${header(v)}${transcript(v)}${composer(v, opts)}${dock(v)}</div></div>
+    ${toast(v)}
+    ${v === 'after' && opts.palette ? paletteOverlay() : ''}
+  </div>`;
+  // Each note's badge sits in the element it's about.
+  return v === 'after' && opts.notes
+    ? html.replace(/<(\w+) class="([^"]*)" data-note="(\d+)"([^>]*)>/g, (m, tag, cls, n, rest) => `<${tag} class="${cls}" data-note="${n}"${rest}><span class="note">${n}</span>`)
+    : html;
+}
+
+const state = { mode: 'side', theme: 'dark', notes: true, atfile: false, palette: false };
+function render() {
+  const stage = document.getElementById('stage');
+  const frames = state.mode === 'side' ? ['before', 'after'] : [state.mode];
+  stage.innerHTML = frames.map(v => `<div class="frame"><h2>${v} <span>${v === 'before' ? 'Kynex 0.0.6 as it draws today' : 'the proposal, same session'}</span></h2>${app(v, state.theme, state)}${v === 'after' && state.notes ? `<ol class="legend">${NOTES.map(([n, t]) => `<li value="${n}">${t}</li>`).join('')}</ol>` : ''}</div>`).join('');
+  // Fit two windows side by side on narrower screens.
+  const need = frames.length * 1280 + (frames.length - 1) * 28 + 56;
+  stage.style.zoom = Math.min(1, window.innerWidth / need);
+}
+document.querySelectorAll('#mode button').forEach(b => b.onclick = () => { state.mode = b.dataset.v; document.querySelectorAll('#mode button').forEach(x => x.classList.toggle('on', x === b)); render(); });
+document.querySelectorAll('#theme button').forEach(b => b.onclick = () => { state.theme = b.dataset.t; document.querySelectorAll('#theme button').forEach(x => x.classList.toggle('on', x === b)); render(); });
+for (const k of ['notes', 'atfile', 'palette']) document.getElementById(k).onchange = e => { state[k] = e.target.checked; render(); };
+window.addEventListener('resize', render);
+render();
+</script>
+</body>
+</html>
