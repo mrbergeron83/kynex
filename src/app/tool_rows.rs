@@ -62,14 +62,28 @@ impl KynexApp {
             })
             .when(add + del > 0, |d| d.child(stat(add, del, &t)))
             .on_click(toggle);
-        let calls: Vec<AnyElement> = if open {
-            run.calls.iter().map(|c| self.render_call(c, row, cx)).collect()
-        } else if live {
-            run.calls.last().map(|c| self.render_call(c, row, cx)).into_iter().collect()
-        } else {
-            Vec::new()
-        };
-        div().flex().flex_col().child(head).child(div().pl_4().flex().flex_col().children(calls)).into_any_element()
+        let shown = if open { run.calls.len() } else { usize::from(live) };
+        let hidden = &run.calls[..run.calls.len() - shown];
+        // Pictures the folded calls returned (a screenshot, a `Read` of an image) still show.
+        let images: Vec<_> = hidden
+            .iter()
+            .filter_map(|c| match session.items.get(c.result?) {
+                Some(Item::ToolResult { images, .. }) => Some(images.iter().cloned()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let images = (!images.is_empty())
+            .then(|| div().pl_6().pt_1().child(self.thumbnails(("run-images", first).into(), &images, 160., cx)));
+        let calls: Vec<AnyElement> =
+            run.calls[run.calls.len() - shown..].iter().map(|c| self.render_call(c, row, cx)).collect();
+        div()
+            .flex()
+            .flex_col()
+            .child(head)
+            .children(images)
+            .child(div().pl_4().flex().flex_col().children(calls))
+            .into_any_element()
     }
 
     /// One tool call, with its result, at transcript row `row`. Collapsed it's

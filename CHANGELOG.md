@@ -21,6 +21,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - The transcript no longer jumps back to the start of a reply (or an earlier message) on its
   own while a reply streams or the session's rows are rebuilt.
+- Screenshots and images Claude reads show in the transcript even when their tool calls are
+  folded into a run ("Ran 2 commands, read 2 files"); they were hidden until you opened it.
 
 ## [0.0.5] - 2026-10-27
 
