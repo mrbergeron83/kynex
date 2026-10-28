@@ -74,6 +74,12 @@ A cargo workspace with two crates:
     extra dirs via `--permission-mode`, `--effort`, `--add-dir`; the mode switches live
   - `commands.rs` — slash commands: listing a folder's (the CLI's free `initialize`
     handshake), matching as you type, and the built-ins Kynex runs itself (`/clear`, `/model`…)
+  - `history.rs` — sent messages per project for the composer's ↑ / ↓, Ctrl+R and stash;
+    `queue.rs` — messages written while Claude works, sent together when the turn ends
+  - `mcp.rs` — MCP tools and servers in words, server status, browser handoff;
+    `tasks.rs` — background tasks (`run_in_background`, agents, Monitors) from stream-json
+  - `zoom.rs` — the image viewer's fit, zoom and pan; `env_path.rs` — the login shell's PATH
+    for an app started from Finder or the Dock (macOS)
   - `rewind.rs` — going back to an earlier message: the log's current branch, the points with
     their file checkpoints, restoring files (`--rewind-files`); the session resumes with
     `--resume-session-at`
