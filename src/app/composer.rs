@@ -13,7 +13,7 @@ use kynex_core::attach::{is_image, prepare_image};
 use kynex_core::project::{self, ClaudeSettings, Mode};
 use kynex_core::session::{Attachment, Kind};
 
-use super::keys::Interrupt;
+use super::keys::{CycleMode, Interrupt};
 use super::menus::Menu;
 use super::state::{Active, View};
 use super::transcript::THREAD_WIDTH;
@@ -414,7 +414,7 @@ impl KynexApp {
                                 .text_color(if mode == Mode::Plan { t.info } else { t.text_muted })
                                 .child(mode.label())
                                 .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
-                                .tooltip(Tooltip::with_meta(mode.help(), "Shift+Tab to cycle"))
+                                .tooltip(Tooltip::for_action(mode.help(), CycleMode, "next mode"))
                                 .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
                                     this.open_menu(Menu::Mode, ev.position(), Anchor::BottomLeft, cx)
                                 })),

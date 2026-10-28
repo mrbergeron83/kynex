@@ -35,6 +35,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- macOS: Kynex opened from Finder or the Dock finds a `claude`, `pwsh` or `code` installed with
+  Homebrew or npm; it takes PATH from your login shell, as editors do.
+- macOS: Cmd+C / Cmd+V copy and paste in the terminal; Ctrl+C and Ctrl+V go to the shell.
+- Shortcut hints in tooltips show the keys actually bound: ⌘ on macOS, and your `keymap.json`
+  rebinds.
 - Switching away from a session, or changing a project's rules, no longer closes a session
   whose background tasks are still running (which stopped them).
 - A reopened session no longer shows the CLI's background-task notices

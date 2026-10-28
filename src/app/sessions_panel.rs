@@ -155,7 +155,7 @@ impl KynexApp {
             )
             .child(
                 icon_button("hide-sessions", Icon::PanelLeft, cx)
-                    .tooltip(Tooltip::with_meta("Hide sessions", "Ctrl+B"))
+                    .tooltip(Tooltip::for_action("Hide sessions", ToggleSessions, ""))
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_sessions(&ToggleSessions, window, cx))),
             );
 

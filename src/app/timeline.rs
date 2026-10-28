@@ -161,7 +161,7 @@ impl KynexApp {
             })
             .child(
                 icon_button("close-timeline", Icon::Close, cx)
-                    .tooltip(Tooltip::with_meta("Hide the timeline", "Ctrl+Shift+T"))
+                    .tooltip(Tooltip::for_action("Hide the timeline", ToggleTimeline, ""))
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_timeline(&ToggleTimeline, window, cx))),
             );
 

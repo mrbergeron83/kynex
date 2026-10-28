@@ -8,6 +8,7 @@ use kynex_core::live::Live;
 use kynex_core::paths::project_name;
 
 use super::KynexApp;
+use super::keys::OpenProject;
 use super::menus::Menu;
 use crate::chrome::{self, TITLE_BAR_HEIGHT};
 use crate::theme::{THEMES, mix, theme};
@@ -73,7 +74,7 @@ impl KynexApp {
             .child(
                 icon_button("add-project", Icon::Plus, cx)
                     .ml_1()
-                    .tooltip(Tooltip::with_meta("Open project folder", "Ctrl+O"))
+                    .tooltip(Tooltip::for_action("Open project folder", OpenProject, ""))
                     .on_click(cx.listener(|this, _, _, cx| this.pick_project(cx))),
             )
             // The empty middle of the bar is the window's title bar.

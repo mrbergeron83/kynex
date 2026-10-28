@@ -287,7 +287,11 @@ impl Render for TerminalPanel {
             .children(admin)
             .child(
                 icon_button("hide-terminal", Icon::ChevronDown, cx)
-                    .tooltip(Tooltip::with_meta("Hide the terminal", "Ctrl+` · shells keep running"))
+                    .tooltip(Tooltip::for_action(
+                        "Hide the terminal",
+                        crate::app::ToggleTerminal,
+                        "shells keep running",
+                    ))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(PanelEvent::Hide))),
             );
 

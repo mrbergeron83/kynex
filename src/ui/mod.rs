@@ -18,6 +18,8 @@ use gpui::{
     SharedString, Stateful, Transformation, Window, div, percentage, prelude::*, px, svg,
 };
 
+use kynex_core::fmt::Mods;
+
 use crate::theme::{label_font, theme, ui_font};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -308,6 +310,44 @@ impl Tooltip {
         let (text, meta) = (text.into(), meta.into());
         move |_, cx| cx.new(|_| Tooltip { text: text.clone(), meta: Some(meta.clone()) }).into()
     }
+
+    /// `text`, with the shortcut that runs `action` (as bound now, see
+    /// [`shortcut`]) and then `more`, if not empty: "Ctrl+B", "⌘B · more".
+    pub fn for_action(
+        text: impl Into<SharedString>,
+        action: impl gpui::Action,
+        more: &'static str,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView {
+        let text = text.into();
+        move |_, cx| {
+            let meta = match shortcut(&action, cx) {
+                Some(keys) if more.is_empty() => Some(keys.into()),
+                Some(keys) => Some(format!("{keys} · {more}").into()),
+                None => (!more.is_empty()).then(|| more.into()),
+            };
+            cx.new(|_| Tooltip { text: text.clone(), meta }).into()
+        }
+    }
+}
+
+/// The shortcut that runs `action`, as the user would press it: their
+/// `keymap.json` rebinds included, "⌘B" on macOS, "Ctrl+B" elsewhere. `None`
+/// if it's unbound.
+pub fn shortcut(action: &dyn gpui::Action, cx: &App) -> Option<String> {
+    let keymap = cx.key_bindings();
+    let keymap = keymap.borrow();
+    // The last binding added wins, as gpui dispatches it.
+    let binding = keymap.bindings_for_action(action).next_back()?;
+    let keys: Vec<String> = binding
+        .keystrokes()
+        .iter()
+        .map(|k| {
+            let m = k.modifiers();
+            let mods = Mods { control: m.control, alt: m.alt, shift: m.shift, platform: m.platform };
+            kynex_core::fmt::keystroke(mods, k.key(), cfg!(target_os = "macos"))
+        })
+        .collect();
+    Some(keys.join(" "))
 }
 
 impl Render for Tooltip {

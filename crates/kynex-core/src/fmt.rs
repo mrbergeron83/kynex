@@ -1,4 +1,4 @@
-//! Short human-readable times and turn recaps.
+//! Short human-readable times, turn recaps and key shortcuts.
 
 use std::time::SystemTime;
 
@@ -69,9 +69,63 @@ pub fn tokens(n: u64) -> String {
     }
 }
 
+/// Modifier keys held in a shortcut; `platform` is Cmd on macOS.
+#[derive(Clone, Copy, Default)]
+pub struct Mods {
+    pub control: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub platform: bool,
+}
+
+/// One keystroke as a shortcut hint: "⇧⌘T" on macOS (Apple's order), else
+/// "Ctrl+Shift+T". `key` is gpui's name for it (`t`, `escape`, `` ` ``).
+pub fn keystroke(mods: Mods, key: &str, mac: bool) -> String {
+    let key = match key {
+        "escape" => "Esc".to_string(),
+        "enter" => if mac { "↩" } else { "Enter" }.to_string(),
+        "tab" => if mac { "⇥" } else { "Tab" }.to_string(),
+        "backspace" => if mac { "⌫" } else { "Backspace" }.to_string(),
+        "up" => "↑".to_string(),
+        "down" => "↓".to_string(),
+        "left" => "←".to_string(),
+        "right" => "→".to_string(),
+        "pageup" => "Page Up".to_string(),
+        "pagedown" => "Page Down".to_string(),
+        "space" => "Space".to_string(),
+        k => {
+            let mut c = k.chars();
+            c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
+        }
+    };
+    if mac {
+        let held = [(mods.control, "⌃"), (mods.alt, "⌥"), (mods.shift, "⇧"), (mods.platform, "⌘")];
+        let mut s: String = held.iter().filter(|h| h.0).map(|h| h.1).collect();
+        s.push_str(&key);
+        s
+    } else {
+        let held = [(mods.control, "Ctrl"), (mods.alt, "Alt"), (mods.shift, "Shift"), (mods.platform, "Super")];
+        let mut parts: Vec<&str> = held.iter().filter(|h| h.0).map(|h| h.1).collect();
+        parts.push(&key);
+        parts.join("+")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shortcuts_read_per_platform() {
+        let ctrl_shift = Mods { control: true, shift: true, ..Mods::default() };
+        assert_eq!(keystroke(ctrl_shift, "t", false), "Ctrl+Shift+T");
+        let cmd_shift = Mods { platform: true, shift: true, ..Mods::default() };
+        assert_eq!(keystroke(cmd_shift, "t", true), "⇧⌘T");
+        assert_eq!(keystroke(Mods { control: true, ..Mods::default() }, "`", false), "Ctrl+`");
+        assert_eq!(keystroke(Mods::default(), "escape", true), "Esc");
+        assert_eq!(keystroke(Mods { shift: true, ..Mods::default() }, "tab", false), "Shift+Tab");
+        assert_eq!(keystroke(Mods::default(), "f5", false), "F5");
+    }
 
     #[test]
     fn durations() {

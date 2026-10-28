@@ -25,7 +25,9 @@ pub struct SendKey(pub &'static str);
 pub fn bind_keys(cx: &mut App) {
     let c = Some(CONTEXT);
     let keys = ["escape", "shift-tab", "ctrl-b", "ctrl-o", "ctrl-c", "ctrl-v", "ctrl-shift-c", "ctrl-shift-v"];
-    let keys = keys.into_iter().chain(crate::app::SHELL_KEYS);
+    // The workspace's Cmd+C copies conversation text; in a shell it copies the selection.
+    let mac: &[&'static str] = if cfg!(target_os = "macos") { &["cmd-c", "cmd-v"] } else { &[] };
+    let keys = keys.into_iter().chain(mac.iter().copied()).chain(crate::app::SHELL_KEYS);
     cx.bind_keys(keys.map(|k| KeyBinding::new(k, SendKey(k), c)));
 }
 
@@ -175,13 +177,20 @@ impl TerminalView {
     }
 
     fn send_key(&mut self, action: &SendKey, _: &mut Window, cx: &mut Context<Self>) {
+        const MAC: bool = cfg!(target_os = "macos");
         match action.0 {
+            // Like Terminal.app: Cmd+C / Cmd+V, and Ctrl+C / Ctrl+V stay the shell's.
+            "cmd-c" => {
+                self.copy(cx);
+            }
+            "cmd-v" => self.paste_clipboard(cx),
             // Like Windows Terminal: Ctrl+C copies a selection, else interrupts.
-            "ctrl-c" if self.copy(cx) => {}
+            "ctrl-c" if !MAC && self.copy(cx) => {}
             "ctrl-shift-c" => {
                 self.copy(cx);
             }
-            "ctrl-v" | "ctrl-shift-v" => self.paste_clipboard(cx),
+            "ctrl-v" if !MAC => self.paste_clipboard(cx),
+            "ctrl-shift-v" => self.paste_clipboard(cx),
             key => {
                 if let Ok(ks) = Keystroke::parse(key) {
                     self.send_keystroke(&ks, cx);

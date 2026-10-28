@@ -17,6 +17,9 @@ use gpui::{
 };
 
 fn main() {
+    // Started from Finder or the Dock, macOS gives no shell PATH: find `claude` and friends anyway.
+    // SAFETY: first thing in main, before any other thread starts.
+    unsafe { kynex_core::env_path::fix() };
     // Sessions, shells and helpers end with Kynex, even if it crashes or is killed.
     if let Err(e) = kynex_core::process::tie_children_to_kynex() {
         eprintln!("kynex: {e}; child processes may outlive Kynex");

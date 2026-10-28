@@ -8,7 +8,7 @@ use gpui::{Context, FontWeight, div, prelude::*, px};
 use kynex_core::open::{Opener, open_project};
 
 use super::KynexApp;
-use super::keys::{ToggleSessions, ToggleTimeline};
+use super::keys::{ToggleSessions, ToggleTerminal, ToggleTimeline};
 use super::state::{Active, View};
 use crate::theme::theme;
 use crate::ui::{Icon, Tooltip, icon, icon_button};
@@ -30,13 +30,13 @@ impl KynexApp {
             .when(collapsed, |d| {
                 d.child(
                     icon_button("show-sessions", Icon::PanelLeft, cx)
-                        .tooltip(Tooltip::with_meta("Show sessions", "Ctrl+B"))
+                        .tooltip(Tooltip::for_action("Show sessions", ToggleSessions, ""))
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_sessions(&ToggleSessions, window, cx))),
                 )
             });
         let timeline = icon_button("toggle-timeline", Icon::Timeline, cx)
             .when(self.saved.timeline_open, |b| b.bg(t.active))
-            .tooltip(Tooltip::with_meta("Timeline", "Ctrl+Shift+T · jump to any message or step"))
+            .tooltip(Tooltip::for_action("Timeline", ToggleTimeline, "jump to any message or step"))
             .on_click(cx.listener(|this, _, window, cx| this.toggle_timeline(&ToggleTimeline, window, cx)));
         let Some((path, view)) = project else {
             return bar
@@ -101,7 +101,7 @@ impl KynexApp {
             .child(
                 icon_button("open-term", Icon::Terminal, cx)
                     .when(self.saved.terminal_open && view == View::Code, |b| b.bg(t.active))
-                    .tooltip(Tooltip::with_meta("Terminal", "Ctrl+` · in Kynex, under the conversation"))
+                    .tooltip(Tooltip::for_action("Terminal", ToggleTerminal, "in Kynex, under the conversation"))
                     .on_click(cx.listener(|this, _, window, cx| this.terminal_button(window, cx))),
             )
     }

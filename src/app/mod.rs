@@ -81,7 +81,7 @@ use kynex_core::session::{self, Attachment, Kind, Session};
 
 use drafts::Draft;
 use keys::{CopySelection, copy_selection};
-pub use keys::{SHELL_KEYS, bind_keys};
+pub use keys::{SHELL_KEYS, ToggleTerminal, bind_keys};
 use menus::OpenMenu;
 use prompts::ActivePrompt;
 use session_groups::Organize;
