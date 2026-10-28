@@ -8,6 +8,7 @@
 //! | `keys.rs`           | actions, `keymap.json`, tab / Esc / mode shortcuts   |
 //! | `workspace.rs`      | tabs, projects, and which session is shown           |
 //! | `title_bar.rs`      | title bar and project tabs                           |
+//! | `status.rs`         | title bar's usage-limits meter and update pill       |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_groups.rs` | session groups and the archive, their menus          |
@@ -62,6 +63,7 @@ mod settings;
 mod setup;
 mod slash;
 mod state;
+mod status;
 mod tasks;
 mod terminal_dock;
 mod timeline;
@@ -180,6 +182,8 @@ pub struct KynexApp {
     update_checking: bool,
     /// The small "update available" toast under the title bar.
     update_toast: bool,
+    /// The account's usage limits, as the CLI last reported them (this run or the last).
+    usage: Option<kynex_core::usage::Limits>,
     /// A background task ended in a session that isn't shown.
     task_toast: Option<tasks::TaskToast>,
     /// Mouse-wheel turns made smooth for every scroll area.
@@ -218,6 +222,7 @@ impl KynexApp {
         .detach();
         Self::watch_cli_updates(cx);
         Self::watch_app_updates(cx);
+        Self::watch_usage(cx);
 
         let mut chat = match saved.chat_session_id.clone() {
             Some(id) => Session::resume(Kind::Chat, chat_dir(), id),
@@ -333,6 +338,7 @@ impl KynexApp {
             update_checked: None,
             update_checking: false,
             update_toast: false,
+            usage: kynex_core::usage::Limits::load(),
             task_toast: None,
             wheel: SmoothWheel::default(),
             viewer: None,
@@ -355,6 +361,7 @@ impl KynexApp {
         // in the background flashes the taskbar / bounces the Dock icon.
         let mut called = false;
         let mut reports = Vec::new();
+        let mut limits = None;
         // Folders whose files may have just changed: a turn ended or a tool call finished.
         let mut touched = HashSet::new();
         // Background tasks that just ended, for a toast if their session isn't shown.
@@ -383,6 +390,11 @@ impl KynexApp {
             if let Some(init) = s.take_init() {
                 reports.push((s.cwd.clone(), init));
             }
+            // The account's limits: whichever session reported last is newest.
+            limits = s.take_limits().or(limits);
+        }
+        if let Some(limits) = limits {
+            self.limits_reported(limits, cx);
         }
         // What a session reported as it started: its folder's commands, the models.
         for (cwd, init) in reports {
