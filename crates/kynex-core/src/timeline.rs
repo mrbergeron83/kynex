@@ -46,10 +46,63 @@ pub struct Turn {
 }
 
 /// The turns in `items`, oldest first. Anything before the first message (a
-/// resumed session's leftovers) is skipped. Cheap enough to redo per render.
+/// resumed session's leftovers) is skipped. Walks every item: renders use
+/// [`Turns`], which only walks what changed.
 pub fn turns(items: &[Item]) -> Vec<Turn> {
-    let mut turns: Vec<Turn> = Vec::new();
-    for (ix, item) in items.iter().enumerate() {
+    let mut turns = Vec::new();
+    walk(&mut turns, items, 0, &mut Vec::new());
+    turns
+}
+
+/// A session's turns kept across renders. Items only change in place in two
+/// ways that show here: they're appended to (often to the last turn), and a
+/// permission prompt gets answered. So `update` reuses the turns while the
+/// count is the same and no pending prompt was answered, and otherwise walks
+/// again from the last turn's message: the turns before it are settled.
+#[derive(Debug, Default)]
+pub struct Turns {
+    turns: Vec<Turn>,
+    /// How many items the turns were built from.
+    len: usize,
+    /// Permission prompts still pending when last walked, by item.
+    pending: Vec<usize>,
+}
+
+impl Turns {
+    pub fn update(&mut self, items: &[Item]) -> &[Turn] {
+        let answered = |i: &usize| !matches!(items.get(*i), Some(Item::Permission { state: PermState::Pending, .. }));
+        if items.len() == self.len && !self.pending.iter().any(answered) {
+            return &self.turns;
+        }
+        // Start over when items were dropped or replaced (a rewind, `/clear`),
+        // or a prompt was answered in a settled turn.
+        let last = self.turns.last().map_or(0, |t| t.item);
+        let same_start = |t: &Turn| matches!(items.get(t.item), Some(Item::User { text, .. }) if *text == t.text);
+        if items.len() < self.len
+            || !self.turns.last().is_none_or(same_start)
+            || self.pending.iter().any(|i| *i < last && answered(i))
+        {
+            *self = Self::default();
+        }
+        let from = self.turns.pop().map_or(0, |t| t.item);
+        self.pending.retain(|i| *i < from);
+        walk(&mut self.turns, items, from, &mut self.pending);
+        self.len = items.len();
+        &self.turns
+    }
+
+    /// The turns as of the last `update`.
+    pub fn turns(&self) -> &[Turn] {
+        &self.turns
+    }
+}
+
+/// Adds the turns in `items[from..]` to `turns`, noting pending prompts.
+fn walk(turns: &mut Vec<Turn>, items: &[Item], from: usize, pending: &mut Vec<usize>) {
+    for (ix, item) in items.iter().enumerate().skip(from) {
+        if let Item::Permission { state: PermState::Pending, .. } = item {
+            pending.push(ix);
+        }
         if let Item::User { text, .. } = item {
             let prompt = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("(image)").trim();
             turns.push(Turn {
@@ -107,7 +160,6 @@ pub fn turns(items: &[Item]) -> Vec<Turn> {
             _ => {}
         }
     }
-    turns
 }
 
 /// Adds a step, folding a repeat of the one before ("Edited a.rs" twice
@@ -250,6 +302,55 @@ mod tests {
         let t = &turns[1];
         assert_eq!(t.steps[0].label, "Denied Bash");
         assert!(t.failed && t.recap.is_none());
+    }
+
+    fn permission(state: PermState) -> Item {
+        Item::Permission {
+            request_id: String::new(),
+            tool: "Bash".into(),
+            input: Value::Null,
+            suggestions: Value::Null,
+            description: String::new(),
+            state,
+        }
+    }
+
+    #[test]
+    fn the_cache_keeps_up_with_appends_answers_and_rewinds() {
+        let mut cache = Turns::default();
+        let mut items = sample();
+        assert_eq!(cache.update(&items), turns(&items));
+
+        items.extend([permission(PermState::Pending), tool("Edit", "a.rs")]);
+        assert_eq!(cache.update(&items), turns(&items), "appended to the last turn");
+        items.push(user("Third"));
+        assert_eq!(cache.update(&items), turns(&items), "a new turn");
+
+        // A prompt answered in place, in a settled turn and then in the last one.
+        let pending = items.len() - 3;
+        items[pending] = permission(PermState::Allowed("ok".into()));
+        assert_eq!(cache.update(&items), turns(&items));
+        items.push(permission(PermState::Pending));
+        cache.update(&items);
+        *items.last_mut().unwrap() = permission(PermState::Denied("cancelled".into()));
+        assert_eq!(cache.update(&items)[2].steps[0].label, "Denied Bash");
+
+        // Rewound and regrown past where it was, with other messages.
+        items.truncate(12);
+        items.extend([
+            user("Instead"),
+            tool("Bash", "ls"),
+            tool("Edit", "b.rs"),
+            result(false),
+            user("More"),
+            user("x"),
+            tool("Bash", "y"),
+            result(true),
+        ]);
+        assert!(items.len() > cache.len);
+        assert_eq!(cache.update(&items), turns(&items));
+        items.clear();
+        assert!(cache.update(&items).is_empty());
     }
 
     #[test]

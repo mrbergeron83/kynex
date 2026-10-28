@@ -45,18 +45,28 @@ impl KynexApp {
 
     /// Jumps to the turn after (or before) the one in view.
     fn step_turn(&mut self, forward: bool, cx: &mut Context<Self>) {
-        let Some(s) = self.active_session() else { return };
-        let turns = timeline::turns(&s.items);
+        let Some(key) = self.update_turns() else { return };
+        let turns = self.timelines[&key].turns();
         if turns.is_empty() {
             return;
         }
-        let current = self.turn_in_view(&turns);
+        let current = self.turn_in_view(turns);
         let target = match (current, forward) {
             (None, _) => 0,
             (Some(t), true) => (t + 1).min(turns.len() - 1),
             (Some(t), false) => t.saturating_sub(1),
         };
         self.jump_to_item(turns[target].item, cx);
+    }
+
+    /// Brings the shown session's turns up to date with its items, walking
+    /// only what changed; they're in `timelines` under the key returned.
+    fn update_turns(&mut self) -> Option<Key> {
+        let key = self.active_key()?;
+        let mut cache = self.timelines.remove(&key).unwrap_or_default();
+        cache.update(&self.active_session()?.items);
+        self.timelines.insert(key, cache);
+        Some(key)
     }
 
     /// The turn whose message (or steps) is at the top of the transcript.
@@ -66,10 +76,10 @@ impl KynexApp {
 
     /// Opens or folds turn `n` of the shown session's timeline.
     fn toggle_turn(&mut self, n: usize, cx: &mut Context<Self>) {
-        let Some(s) = self.active_session() else { return };
-        let (key, turns) = (s.uid, timeline::turns(&s.items));
-        let current = self.turn_in_view(&turns);
-        self.folds.entry(key).or_default().toggle(&turns, n, current);
+        let Some(key) = self.update_turns() else { return };
+        let turns = self.timelines[&key].turns();
+        let current = self.turn_in_view(turns);
+        self.folds.entry(key).or_default().toggle(turns, n, current);
         cx.notify();
     }
 
@@ -124,15 +134,15 @@ impl KynexApp {
             return None;
         }
         let t = theme(cx).clone();
-        let s = self.active_session()?;
-        let turns = timeline::turns(&s.items);
-        let (busy, key) = (s.busy, s.uid);
-        let here = self.item_in_view().and_then(|i| timeline::locate(&turns, i));
+        let key = self.update_turns()?;
+        let busy = self.active_session().is_some_and(|s| s.busy);
+        let turns = self.timelines[&key].turns();
+        let here = self.item_in_view().and_then(|i| timeline::locate(turns, i));
         let fold = self.folds.get(&key).cloned().unwrap_or_default();
         let current = here.map(|(t, _)| t);
         let at_latest = self.threads.get(&key).is_none_or(|th| th.at_latest());
         let foldable = turns.iter().any(|t| !t.steps.is_empty());
-        let any_open = fold.any_open(&turns, current);
+        let any_open = fold.any_open(turns, current);
 
         let header = div()
             .flex()
@@ -183,7 +193,7 @@ impl KynexApp {
                 .enumerate()
                 .map(|(n, turn)| {
                     let in_view = here.filter(|(t, _)| *t == n).map(|(_, step)| step);
-                    let open = fold.is_open(&turns, n, current);
+                    let open = fold.is_open(turns, n, current);
                     self.render_turn(n, turn, in_view, open, busy && n == last, cx)
                 })
                 .collect()

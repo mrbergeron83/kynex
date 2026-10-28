@@ -2,7 +2,7 @@
 //! extra directories and effort. Edits save at once; the mode applies live,
 //! the rest from the project's next process start.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{
     Anchor, AnyElement, ClickEvent, Context, FontWeight, MouseButton, PathPromptOptions, SharedString, Window, div,
@@ -31,7 +31,7 @@ impl KynexApp {
         self.extensions = None;
         self.settings = Some(SettingsView {
             perms: Permissions::load(&path),
-            claude: ClaudeSettings::load(&path),
+            claude: self.claude_settings(&path),
             path,
             section: 0,
         });
@@ -55,6 +55,7 @@ impl KynexApp {
             if let Err(e) = view.claude.save(&path) {
                 errors.push(e);
             }
+            self.claude_settings.insert(path.clone(), view.claude.clone());
             if view.claude.mode != claude_before.mode {
                 for s in self.code.get_mut(&path).into_iter().flat_map(|l| l.sessions.iter_mut()) {
                     s.set_mode(view.claude.mode);
@@ -76,17 +77,24 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// A project's Claude settings, from the cache; read from disk only for a
+    /// project that isn't open.
+    pub(super) fn claude_settings(&self, path: &Path) -> ClaudeSettings {
+        self.claude_settings.get(path).cloned().unwrap_or_else(|| ClaudeSettings::load(path))
+    }
+
     /// Sets a project's effort, from the modal or the composer's picker.
     pub(super) fn set_effort(&mut self, path: PathBuf, id: String, cx: &mut Context<Self>) {
         if self.settings.is_some() {
             return self.edit_settings(cx, |v| v.claude.effort = id);
         }
-        let mut claude = ClaudeSettings::load(&path);
+        let mut claude = self.claude_settings(&path);
         if claude.effort != id {
             claude.effort = id;
             if let Err(e) = claude.save(&path) {
                 self.notice = Some(e);
             }
+            self.claude_settings.insert(path.clone(), claude);
             // The CLI reads it at startup: restart once idle; `--resume` keeps the conversation.
             self.restart_when_idle.insert(path);
             self.restart_idle();

@@ -10,7 +10,7 @@ use gpui::{
     KeyDownEvent, PathPromptOptions, SharedString, Window, canvas, deferred, div, img, prelude::*, px,
 };
 use kynex_core::attach::{is_image, prepare_image};
-use kynex_core::project::{self, ClaudeSettings, Mode};
+use kynex_core::project::{self, Mode};
 use kynex_core::session::{Attachment, Kind};
 
 use super::keys::{CycleMode, Interrupt};
@@ -249,7 +249,7 @@ impl KynexApp {
         let model_label = models::model_label(&self.saved.model);
         // Effort lives in the project's Claude settings (a tiny file); chat has none.
         let effort_label = self.active_project().filter(|_| mode.is_some()).map(|p| {
-            let effort = ClaudeSettings::load(&p.path).effort;
+            let effort = self.claude_settings(&p.path).effort;
             match project::EFFORTS.iter().find(|e| e.0 == effort) {
                 Some((id, name)) if !id.is_empty() => format!("{name} effort"),
                 _ => "Default effort".to_string(),

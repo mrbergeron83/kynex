@@ -128,9 +128,14 @@ pub struct KynexApp {
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
     /// Each open project's colour settings, read once.
     appearances: HashMap<PathBuf, kynex_core::project::Appearance>,
+    /// Each open project's Claude settings (mode, effort, folders), read once and
+    /// kept in step with every save, so no render reads the file.
+    claude_settings: HashMap<PathBuf, kynex_core::project::ClaudeSettings>,
     /// Each project's terminal panel, created the first time it's opened.
     terminals: HashMap<PathBuf, Entity<TerminalPanel>>,
     threads: HashMap<Key, Thread>,
+    /// Each session's timeline turns, walked again only where items changed.
+    timelines: HashMap<Key, kynex_core::timeline::Turns>,
     /// Tool calls and results opened up in the transcript.
     expanded: HashSet<(Key, usize)>,
     /// Runs of tool calls opened up, by their first call's index.
@@ -309,7 +314,9 @@ impl KynexApp {
             worktrees: HashMap::new(),
             terminals: HashMap::new(),
             appearances: HashMap::new(),
+            claude_settings: HashMap::new(),
             threads: HashMap::new(),
+            timelines: HashMap::new(),
             expanded: HashSet::new(),
             open_runs: HashSet::new(),
             expand_tools: false,
@@ -495,7 +502,7 @@ impl Render for KynexApp {
         }
         self.sync_draft(cx);
         self.sync_prompt(window, cx);
-        self.load_appearances();
+        self.load_project_settings();
         // Shortcuts (Esc, Ctrl+B…) only reach the workspace through the focused
         // element, so never leave the window with nothing focused.
         if window.focused(cx).is_none() {

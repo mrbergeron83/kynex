@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Smoother scrolling and streaming: no frame reads files or searches PATH any more (the
+  composer's effort label, task output buttons, the CLI path in Settings), and the timeline
+  only goes over the messages that changed instead of the whole session every frame.
 ### Added
 
 - The usage meter in the title bar shows Fable's own weekly limit next to the 5-hour and

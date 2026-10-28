@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{AnyElement, Context, Div, Hsla, Pixels, div, prelude::*, px};
-use kynex_core::project::{self, Appearance, COLOURS, Colour};
+use kynex_core::project::{self, Appearance, COLOURS, ClaudeSettings, Colour};
 
 use super::KynexApp;
 use super::settings::heading;
@@ -18,11 +18,15 @@ fn capitalize(s: &str) -> String {
 }
 
 impl KynexApp {
-    /// Reads the appearance of projects opened since the last render; once each.
-    pub(super) fn load_appearances(&mut self) {
+    /// Reads the appearance and Claude settings of projects opened since the last
+    /// render; once each.
+    pub(super) fn load_project_settings(&mut self) {
         for p in &self.saved.projects {
             if !self.appearances.contains_key(&p.path) {
                 self.appearances.insert(p.path.clone(), Appearance::load(&p.path));
+            }
+            if !self.claude_settings.contains_key(&p.path) {
+                self.claude_settings.insert(p.path.clone(), ClaudeSettings::load(&p.path));
             }
         }
     }

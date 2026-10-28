@@ -4,7 +4,7 @@
 use gpui::{Anchor, AnyElement, Context, Pixels, Point, SharedString, anchored, deferred, div, prelude::*, px};
 use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
-use kynex_core::project::{self, ClaudeSettings, Mode};
+use kynex_core::project::{self, Mode};
 use kynex_core::update;
 
 use super::{KynexApp, models};
@@ -278,7 +278,7 @@ impl KynexApp {
                     .or_else(|| self.active_project().map(|p| p.path.clone()));
                 let current = match (&self.settings, &path) {
                     (Some(s), _) => s.claude.effort.clone(),
-                    (None, Some(p)) => ClaudeSettings::load(p).effort,
+                    (None, Some(p)) => self.claude_settings(p).effort,
                     _ => String::new(),
                 };
                 // Only the levels the selected model takes, once the CLI has said which.
