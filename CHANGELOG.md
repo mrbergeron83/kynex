@@ -10,6 +10,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Smoother scrolling and streaming: no frame reads files or searches PATH any more (the
   composer's effort label, task output buttons, the CLI path in Settings), and the timeline
   only goes over the messages that changed instead of the whole session every frame.
+- Scrolling the transcript while Claude runs commands no longer jitters or jumps back near
+  the end, and new output is followed again once you scroll back down. A wheel turned over
+  a code block scrolls the conversation instead of the code sideways.
+
 ### Added
 
 - The usage meter in the title bar shows Fable's own weekly limit next to the 5-hour and
