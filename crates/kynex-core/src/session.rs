@@ -196,6 +196,8 @@ pub struct Session {
     reply_model: String,
     /// What the process reported when it started, until the app takes it.
     init: Option<Init>,
+    /// The account's usage limits from the last `rate_limit_event`, until the app takes them.
+    limits: Option<crate::usage::Limits>,
     /// The log entry a rewind went back to, which the next process continues from.
     resume_at: Option<String>,
 }
@@ -240,6 +242,7 @@ impl Session {
             next_request: 0,
             reply_model: String::new(),
             init: None,
+            limits: None,
             resume_at: None,
         }
     }
@@ -406,6 +409,11 @@ impl Session {
     /// The commands and models the process reported when it started, once.
     pub fn take_init(&mut self) -> Option<Init> {
         self.init.take()
+    }
+
+    /// The usage limits the process last reported, once.
+    pub fn take_limits(&mut self) -> Option<crate::usage::Limits> {
+        self.limits.take()
     }
 
     fn write(&mut self, msg: Value) {
@@ -662,6 +670,11 @@ impl Session {
             "control_response" if v["response"]["request_id"] == INIT_ID => {
                 let r = &v["response"]["response"];
                 self.init = Some(Init { commands: crate::commands::from_init(r), models: models_from_init(r) });
+            }
+            "rate_limit_event" => {
+                if let Some(limits) = crate::usage::parse(&v) {
+                    self.limits = Some(limits);
+                }
             }
             // `/compact` finished: the context is down to its summary.
             // Without a size after it, the meter waits for the next reply.
@@ -1300,6 +1313,20 @@ mod tests {
         assert_eq!(init.models[0].value, "opus");
         assert_eq!(init.models[0].efforts, ["high"]);
         assert!(s.take_init().is_none(), "taken once");
+        assert!(s.items.is_empty(), "nothing in the transcript");
+    }
+
+    #[test]
+    fn keeps_the_last_usage_limits_until_taken() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        let event = |used: f64| {
+            json!({ "type": "rate_limit_event", "rate_limit_info": { "unifiedWindows": {
+                "five_hour": { "utilization": used, "resetsAt": 1, "status": "allowed" } } } })
+        };
+        s.handle(event(0.1));
+        s.handle(event(0.2));
+        assert_eq!(s.take_limits().unwrap().five_hour.unwrap().used, 0.2);
+        assert!(s.take_limits().is_none(), "taken once");
         assert!(s.items.is_empty(), "nothing in the transcript");
     }
 

@@ -1,5 +1,6 @@
-//! The custom title bar: app name, one tab per project (Chat first), the
-//! theme picker, Settings and the window buttons.
+//! The custom title bar: app name, one tab per project (Chat first), usage
+//! limits and the update pill (`status.rs`), the theme picker, Settings and
+//! the window buttons.
 
 use gpui::{
     Anchor, AnyElement, ClickEvent, Context, FontWeight, Hsla, MouseButton, SharedString, Window, div, prelude::*, px,
@@ -20,7 +21,6 @@ impl KynexApp {
         let t = theme(cx).clone();
         // The mark's lamp shows the shown session.
         let hover = t.hover;
-        let update_waiting = self.update_waiting();
         let shown = self.active_session().map_or(Lamp::Idle, |s| Lamp::of(s.busy, s.waiting(), s.finished));
         let status = |l: &Live| (l.busy(), l.waiting(), l.finished());
         let mut tabs = vec![self.render_tab(0, "Chat".into(), None, None, status(&self.chat), cx)];
@@ -46,8 +46,7 @@ impl KynexApp {
                 None => d.bg(t.title_bar).border_b_1().border_color(t.border),
             })
             .pl(chrome::leading_inset() + px(10.))
-            // The mark and name open the Kynex menu (About, updates); a dot marks
-            // an update waiting.
+            // The mark and name open the Kynex menu (About, updates).
             .child(
                 div()
                     .id("kynex-menu")
@@ -63,7 +62,6 @@ impl KynexApp {
                     .hover(move |s| s.bg(hover))
                     .child(mark("title-mark", px(22.), shown, cx))
                     .child(section_label("Kynex", cx).font_weight(FontWeight::EXTRA_BOLD))
-                    .when(update_waiting, |d| d.child(div().size(px(6.)).rounded_full().bg(t.accent)))
                     .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
                         // Drop the menu from under the bar rather than from the cursor.
                         let at = gpui::point(ev.position().x, TITLE_BAR_HEIGHT);
@@ -79,6 +77,8 @@ impl KynexApp {
             )
             // The empty middle of the bar is the window's title bar.
             .child(chrome::drag_area(div().id("drag").flex_1().h_full()))
+            .children(self.render_usage(cx))
+            .children(self.render_update_pill(cx))
             .child(
                 ghost_button("theme", cx)
                     .mr_2()

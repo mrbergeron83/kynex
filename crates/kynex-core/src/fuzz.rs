@@ -20,6 +20,11 @@ pub fn stream_json(text: &str) {
     let _ = crate::mcp::handoff(&s.items);
     let _ = crate::mcp::health(&s.mcp);
     let _ = crate::transcript::rows(&s.items);
+    if let Some(limits) = s.take_limits() {
+        let now = limits.at(crate::usage::now());
+        let _ = [now.five_hour, now.seven_day].map(|w| w.map(|w| (w.percent(), w.level())));
+        let _ = limits.describe(0);
+    }
 }
 
 /// A Claude Code transcript on disk: replayed into a session, listed, rewound.

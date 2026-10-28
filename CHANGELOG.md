@@ -5,6 +5,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Your Claude usage limits in the title bar: a small meter each for the 5-hour and weekly (7d)
+  windows, amber from 80%, and "Limited · 2h 10m" once a limit is hit. The tooltip says when
+  they reset. They're account-wide, update with every turn and are kept for the next start.
+- An "Update" pill in the title bar while a Kynex or Claude Code update waits, until it's
+  installed, even after the toast is closed. It opens About Kynex. It replaces the dot by the
+  Kynex menu.
+
 ### Changed
 
 - When Claude finishes a turn, the transcript glides to the end of it, even if you'd scrolled
