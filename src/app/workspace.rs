@@ -141,6 +141,16 @@ impl KynexApp {
         true
     }
 
+    /// Puts the keyboard where the shown session wants it: its prompt, when it
+    /// has one up, else the composer. A session just switched to has no prompt
+    /// view yet; the one made for it on the next frame takes focus itself.
+    pub(super) fn focus_input(&self, window: &mut Window, cx: &mut Context<Self>) {
+        match &self.prompt {
+            Some(p) if Some(p.key) == self.active_key() => p.view.read(cx).focus_handle(cx).focus(window, cx),
+            _ => self.composer.read(cx).focus_handle(cx).focus(window, cx),
+        }
+    }
+
     /// Closes an open session that isn't working (its transcript stays).
     pub(super) fn close_open(&mut self, key: Key) {
         if self.live_mut().is_some_and(|l| l.close(key)) {

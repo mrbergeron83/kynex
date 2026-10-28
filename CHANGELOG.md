@@ -13,6 +13,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Scrolling the transcript while Claude runs commands no longer jitters or jumps back near
   the end, and new output is followed again once you scroll back down. A wheel turned over
   a code block scrolls the conversation instead of the code sideways.
+- Starting a new session or picking one in the sessions panel puts the cursor in the
+  composer, or in the session's waiting prompt, so you can type right away.
 
 ### Added
 

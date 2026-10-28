@@ -64,6 +64,7 @@ impl KynexApp {
         }
         self.select(target, window, cx);
         self.show_open(|s| s.uid == key);
+        self.focus_input(window, cx);
         cx.notify();
     }
 

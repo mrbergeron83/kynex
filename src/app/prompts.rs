@@ -13,7 +13,7 @@ use super::KynexApp;
 use crate::prompt::{PromptAnswer, PromptView, Request};
 
 pub struct ActivePrompt {
-    key: Key,
+    pub key: Key,
     id: String,
     pub view: Entity<PromptView>,
     _sub: Subscription,

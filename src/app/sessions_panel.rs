@@ -145,16 +145,15 @@ impl KynexApp {
                 icon_button("new-session", Icon::Plus, cx)
                     .when(current.is_none(), |b| b.opacity(0.4))
                     .tooltip(Tooltip::text(if current.is_none() { "Already a new session" } else { "New session" }))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.show_code_view();
                         cx.notify();
                         let Some(s) = this.session_mut() else { return };
-                        if s.session_id.is_none() {
-                            return;
+                        if s.session_id.is_some() {
+                            let (kind, cwd) = (s.kind, s.cwd.clone());
+                            this.open_session(Session::new(kind, cwd));
                         }
-                        let (kind, cwd) = (s.kind, s.cwd.clone());
-                        this.open_session(Session::new(kind, cwd));
-                        cx.notify();
+                        this.focus_input(window, cx);
                     })),
             )
             .child(
@@ -172,12 +171,13 @@ impl KynexApp {
             rows.push(
                 session_row(("open", uid as usize), title.into(), None, is_current, &t)
                     .child(lamp(("open-status", uid as usize), Lamp::of(o.busy, o.waiting, o.finished), cx))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.confirm_delete = None;
                         this.show_code_view();
                         if !is_current {
                             this.show_open(|s| s.uid == uid);
                         }
+                        this.focus_input(window, cx);
                         cx.notify();
                     }))
                     .into_any_element(),
@@ -232,13 +232,13 @@ impl KynexApp {
                         this.open_menu(Menu::Session(menu_id.clone()), ev.position, Anchor::TopLeft, cx)
                     }),
                 )
-                .on_click(cx.listener(move |this, _, _, cx| {
+                .on_click(cx.listener(move |this, _, window, cx| {
                     this.confirm_delete = None;
                     this.show_code_view();
-                    if is_current {
-                        return cx.notify();
+                    if !is_current {
+                        this.switch_session(kind2, cwd2.clone(), open_id.clone());
                     }
-                    this.switch_session(kind2, cwd2.clone(), open_id.clone());
+                    this.focus_input(window, cx);
                     cx.notify();
                 }))
                 .child(
