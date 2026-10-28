@@ -125,7 +125,11 @@ impl KynexApp {
                     .child("Send now")
                     .tooltip(Tooltip::with_meta(
                         if busy { "Stop Claude and send these right away" } else { "Send these now" },
-                        "Ctrl+Enter",
+                        kynex_core::fmt::keystroke(
+                            kynex_core::fmt::Mods { control: true, ..Default::default() },
+                            "enter",
+                            cfg!(target_os = "macos"),
+                        ),
                     ))
                     .on_click(cx.listener(|this, _, _, cx| this.send_queue_now(cx))),
             );

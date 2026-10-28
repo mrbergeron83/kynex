@@ -10,6 +10,7 @@ use gpui::{AnyElement, Context, Window, prelude::*, px};
 use kynex_core::history::{History, Stash};
 
 use super::KynexApp;
+use super::keys::StashDraft;
 use crate::ui::completions::{Completion, completions};
 
 /// Two Esc presses this close together clear the draft.
@@ -82,7 +83,10 @@ impl KynexApp {
         match h.toggle_stash(&current) {
             Stash::Stashed => {
                 self.set_composer(String::new(), cx);
-                self.notice = Some("Draft stashed. Ctrl+S on an empty message box brings it back.".into());
+                self.notice = Some(match crate::ui::shortcut(&StashDraft, cx) {
+                    Some(keys) => format!("Draft stashed. {keys} on an empty message box brings it back."),
+                    None => "Draft stashed.".into(),
+                });
             }
             Stash::Restored(text) => self.set_composer(text, cx),
             Stash::Nothing => return,
