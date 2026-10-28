@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The usage meter in the title bar shows Fable's own weekly limit next to the 5-hour and
+  weekly ones, once a Fable turn has reported it.
+
 ## [0.0.6] - 2026-10-28
 
 ### Added
