@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-10-28
+
 ### Added
 
 - Your Claude usage limits in the title bar: a small meter each for the 5-hour and weekly (7d)
@@ -252,7 +254,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/mrbergeron83/kynex/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/mrbergeron83/kynex/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/mrbergeron83/kynex/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/mrbergeron83/kynex/compare/v0.0.2...v0.0.3
