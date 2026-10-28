@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use gpui::{AnyElement, Context, div, prelude::*, px};
 use kynex_core::cli::UpdateState;
-use kynex_core::usage::{self, Level, Limits};
+use kynex_core::usage::{self, Level, Limits, Window};
 
 use super::KynexApp;
 use crate::theme::theme;
@@ -46,35 +46,29 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// The fuller of the 5-hour and weekly windows, "5h 42%", with both in the
-    /// tooltip. Amber close to the limit, red with the wait once it's hit.
+    /// The account's 5-hour and weekly windows side by side, "5h ▬ 42%  7d ▬ 53%",
+    /// with reset times in the tooltip. Each turns amber close to its limit, and
+    /// red with the wait once it's hit.
     pub(super) fn render_usage(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
         let now = usage::now();
         let limits = self.usage.as_ref()?.at(now);
-        let w = limits.tightest()?;
-        let name = if Some(w) == limits.five_hour { "5h" } else { "Week" };
-        let level = w.level();
-        let color = match level {
-            Level::Ok => t.text_muted,
-            Level::Near => t.warning,
-            Level::Limited => t.error,
-        };
-        let text = match level {
-            Level::Limited => format!("Limited · {}", usage::until(w.resets_at.saturating_sub(now))),
-            _ => w.percent(),
-        };
-        let fill = (w.used.clamp(0.0, 1.0) * 28.0) as f32;
-        Some(
+        let meter = |name: &'static str, w: Window| {
+            let level = w.level();
+            let color = match level {
+                Level::Ok => t.text_muted,
+                Level::Near => t.warning,
+                Level::Limited => t.error,
+            };
+            let text = match level {
+                Level::Limited => format!("Limited · {}", usage::until(w.resets_at.saturating_sub(now))),
+                _ => w.percent(),
+            };
+            let fill = (w.used.clamp(0.0, 1.0) * 28.0) as f32;
             div()
-                .id("usage")
                 .flex()
                 .items_center()
                 .gap_1p5()
-                .mr_2()
-                .px_1p5()
-                .h(px(24.))
-                .text_xs()
                 .child(div().text_color(t.text_placeholder).child(name))
                 .child(div().w(px(28.)).h(px(4.)).rounded_full().bg(t.border).child(
                     div().h_full().w(px(fill)).rounded_full().bg(match level {
@@ -83,9 +77,25 @@ impl KynexApp {
                     }),
                 ))
                 .child(div().text_color(color).child(text))
-                .tooltip(Tooltip::with_meta("Usage limits", limits.describe(now)))
-                .into_any_element(),
-        )
+        };
+        let meters: Vec<_> = [("5h", limits.five_hour), ("7d", limits.seven_day)]
+            .into_iter()
+            .filter_map(|(name, w)| Some(meter(name, w?)))
+            .collect();
+        (!meters.is_empty()).then(|| {
+            div()
+                .id("usage")
+                .flex()
+                .items_center()
+                .gap_3()
+                .mr_2()
+                .px_1p5()
+                .h(px(24.))
+                .text_xs()
+                .children(meters)
+                .tooltip(Tooltip::with_meta("Claude usage limits", limits.describe(now)))
+                .into_any_element()
+        })
     }
 
     /// "Update" while a Kynex or Claude Code update waits, until it's installed:

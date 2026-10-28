@@ -95,14 +95,6 @@ impl Limits {
         }
     }
 
-    /// The window closest to its limit, which the title bar shows.
-    pub fn tightest(&self) -> Option<Window> {
-        [self.five_hour, self.seven_day]
-            .into_iter()
-            .flatten()
-            .max_by(|a, b| a.level().cmp(&b.level()).then(a.used.total_cmp(&b.used)))
-    }
-
     /// One line per window, for the tooltip: "5-hour: 42% used, resets in 2h 10m".
     pub fn describe(&self, now: u64) -> String {
         let line = |name: &str, w: Window| {
@@ -175,19 +167,17 @@ mod tests {
         assert_eq!(l.five_hour, Some(Window { used: 0.12, resets_at: 1000, limited: false }));
         assert_eq!(l.seven_day.unwrap().percent(), "53%");
         assert!(!l.overage);
-        assert_eq!(l.tightest().unwrap().used, 0.53, "the fuller window");
         assert!(parse(&json!({ "type": "result" })).is_none());
         assert!(parse(&json!({ "type": "rate_limit_event", "rate_limit_info": {} })).is_none());
     }
 
     #[test]
-    fn levels_and_the_tightest_window() {
+    fn levels() {
         let l = parse(&event(0.85, "allowed_warning")).unwrap();
         assert_eq!(l.five_hour.unwrap().level(), Level::Near);
-        assert_eq!(l.tightest().unwrap().resets_at, 1000);
+        assert_eq!(l.seven_day.unwrap().level(), Level::Ok);
         let l = parse(&event(0.2, "rejected")).unwrap();
         assert_eq!(l.five_hour.unwrap().level(), Level::Limited, "rejected wins over the number");
-        assert_eq!(l.tightest().unwrap().resets_at, 1000);
     }
 
     #[test]
