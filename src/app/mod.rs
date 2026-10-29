@@ -204,6 +204,8 @@ pub struct KynexApp {
     toast_hover: bool,
     toasts_paused: bool,
     toasts_ticking: bool,
+    /// A running call's elapsed time is being repainted once a second.
+    calls_ticking: bool,
     /// Mouse-wheel turns made smooth for every scroll area.
     wheel: SmoothWheel,
     /// An image opened over the window.
@@ -377,6 +379,7 @@ impl KynexApp {
             toast_hover: false,
             toasts_paused: false,
             toasts_ticking: false,
+            calls_ticking: false,
             wheel: SmoothWheel::default(),
             viewer: None,
             about_open: false,

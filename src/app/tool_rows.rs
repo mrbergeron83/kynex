@@ -2,8 +2,10 @@
 //! call is one row with its result folded in, and a run of calls sits under
 //! one summary row ("Edited app.rs ×3, read 2 files") that opens to them.
 
+use std::time::Duration;
+
 use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
-use kynex_core::session::{Item, PermState};
+use kynex_core::session::{Item, PermState, Session};
 use kynex_core::transcript::{Call, Run, shows_result};
 use kynex_core::{fmt, mcp};
 
@@ -86,6 +88,29 @@ impl KynexApp {
             .into_any_element()
     }
 
+    /// While the shown session runs a call with a time limit, repaints once a
+    /// second so its elapsed time counts up; stops when none is running.
+    pub(super) fn tick_timed_calls(&mut self, cx: &mut Context<Self>) {
+        if self.calls_ticking || !self.active_session().is_some_and(Session::timed_call_running) {
+            return;
+        }
+        self.calls_ticking = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let going = this.update(cx, |this, cx| {
+                    this.calls_ticking = this.active_session().is_some_and(Session::timed_call_running);
+                    cx.notify();
+                    this.calls_ticking
+                });
+                if !matches!(going, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// One tool call, with its result, at transcript row `row`. Collapsed it's
     /// one line, with a marker if it failed; open, it shows the diff or the
     /// input and output.
@@ -94,7 +119,7 @@ impl KynexApp {
         let Some(session) = self.active_session() else { return div().into_any_element() };
         let key = session.uid;
         let ix = call.ix;
-        let Some(Item::ToolUse { name, summary, input, .. }) = session.items.get(ix) else {
+        let Some(Item::ToolUse { name, summary, input, timing, .. }) = session.items.get(ix) else {
             return div().into_any_element();
         };
         let result = call.result.and_then(|r| match session.items.get(r) {
@@ -113,15 +138,30 @@ impl KynexApp {
             parsed.as_ref().is_some_and(|v| v["description"].as_str().is_some_and(|d| !d.trim().is_empty()));
         // File edits show how many lines they change, and open as a diff.
         let stat_lines = parsed.as_ref().and_then(|v| prompt::diff_stat(name, v));
-        // A call with a time limit (Bash's `timeout`, in ms) says how long it may run.
+        // A call with a time limit (Bash's `timeout`, in ms) says how long it may
+        // run, and when watched live how long it has: "1m 12s / max 2m".
         let timeout = parsed.as_ref().and_then(|v| v["timeout"].as_u64()).filter(|&ms| ms > 0).map(|ms| {
+            let max = fmt::limit(ms);
+            let ran = match (running, timing.elapsed()) {
+                (true, Some(d)) => Some(fmt::elapsed(d)),
+                (false, Some(d)) if timing.took.is_some() => Some(fmt::duration(d.as_millis() as u64)),
+                _ => None,
+            };
+            let tip = match (&ran, running) {
+                (Some(r), true) => format!("Running for {r}; will run for at most {max}"),
+                (Some(r), false) => format!("Ran for {r}; could have run for {max}"),
+                (None, _) => format!("Will run for at most {max}"),
+            };
             div()
                 .id(("tool-timeout", ix))
                 .flex_none()
                 .text_xs()
                 .text_color(t.text_placeholder)
-                .child(format!("max {}", fmt::limit(ms)))
-                .tooltip(Tooltip::text(format!("Will run for at most {}", fmt::limit(ms))))
+                .child(match ran {
+                    Some(r) => format!("{r} / max {max}"),
+                    None => format!("max {max}"),
+                })
+                .tooltip(Tooltip::text(tip))
         });
         // The prompt it raised: waiting, or how it was answered.
         let permission = call.permission.and_then(|p| match session.items.get(p) {

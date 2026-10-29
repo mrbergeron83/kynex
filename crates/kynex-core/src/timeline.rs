@@ -245,7 +245,13 @@ mod tests {
     }
 
     fn tool(name: &str, summary: &str) -> Item {
-        Item::ToolUse { id: String::new(), name: name.into(), summary: summary.into(), input: String::new() }
+        Item::ToolUse {
+            id: String::new(),
+            name: name.into(),
+            summary: summary.into(),
+            input: String::new(),
+            timing: Default::default(),
+        }
     }
 
     fn result(is_error: bool) -> Item {
