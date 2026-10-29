@@ -29,6 +29,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - Screenshots and other images in tool results no longer flash and disappear when Claude
   takes several in a turn.
+- Clicking a menu item, toast or popup no longer also clicks what's underneath it.
 
 ## [0.0.7] - 2026-10-28
 
