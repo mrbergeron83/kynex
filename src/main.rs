@@ -29,15 +29,19 @@ fn main() {
     gpui_platform::application().with_assets(ui::Assets).run(|cx: &mut App| {
         // Before any window: the taskbar groups by this ID, and notifications need one.
         cx.set_app_identity(kynex_core::attention::APP_ID, "Kynex");
-        // Kynex's own shortcuts get the same ID, or a pinned one would sit apart from the window.
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut saved = app::Saved::load();
+        // `install.ps1` gives its shortcuts the same ID; those from before it did get it once.
         #[cfg(windows)]
-        if let Ok(exe) = std::env::current_exe() {
+        if !saved.shortcuts_stamped
+            && let Ok(exe) = std::env::current_exe()
+        {
+            saved.shortcuts_stamped = true;
             std::thread::spawn(move || {
                 use kynex_core::win_shell;
                 win_shell::stamp_shortcuts(&win_shell::shortcut_folders(), &exe, kynex_core::attention::APP_ID)
             });
         }
-        let saved = app::Saved::load();
         theme::set(saved.theme, cx);
         theme::init_fonts(cx);
         theme::set_fonts(&saved.ui_font, &saved.code_font);

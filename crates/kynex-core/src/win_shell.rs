@@ -4,8 +4,9 @@
 //! Notifications need the process to have an explicit AppUserModelID
 //! ([`crate::attention::APP_ID`]). The taskbar groups windows by that ID, and a
 //! shortcut without one stands for the exe's default ID, so a pinned Kynex
-//! would show apart from the running window. [`stamp_shortcuts`] gives the
-//! shortcuts to this exe the same ID.
+//! would show apart from the running window. `install.ps1` puts the ID on the
+//! shortcuts it makes, as Windows expects of an installer; [`stamp_shortcuts`]
+//! does it once for those made by an older `install.ps1`.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -64,13 +65,13 @@ fn dot() -> windows::core::Result<HICON> {
     Ok(HICON(*DOT.get_or_init(|| icon.0 as isize) as *mut _))
 }
 
-/// Where Kynex's shortcuts are: the Start menu (`install.ps1` puts one in
-/// Programs), the desktop, and the taskbar's pinned items.
+/// Where `install.ps1` puts Kynex's shortcuts: the Start menu's Programs and
+/// the desktop. Taskbar pins are the shell's own and stay untouched; one made
+/// before the ID was set is pinned again once.
 pub fn shortcut_folders() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Some(roaming) = std::env::var_os("APPDATA").map(PathBuf::from) {
         out.push(roaming.join(r"Microsoft\Windows\Start Menu\Programs"));
-        out.push(roaming.join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"));
     }
     out.extend(dirs::desktop_dir());
     out
