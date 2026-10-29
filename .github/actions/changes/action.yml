@@ -1,16 +1,21 @@
 # Whether a run needs its full checks: `code` is "false" only for a pull request
 # or push that changes nothing but docs (markdown, docs/, LICENSE, issue
 # templates, CODEOWNERS). Anything else, or a list it can't read, counts as code.
+# `rust` is narrower: "true" when Rust sources, cargo manifests or the CodeQL
+# setup changed (or the list can't be read), for the slow Rust analysis.
 #
 # Jobs whose checks are required skip their steps rather than the whole job: a
 # skipped matrix job doesn't report under its matrix name, so it would leave the
 # required "check (windows-latest)" waiting forever.
 name: Changes
-description: Whether this run changes anything besides docs
+description: Whether this run changes anything besides docs, and whether it changes Rust
 outputs:
   code:
     description: '"true" unless only docs changed'
     value: ${{ steps.diff.outputs.code }}
+  rust:
+    description: '"true" if Rust sources, cargo manifests or the CodeQL setup changed'
+    value: ${{ steps.diff.outputs.rust }}
 runs:
   using: composite
   steps:
@@ -39,14 +44,24 @@ runs:
           *) files="" ;;
         esac
         code=false
-        [ -z "$files" ] && code=true
+        rust=false
+        if [ -z "$files" ]; then
+          code=true
+          rust=true
+        fi
         while IFS= read -r f; do
           case "$f" in
             "" | *.md | docs/* | LICENSE | .github/ISSUE_TEMPLATE/* | .github/CODEOWNERS) ;;
             *) code=true ;;
           esac
+          # In `case`, * also matches /, so *Cargo.toml is a manifest at any depth.
+          case "$f" in
+            *.rs | *Cargo.toml | *Cargo.lock | rust-toolchain* | .cargo/* | \
+              .github/workflows/codeql.yml | .github/actions/changes/*) rust=true ;;
+          esac
         done <<< "$files"
         echo "code=$code" >> "$GITHUB_OUTPUT"
+        echo "rust=$rust" >> "$GITHUB_OUTPUT"
         if [ "$code" = false ]; then
           echo "::notice::Only docs changed; skipping the build and analysis steps."
         fi
