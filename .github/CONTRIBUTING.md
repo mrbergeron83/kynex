@@ -114,14 +114,68 @@ prerelease). Only the maintainer releases:
    git push origin vX.Y.Z
    ```
 
-   Signing uses your SSH or GPG key (`git config gpg.format ssh` and `user.signingkey`), the same
-   key added to GitHub as a signing key, so the tag shows as Verified. Only admins can create
-   release tags (the "Protect release tags" ruleset).
+   Signing uses your SSH key, added to GitHub as a signing key, so the tag shows as Verified;
+   [Signing tags](#signing-tags) sets up a machine for it. Only admins can create release tags
+   (the "Protect release tags" ruleset).
 3. The Release workflow checks the tag matches `Cargo.toml` and is on `main` (and warns if it
    isn't signed), re-runs CI and cargo-deny on the tagged commit, builds every OS, signs the
    Windows binary when that's set up, and publishes the archives with `SHA256SUMS` and a signed
    build provenance attestation. A tag that fails any of that publishes nothing.
 4. Running installs pick the release up through the self-updater; check one updates.
+
+### Signing tags
+
+Release tags are signed with an SSH key. Give each machine you release from its own key rather
+than copying one around: GitHub takes any number of signing keys, and a lost machine's key can be
+removed on its own. Once per machine:
+
+1. **A key.** Reuse the one you push with if the machine has one (`~/.ssh/id_ed25519.pub`), or
+   make one; a passphrase is fine, git asks for it when signing:
+
+   ```sh
+   ssh-keygen -t ed25519 -C "you@example.com"
+   ```
+
+2. **Add it to GitHub as a signing key.** Copy the public key, then on
+   [github.com/settings/ssh/new](https://github.com/settings/ssh/new) set *Key type* to
+   **Signing Key** and paste it. A key you also push with is added twice, once per type.
+
+   ```sh
+   # Windows (PowerShell)
+   Get-Content "$env:USERPROFILE\.ssh\id_ed25519.pub" | Set-Clipboard
+   # macOS
+   pbcopy < ~/.ssh/id_ed25519.pub
+   # Linux (Wayland: wl-copy < …; or print it with cat and copy it)
+   xclip -selection clipboard < ~/.ssh/id_ed25519.pub
+   ```
+
+3. **Tell git to sign with it.** The email in `git config user.email` must be a verified email
+   on your GitHub account, or the tag won't show as Verified.
+
+   ```sh
+   git config --global gpg.format ssh
+   git config --global tag.gpgSign true
+   # macOS / Linux
+   git config --global user.signingkey ~/.ssh/id_ed25519.pub
+   # Windows (PowerShell)
+   git config --global user.signingkey "$env:USERPROFILE\.ssh\id_ed25519.pub"
+   ```
+
+   On Windows, if signing says it can't find `ssh-keygen`, point git at Git for Windows' copy:
+   `git config --global gpg.ssh.program "C:/Program Files/Git/usr/bin/ssh-keygen.exe"`.
+
+4. **Optional: check signatures locally.** `git tag -v` needs to know which keys are yours: list
+   every machine's public key in `~/.ssh/allowed_signers`, one line each, as
+   `you@example.com ssh-ed25519 AAAA…`, then
+
+   ```sh
+   git config --global gpg.ssh.allowedSignersFile ~/.ssh/allowed_signers
+   ```
+
+   (on Windows, `"$env:USERPROFILE\.ssh\allowed_signers"`). GitHub doesn't need this file.
+
+5. **Try it** without releasing anything: `git tag -s sign-test -m test`, `git tag -v sign-test`
+   ("Good signature"), then `git tag -d sign-test`.
 
 ### Code signing
 
