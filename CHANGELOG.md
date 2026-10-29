@@ -26,6 +26,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   first. Its context chip is just the percentage, with the tokens in the tooltip.
 - The theme picker left the title bar: theme, fonts and motion are under Appearance in the
   Kynex menu, and in Settings.
+- A terminal whose shell exited shrinks to a one-line strip instead of keeping its full
+  height; Enter or a click on it restarts the shell at the dock's saved height.
 - Quieter while Claude works: the "Working…" strip above the composer and the stop square
   in the Stop button are gone; the lamps, Stop's spinner and the running step say it.
 

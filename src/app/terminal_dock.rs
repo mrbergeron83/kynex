@@ -10,8 +10,9 @@ use kynex_core::terminal::ShellKind;
 use super::KynexApp;
 use super::keys::ToggleTerminal;
 use super::state::{Active, View};
-use crate::terminal::{PanelEvent, TerminalPanel};
+use crate::terminal::{PanelEvent, STRIP_HEIGHT, TerminalPanel};
 use crate::theme::theme;
+use crate::ui::ease_height::ease_height;
 use crate::ui::motion::{self, fade};
 
 /// The panel never shrinks below this, nor squeezes the conversation below it.
@@ -35,6 +36,7 @@ impl KynexApp {
                 this.save();
                 cx.notify();
             }
+            PanelEvent::Collapsed => cx.notify(),
         })
         .detach();
         self.terminals.insert(cwd.to_path_buf(), panel.clone());
@@ -101,32 +103,37 @@ impl KynexApp {
         }
         let t = theme(cx).clone();
         let max = (f32::from(window.viewport_size().height) - MIN_CONVERSATION).max(MIN_HEIGHT);
-        let height = self.saved.terminal_height.clamp(MIN_HEIGHT, max);
-        // Fades in and out rather than growing, so the shell isn't resized on every frame.
-        Some(fade(
-            "terminal-in",
-            div().relative().flex_none().h(px(height)).border_t_1().border_color(t.border).child(panel).child(
-                // Drag the top edge to resize.
-                div()
-                    .id("terminal-resize")
-                    .absolute()
-                    .top(px(-3.))
-                    .left_0()
-                    .right_0()
-                    .h(px(6.))
-                    .cursor_row_resize()
-                    .hover(|s| s.bg(t.border_focused.opacity(0.6)))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.resizing_terminal = true;
-                            cx.stop_propagation();
-                        }),
-                    ),
-            ),
-            motion::NORMAL,
-            leaving,
-        ))
+        // Every shell exited: a strip until one restarts, then the saved height again.
+        let collapsed = panel.read(cx).collapsed(cx);
+        let height = if collapsed { STRIP_HEIGHT } else { self.saved.terminal_height.clamp(MIN_HEIGHT, max) };
+        let dock = div().relative().w_full().h(px(height)).border_t_1().border_color(t.border).child(panel).when(
+            !collapsed,
+            |d| {
+                d.child(
+                    // Drag the top edge to resize.
+                    div()
+                        .id("terminal-resize")
+                        .absolute()
+                        .top(px(-3.))
+                        .left_0()
+                        .right_0()
+                        .h(px(6.))
+                        .cursor_row_resize()
+                        .hover(|s| s.bg(t.border_focused.opacity(0.6)))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.resizing_terminal = true;
+                                cx.stop_propagation();
+                            }),
+                        ),
+                )
+            },
+        );
+        // Fades in and out rather than growing, and eases between the strip and
+        // full height with the shell laid out at its final size, so it isn't
+        // resized on every frame.
+        Some(fade("terminal-in", div().flex_none().child(ease_height("terminal-dock", dock)), motion::NORMAL, leaving))
     }
 
     /// Follows the mouse while the top edge is dragged.

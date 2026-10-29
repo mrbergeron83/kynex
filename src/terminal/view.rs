@@ -134,6 +134,11 @@ impl TerminalView {
         self.terminal.as_ref().is_none_or(Terminal::exited)
     }
 
+    /// Starts the shell again after it exited.
+    pub fn restart(&mut self, cx: &mut Context<Self>) {
+        self.start(cx);
+    }
+
     /// Types `command` and runs it, restarting the shell first if it had exited.
     pub fn run(&mut self, command: &str, cx: &mut Context<Self>) {
         if self.exited() {
