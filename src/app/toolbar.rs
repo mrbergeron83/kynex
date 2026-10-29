@@ -1,5 +1,5 @@
-//! The bar above the transcript: Code / Git switch, the project path, and
-//! buttons to open the project in other apps. The session's own details are in
+//! The bar above the transcript: Code / Git switch, the project path, the
+//! project's Claude settings, and buttons to open the project in other apps. The session's own details are in
 //! the session header below it.
 
 use std::path::PathBuf;
@@ -98,6 +98,13 @@ impl KynexApp {
                     .child(path.display().to_string()),
             )
             .when(view == View::Code, |d| d.child(timeline))
+            .child({
+                // The project's Claude settings: permissions, mode, effort.
+                let path = path.clone();
+                icon_button("claude-settings", Icon::Shield, cx)
+                    .tooltip(Tooltip::with_meta("Claude settings", "permissions, mode and effort for this project"))
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_settings(path.clone(), cx)))
+            })
             .child(open("open-code", Icon::Code, "Open in VS Code", Opener::Code, path.clone(), cx))
             .child(open("open-files", Icon::Folder, "Open in file manager", Opener::Explorer, path.clone(), cx))
             .child(

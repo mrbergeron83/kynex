@@ -28,6 +28,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   Kynex menu, and in Settings.
 - A terminal whose shell exited shrinks to a one-line strip instead of keeping its full
   height; Enter or a click on it restarts the shell at the dock's saved height.
+- The sessions panel is quieter: rows show just their title (the time is in the tooltip),
+  a lamp only when a session is working, waiting or just finished, and a search button
+  filters by title. Claude settings moved to a shield in the toolbar.
 - Quieter while Claude works: the "Working…" strip above the composer and the stop square
   in the Stop button are gone; the lamps, Stop's spinner and the running step say it.
 

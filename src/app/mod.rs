@@ -162,6 +162,9 @@ pub struct KynexApp {
     draft_for: Option<(Key, String)>,
     slash: Slash,
     sessions: Option<SessionList>,
+    /// The sessions panel's title filter, while it's open.
+    session_filter: Entity<TextInput>,
+    filtering_sessions: bool,
     /// Groups and the archive in the sessions panel.
     organize: Organize,
     /// Session id whose delete button was clicked once and is awaiting confirmation.
@@ -270,6 +273,13 @@ impl KynexApp {
             }
         })
         .detach();
+        let session_filter = cx.new(|cx| TextInput::new(cx).placeholder("Filter sessions"));
+        cx.subscribe(&session_filter, |_, _, ev, cx| {
+            if let InputEvent::Changed = ev {
+                cx.notify();
+            }
+        })
+        .detach();
         let new_rule = cx.new(|cx| TextInput::new(cx).mono().placeholder("Bash(npm test:*)"));
         cx.subscribe(&new_rule, |this, _, ev, cx| {
             if let InputEvent::Submit = ev {
@@ -336,6 +346,8 @@ impl KynexApp {
             draft_for: None,
             slash: Slash::default(),
             sessions: None,
+            session_filter,
+            filtering_sessions: false,
             organize: Organize::new(group_name),
             confirm_delete: None,
             naming: None,
