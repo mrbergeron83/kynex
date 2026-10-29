@@ -209,7 +209,7 @@ impl KynexApp {
                                 // Slash commands, history search, rewind: rise into place above the box.
                                 d.child(deferred(pop(
                                     "composer-popup-in",
-                                    div().absolute().bottom_full().left_0().w_full().pb_1().child(popup),
+                                    div().absolute().bottom_full().left_0().w_full().pb_1().occlude().child(popup),
                                     px(4.),
                                     popup_leaving,
                                 )))

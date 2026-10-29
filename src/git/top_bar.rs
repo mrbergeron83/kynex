@@ -171,6 +171,7 @@ impl GitView {
                 anchored().snap_to_window_with_margin(px(8.)).child(
                     popover(cx)
                         .w(px(340.))
+                        .occlude()
                         .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                             this.branch_menu = false;
                             cx.notify();

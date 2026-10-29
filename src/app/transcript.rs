@@ -289,6 +289,7 @@ impl KynexApp {
             .text_color(t.text_muted)
             .child(icon(Icon::ArrowDown, t.text_muted).size_3())
             .child("Jump to latest")
+            .occlude()
             .on_click(cx.listener(|this, _, _, cx| this.follow_tail(cx)));
         div().absolute().bottom_3().left_0().right_0().flex().justify_center().child(pop_in(
             ("jump-to-latest-in", uid),

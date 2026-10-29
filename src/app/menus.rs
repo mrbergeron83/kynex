@@ -399,6 +399,9 @@ impl KynexApp {
                     SharedString::from(format!("menu-in-{which:?}")),
                     popover(cx)
                         .min_w(px(if which == Menu::Theme { 300. } else { 200. }))
+                        // Clicks stop here: the row under "Rename" mustn't take them
+                        // (and the focus) too.
+                        .occlude()
                         .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                             this.menu = None;
                             cx.notify();

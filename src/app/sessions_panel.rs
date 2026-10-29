@@ -118,7 +118,14 @@ impl KynexApp {
         let live_sig: Vec<(Option<String>, bool)> = open.iter().map(|o| (o.id.clone(), o.busy)).collect();
         // Re-read when the folder or session changes, and when a reply starts or finishes (titles and times move).
         if self.sessions.as_ref().is_none_or(|l| l.cwd != cwd || l.current != current || l.live != live_sig) {
-            let items = session::list_sessions(&cwd);
+            let mut items = session::list_sessions(&cwd);
+            // A name given by hand wins, and counts as named, so none is generated.
+            for i in &mut items {
+                if let Some(name) = self.given_name(&cwd, &i.id) {
+                    i.title = name;
+                    i.named = true;
+                }
+            }
             let days = items.iter().map(|i| (i.id.clone(), dates::local_day(i.modified))).collect();
             self.sessions =
                 Some(SessionList { items, days, cwd: cwd.clone(), current: current.clone(), live: live_sig });
@@ -235,8 +242,13 @@ impl KynexApp {
                 icon_button(("delete", n), Icon::Trash, cx).invisible().group_hover("session-row", |s| s.visible())
             };
             let (menu_id, drag) = (id.clone(), DraggedSession { id: id.clone(), title: info.title.clone().into() });
-            // When it was last used is in the tooltip; the row is just its title.
-            let row = session_row(("session", n), info.title.clone().into(), is_current, &t)
+            // When it was last used is in the tooltip; the row is just its title,
+            // or the field renaming it.
+            let title = match self.session_name_field(&id, false, cx) {
+                Some(field) => field.flex_1().into_any_element(),
+                None => title_text(info.title.clone().into(), is_current, &t),
+            };
+            let row = session_row_with(("session", n), title, is_current, &t)
                 .group("session-row")
                 .tooltip(Tooltip::with_meta(info.title.clone(), ago(info.modified)))
                 .children(news_lamp(("session-status", n), busy, waiting, finished, cx))
@@ -304,6 +316,23 @@ impl KynexApp {
         // Ungrouped first, then each group, then the archive.
         let arranged = self.groups_for(&cwd).arrange(items.iter().map(|i| i.id.as_str()));
         let mut take = |ids: Vec<String>| ids.iter().filter_map(|id| past.remove(id)).collect::<Vec<_>>();
+        // Pinned sessions first, above the dates.
+        let pinned = take(arranged.pinned);
+        if !pinned.is_empty() {
+            rows.push(
+                div()
+                    .flex()
+                    .items_end()
+                    .h(px(26.))
+                    .px_2()
+                    .pb_1()
+                    .text_xs()
+                    .text_color(t.text_placeholder)
+                    .child("Pinned")
+                    .into_any_element(),
+            );
+            rows.extend(pinned);
+        }
         // The ungrouped sessions under date headers, unless filtering or they
         // all fall on one: then a flat list.
         let days = &self.sessions.as_ref().unwrap().days;
@@ -429,6 +458,16 @@ fn session_row(
     current: bool,
     t: &Palette,
 ) -> gpui::Stateful<gpui::Div> {
+    session_row_with(id, title_text(title, current, t), current, t)
+}
+
+/// A session row whose name is `title`: its text, or the field renaming it.
+fn session_row_with(
+    id: impl Into<gpui::ElementId>,
+    title: AnyElement,
+    current: bool,
+    t: &Palette,
+) -> gpui::Stateful<gpui::Div> {
     let hover = t.hover;
     div()
         .id(id)
@@ -443,7 +482,18 @@ fn session_row(
         .text_sm()
         .relative()
         .child(row_wash(current, hover, t.selection))
-        .child(div().flex_1().min_w_0().truncate().text_color(if current { t.text } else { t.text_muted }).child(title))
+        .child(title)
+}
+
+/// A row's name as text, brighter on the shown session.
+fn title_text(title: SharedString, current: bool, t: &Palette) -> AnyElement {
+    div()
+        .flex_1()
+        .min_w_0()
+        .truncate()
+        .text_color(if current { t.text } else { t.text_muted })
+        .child(title)
+        .into_any_element()
 }
 
 /// A session's lamp, only when there's news: it's working, waiting for you,

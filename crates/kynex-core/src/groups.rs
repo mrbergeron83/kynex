@@ -1,7 +1,9 @@
 //! How a folder's sessions are organised in the sessions panel: named groups
-//! that collapse, and an archive that hides sessions without deleting them.
+//! that collapse, an archive that hides sessions without deleting them,
+//! sessions pinned above the rest, and names given by hand.
 //! Kept per project as `sessions.json` in its settings folder (see [`crate::project`]).
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +18,14 @@ pub struct SessionGroups {
     /// Date headers ([`crate::dates::Bucket::key`]) opened or folded away
     /// from how they start.
     pub dates_toggled: Vec<String>,
+    /// Session ids shown above everything else.
+    pub pinned: Vec<String>,
+    /// Names given by hand, by session id; they win over generated ones.
+    pub names: BTreeMap<String, String>,
 }
+
+/// The longest name a session can be given, in characters.
+const MAX_NAME: usize = 80;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -31,6 +40,8 @@ pub struct Group {
 /// the order it was given (newest first).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Arranged {
+    /// Above everything, whatever group they're in.
+    pub pinned: Vec<String>,
     pub top: Vec<String>,
     /// One list per group, in [`SessionGroups::groups`] order.
     pub groups: Vec<Vec<String>>,
@@ -73,9 +84,40 @@ impl SessionGroups {
         }
     }
 
-    /// Hides a session; it leaves its group, and comes back at the top level.
+    pub fn is_pinned(&self, id: &str) -> bool {
+        self.pinned.iter().any(|s| s == id)
+    }
+
+    /// Pins a session above the rest, or unpins it. A pinned session isn't archived.
+    pub fn toggle_pin(&mut self, id: &str) {
+        if self.is_pinned(id) {
+            self.pinned.retain(|s| s != id);
+        } else {
+            self.unarchive(id);
+            self.pinned.push(id.to_string());
+        }
+    }
+
+    /// The name given to a session by hand, if any.
+    pub fn name_of(&self, id: &str) -> Option<&str> {
+        self.names.get(id).map(String::as_str)
+    }
+
+    /// Names a session by hand: one line, trimmed, at most [`MAX_NAME`]
+    /// characters. A blank name drops it, back to the generated one.
+    pub fn rename(&mut self, id: &str, name: &str) {
+        let name: String = name.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(MAX_NAME).collect();
+        if name.is_empty() {
+            self.names.remove(id);
+        } else {
+            self.names.insert(id.to_string(), name);
+        }
+    }
+
+    /// Hides a session; it leaves its group (and the pinned ones), and comes back at the top level.
     pub fn archive(&mut self, id: &str) {
         self.leave_group(id);
+        self.pinned.retain(|s| s != id);
         if !self.is_archived(id) {
             self.archived.push(id.to_string());
         }
@@ -89,9 +131,10 @@ impl SessionGroups {
     }
 
     /// Puts a session in group `to`, or at the top level with `None`.
-    /// A session moved anywhere is no longer archived.
+    /// A session moved anywhere is no longer archived, or pinned.
     pub fn move_to(&mut self, id: &str, to: Option<usize>) {
         self.unarchive(id);
+        self.pinned.retain(|s| s != id);
         self.leave_group(id);
         if let Some(g) = to.and_then(|i| self.groups.get_mut(i)) {
             g.sessions.push(id.to_string());
@@ -142,15 +185,19 @@ impl SessionGroups {
     pub fn forget(&mut self, id: &str) {
         self.leave_group(id);
         self.unarchive(id);
+        self.pinned.retain(|s| s != id);
+        self.names.remove(id);
     }
 
-    /// Sorts session ids (newest first) into the top level, groups and archive.
-    /// Ids saved here that aren't in `ids` are left out.
+    /// Sorts session ids (newest first) into the pinned ones, the top level,
+    /// groups and archive. Ids saved here that aren't in `ids` are left out.
     pub fn arrange<'a>(&self, ids: impl IntoIterator<Item = &'a str>) -> Arranged {
         let mut out = Arranged { groups: vec![Vec::new(); self.groups.len()], ..Arranged::default() };
         for id in ids {
             let list = if self.is_archived(id) {
                 &mut out.archived
+            } else if self.is_pinned(id) {
+                &mut out.pinned
             } else if let Some(g) = self.group_of(id) {
                 &mut out.groups[g]
             } else {
@@ -263,11 +310,55 @@ mod tests {
     }
 
     #[test]
+    fn pinned_sessions_sit_above_groups_and_leave_the_archive() {
+        let mut g = SessionGroups::default();
+        let work = g.add_group("Work");
+        g.move_to("b", Some(work));
+        g.archive("c");
+        g.toggle_pin("b");
+        g.toggle_pin("c");
+        assert!(g.is_pinned("b") && g.is_pinned("c") && !g.is_archived("c"));
+        let a = g.arrange(["a", "b", "c", "d"]);
+        assert_eq!(a.pinned, ["b", "c"]);
+        assert_eq!(a.top, ["a", "d"]);
+        // Still in its group underneath: unpinned, it goes back there.
+        assert_eq!(a.groups, [Vec::<String>::new()]);
+        g.toggle_pin("b");
+        assert_eq!(g.arrange(["b"]).groups, [vec!["b"]]);
+        // Archiving or moving a session unpins it.
+        g.archive("c");
+        assert!(!g.is_pinned("c"));
+        g.toggle_pin("a");
+        g.move_to("a", Some(work));
+        assert!(!g.is_pinned("a"));
+    }
+
+    #[test]
+    fn names_given_by_hand() {
+        let mut g = SessionGroups::default();
+        assert_eq!(g.name_of("s"), None);
+        g.rename("s", "  Fix the\nlogin   redirect ");
+        assert_eq!(g.name_of("s"), Some("Fix the login redirect"));
+        g.rename("s", &"x".repeat(200));
+        assert_eq!(g.name_of("s").unwrap().chars().count(), MAX_NAME);
+        // Blank goes back to the generated name.
+        g.rename("s", "   ");
+        assert_eq!(g.name_of("s"), None);
+        // A deleted session takes its name and pin with it.
+        g.rename("t", "Keep");
+        g.toggle_pin("t");
+        g.forget("t");
+        assert_eq!(g, SessionGroups::default());
+    }
+
+    #[test]
     fn round_trips_through_json() {
         let mut g = SessionGroups::default();
         let i = g.add_group("G");
         g.move_to("s", Some(i));
         g.archive("t");
+        g.toggle_pin("u");
+        g.rename("u", "Named");
         let back: SessionGroups = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
         assert_eq!(back, g);
         // Older or partial files still load.

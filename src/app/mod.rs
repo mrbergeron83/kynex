@@ -269,13 +269,16 @@ impl KynexApp {
         })
         .detach();
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.check_setup(cx))).detach();
-        let group_name = cx.new(|cx| TextInput::new(cx).placeholder("Group name"));
+        let group_name = cx.new(|cx| TextInput::new(cx).placeholder("Name"));
         cx.subscribe(&group_name, |this, _, ev, cx| {
             if let InputEvent::Submit = ev {
                 this.commit_rename(cx);
             }
         })
         .detach();
+        // Clicking away keeps the name too; Esc cancels before the focus leaves.
+        let name_focus = group_name.read(cx).focus_handle(cx);
+        cx.on_blur(&name_focus, window, |this, _, cx| this.commit_rename(cx)).detach();
         let session_filter = cx.new(|cx| TextInput::new(cx).placeholder("Filter sessions"));
         cx.subscribe(&session_filter, |_, _, ev, cx| {
             if let InputEvent::Changed = ev {

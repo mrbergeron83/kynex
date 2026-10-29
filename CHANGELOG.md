@@ -13,6 +13,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A project can have its own model: "This project" at the top of the composer's model
   menu pins one, "Everywhere" goes back to the one for every tab. The chip shows a folder
   when the project's own model applies.
+- Sessions can be renamed (Rename in a session's right-click menu, or double-click its
+  name above the conversation) and pinned above the date groups (Pin to top). A blank
+  name goes back to the generated one.
 - A setting for session names: by default only the session you open is named by Claude
   Haiku; naming the 10 most recent past sessions too is opt-in.
 

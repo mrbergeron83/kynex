@@ -228,7 +228,7 @@ impl KynexApp {
     }
 
     /// The session `by` rows down the sessions panel (up if negative), in its
-    /// order: ungrouped, then each group; the archive is skipped.
+    /// order: pinned, ungrouped, then each group; the archive is skipped.
     fn step_session(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(s) = self.active_session() else { return };
         let (kind, cwd, current) = (s.kind, s.cwd.clone(), s.session_id.clone());
@@ -237,7 +237,8 @@ impl KynexApp {
             _ => kynex_core::session::list_sessions(&cwd).into_iter().map(|i| i.id).collect(),
         };
         let arranged = self.groups_for(&cwd).arrange(items.iter().map(String::as_str));
-        let order: Vec<String> = arranged.top.into_iter().chain(arranged.groups.into_iter().flatten()).collect();
+        let order: Vec<String> =
+            arranged.pinned.into_iter().chain(arranged.top).chain(arranged.groups.into_iter().flatten()).collect();
         if order.is_empty() {
             return;
         }

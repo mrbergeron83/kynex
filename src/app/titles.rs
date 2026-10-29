@@ -49,8 +49,11 @@ impl KynexApp {
         .detach();
     }
 
-    /// The shown session's name, if it has one yet.
+    /// The shown session's name, if it has one yet: the one given by hand first.
     pub(super) fn session_name(&self, id: &str) -> Option<String> {
+        if let Some(name) = self.active_session().and_then(|s| self.organize.name_of(&s.cwd, id)) {
+            return Some(name);
+        }
         let list = self.sessions.as_ref()?;
         list.items.iter().find(|s| s.id == id && s.named).map(|s| s.title.clone())
     }
