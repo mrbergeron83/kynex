@@ -31,6 +31,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - The sessions panel is quieter: rows show just their title (the time is in the tooltip),
   a lamp only when a session is working, waiting or just finished, and a search button
   filters by title. Claude settings moved to a shield in the toolbar.
+- Ungrouped sessions sit under date headers: Today, Yesterday, Previous 7 and 30 days,
+  then months and years. Older ones start folded; a click folds or opens a header, and
+  it's remembered per project.
 - Quieter while Claude works: the "Working…" strip above the composer and the stop square
   in the Stop button are gone; the lamps, Stop's spinner and the running step say it.
 

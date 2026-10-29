@@ -8,6 +8,7 @@ edition = "2024"
 alacritty_terminal = "0.26"
 async-channel = "2"
 base64 = "0.23.1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 dirs = "7.0.0"
 gpui = { package = "gpui-pre", version = "=0.3.10" }
 # gpui-pre 0.3.10 only gives macOS a text system (and therefore any text at

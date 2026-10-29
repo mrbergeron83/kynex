@@ -5,6 +5,7 @@
 pub mod attach;
 pub mod cli;
 pub mod commands;
+pub mod dates;
 pub mod env_path;
 pub mod extensions;
 pub mod fmt;

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use gpui::{
     Anchor, AnyElement, Context, Focusable, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px,
 };
+use kynex_core::dates::{self, Bucket};
 use kynex_core::fmt::ago;
 use kynex_core::live::Key;
 use kynex_core::session::{self, Item, Session, SessionInfo};
@@ -32,6 +33,9 @@ pub struct SessionList {
     /// move when a reply starts or finishes.
     live: Vec<(Option<String>, bool)>,
     pub items: Vec<SessionInfo>,
+    /// Each session's local day of last activity, for the date headers;
+    /// worked out once per read, not every frame.
+    days: HashMap<String, dates::Day>,
 }
 
 /// An open session as the sessions panel shows it.
@@ -114,12 +118,10 @@ impl KynexApp {
         let live_sig: Vec<(Option<String>, bool)> = open.iter().map(|o| (o.id.clone(), o.busy)).collect();
         // Re-read when the folder or session changes, and when a reply starts or finishes (titles and times move).
         if self.sessions.as_ref().is_none_or(|l| l.cwd != cwd || l.current != current || l.live != live_sig) {
-            self.sessions = Some(SessionList {
-                items: session::list_sessions(&cwd),
-                cwd: cwd.clone(),
-                current: current.clone(),
-                live: live_sig,
-            });
+            let items = session::list_sessions(&cwd);
+            let days = items.iter().map(|i| (i.id.clone(), dates::local_day(i.modified))).collect();
+            self.sessions =
+                Some(SessionList { items, days, cwd: cwd.clone(), current: current.clone(), live: live_sig });
         }
         let all = self.sessions.as_ref().unwrap().items.clone();
         self.name_sessions(&all, cx);
@@ -310,7 +312,25 @@ impl KynexApp {
         // Ungrouped first, then each group, then the archive.
         let arranged = self.groups_for(&cwd).arrange(items.iter().map(|i| i.id.as_str()));
         let mut take = |ids: Vec<String>| ids.iter().filter_map(|id| past.remove(id)).collect::<Vec<_>>();
-        rows.extend(take(arranged.top));
+        // The ungrouped sessions under date headers, unless filtering or they
+        // all fall on one: then a flat list.
+        let days = &self.sessions.as_ref().unwrap().days;
+        let today = dates::today();
+        let dated: Vec<(String, dates::Day)> =
+            arranged.top.iter().map(|id| (id.clone(), days.get(id).copied().unwrap_or(today))).collect();
+        match dates::sections(&dated, today).filter(|_| query.is_empty()) {
+            Some(sections) => {
+                for (bucket, ids) in sections {
+                    let open = self.groups_for(&cwd).date_open(bucket);
+                    rows.push(self.date_header(&cwd, bucket, ids.len(), open, today, cx));
+                    let shown = take(ids);
+                    if open {
+                        rows.extend(shown);
+                    }
+                }
+            }
+            None => rows.extend(take(arranged.top)),
+        }
         let groups: Vec<Vec<AnyElement>> = arranged.groups.into_iter().map(&mut take).collect();
         let archived = take(arranged.archived);
         for (i, group) in groups.into_iter().enumerate() {
@@ -362,6 +382,40 @@ impl KynexApp {
                 }))
                 .children(rows),
         )
+    }
+
+    /// A date header: one line of small muted text that folds its sessions
+    /// away (with their count) or opens them.
+    fn date_header(
+        &self,
+        cwd: &std::path::Path,
+        bucket: Bucket,
+        count: usize,
+        open: bool,
+        today: dates::Day,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = theme(cx).clone();
+        let label = bucket.label(today);
+        let cwd = cwd.to_path_buf();
+        let muted = t.text_muted;
+        div()
+            .id(SharedString::from(format!("date-{}", bucket.key())))
+            .flex()
+            .items_end()
+            .h(px(26.))
+            .px_2()
+            .pb_1()
+            .text_xs()
+            .text_color(t.text_placeholder)
+            .cursor_pointer()
+            .hover(move |s| s.text_color(muted))
+            .child(if open { label } else { format!("{label} · {count}") })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.edit_groups(&cwd, |g| g.toggle_date(bucket));
+                cx.notify();
+            }))
+            .into_any_element()
     }
 
     /// Opens the title filter, or closes it and shows every session again.
