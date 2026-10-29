@@ -294,9 +294,28 @@ impl KynexApp {
             .child(probe)
             // Switching sessions fades the new one in instead of swapping in one frame.
             .child(fade_in(("thread-in", uid), thread, motion::NORMAL))
+            .children(self.render_awaiting(&t))
             .child(bar)
             .when(!at_latest, |d| d.child(self.render_jump_to_latest(uid, &t, cx)))
             .into_any_element()
+    }
+
+    /// From sending a message to the first thing back, a quiet row at the
+    /// transcript's end says what's being waited on and for how long (#157).
+    fn render_awaiting(&self, t: &Palette) -> Option<impl IntoElement + use<>> {
+        let a = self.active_session()?.awaiting()?;
+        let what = if a.starting { "Starting Claude…" } else { "Waiting for Claude…" };
+        Some(
+            div()
+                .flex()
+                .gap_2()
+                .px_6()
+                .py_1()
+                .text_sm()
+                .text_color(t.text_placeholder)
+                .child(what)
+                .child(div().font_family(mono()).text_xs().child(fmt::elapsed(a.since.elapsed()))),
+        )
     }
 
     /// The floating "Jump to latest" over a transcript scrolled up.

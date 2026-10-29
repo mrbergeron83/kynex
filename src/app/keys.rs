@@ -44,14 +44,15 @@ actions!(
         ScrollBottom,
         LineUp,
         LineDown,
-        OpenSettings
+        OpenSettings,
+        Quit
     ]
 );
 
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 25] = [
+const SHORTCUTS: [(&str, &str); 26] = [
     ("open_project", "secondary-o"),
     ("open_settings", "secondary-,"),
     ("new_session", "secondary-n"),
@@ -85,6 +86,8 @@ const SHORTCUTS: [(&str, &str); 25] = [
     ("page_down", "pagedown"),
     ("scroll_top", "secondary-home"),
     ("scroll_bottom", "secondary-end"),
+    // Closing the window may only hide Kynex; this always quits.
+    ("quit", "secondary-q"),
 ];
 
 /// Keys that scroll the transcript when nothing focused (the message box, a
@@ -182,6 +185,7 @@ pub fn bind_keys(cx: &mut App) {
             "page_down" => KeyBinding::new(keys, PageDown, c),
             "scroll_top" => KeyBinding::new(keys, ScrollTop, c),
             "scroll_bottom" => KeyBinding::new(keys, ScrollBottom, c),
+            "quit" => KeyBinding::new(keys, Quit, c),
             _ => KeyBinding::new(keys, Interrupt, c),
         });
     }
