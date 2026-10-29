@@ -24,6 +24,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - The session header shows the session's name, or its first few words (muted) until the
   name comes, instead of repeating the whole first message; the shown session is named
   first. Its context chip is just the percentage, with the tokens in the tooltip.
+- The theme picker left the title bar: theme, fonts and motion are under Appearance in the
+  Kynex menu, and in Settings.
 - Quieter while Claude works: the "Working…" strip above the composer and the stop square
   in the Stop button are gone; the lamps, Stop's spinner and the running step say it.
 

@@ -1,6 +1,6 @@
 //! The custom title bar: app name, one tab per project (Chat first), usage
-//! limits and the update pill (`status.rs`), the theme picker, Settings and
-//! the window buttons.
+//! limits and the update pill (`status.rs`), Settings and the window buttons.
+//! The theme lives in Settings and the Kynex menu's Appearance.
 
 use gpui::{
     Anchor, AnyElement, ClickEvent, Context, FontWeight, Hsla, MouseButton, SharedString, Window, div, prelude::*, px,
@@ -12,9 +12,9 @@ use super::KynexApp;
 use super::keys::{OpenProject, OpenSettings};
 use super::menus::Menu;
 use crate::chrome::{self, TITLE_BAR_HEIGHT};
-use crate::theme::{THEMES, mix, theme};
+use crate::theme::{mix, theme};
 use crate::ui::mark::mark;
-use crate::ui::{Icon, Lamp, Tooltip, ghost_button, icon, icon_button, lamp, section_label};
+use crate::ui::{Icon, Lamp, Tooltip, icon, icon_button, lamp, section_label};
 
 impl KynexApp {
     pub(super) fn render_title_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -79,16 +79,6 @@ impl KynexApp {
             .child(chrome::drag_area(div().id("drag").flex_1().h_full()))
             .children(self.render_usage(cx))
             .children(self.render_update_pill(cx))
-            .child(
-                ghost_button("theme", cx)
-                    .mr_2()
-                    .text_color(t.text_muted)
-                    .child(THEMES.iter().find(|x| x.0 == self.saved.theme).map_or("", |x| x.1))
-                    .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
-                    .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
-                        this.open_menu(Menu::Theme, ev.position(), Anchor::TopRight, cx)
-                    })),
-            )
             .child(
                 icon_button("app-settings", Icon::Settings, cx)
                     .mr_2()
