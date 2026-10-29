@@ -311,6 +311,12 @@ pub struct Session {
     resume_at: Option<String>,
     /// The log being read back, on [`Self::resume`] or a rewind.
     loader: Option<Loader>,
+    /// The process has answered `initialize`, so it's up and reading messages.
+    ready: bool,
+    /// The last message sent (its item) and when, until anything comes after it.
+    sent: Option<(usize, Instant)>,
+    /// Started by [`Self::warm`] on this model and not sent anything yet.
+    warmed: Option<String>,
     /// While replaying: the log and line the entry came from, so its images stay there.
     origin: Option<(Arc<PathBuf>, Span)>,
 }
@@ -393,6 +399,14 @@ pub struct Init {
     pub models: Vec<ModelInfo>,
 }
 
+/// A sent message nothing has come back for yet ([`Session::awaiting`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Awaiting {
+    /// The process hasn't answered `initialize` yet: it's still starting.
+    pub starting: bool,
+    pub since: Instant,
+}
+
 /// The request id of the `initialize` handshake each process starts with.
 const INIT_ID: &str = "kynex-init";
 
@@ -430,6 +444,9 @@ impl Session {
             limits: None,
             resume_at: None,
             loader: None,
+            ready: false,
+            sent: None,
+            warmed: None,
             origin: None,
         }
     }
@@ -635,6 +652,7 @@ impl Session {
         spawn_readers(stdout, stderr, tx, self.wake.clone());
 
         self.child = Some(child);
+        self.ready = false;
         self.stdin = Some(Arc::new(Mutex::new(stdin)));
         self.rx = Some(rx);
         // Ask for the commands and models first, as the Agent SDK does; the
@@ -671,6 +689,10 @@ impl Session {
             self.queue.push(text, attachments);
             return;
         }
+        // Started early on a model since changed: start again on the new one.
+        if self.warmed.take().is_some_and(|m| m != self.model) {
+            self.kill();
+        }
         if self.child.is_none()
             && let Err(e) = self.spawn()
         {
@@ -690,8 +712,26 @@ impl Session {
             content.push(json!({ "type": "text", "text": text }));
         }
         self.items.push(Item::User { text, images });
+        self.sent = Some((self.items.len() - 1, Instant::now()));
         self.busy = true;
         self.write(json!({ "type": "user", "message": { "role": "user", "content": content } }));
+    }
+
+    /// Starts the process ahead of the first message, so sending doesn't wait
+    /// for it (about half a second to well over one). Call when a message is
+    /// likely: the composer focused, typing, the session shown. Does nothing if
+    /// it's running; a failure to start is left for [`Self::send`] to report.
+    pub fn warm(&mut self) {
+        if self.child.is_none() && self.spawn().is_ok() {
+            self.warmed = Some(self.model.clone());
+        }
+    }
+
+    /// Between sending a message and the first thing back: whether the process
+    /// is still starting, and since when it's been waited on.
+    pub fn awaiting(&self) -> Option<Awaiting> {
+        let (at, since) = self.sent?;
+        (self.busy && self.items.len() == at + 1).then_some(Awaiting { starting: !self.ready, since })
     }
 
     /// Stops the turn. Anything queued goes out as soon as it has ended.
@@ -863,6 +903,9 @@ impl Session {
         self.stdin = None;
         self.rx = None;
         self.busy = false;
+        self.ready = false;
+        self.sent = None;
+        self.warmed = None;
         self.settle_thoughts();
         self.tasks.clear();
         self.stopping.clear();
@@ -927,6 +970,7 @@ impl Session {
             "control_response" if v["response"]["request_id"] == INIT_ID => {
                 let r = &v["response"]["response"];
                 self.init = Some(Init { commands: crate::commands::from_init(r), models: models_from_init(r) });
+                self.ready = true;
             }
             // The answer to a Stop: on success the task's end follows as a notification.
             "control_response"
@@ -1554,6 +1598,20 @@ mod tests {
         let Some(Item::Result { tools, files, .. }) = s.items.last() else { panic!("no result") };
         assert_eq!(*tools, 4);
         assert_eq!(files, &["C:/x/a.rs", "/y/b.md"]);
+    }
+
+    #[test]
+    fn awaiting_lasts_from_send_to_the_first_thing_back() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        assert_eq!(s.awaiting(), None);
+        let since = Instant::now();
+        s.items.push(Item::User { text: "hi".into(), images: Vec::new() });
+        (s.sent, s.busy) = (Some((0, since)), true);
+        assert_eq!(s.awaiting(), Some(Awaiting { starting: true, since }));
+        s.handle(json!({ "type": "control_response", "response": { "request_id": INIT_ID, "response": {} } }));
+        assert_eq!(s.awaiting(), Some(Awaiting { starting: false, since }));
+        s.handle(json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "hello" }] } }));
+        assert_eq!(s.awaiting(), None);
     }
 
     #[test]

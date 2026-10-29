@@ -9,6 +9,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Closing the window keeps Kynex running, so turns and background tasks carry on: on
+  Windows it goes to the notification area (click the icon to come back; its menu has
+  Quit), on macOS the Dock brings it back. Turn it off in Settings → General. Ctrl+Q
+  (Cmd+Q) quits. Linux closes as before.
+- Keep awake (Settings → General): the computer doesn't idle-sleep while Claude works or
+  background tasks run, or, if you pick it, whenever Kynex is open. The screen still
+  turns off and locks.
+- Sending a message shows "Starting Claude…" / "Waiting for Claude…" with the seconds
+  until the first reply comes. Claude starts when you focus the message box or open a
+  session, so sending no longer waits for it.
 - Notifications (Settings → General, off by default): while Kynex is in the background, an
   OS notification says which session finished or needs your answer; clicking it opens
   that session. Kynex's icon shows a dot while any session needs you (taskbar on

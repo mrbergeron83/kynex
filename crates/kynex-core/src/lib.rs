@@ -4,6 +4,7 @@
 
 pub mod attach;
 pub mod attention;
+pub mod awake;
 pub mod cli;
 pub mod column;
 pub mod commands;
@@ -39,6 +40,7 @@ pub mod timeline;
 pub mod titles;
 pub mod toasts;
 pub mod transcript;
+pub mod tray;
 pub mod update;
 pub mod usage;
 #[cfg(windows)]

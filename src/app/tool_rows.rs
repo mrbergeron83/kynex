@@ -89,10 +89,11 @@ impl KynexApp {
             .into_any_element()
     }
 
-    /// While the shown session runs a call with a time limit, repaints once a
-    /// second so its elapsed time counts up; stops when none is running.
+    /// While the shown session runs a call with a time limit, or waits for its
+    /// first reply, repaints once a second so the elapsed time counts up; stops
+    /// when neither is going on.
     pub(super) fn tick_timed_calls(&mut self, cx: &mut Context<Self>) {
-        if self.calls_ticking || !self.active_session().is_some_and(Session::timed_call_running) {
+        if self.calls_ticking || !self.active_session().is_some_and(ticks) {
             return;
         }
         self.calls_ticking = true;
@@ -100,7 +101,7 @@ impl KynexApp {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let going = this.update(cx, |this, cx| {
-                    this.calls_ticking = this.active_session().is_some_and(Session::timed_call_running);
+                    this.calls_ticking = this.active_session().is_some_and(ticks);
                     cx.notify();
                     this.calls_ticking
                 });
@@ -269,4 +270,9 @@ fn stat(add: usize, del: usize, t: &crate::theme::Palette) -> impl IntoElement +
         .text_xs()
         .when(add > 0, |d| d.child(div().text_color(t.success).child(format!("+{add}"))))
         .when(del > 0, |d| d.child(div().text_color(t.error).child(format!("−{del}"))))
+}
+
+/// A session whose transcript shows a time counting up.
+fn ticks(s: &Session) -> bool {
+    s.timed_call_running() || s.awaiting().is_some()
 }

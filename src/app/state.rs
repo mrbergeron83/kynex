@@ -4,10 +4,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use kynex_core::awake::KeepAwake;
 use kynex_core::column::ColumnWidth;
 use kynex_core::motion::Motion;
 use kynex_core::paths::data_dir;
 use kynex_core::terminal::ShellKind;
+use kynex_core::tray::OnClose;
 use serde::{Deserialize, Serialize};
 
 use crate::theme::Theme;
@@ -90,6 +92,10 @@ pub struct Saved {
     pub shortcuts_stamped: bool,
     /// How wide the transcript and composer are.
     pub column: ColumnWidth,
+    /// When to keep the computer from sleeping.
+    pub keep_awake: KeepAwake,
+    /// What closing the window does: hide Kynex (tray / Dock) or quit.
+    pub on_close: OnClose,
 }
 
 impl Default for Saved {
@@ -117,6 +123,8 @@ impl Default for Saved {
             notify: false,
             shortcuts_stamped: false,
             column: ColumnWidth::default(),
+            keep_awake: KeepAwake::default(),
+            on_close: OnClose::default(),
         }
     }
 }
