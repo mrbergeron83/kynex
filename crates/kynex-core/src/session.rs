@@ -726,10 +726,11 @@ impl Session {
         self.write(json!({ "type": "user", "message": { "role": "user", "content": content } }));
     }
 
-    /// Starts the process ahead of the first message (you're typing, or just
-    /// switched here), so its start-up isn't in the wait. Does nothing if it's
-    /// running or won't start; [`Self::send`] says why then.
-    pub fn warm_up(&mut self) {
+    /// Starts the process ahead of the first message, so sending doesn't wait
+    /// for it (about half a second to well over one). Call when a message is
+    /// likely: the composer focused, typing, the session shown. Does nothing if
+    /// it's running; a failure to start is left for [`Self::send`] to report.
+    pub fn warm(&mut self) {
         if self.child.is_none() {
             let _ = self.spawn();
         }
@@ -1011,6 +1012,7 @@ impl Session {
             "control_response" if v["response"]["request_id"] == INIT_ID => {
                 let r = &v["response"]["response"];
                 self.init = Some(Init { commands: crate::commands::from_init(r), models: models_from_init(r) });
+                self.process_up();
             }
             // The answer to a Stop: on success the task's end follows as a notification.
             "control_response"
@@ -1691,6 +1693,19 @@ mod tests {
         let Some(Item::Result { tools, files, .. }) = s.items.last() else { panic!("no result") };
         assert_eq!(*tools, 4);
         assert_eq!(files, &["C:/x/a.rs", "/y/b.md"]);
+    }
+
+    #[test]
+    fn the_initialize_answer_ends_starting() {
+        use crate::pulse::Activity;
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        s.items.push(Item::User { text: "hi".into(), images: Vec::new() });
+        s.busy = true;
+        assert_eq!(s.pulse().map(|p| p.activity), Some(Activity::Starting));
+        s.handle(json!({ "type": "control_response", "response": { "request_id": INIT_ID, "response": {} } }));
+        assert_eq!(s.pulse().map(|p| p.activity), Some(Activity::Waiting));
+        s.handle(json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "hello" }] } }));
+        assert_eq!(s.pulse().map(|p| p.activity), Some(Activity::Working));
     }
 
     #[test]

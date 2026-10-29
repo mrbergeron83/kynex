@@ -7,12 +7,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- The transcript says what Claude is doing while nothing else shows it: "Starting Claude…",
-  "Waiting for Claude…" and "Working…" with the seconds, in one quiet line at its end.
+- The "Starting Claude…" / "Waiting for Claude…" line stays for the whole turn: between
+  steps (after thinking, after a tool's result) it says "Working…" with the seconds, so the
+  transcript never sits there looking stuck.
 - A tool call shows as soon as Claude starts writing it, with its file or command once that
   much is in, instead of only once its whole input arrived (a long `Write` showed nothing).
-- Claude starts while you type, and when you switch to a session, so sending doesn't wait for
-  it to start up. The last two sessions you left stay open, so switching back is instant.
+- The last two sessions you left stay open, with their Claude still running, so switching
+  back is instant. Changing the model before the first message restarts the early-started
+  Claude on it.
 - "Thinking… 4s" keeps counting even when nothing else changes, and no longer repaints the
   window every frame to do it.
 - A status footer along the bottom of the window shows what Kynex and the processes it
@@ -28,6 +30,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Closing the window keeps Kynex running, so turns and background tasks carry on: on
+  Windows it goes to the notification area (click the icon to come back; its menu has
+  Quit), on macOS the Dock brings it back. Turn it off in Settings → General. Ctrl+Q
+  (Cmd+Q) quits. Linux closes as before.
+- Keep awake (Settings → General): the computer doesn't idle-sleep while Claude works or
+  background tasks run, or, if you pick it, whenever Kynex is open. The screen still
+  turns off and locks.
+- Sending a message shows "Starting Claude…" / "Waiting for Claude…" with the seconds
+  until the first reply comes. Claude starts when you focus the message box or open a
+  session, so sending no longer waits for it.
 - Notifications (Settings → General, off by default): while Kynex is in the background, an
   OS notification says which session finished or needs your answer; clicking it opens
   that session. Kynex's icon shows a dot while any session needs you (taskbar on

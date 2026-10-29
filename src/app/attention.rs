@@ -27,7 +27,11 @@ impl KynexApp {
             handle
                 .update(cx, |_, window, cx| {
                     window.activate_window();
-                    this.update(cx, |this, cx| this.go_to_session(key, window, cx)).ok();
+                    this.update(cx, |this, cx| {
+                        this.show_from_background(cx);
+                        this.go_to_session(key, window, cx)
+                    })
+                    .ok();
                 })
                 .ok();
         });

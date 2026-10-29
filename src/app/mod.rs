@@ -27,6 +27,7 @@
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
 //! | `handoff.rs`        | "waiting for you in the browser" banner, Continue    |
 //! | `attention.rs`      | OS notifications and the icon's "needs you" dot     |
+//! | `background.rs`     | close to tray / Dock, keep awake, `claude` started early |
 //! | `history.rs`        | ↑ / ↓ history, Ctrl+R search, stash, Esc Esc, editor |
 //! | `rewind.rs`         | rewind to an earlier message: conversation and files |
 //! | `timeline.rs`       | the session's turns and steps beside the transcript  |
@@ -50,6 +51,7 @@ mod app_settings;
 mod app_update;
 mod appearance;
 mod attention;
+mod background;
 mod composer;
 mod drafts;
 mod extensions;
@@ -225,6 +227,11 @@ pub struct KynexApp {
     wants: HashMap<Key, kynex_core::attention::Why>,
     /// The icon's "needs you" dot is on.
     badged: bool,
+    /// Idle sleep held off while sessions work (Keep awake), and whether taking it failed.
+    awake: Option<kynex_core::awake::Awake>,
+    awake_failed: bool,
+    /// The notification-area icon, while closing the window hides Kynex there (Windows).
+    tray: Option<kynex_core::tray::Tray>,
     /// The window's native handle, for the taskbar dot.
     native_window: isize,
     /// Kynex is the app in front: no notifications then, and finished turns count as seen.
@@ -282,10 +289,12 @@ impl KynexApp {
                     this.attach_bytes(&i.bytes, cx);
                 }
             }
-            // Typing: start Claude now, so it's up when the message goes.
-            InputEvent::Changed => this.warm_up(),
+            InputEvent::Changed => this.warm_shown(),
         })
         .detach();
+        // Focusing the message box means a message is coming: start Claude now.
+        let composer_focus = composer.read(cx).focus_handle(cx);
+        cx.on_focus(&composer_focus, window, |this, _, _| this.warm_shown()).detach();
         let login_code = cx.new(|cx| TextInput::new(cx).mono().placeholder("Paste the code here"));
         cx.subscribe(&login_code, |this, _, ev, cx| {
             if let InputEvent::Submit = ev {
@@ -333,6 +342,8 @@ impl KynexApp {
         .detach();
         // Coming back to Kynex: files may have changed while it was in the background.
         Self::watch_notification_clicks(window, cx);
+        Self::watch_close(window, cx);
+        cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.sync_tray(cx))).detach();
         cx.observe_window_activation(window, |this, window, cx| {
             this.window_active = window.is_window_active();
             if window.is_window_active() {
@@ -412,6 +423,9 @@ impl KynexApp {
             viewer: None,
             wants: HashMap::new(),
             badged: false,
+            awake: None,
+            awake_failed: false,
+            tray: None,
             native_window: attention::native_handle(window),
             window_active: window.is_window_active(),
             logged: Default::default(),
@@ -507,6 +521,7 @@ impl KynexApp {
         self.restart_idle();
         self.sync_session_ids();
         self.sync_attention(cx);
+        self.sync_awake();
         cx.notify();
     }
 
@@ -549,6 +564,7 @@ impl Render for KynexApp {
             s.finished = false;
         }
         self.sync_attention(cx);
+        self.sync_awake();
         self.sync_draft(cx);
         self.sync_prompt(window, cx);
         self.sync_toasts(window, cx);
@@ -666,6 +682,7 @@ impl Render for KynexApp {
             .text_sm()
             .on_action(cx.listener(Self::open_project))
             .on_action(cx.listener(Self::open_settings_action))
+            .on_action(cx.listener(|_, _: &keys::Quit, _, cx| cx.quit()))
             .on_action(cx.listener(Self::new_session_action))
             .on_action(cx.listener(Self::next_session))
             .on_action(cx.listener(Self::prev_session))

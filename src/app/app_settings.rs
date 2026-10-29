@@ -5,12 +5,14 @@
 use std::path::PathBuf;
 
 use gpui::{Anchor, ClickEvent, Context, PathPromptOptions, Window, div, prelude::*, px};
+use kynex_core::awake::KeepAwake;
 use kynex_core::cli;
 use kynex_core::column::ColumnWidth;
 use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
 use kynex_core::paths::data_dir;
 use kynex_core::terminal::ShellKind;
+use kynex_core::tray::OnClose;
 
 use kynex_core::toasts::{Corner, Toast};
 
@@ -284,7 +286,53 @@ impl KynexApp {
                 },
             ));
 
-        div().flex().flex_col().gap_6().child(cli).child(shell).child(naming).child(notifications)
+        let keep = self.saved.keep_awake;
+        let awake = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(heading(
+                "Keep awake",
+                "Stops idle sleep so long turns and background tasks finish. The screen still turns off and locks.",
+                t,
+            ))
+            .children(KeepAwake::ALL.into_iter().enumerate().map(|(n, k)| {
+                choice(("keep-awake", n), keep == k, k.label().into(), t)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_keep_awake(k, cx)))
+            }));
+
+        // Only where a hidden Kynex has a way back; elsewhere closing quits.
+        let closing = kynex_core::tray::Haven::of_os().map(|haven| {
+            let on = self.saved.on_close;
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(heading(
+                    "Closing the window",
+                    "Sessions and background tasks keep running while Kynex is hidden. Quit with Ctrl+Q (Cmd+Q).",
+                    t,
+                ))
+                .children(
+                    [(OnClose::KeepRunning, haven.label()), (OnClose::Quit, "Quit Kynex")].into_iter().enumerate().map(
+                        |(n, (o, label))| {
+                            choice(("on-close", n), on == o, label.into(), t)
+                                .on_click(cx.listener(move |this, _, _, cx| this.set_on_close(o, cx)))
+                        },
+                    ),
+                )
+        });
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_6()
+            .child(cli)
+            .child(shell)
+            .child(naming)
+            .child(notifications)
+            .children(closing)
+            .child(awake)
     }
 
     fn set_name_past_sessions(&mut self, on: bool, cx: &mut Context<Self>) {

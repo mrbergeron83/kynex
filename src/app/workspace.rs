@@ -13,6 +13,10 @@ use super::state::{Active, ProjectState, View};
 
 impl KynexApp {
     /// Every open session, in every tab.
+    pub(super) fn all_sessions(&self) -> impl Iterator<Item = &Session> {
+        self.chat.sessions.iter().chain(self.code.values().flat_map(|l| l.sessions.iter()))
+    }
+
     pub(super) fn all_sessions_mut(&mut self) -> impl Iterator<Item = &mut Session> {
         self.chat.sessions.iter_mut().chain(self.code.values_mut().flat_map(|l| l.sessions.iter_mut()))
     }
@@ -119,20 +123,7 @@ impl KynexApp {
         let Some(live) = self.live_mut() else { return };
         let closed = live.show(s);
         self.forget(&closed);
-        self.warm_up();
-    }
-
-    /// Starts the shown session's `claude` ahead of its next message, so you
-    /// don't wait for it to start up after pressing Enter (#157).
-    pub(super) fn warm_up(&mut self) {
-        if !matches!(self.setup, super::setup::Setup::Ready) {
-            return;
-        }
-        let model = self.active_model();
-        if let Some(s) = self.session_mut().filter(|s| !s.is_running()) {
-            s.use_model(model);
-            s.warm_up();
-        }
+        self.warm_shown();
     }
 
     /// Shows the open session with this CLI id, or resumes it from its transcript.
@@ -167,7 +158,7 @@ impl KynexApp {
         }
         let closed = live.prune();
         self.forget(&closed);
-        self.warm_up();
+        self.warm_shown();
         true
     }
 
