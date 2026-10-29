@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A running command with a time limit shows how long it has been going, "1m 12s / max 2m",
+  counting up once a second; once it's done, how long it took.
+
 ### Fixed
 
 - Opening a project or a past session no longer freezes the window. Session titles come

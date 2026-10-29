@@ -192,6 +192,7 @@ impl KynexApp {
                 .into_any_element();
         }
         let Some(key) = key else { return div().into_any_element() };
+        self.tick_timed_calls(cx);
         // Lay the rows out again when items come or go; only the rows that
         // changed (usually the last few) are measured again.
         let stale = self.threads.get(&key).is_none_or(|t| t.items != count);

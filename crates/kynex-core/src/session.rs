@@ -128,6 +128,37 @@ impl Thought {
     }
 }
 
+/// When a tool call started and how long it took, for one watched live; one
+/// read back from a log has neither.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Timing {
+    pub started: Option<Instant>,
+    pub took: Option<Duration>,
+}
+
+impl Timing {
+    /// Started and not done yet.
+    pub fn is_running(&self) -> bool {
+        self.started.is_some() && self.took.is_none()
+    }
+
+    /// How long it has run so far, or ran in all.
+    pub fn elapsed(&self) -> Option<Duration> {
+        self.took.or_else(|| self.started.map(|s| s.elapsed()))
+    }
+
+    fn finish(&mut self) {
+        if let (Some(started), None) = (self.started, self.took) {
+            self.took = Some(started.elapsed());
+        }
+    }
+}
+
+/// A tool call's time limit in ms (Bash's `timeout`), from its pretty-printed input.
+pub fn timeout_ms(input: &str) -> Option<u64> {
+    serde_json::from_str::<Value>(input).ok()?["timeout"].as_u64().filter(|&ms| ms > 0)
+}
+
 /// Called from the reader threads whenever the process has news, so the UI drains it.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
@@ -144,6 +175,8 @@ pub enum Item {
         name: String,
         summary: String,
         input: String,
+        /// How long it ran, when watched live.
+        timing: Timing,
     },
     ToolResult {
         /// The `tool_use_id` of the call this answers.
@@ -815,6 +848,7 @@ impl Session {
         self.stdin = None;
         self.rx = None;
         self.busy = false;
+        self.settle_thoughts();
         self.tasks.clear();
         // Nobody is left to answer them.
         self.cancel_permissions(|_| true);
@@ -931,7 +965,10 @@ impl Session {
                             let summary = tool_summary(&name, &block["input"]);
                             let input = serde_json::to_string_pretty(&block["input"]).unwrap_or_default();
                             let id = block["id"].as_str().unwrap_or("").to_string();
-                            self.items.push(Item::ToolUse { id, name, summary, input });
+                            // Only a call watched live has a start; a log's are long done.
+                            let started = self.child.is_some().then(Instant::now);
+                            let timing = Timing { started, took: None };
+                            self.items.push(Item::ToolUse { id, name, summary, input, timing });
                         }
                         _ => {}
                     }
@@ -944,6 +981,7 @@ impl Session {
                         let id = block["tool_use_id"].as_str().unwrap_or("").to_string();
                         let content = tool_result_text(&block["content"]);
                         self.tasks.tool_result(&id, &content);
+                        self.finish_call(&id);
                         // Read back from a log, screenshots stay there until shown.
                         let images = match &self.origin {
                             Some(origin) => {
@@ -1037,16 +1075,35 @@ impl Session {
         (tools, files)
     }
 
-    /// Thinking cut short (the turn was stopped, the process ended) stops
-    /// counting where it is.
+    /// Thinking and tool calls cut short (the turn was stopped, the process
+    /// ended) stop counting where they are.
     fn settle_thoughts(&mut self) {
         for item in self.items.iter_mut().rev().take_while(|i| !matches!(i, Item::Result { .. })) {
-            if let Item::Thinking(t) = item
-                && t.is_live()
-            {
-                t.finish("");
+            match item {
+                Item::Thinking(t) if t.is_live() => t.finish(""),
+                Item::ToolUse { timing, .. } => timing.finish(),
+                _ => {}
             }
         }
+    }
+
+    /// Call `id`'s result came: its time stops.
+    fn finish_call(&mut self, id: &str) {
+        let call = self.items.iter_mut().rev().find_map(|i| match i {
+            Item::ToolUse { id: c, timing, .. } if c == id => Some(timing),
+            _ => None,
+        });
+        if let Some(timing) = call {
+            timing.finish();
+        }
+    }
+
+    /// A call with a time limit is running: its elapsed time ticks in the transcript.
+    pub fn timed_call_running(&self) -> bool {
+        self.busy
+            && self.items.iter().rev().take_while(|i| !matches!(i, Item::User { .. })).any(|i| {
+                matches!(i, Item::ToolUse { input, timing, .. } if timing.is_running() && timeout_ms(input).is_some())
+            })
     }
 
     fn handle_stream(&mut self, ev: &Value) {
@@ -1468,6 +1525,42 @@ mod tests {
         let Some(Item::Result { tools, files, .. }) = s.items.last() else { panic!("no result") };
         assert_eq!(*tools, 4);
         assert_eq!(files, &["a.rs", "b.md"]);
+    }
+
+    #[test]
+    fn calls_are_timed_from_start_to_result() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        // From a log (no process): no timing.
+        s.handle(json!({ "type": "assistant", "message": { "content": [
+            { "type": "tool_use", "id": "a", "name": "Bash", "input": { "command": "make", "timeout": 120000 } }
+        ] } }));
+        let Some(Item::ToolUse { timing, input, .. }) = s.items.last() else { panic!("no call") };
+        assert_eq!((*timing, timeout_ms(input)), (Timing::default(), Some(120_000)));
+
+        // Watched live: it runs until its result comes.
+        s.items.push(Item::User { text: "go".into(), images: Vec::new() });
+        let started = Some(Instant::now() - Duration::from_secs(5));
+        let input = r#"{ "command": "make", "timeout": 120000 }"#.to_string();
+        s.items.push(Item::ToolUse {
+            id: "b".into(),
+            name: "Bash".into(),
+            summary: String::new(),
+            input,
+            timing: Timing { started, took: None },
+        });
+        s.busy = true;
+        assert!(s.timed_call_running());
+        assert!(
+            matches!(s.items.last(), Some(Item::ToolUse { timing, .. }) if timing.elapsed().unwrap().as_secs() >= 5)
+        );
+        s.handle(json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "b", "content": "ok" }] } }));
+        assert!(!s.timed_call_running());
+        let Some(Item::ToolUse { timing, .. }) = s.items.iter().rev().find(|i| matches!(i, Item::ToolUse { .. }))
+        else {
+            panic!()
+        };
+        let took = timing.took.expect("stopped");
+        assert!(took.as_secs() >= 5 && timing.elapsed() == Some(took));
     }
 
     #[test]
