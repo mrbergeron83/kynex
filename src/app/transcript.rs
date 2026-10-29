@@ -151,6 +151,18 @@ impl KynexApp {
         let key = self.active_key();
         let count = self.active_session().map_or(0, |s| s.items.len());
         let busy = self.active_session().is_some_and(|s| s.busy);
+        // A session opening: its log is read back off this thread, newest turns first.
+        if count == 0 && self.active_session().is_some_and(|s| s.loading()) {
+            return div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(t.text_placeholder)
+                .child(fade_in("transcript-loading", div().child("Loading the conversation…"), motion::NORMAL))
+                .into_any_element();
+        }
         if count == 0 {
             let msg = match self.saved.active {
                 Active::Chat => "Start a conversation. Uses your Claude Code login, no API key needed.",
@@ -359,6 +371,28 @@ impl KynexApp {
             t.glide.push(distance);
         }
         cx.notify();
+    }
+
+    /// `n` items of history came in front of `key`'s transcript. What's keyed by
+    /// item moves down with them, and so do the list's rows: the view stays on
+    /// what it showed instead of jumping to the oldest message.
+    pub(super) fn history_came(&mut self, key: Key, n: usize) {
+        let shift = |set: &mut std::collections::HashSet<(Key, usize)>| {
+            *set = set.drain().map(|(k, ix)| if k == key { (k, ix + n) } else { (k, ix) }).collect();
+        };
+        shift(&mut self.expanded);
+        shift(&mut self.open_runs);
+        // Turns are counted from the first; work them out again.
+        self.timelines.remove(&key);
+        self.folds.remove(&key);
+        let Some((rows, count)) = self.session_for(key).map(|s| (transcript::rows(&s.items), s.items.len())) else {
+            return;
+        };
+        let Some(thread) = self.threads.get_mut(&key) else { return };
+        let added = rows.len().saturating_sub(thread.rows.len());
+        thread.list.splice(0..0, added);
+        thread.rows = rows;
+        thread.items = count;
     }
 
     /// A turn finished in `key`'s session while it's shown; its transcript

@@ -27,15 +27,24 @@ use crate::ui::{Icon, Lamp, Tooltip, icon_button, lamp, section_label};
 /// Past sessions for the active conversation's folder, re-read when the folder
 /// or the current session changes, or a reply starts or finishes.
 pub struct SessionList {
+    /// What it was read for.
+    pub(super) read: ListRead,
+    pub items: Vec<SessionInfo>,
+    /// Each session's local day of last activity, for the date headers;
+    /// worked out once per read, not every frame.
+    days: HashMap<String, dates::Day>,
+    /// Something it shows changed (a rename, a setting): read it again.
+    stale: bool,
+}
+
+/// What the sessions list is read again for when it changes.
+#[derive(Clone, PartialEq)]
+pub struct ListRead {
     pub(super) cwd: PathBuf,
     current: Option<String>,
     /// The folder's open sessions and whether each is busy: titles and times
     /// move when a reply starts or finishes.
     live: Vec<(Option<String>, bool)>,
-    pub items: Vec<SessionInfo>,
-    /// Each session's local day of last activity, for the date headers;
-    /// worked out once per read, not every frame.
-    days: HashMap<String, dates::Day>,
 }
 
 /// An open session as the sessions panel shows it.
@@ -51,6 +60,42 @@ struct OpenSession {
 }
 
 impl KynexApp {
+    /// Reads the folder's past sessions off the UI thread (each transcript's
+    /// ends); the panel keeps showing the last list until they're in.
+    fn read_sessions(&mut self, read: ListRead, cx: &mut Context<Self>) {
+        self.sessions_reading = Some(read.clone());
+        let cwd = read.cwd.clone();
+        cx.spawn(async move |this, cx| {
+            let mut items = cx.background_spawn(async move { session::list_sessions(&cwd) }).await;
+            this.update(cx, |this, cx| {
+                // A newer read is on its way.
+                if this.sessions_reading.as_ref() != Some(&read) {
+                    return;
+                }
+                this.sessions_reading = None;
+                // A name given by hand wins, and counts as named, so none is generated.
+                for i in &mut items {
+                    if let Some(name) = this.given_name(&read.cwd, &i.id) {
+                        i.title = name;
+                        i.named = true;
+                    }
+                }
+                let days = items.iter().map(|i| (i.id.clone(), dates::local_day(i.modified))).collect();
+                this.sessions = Some(SessionList { read, items, days, stale: false });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Has the sessions list read again, keeping it on screen meanwhile.
+    pub(super) fn reread_sessions(&mut self) {
+        if let Some(l) = &mut self.sessions {
+            l.stale = true;
+        }
+    }
+
     /// The panel with its drag-to-resize right edge, or nothing while collapsed.
     pub(super) fn render_sessions_column(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let open = !self.saved.sessions_collapsed;
@@ -115,22 +160,15 @@ impl KynexApp {
                 finished: s.finished,
             })
             .collect();
-        let live_sig: Vec<(Option<String>, bool)> = open.iter().map(|o| (o.id.clone(), o.busy)).collect();
+        let live: Vec<(Option<String>, bool)> = open.iter().map(|o| (o.id.clone(), o.busy)).collect();
         // Re-read when the folder or session changes, and when a reply starts or finishes (titles and times move).
-        if self.sessions.as_ref().is_none_or(|l| l.cwd != cwd || l.current != current || l.live != live_sig) {
-            let mut items = session::list_sessions(&cwd);
-            // A name given by hand wins, and counts as named, so none is generated.
-            for i in &mut items {
-                if let Some(name) = self.given_name(&cwd, &i.id) {
-                    i.title = name;
-                    i.named = true;
-                }
-            }
-            let days = items.iter().map(|i| (i.id.clone(), dates::local_day(i.modified))).collect();
-            self.sessions =
-                Some(SessionList { items, days, cwd: cwd.clone(), current: current.clone(), live: live_sig });
+        let read = ListRead { cwd: cwd.clone(), current: current.clone(), live };
+        let fresh = self.sessions.as_ref().is_some_and(|l| !l.stale && l.read == read);
+        if !fresh && self.sessions_reading.as_ref() != Some(&read) {
+            self.read_sessions(read, cx);
         }
-        let all = self.sessions.as_ref().unwrap().items.clone();
+        // Until the first read for this folder is in, the list is empty.
+        let all = self.sessions.as_ref().filter(|l| l.read.cwd == cwd).map(|l| l.items.clone()).unwrap_or_default();
         self.name_sessions(&all, cx);
         // The title filter, while it's open.
         let query = if self.filtering_sessions {
@@ -335,7 +373,8 @@ impl KynexApp {
         }
         // The ungrouped sessions under date headers, unless filtering or they
         // all fall on one: then a flat list.
-        let days = &self.sessions.as_ref().unwrap().days;
+        let no_days = HashMap::new();
+        let days = self.sessions.as_ref().map_or(&no_days, |l| &l.days);
         let today = dates::today();
         let dated: Vec<(String, dates::Day)> =
             arranged.top.iter().map(|id| (id.clone(), days.get(id).copied().unwrap_or(today))).collect();

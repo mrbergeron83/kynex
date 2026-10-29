@@ -252,6 +252,73 @@ pub struct Session {
     limits: Option<crate::usage::Limits>,
     /// The log entry a rewind went back to, which the next process continues from.
     resume_at: Option<String>,
+    /// The log being read back, on [`Self::resume`] or a rewind.
+    loader: Option<Loader>,
+}
+
+/// A session log being read back on a thread: its newest turns, then the rest.
+struct Loader {
+    rx: Receiver<Loaded>,
+    /// The newest turns are in.
+    shown: bool,
+}
+
+enum Loaded {
+    Recent(Replayed),
+    Older(Vec<Item>),
+}
+
+/// Log entries replayed into a transcript, and what they say about the session.
+struct Replayed {
+    items: Vec<Item>,
+    context: ContextUse,
+    reply_model: String,
+    tasks: Tasks,
+    finished: bool,
+}
+
+impl Replayed {
+    /// `entries` replayed, oldest first.
+    fn of(entries: impl IntoIterator<Item = Value>) -> Self {
+        let mut s = Session::new(Kind::Chat, PathBuf::new());
+        for v in entries {
+            s.replay_entry(v);
+        }
+        Self {
+            items: std::mem::take(&mut s.items),
+            context: s.context,
+            reply_model: std::mem::take(&mut s.reply_model),
+            tasks: std::mem::take(&mut s.tasks),
+            finished: s.finished,
+        }
+    }
+}
+
+/// Entries to show at once when a session opens; the walk goes on to the start
+/// of their turn, and the rest of the history follows.
+const RECENT_ENTRIES: usize = 60;
+
+/// Reads session `id`'s log back (see [`crate::session_log::Branch`]) into
+/// `tx`. Nothing is sent if there's no log; it stops if `tx` closes.
+fn read_history(cwd: &Path, id: &str, until: Option<&str>, tx: &Sender<Loaded>, wake: &Wake) {
+    use crate::session_log::{Branch, read_span};
+    let send = |l: Loaded| {
+        let sent = tx.send(l).is_ok();
+        wake();
+        sent
+    };
+    let Some(mut file) = find_transcript(cwd, id).and_then(|p| std::fs::File::open(p).ok()) else { return };
+    let walked = Branch { recent: RECENT_ENTRIES }.walk(&mut file, until, |mut recent| {
+        recent.reverse();
+        send(Loaded::Recent(Replayed::of(recent)))
+    });
+    let Ok(Some(walked)) = walked else { return };
+    if walked.older.is_empty() {
+        return;
+    }
+    let mut buf = Vec::new();
+    let older = walked.older.iter().rev().filter_map(|s| read_span(&mut file, *s, &mut buf)).collect::<Vec<_>>();
+    send(Loaded::Older(Replayed::of(older).items));
 }
 
 /// What a session's process reports as it starts (the `initialize` handshake):
@@ -296,53 +363,101 @@ impl Session {
             init: None,
             limits: None,
             resume_at: None,
+            loader: None,
         }
     }
 
     /// Reopen a previous conversation: replay its transcript from Claude Code's
-    /// own session log, and `--resume` it on the next message.
-    pub fn resume(kind: Kind, cwd: PathBuf, id: String) -> Self {
+    /// own session log, and `--resume` it on the next message. The log is read
+    /// on a thread of its own, newest turns first, so this returns at once;
+    /// `wake` rings as they come in, for [`Self::take_history`].
+    pub fn resume(kind: Kind, cwd: PathBuf, id: String, wake: Wake) -> Self {
         let mut s = Self::new(kind, cwd);
         s.session_id = Some(id);
-        if !s.replay(None) {
-            s.items.push(Item::Error("previous transcript not found; continuing the session anyway".into()));
-        }
+        s.wake = wake;
+        s.load(None);
         s
     }
 
-    /// Fills the transcript from the session log's current branch, up to and
-    /// including entry `until` if given. False if there's no log to read.
-    fn replay(&mut self, until: Option<&str>) -> bool {
-        let id = self.session_id.clone().unwrap_or_default();
-        let Some(log) = find_transcript(&self.cwd, &id).and_then(|p| std::fs::read_to_string(p).ok()) else {
-            return false;
-        };
-        for v in crate::rewind::branch(&log) {
-            let last = until.is_some_and(|u| v["uuid"] == u);
-            self.replay_entry(v);
-            if last {
-                break;
+    /// Starts filling the transcript from the session log's current branch, up
+    /// to and including entry `until` if given.
+    fn load(&mut self, until: Option<String>) {
+        let (tx, rx) = channel();
+        let (cwd, id, wake) = (self.cwd.clone(), self.session_id.clone().unwrap_or_default(), self.wake.clone());
+        thread::spawn(move || {
+            read_history(&cwd, &id, until.as_deref(), &tx, &wake);
+            // The last ring comes after the channel closes, so the app sees it closed.
+            drop(tx);
+            wake();
+        });
+        self.loader = Some(Loader { rx, shown: false });
+    }
+
+    /// The log is still being read and its newest turns aren't in yet:
+    /// messages wait in the queue until they are.
+    pub fn loading(&self) -> bool {
+        self.loader.as_ref().is_some_and(|l| !l.shown)
+    }
+
+    /// Takes in the history read back since last time. Returns how many items
+    /// came in front of the ones there were, which moved down by as many, or
+    /// `None` if nothing came. Call it when woken, before [`Self::poll`].
+    pub fn take_history(&mut self) -> Option<usize> {
+        let loader = self.loader.as_mut()?;
+        let mut came = Vec::new();
+        let done = loop {
+            match loader.rx.try_recv() {
+                Ok(l) => came.push(l),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break false,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => break true,
             }
+        };
+        let shown = loader.shown || came.iter().any(|l| matches!(l, Loaded::Recent(_)));
+        loader.shown = shown;
+        if done {
+            self.loader = None;
         }
-        // Replayed ids are this session's own; a slip shouldn't change it.
-        self.session_id = Some(id);
-        self.streaming_text = false;
-        true
+        let mut added = None;
+        for l in came {
+            let n = match l {
+                Loaded::Recent(r) => {
+                    self.context = r.context;
+                    self.reply_model = r.reply_model;
+                    self.tasks = r.tasks;
+                    self.finished |= r.finished;
+                    r.items
+                }
+                Loaded::Older(items) => items,
+            };
+            let after = std::mem::replace(&mut self.items, n);
+            added = Some(added.unwrap_or(0) + self.items.len());
+            self.items.extend(after);
+        }
+        if done && !shown {
+            self.items.insert(0, Item::Error("previous transcript not found; continuing the session anyway".into()));
+            added = Some(added.unwrap_or(0) + 1);
+        }
+        // Messages written while it loaded go out now.
+        if added.is_some() && !self.loading() && !self.busy {
+            self.send_queue_now();
+        }
+        added
     }
 
     /// Goes back to just before `point`: its transcript ends there and the next
     /// message continues from there, leaving out what came after (it stays in
     /// the log, on its own branch). Back to the first message, it starts over
-    /// as a new session. Stops the process; blocks on reading the log.
+    /// as a new session. Stops the process; the log is read back as on [`Self::resume`].
     pub fn rewind_to(&mut self, point: &crate::rewind::Point) {
         self.kill();
         self.items.clear();
         self.context = ContextUse::default();
         self.queue = Queue::default();
         self.finished = false;
+        self.loader = None;
         match &point.before {
             Some(before) => {
-                self.replay(Some(before));
+                self.load(Some(before.clone()));
                 self.resume_at = Some(before.clone());
             }
             None => {
@@ -479,7 +594,13 @@ impl Session {
         }
     }
 
+    /// Sends a message, starting the process if it isn't running. While the
+    /// log is still loading it waits in the queue, to go after the history.
     pub fn send(&mut self, text: String, attachments: Vec<Attachment>) {
+        if self.loading() {
+            self.queue.push(text, attachments);
+            return;
+        }
         if self.child.is_none()
             && let Err(e) = self.spawn()
         {
@@ -990,12 +1111,20 @@ fn transcripts_dir(cwd: &Path) -> Option<PathBuf> {
         None => cwd.to_string_lossy().into_owned(),
     };
     let name: String = path.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    // Looked up once per folder: `~/.claude/projects` can hold hundreds.
+    static FOUND: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();
+    let found = FOUND.get_or_init(Default::default);
+    if let Some(dir) = found.lock().ok()?.get(cwd).filter(|d| d.is_dir()) {
+        return Some(dir.clone());
+    }
     // The drive letter's case depends on who launched Claude (`C:` vs `c:`).
-    std::fs::read_dir(projects_dir(cwd)?)
+    let dir = std::fs::read_dir(projects_dir(cwd)?)
         .ok()?
         .filter_map(Result::ok)
         .map(|d| d.path())
-        .find(|p| p.is_dir() && p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&name)))
+        .find(|p| p.is_dir() && p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&name)))?;
+    found.lock().ok()?.insert(cwd.to_path_buf(), dir.clone());
+    Some(dir)
 }
 
 /// Each session is `<transcripts dir>/<id>.jsonl`.
@@ -1129,7 +1258,8 @@ fn models_from_init(v: &Value) -> Vec<ModelInfo> {
         .collect()
 }
 
-/// Past sessions in `cwd`, newest first.
+/// Past sessions in `cwd`, newest first. Blocks on reading the ends of every
+/// transcript (tens of milliseconds for a big project); call it off the UI thread.
 pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
     let Some(entries) = transcripts_dir(cwd).and_then(|d| std::fs::read_dir(d).ok()) else { return Vec::new() };
     let mut sessions: Vec<SessionInfo> = entries
@@ -1139,10 +1269,9 @@ pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
             if path.extension()? != "jsonl" {
                 return None;
             }
-            let meta = e.metadata().ok();
-            let modified = meta.as_ref().and_then(|m| m.modified().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
+            let modified = e.metadata().ok().and_then(|m| m.modified().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
             let id = path.file_stem()?.to_string_lossy().into_owned();
-            let names = transcript_names(&path, modified, meta.map_or(0, |m| m.len()))?;
+            let names = read_names(&path)?;
             let name = names.title.or_else(|| crate::titles::stored(&id));
             Some(SessionInfo {
                 title: name.clone().unwrap_or_else(|| names.first.clone()),
@@ -1157,46 +1286,60 @@ pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
     sessions
 }
 
-#[derive(Clone)]
 struct Names {
     /// The latest `custom-title`, else the latest `ai-title`.
     title: Option<String>,
     first: String,
 }
 
-/// A transcript's names, or `None` for one with no conversation in it. Titles
-/// can be anywhere in the file, so it's read whole, once per change.
-fn transcript_names(path: &Path, modified: SystemTime, len: u64) -> Option<Names> {
-    type Cache = HashMap<PathBuf, (SystemTime, u64, Option<Names>)>;
-    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
-    let cache = CACHE.get_or_init(Default::default);
-    if let Some((m, l, names)) = cache.lock().ok()?.get(path)
-        && *m == modified
-        && *l == len
-    {
-        return names.clone();
-    }
-    let names = read_names(path);
-    cache.lock().ok()?.insert(path.to_path_buf(), (modified, len, names.clone()));
-    names
+/// How far into a log to look for its first message, and back from its end for its title.
+const HEAD_CAP: u64 = 256 * 1024;
+const TAIL_CAP: u64 = 2 * 1024 * 1024;
+const TAIL_CHUNK: u64 = 64 * 1024;
+
+/// A transcript's names, or `None` for one with no conversation in it. Only
+/// its ends are read: the first message is near the top, and the CLI writes
+/// the title again every turn, so the newest is near the end. Blocks on the file.
+fn read_names(path: &Path) -> Option<Names> {
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    // A first message too big for the head (a pasted screenshot) is looked for further.
+    let first =
+        first_in(&mut file, HEAD_CAP).or_else(|| (len > HEAD_CAP).then(|| first_in(&mut file, u64::MAX)).flatten())?;
+    let (mut custom, mut ai) = (None, None);
+    let title = |line: &[u8], kind: &str, key: &str| {
+        let line = std::str::from_utf8(line).ok().filter(|l| l.contains(kind))?;
+        let v: Value = serde_json::from_str(line).ok()?;
+        v[key].as_str().filter(|t| !t.trim().is_empty()).map(str::to_string)
+    };
+    let _ = crate::session_log::lines_back(&mut file, len, TAIL_CHUNK, TAIL_CAP, |_, line| {
+        custom = title(line, r#""type":"custom-title""#, "customTitle");
+        if ai.is_none() {
+            ai = title(line, r#""type":"ai-title""#, "aiTitle");
+        }
+        custom.is_none()
+    });
+    Some(Names { title: custom.or(ai), first })
 }
 
-fn read_names(path: &Path) -> Option<Names> {
-    let file = std::fs::File::open(path).ok()?;
-    let (mut first, mut custom, mut ai) = (None, None, None);
-    for line in BufReader::new(file).lines() {
-        let Ok(line) = line else { break };
-        if line.contains(r#""type":"custom-title""#) {
-            let v: Value = serde_json::from_str(&line).unwrap_or_default();
-            custom = v["customTitle"].as_str().map(str::to_string).filter(|t| !t.trim().is_empty()).or(custom);
-        } else if line.contains(r#""type":"ai-title""#) {
-            let v: Value = serde_json::from_str(&line).unwrap_or_default();
-            ai = v["aiTitle"].as_str().map(str::to_string).filter(|t| !t.trim().is_empty()).or(ai);
-        } else if first.is_none() && line.contains(r#""type":"user""#) {
-            first = first_message(&line);
+/// The first real user message in the first `cap` bytes of a log.
+fn first_in(file: &mut std::fs::File, cap: u64) -> Option<String> {
+    use std::io::{Read, Seek};
+    file.seek(std::io::SeekFrom::Start(0)).ok()?;
+    let mut reader = BufReader::new((&mut *file).take(cap));
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line).ok()? == 0 {
+            return None;
+        }
+        if let Ok(l) = std::str::from_utf8(&line)
+            && l.contains(r#""type":"user""#)
+            && let Some(first) = first_message(l.trim_end())
+        {
+            return Some(first);
         }
     }
-    Some(Names { title: custom.or(ai), first: first? })
 }
 
 /// The text of a transcript line if it's a real user message (not a tool
@@ -1534,6 +1677,44 @@ mod tests {
         let Some(Item::ToolResult { content, images, .. }) = s.items.last() else { panic!() };
         assert_eq!(content, "shot");
         assert_eq!(images.iter().map(said).collect::<Vec<_>>(), ["image/png 6"]);
+    }
+
+    #[test]
+    fn history_comes_newest_first_and_older_goes_in_front() {
+        let text = |t: &str| json!({ "type": "assistant", "message": { "role": "assistant", "content": [{ "type": "text", "text": t }] } });
+        let said = |s: &Session| {
+            s.items
+                .iter()
+                .filter_map(|i| if let Item::Assistant(t) = i { Some(t.clone()) } else { None })
+                .collect::<Vec<_>>()
+        };
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        let (tx, rx) = channel();
+        s.loader = Some(Loader { rx, shown: false });
+        assert!(s.loading());
+        assert_eq!(s.take_history(), None);
+        // A message sent meanwhile waits for the history.
+        s.send("later".into(), Vec::new());
+        assert_eq!(s.queue.items().len(), 1);
+        assert!(s.items.is_empty());
+        s.queue.remove(0);
+
+        tx.send(Loaded::Recent(Replayed::of([text("c"), text("d")]))).unwrap();
+        assert_eq!(s.take_history(), Some(2));
+        assert!(!s.loading());
+        tx.send(Loaded::Older(Replayed::of([text("a"), text("b")]).items)).unwrap();
+        drop(tx);
+        assert_eq!(s.take_history(), Some(2));
+        assert_eq!(said(&s), ["a", "b", "c", "d"]);
+        assert!(s.loader.is_none());
+
+        // No log at all: the session says so, and carries on.
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        let (tx, rx) = channel::<Loaded>();
+        s.loader = Some(Loader { rx, shown: false });
+        drop(tx);
+        assert_eq!(s.take_history(), Some(1));
+        assert!(matches!(s.items[0], Item::Error(_)) && !s.loading());
     }
 
     #[test]

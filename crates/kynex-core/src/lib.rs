@@ -28,6 +28,7 @@ pub mod questions;
 pub mod queue;
 pub mod rewind;
 pub mod session;
+pub(crate) mod session_log;
 pub mod tasks;
 pub mod terminal;
 pub mod timeline;

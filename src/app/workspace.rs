@@ -83,7 +83,7 @@ impl KynexApp {
         };
         if live.sessions.is_empty() {
             let mut s = match resume {
-                Some(id) => Session::resume(kind, path, id),
+                Some(id) => Session::resume(kind, path, id, wake.clone()),
                 None => Session::new(kind, path),
             };
             s.model = model;
@@ -128,7 +128,7 @@ impl KynexApp {
             g.unarchive(&id);
         });
         if !self.show_open(|s| s.session_id.as_deref() == Some(id.as_str())) {
-            self.open_session(Session::resume(kind, cwd, id));
+            self.open_session(Session::resume(kind, cwd, id, self.wake.clone()));
         }
     }
 

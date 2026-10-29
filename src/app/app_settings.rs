@@ -269,7 +269,7 @@ impl KynexApp {
         self.saved.name_past_sessions = on;
         self.save();
         // Re-read the list so naming picks up (or stops after the current one).
-        self.sessions = None;
+        self.reread_sessions();
         cx.notify();
     }
 

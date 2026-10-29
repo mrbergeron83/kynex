@@ -158,7 +158,7 @@ impl KynexApp {
             Editing::Session { cwd, id, .. } => {
                 self.edit_groups(&cwd, |g| g.rename(&id, &name));
                 // Re-read the list so the new name shows everywhere.
-                self.sessions = None;
+                self.reread_sessions();
             }
         }
         cx.notify();
