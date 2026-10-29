@@ -3,6 +3,7 @@
 //! marked as such; the app runs them off the UI thread.
 
 pub mod attach;
+pub mod attention;
 pub mod cli;
 pub mod column;
 pub mod commands;
@@ -38,5 +39,7 @@ pub mod toasts;
 pub mod transcript;
 pub mod update;
 pub mod usage;
+#[cfg(windows)]
+pub mod win_shell;
 pub mod wsl;
 pub mod zoom;

@@ -27,6 +27,16 @@ fn main() {
     // Images read back from logs and tool results are shown as gpui images.
     kynex_core::session::set_preview_maker(ui::image_viewer::preview);
     gpui_platform::application().with_assets(ui::Assets).run(|cx: &mut App| {
+        // Before any window: the taskbar groups by this ID, and notifications need one.
+        cx.set_app_identity(kynex_core::attention::APP_ID, "Kynex");
+        // Kynex's own shortcuts get the same ID, or a pinned one would sit apart from the window.
+        #[cfg(windows)]
+        if let Ok(exe) = std::env::current_exe() {
+            std::thread::spawn(move || {
+                use kynex_core::win_shell;
+                win_shell::stamp_shortcuts(&win_shell::shortcut_folders(), &exe, kynex_core::attention::APP_ID)
+            });
+        }
         let saved = app::Saved::load();
         theme::set(saved.theme, cx);
         theme::init_fonts(cx);

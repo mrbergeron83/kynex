@@ -25,6 +25,7 @@
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
 //! | `handoff.rs`        | "waiting for you in the browser" banner, Continue    |
+//! | `attention.rs`      | OS notifications and the icon's "needs you" dot     |
 //! | `history.rs`        | ↑ / ↓ history, Ctrl+R search, stash, Esc Esc, editor |
 //! | `rewind.rs`         | rewind to an earlier message: conversation and files |
 //! | `timeline.rs`       | the session's turns and steps beside the transcript  |
@@ -47,6 +48,7 @@ mod about;
 mod app_settings;
 mod app_update;
 mod appearance;
+mod attention;
 mod composer;
 mod drafts;
 mod extensions;
@@ -212,6 +214,14 @@ pub struct KynexApp {
     wheel: SmoothWheel,
     /// An image opened over the window.
     viewer: Option<Entity<ImageViewer>>,
+    /// Why each open session wants you, as of the last check (`attention.rs`).
+    wants: HashMap<Key, kynex_core::attention::Why>,
+    /// The icon's "needs you" dot is on.
+    badged: bool,
+    /// The window's native handle, for the taskbar dot.
+    native_window: isize,
+    /// Kynex is the app in front: no notifications then, and finished turns count as seen.
+    window_active: bool,
     /// Thumbnails of screenshots still in session logs (drawn from `&self`, hence the cell).
     logged: std::cell::RefCell<viewer::LoggedImages>,
     /// The About Kynex modal is open; the installed Claude Code version, once read.
@@ -313,7 +323,9 @@ impl KynexApp {
         })
         .detach();
         // Coming back to Kynex: files may have changed while it was in the background.
+        Self::watch_notification_clicks(window, cx);
         cx.observe_window_activation(window, |this, window, cx| {
+            this.window_active = window.is_window_active();
             if window.is_window_active() {
                 let folders: Vec<PathBuf> = this.worktrees.keys().cloned().collect();
                 this.refresh_worktrees(&folders, cx);
@@ -387,6 +399,10 @@ impl KynexApp {
             calls_ticking: false,
             wheel: SmoothWheel::default(),
             viewer: None,
+            wants: HashMap::new(),
+            badged: false,
+            native_window: attention::native_handle(window),
+            window_active: window.is_window_active(),
             logged: Default::default(),
             about_open: false,
             claude_version: None,
@@ -479,6 +495,7 @@ impl KynexApp {
         }
         self.restart_idle();
         self.sync_session_ids();
+        self.sync_attention(cx);
         cx.notify();
     }
 
@@ -512,12 +529,15 @@ impl Render for KynexApp {
         let view = self.active_project().map(|p| p.view);
         // Create (or resume) the project's session as soon as its tab is shown,
         // so a restored transcript is visible before the first message.
-        // Showing it counts as seeing it finish.
+        // Showing it counts as seeing it finish, while Kynex is in front.
+        let active = window.is_window_active();
         if view != Some(View::Git)
             && let Some(s) = self.session_mut()
+            && active
         {
             s.finished = false;
         }
+        self.sync_attention(cx);
         self.sync_draft(cx);
         self.sync_prompt(window, cx);
         self.sync_toasts(window, cx);

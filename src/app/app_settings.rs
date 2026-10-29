@@ -262,7 +262,29 @@ impl KynexApp {
                 },
             ));
 
-        div().flex().flex_col().gap_6().child(cli).child(shell).child(naming)
+        let notify = self.saved.notify;
+        let notifications = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(heading(
+                "Notifications",
+                "While Kynex is in the background. Its icon shows a dot whenever a session needs you.",
+                t,
+            ))
+            .children([(false, "Off"), (true, "Notify when a session finishes or needs you")].into_iter().map(
+                |(on, label)| {
+                    choice(("notify", usize::from(on)), notify == on, label.into(), t).on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            this.saved.notify = on;
+                            this.save();
+                            cx.notify();
+                        },
+                    ))
+                },
+            ));
+
+        div().flex().flex_col().gap_6().child(cli).child(shell).child(naming).child(notifications)
     }
 
     fn set_name_past_sessions(&mut self, on: bool, cx: &mut Context<Self>) {
