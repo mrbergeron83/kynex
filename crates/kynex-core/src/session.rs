@@ -202,6 +202,7 @@ pub enum Item {
         duration_ms: u64,
         is_error: bool,
         tools: usize,
+        /// The files it edited, as the tools were given them (usually absolute).
         files: Vec<String>,
     },
     /// A background task ended (or a Monitor saw something); Claude's turn about it follows.
@@ -298,6 +299,8 @@ pub struct Session {
     rx: Option<Receiver<Event>>,
     streaming_text: bool,
     next_request: u64,
+    /// `stop_task` requests awaiting an answer: request id → task id.
+    stopping: HashMap<String, String>,
     /// The model that wrote the last reply, whose window `context` is measured against.
     reply_model: String,
     /// What the process reported when it started, until the app takes it.
@@ -421,6 +424,7 @@ impl Session {
             rx: None,
             streaming_text: false,
             next_request: 0,
+            stopping: HashMap::new(),
             reply_model: String::new(),
             init: None,
             limits: None,
@@ -714,10 +718,21 @@ impl Session {
         }
     }
 
-    fn control(&mut self, request: Value) {
+    /// Stops background task `id` (as the CLI's own task list does). It stays
+    /// in `tasks.running`, marked stopping, until the CLI reports it stopped.
+    pub fn stop_task(&mut self, id: &str) {
+        let Some(task) = self.tasks.running.iter_mut().find(|t| t.id == id && !t.stopping) else { return };
+        task.stopping = true;
+        let request = self.control(json!({ "subtype": "stop_task", "task_id": id }));
+        self.stopping.insert(request, id.to_string());
+    }
+
+    /// Sends a control request; returns its id.
+    fn control(&mut self, request: Value) -> String {
         self.next_request += 1;
         let id = format!("kynex-{}", self.next_request);
         self.write(json!({ "type": "control_request", "request_id": id, "request": request }));
+        id
     }
 
     /// Answers a permission prompt. For [`Answer::Project`] it returns the rules
@@ -850,6 +865,7 @@ impl Session {
         self.busy = false;
         self.settle_thoughts();
         self.tasks.clear();
+        self.stopping.clear();
         // Nobody is left to answer them.
         self.cancel_permissions(|_| true);
     }
@@ -911,6 +927,20 @@ impl Session {
             "control_response" if v["response"]["request_id"] == INIT_ID => {
                 let r = &v["response"]["response"];
                 self.init = Some(Init { commands: crate::commands::from_init(r), models: models_from_init(r) });
+            }
+            // The answer to a Stop: on success the task's end follows as a notification.
+            "control_response"
+                if v["response"]["request_id"].as_str().is_some_and(|r| self.stopping.contains_key(r)) =>
+            {
+                let request = v["response"]["request_id"].as_str().unwrap_or("");
+                let task = self.stopping.remove(request).unwrap_or_default();
+                if v["response"]["subtype"] == "error" {
+                    if let Some(t) = self.tasks.running.iter_mut().find(|t| t.id == task) {
+                        t.stopping = false;
+                    }
+                    let why = v["response"]["error"].as_str().unwrap_or("the CLI refused");
+                    self.items.push(Item::Error(format!("Couldn't stop the background task: {why}")));
+                }
             }
             "rate_limit_event" => {
                 if let Some(limits) = crate::usage::parse(&v) {
@@ -1054,7 +1084,7 @@ impl Session {
         }
     }
 
-    /// Tool calls since the last user message, and the file names they wrote to.
+    /// Tool calls since the last user message, and the paths they wrote to.
     fn turn_recap(&self) -> (usize, Vec<String>) {
         let start = self.items.iter().rposition(|i| matches!(i, Item::User { .. })).map_or(0, |i| i + 1);
         let mut tools = 0;
@@ -1067,9 +1097,8 @@ impl Session {
             }
             let v: Value = serde_json::from_str(input).unwrap_or_default();
             let path = v["file_path"].as_str().or(v["notebook_path"].as_str()).unwrap_or("");
-            let file = Path::new(path).file_name().map(|f| f.to_string_lossy().into_owned());
-            if let Some(f) = file.filter(|f| !files.contains(f)) {
-                files.push(f);
+            if !path.is_empty() && !files.iter().any(|f| f == path) {
+                files.push(path.to_string());
             }
         }
         (tools, files)
@@ -1524,7 +1553,7 @@ mod tests {
         assert!(!s.busy && s.finished);
         let Some(Item::Result { tools, files, .. }) = s.items.last() else { panic!("no result") };
         assert_eq!(*tools, 4);
-        assert_eq!(files, &["a.rs", "b.md"]);
+        assert_eq!(files, &["C:/x/a.rs", "/y/b.md"]);
     }
 
     #[test]
@@ -1790,6 +1819,29 @@ mod tests {
             "status": "completed", "output_file": "/tmp/b1.output", "summary": "Background command \"Watch CI\" completed (exit code 0)" }));
         assert!(!s.has_tasks() && s.wants_you());
         assert!(matches!(s.items.last(), Some(Item::Task(n)) if n.status == tasks::Status::Completed));
+    }
+
+    #[test]
+    fn stopping_a_task_waits_for_the_cli() {
+        let mut s = Session::new(Kind::Code, std::env::temp_dir());
+        s.handle(json!({ "type": "system", "subtype": "task_started", "task_id": "b1", "tool_use_id": "toolu_1",
+            "description": "Watch CI", "task_type": "local_bash" }));
+        // Refused: it runs on, and says why.
+        s.stop_task("b1");
+        assert!(s.tasks.running[0].stopping);
+        s.handle(json!({ "type": "control_response", "response": { "subtype": "error", "request_id": "kynex-1",
+            "error": "no such task" } }));
+        assert!(!s.tasks.running[0].stopping);
+        assert!(matches!(s.items.last(), Some(Item::Error(e)) if e.contains("no such task")));
+        // Accepted: it stays, stopping, until the CLI says it stopped.
+        s.stop_task("b1");
+        s.stop_task("b1");
+        s.handle(json!({ "type": "control_response", "response": { "subtype": "success", "request_id": "kynex-2" } }));
+        assert!(s.tasks.running[0].stopping && s.stopping.is_empty());
+        s.handle(json!({ "type": "system", "subtype": "task_notification", "task_id": "b1", "tool_use_id": "toolu_1",
+            "status": "stopped", "summary": "Background command \"Watch CI\" was stopped" }));
+        assert!(!s.has_tasks());
+        assert!(matches!(s.items.last(), Some(Item::Task(n)) if n.status == tasks::Status::Stopped));
     }
 
     #[test]

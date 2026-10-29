@@ -1,12 +1,14 @@
 //! What a request will do, in words and as a preview: titles, the "don't ask
 //! again" wording, and diffs of the edits it makes.
 
-use gpui::{div, prelude::*, px};
+use gpui::{StyledText, div, prelude::*, px};
 use serde_json::Value;
 
+use kynex_core::highlight::{Lang, Side};
 use kynex_core::{mcp, project};
 
 use crate::theme::{Palette, mono};
+use crate::ui::code;
 
 /// The headline for a request, e.g. "Allow Claude to run this command?".
 pub fn title(tool: &str, input: &Value) -> String {
@@ -110,25 +112,28 @@ pub fn preview(tool: &str, input: &Value, t: &Palette) -> impl IntoElement + use
             .map(|p| div().font_family(mono()).text_xs().text_color(t.text_muted).pb_1().child(p.to_string()))
     };
     let el = div().flex().flex_col();
+    let path = input["file_path"].as_str();
     match tool {
         "Bash" | "PowerShell" => el.child(code(input["command"].as_str().unwrap_or(""))),
         "Edit" => el.children(path_line(input)).child(diff_lines(
+            path,
             input["old_string"].as_str().unwrap_or(""),
             input["new_string"].as_str().unwrap_or(""),
             t,
         )),
-        "MultiEdit" => {
-            el.children(path_line(input)).children(input["edits"].as_array().into_iter().flatten().enumerate().map(
-                |(n, e)| {
-                    div().when(n > 0, |d| d.mt_2().pt_2().border_t_1().border_color(t.border_variant)).child(
-                        diff_lines(e["old_string"].as_str().unwrap_or(""), e["new_string"].as_str().unwrap_or(""), t),
-                    )
-                },
-            ))
+        "MultiEdit" => el.children(path_line(input)).children(
+            input["edits"].as_array().into_iter().flatten().enumerate().map(|(n, e)| {
+                let (old, new) = (e["old_string"].as_str().unwrap_or(""), e["new_string"].as_str().unwrap_or(""));
+                div()
+                    .when(n > 0, |d| d.mt_2().pt_2().border_t_1().border_color(t.border_variant))
+                    .child(diff_lines(path, old, new, t))
+            }),
+        ),
+        "Write" => {
+            el.children(path_line(input)).child(diff_lines(path, "", input["content"].as_str().unwrap_or(""), t))
         }
-        "Write" => el.children(path_line(input)).child(diff_lines("", input["content"].as_str().unwrap_or(""), t)),
         "NotebookEdit" => {
-            el.children(path_line(input)).child(diff_lines("", input["new_source"].as_str().unwrap_or(""), t))
+            el.children(path_line(input)).child(diff_lines(None, "", input["new_source"].as_str().unwrap_or(""), t))
         }
         "Read" => el.children(path_line(input)),
         "WebFetch" => el.child(code(input["url"].as_str().unwrap_or(""))).children(
@@ -154,27 +159,52 @@ pub fn diff(old: &str, new: &str) -> Vec<(char, String)> {
     lines
 }
 
-fn diff_lines(old: &str, new: &str, t: &Palette) -> impl IntoElement + use<> {
+/// The edit as diff lines, highlighted for `path`'s language, on the add / remove colours.
+fn diff_lines(path: Option<&str>, old: &str, new: &str, t: &Palette) -> impl IntoElement + use<> {
     const MAX_LINES: usize = 400;
-    let lines = diff(old, new);
+    let mut lines = diff(old, new);
     let more = lines.len().saturating_sub(MAX_LINES);
-    let (add_bg, del_bg) = (t.diff_add, t.diff_del);
+    lines.truncate(MAX_LINES);
+    let tokens = path.and_then(Lang::from_path).map(|lang| {
+        let sides: Vec<_> = lines.iter().map(|(sign, line)| (side(*sign), line.as_str())).collect();
+        code::diff_tokens(lang, &sides)
+    });
+    let syntax = t.syntax;
     div()
         .flex()
         .flex_col()
         .font_family(mono())
-        .text_size(px(13.))
-        .children(lines.into_iter().take(MAX_LINES).map(move |(sign, line)| {
-            let row = div().flex().px_1().child(div().w(px(14.)).flex_none().child(sign.to_string())).child(line);
-            match sign {
-                '+' => row.bg(add_bg).text_color(t.success),
-                '-' => row.bg(del_bg).text_color(t.error),
-                _ => row.text_color(t.text_muted),
-            }
+        .text_size(px(12.))
+        .line_height(px(18.))
+        .children(lines.into_iter().enumerate().map(move |(i, (sign, line))| {
+            let styles = tokens.as_ref().map(|all| code::styles(&all[i], &syntax)).unwrap_or_default();
+            let text = StyledText::new(line).with_highlights(styles);
+            let (bg, mark) = match sign {
+                '+' => (Some(t.diff_add), t.success),
+                '-' => (Some(t.diff_del), t.error),
+                _ => (None, t.text_placeholder),
+            };
+            div()
+                .flex()
+                .min_w_full()
+                .whitespace_nowrap()
+                .text_color(t.text)
+                .when_some(bg, |d, bg| d.bg(bg))
+                .child(div().w(px(14.)).flex_none().flex().justify_center().text_color(mark).child(sign.to_string()))
+                .child(div().pr_2().child(text))
         }))
         .when(more > 0, |d| {
-            d.child(div().pt_1().text_xs().text_color(t.text_muted).child(format!("… {more} more lines")))
+            d.child(div().px_2().py_1().text_xs().text_color(t.text_muted).child(format!("… {more} more lines")))
         })
+}
+
+/// Which side of a diff a line of [`diff`] is on.
+fn side(sign: char) -> Side {
+    match sign {
+        '+' => Side::New,
+        '-' => Side::Old,
+        _ => Side::Both,
+    }
 }
 
 #[cfg(test)]

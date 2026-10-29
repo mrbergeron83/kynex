@@ -5,35 +5,50 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{BuildHasher, RandomState};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ClipboardItem, ElementId, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
-    UnderlineStyle, Window, div, prelude::*, px,
+    AnyElement, App, Axis, Bounds, ClipboardItem, DispatchPhase, ElementId, FontStyle, FontWeight, HighlightStyle,
+    MouseMoveEvent, Pixels, ScrollHandle, SharedString, StrikethroughStyle, UnderlineStyle, Window, canvas, div,
+    prelude::*, px,
 };
+use kynex_core::highlight::Lang;
 use kynex_core::markdown::{self, Block, Doc, Inline, ListItem, TableRow};
 use kynex_core::terminal::ShellKind;
 
+use crate::file_links;
 use crate::theme::{Palette, mono, theme};
-use crate::ui::selectable::{Spot, selectable};
-use crate::ui::{Icon, Tooltip, icon, icon_button};
+use crate::ui::selectable::{self, Link, Spot, selectable};
+use crate::ui::{Icon, Tooltip, code, icon, icon_button, scrollbar};
 
 /// Runs a suggested shell command (a ```bash or ```powershell block) somewhere.
 pub type RunCommand = Rc<dyn Fn(ShellKind, String, &mut Window, &mut App)>;
 
 /// Renders `src` as a column of blocks. `id` keeps element ids (copy buttons)
 /// unique across messages; the text is selectable as item `item` of selection
-/// group `group`. With `run`, shell code blocks get a play button that calls it.
+/// group `group`. With `run`, shell code blocks get a play button that calls it;
+/// with `cwd`, paths to files under it link to them.
 pub fn render(
     id: impl Into<ElementId>,
     src: &str,
     group: u64,
     item: usize,
     run: Option<RunCommand>,
+    cwd: Option<&Path>,
     cx: &App,
 ) -> AnyElement {
     let doc = parsed(group, item, src);
-    let mut b = Builder { id: id.into(), p: theme(cx).clone(), cx, counter: 0, select: (group, item), blocks: 0, run };
+    let mut b = Builder {
+        id: id.into(),
+        p: theme(cx).clone(),
+        cx,
+        counter: 0,
+        select: (group, item),
+        blocks: 0,
+        run,
+        cwd: cwd.map(Path::to_path_buf),
+    };
     let blocks = b.blocks(&doc);
     div().flex().flex_col().gap_2().children(blocks).into_any_element()
 }
@@ -64,6 +79,51 @@ fn parsed(group: u64, item: usize, src: &str) -> Rc<Doc> {
     })
 }
 
+thread_local! {
+    /// Code blocks' sideways scroll, by selection group, item and element number.
+    static CODE_SCROLL: RefCell<HashMap<(u64, usize, usize), ScrollHandle>> = RefCell::default();
+}
+
+/// The scroll handle of a code block, kept across frames.
+fn code_scroll((group, item): (u64, usize), n: usize) -> ScrollHandle {
+    CODE_SCROLL.with_borrow_mut(|all| {
+        if all.len() >= 4096 && !all.contains_key(&(group, item, n)) {
+            all.clear();
+        }
+        all.entry((group, item, n)).or_default().clone()
+    })
+}
+
+/// Pixels from either side of a code block where a drag-selection scrolls it.
+const EDGE: f32 = 32.;
+
+/// While a selection is dragged out of a code block's sides, scrolls the code
+/// after it, so a line longer than the block can be selected whole.
+fn follow_drag(scroll: ScrollHandle, bounds: Bounds<Pixels>, group: u64, spot: Spot, window: &mut Window) {
+    window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
+        if phase != DispatchPhase::Bubble || !e.dragging() || !selectable::dragging_from(group, spot, cx) {
+            return;
+        }
+        let x = f32::from(e.position.x);
+        let (left, right) = (f32::from(bounds.left()) + EDGE, f32::from(bounds.right()) - EDGE);
+        let step = if x > right {
+            x - right
+        } else if x < left {
+            x - left
+        } else {
+            return;
+        };
+        let mut o = scroll.offset();
+        let max = f32::from(scroll.max_offset().x);
+        let to = (-f32::from(o.x) + step).clamp(0., max.max(0.));
+        if (to + f32::from(o.x)).abs() > 0.5 {
+            o.x = px(-to);
+            scroll.set_offset(o);
+            window.refresh();
+        }
+    });
+}
+
 struct Builder<'a> {
     id: ElementId,
     p: Palette,
@@ -73,6 +133,8 @@ struct Builder<'a> {
     select: (u64, usize),
     blocks: usize,
     run: Option<RunCommand>,
+    /// The session's folder, for linking file paths; none links nothing.
+    cwd: Option<PathBuf>,
 }
 
 impl Builder<'_> {
@@ -161,19 +223,38 @@ impl Builder<'_> {
             if let Some(url) = &span.link {
                 style.color = Some(self.p.accent);
                 style.underline = Some(UnderlineStyle { thickness: px(1.), color: Some(self.p.accent), wavy: false });
-                links.push((span.range.clone(), url.clone()));
+                links.push((span.range.clone(), Link::Url(url.clone())));
             }
             highlights.push((span.range.clone(), style));
         }
-        selectable(self.select.0, spot, inline.text.clone(), self.p.selection)
-            .styled(|t| t.with_highlights(highlights).with_font_family_overrides(fonts))
-            .links(links)
+        // Paths to files in the project (`src/app/mod.rs:123`) open in the editor.
+        if let Some(cwd) = &self.cwd {
+            let files: Vec<_> = file_links::find(cwd, &inline.text, self.cx)
+                .into_iter()
+                .filter(|(r, _)| !links.iter().any(|(u, _)| u.start < r.end && r.start < u.end))
+                .collect();
+            if !files.is_empty() {
+                let accent = HighlightStyle { color: Some(self.p.accent), ..Default::default() };
+                let over = files.iter().map(|(r, _)| (r.clone(), accent)).collect::<Vec<_>>();
+                highlights = gpui::combine_highlights(highlights, over).collect();
+                links.extend(files);
+            }
+        }
+        selectable(self.select.0, spot, inline.text.clone(), self.p.text_selection)
+            .highlights(highlights)
+            .fonts(fonts)
+            .links(links, self.p.accent)
             .into_any_element()
     }
 
+    /// A code block: a header row with the language, Run and Copy above the code,
+    /// so they never cover it; lines stay unwrapped and the code scrolls sideways
+    /// (a scrollbar, Shift+wheel, or dragging a selection past its edge).
     fn code_block(&mut self, lang: &str, code: &str) -> AnyElement {
         let copy_id = self.next_id("copy");
         let scroll_id = self.next_id("code");
+        let bar_id = self.next_id("code-bar");
+        let scroll = code_scroll(self.select, self.counter);
         let to_copy = code.to_string();
         // Suggested shell commands get a play button; it stays visible so it's found.
         let play = ShellKind::for_lang(lang).zip(self.run.clone()).map(|(shell, run)| {
@@ -181,13 +262,10 @@ impl Builder<'_> {
             let success = self.p.success;
             div()
                 .id(self.next_id("run"))
-                .absolute()
-                .top_1()
-                .right_1()
                 .flex()
                 .items_center()
                 .justify_center()
-                .size(px(24.))
+                .size(px(22.))
                 .rounded_md()
                 .cursor_pointer()
                 .hover(move |s| s.bg(success.opacity(0.15)))
@@ -195,50 +273,67 @@ impl Builder<'_> {
                 .tooltip(Tooltip::with_meta(format!("Run in {}", shell.label()), "In this project's terminal, below"))
                 .on_click(move |_, window, cx| run(shell, command.clone(), window, cx))
         });
-        let has_play = play.is_some();
-        let text = selectable(self.select.0, self.next_spot(), code.to_string(), self.p.selection);
+        let (group, spot) = (self.select.0, self.next_spot());
+        let styles = code::highlighted(Lang::from_fence(lang), code, &self.p.syntax);
+        let text = selectable(group, spot, code.to_string(), self.p.text_selection).highlights(styles);
         let p = &self.p;
+        let header = div()
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap_1()
+            .h(px(28.))
+            .pl_3()
+            .pr_1()
+            .when(!lang.is_empty(), |d| {
+                d.child(div().flex_1().text_size(px(11.)).text_color(p.text_placeholder).child(lang.to_string()))
+            })
+            .child(
+                div().invisible().group_hover("code", |s| s.visible()).child(
+                    icon_button(copy_id, Icon::Copy, self.cx)
+                        .tooltip(Tooltip::text("Copy"))
+                        .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(to_copy.clone()))),
+                ),
+            )
+            .children(play);
+        let follow = scroll.clone();
         div()
             .group("code")
-            .relative()
             .flex()
             .flex_col()
             .rounded_md()
             .border_1()
             .border_color(p.border_variant)
             .bg(p.element)
+            .child(header)
             .child(
                 div()
-                    .id(scroll_id)
-                    .overflow_x_scroll()
-                    // A wheel turned over it scrolls the transcript, not the code sideways.
-                    .restrict_scroll_to_axis()
-                    .px_3()
-                    .py_2()
-                    .font_family(mono())
-                    .text_size(px(13.))
-                    .child(div().whitespace_nowrap().child(text)),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top_1()
-                    .map(|d| if has_play { d.right(px(30.)) } else { d.right_1() })
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .invisible()
-                    .group_hover("code", |s| s.visible())
-                    .when(!lang.is_empty(), |d| {
-                        d.child(div().text_xs().text_color(p.text_placeholder).child(lang.to_string()))
-                    })
+                    .relative()
                     .child(
-                        icon_button(copy_id, Icon::Copy, self.cx).tooltip(Tooltip::text("Copy")).on_click(
-                            move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(to_copy.clone())),
-                        ),
-                    ),
+                        div()
+                            .id(scroll_id)
+                            .overflow_x_scroll()
+                            // A wheel turned over it scrolls the transcript, not the code sideways.
+                            .restrict_scroll_to_axis()
+                            .track_scroll(&scroll)
+                            .px_3()
+                            .pb_3()
+                            .font_family(mono())
+                            .text_size(px(13.))
+                            // As wide as its longest line, so there is something to scroll.
+                            .flex()
+                            .child(div().flex_none().whitespace_nowrap().child(text)),
+                    )
+                    .child(
+                        canvas(
+                            |_, _, _| {},
+                            move |bounds, _, window, _| follow_drag(follow, bounds, group, spot, window),
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
+                    .child(scrollbar::scrollbar(bar_id, scroll, Axis::Horizontal)),
             )
-            .children(play)
             .into_any_element()
     }
 

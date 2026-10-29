@@ -5,6 +5,7 @@
 
 mod app;
 mod chrome;
+mod file_links;
 mod git;
 mod markdown;
 mod prompt;

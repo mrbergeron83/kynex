@@ -8,7 +8,7 @@ use super::diff_view::split_path;
 use super::{GitView, Selection};
 use crate::theme::{Palette, mono, theme};
 use crate::ui::wash::row_wash;
-use crate::ui::{Icon, Tooltip, icon, icon_button, section_label};
+use crate::ui::{Icon, Tooltip, icon, icon_button, scrollbar, section_label};
 
 impl GitView {
     pub(super) fn render_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -45,12 +45,19 @@ impl GitView {
             );
         }
 
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .child(self.commit_box(staged.len(), unstaged.len(), window, cx))
-            .child(div().id("git-files").flex_1().min_h_0().overflow_y_scroll().px_1p5().pb_2().children(list))
+        div().flex().flex_col().size_full().child(self.commit_box(staged.len(), unstaged.len(), window, cx)).child({
+            let scroll = scrollbar::handle(gpui::ElementId::Name(format!("git-files:{}", self.root.display()).into()));
+            let area = div()
+                .id("git-files")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&scroll)
+                .px_1p5()
+                .pb_2()
+                .children(list);
+            scrollbar::vertical_over("git-files-bar", scroll, area, |d| d.flex_1().min_h_0())
+        })
     }
 
     fn commit_box(

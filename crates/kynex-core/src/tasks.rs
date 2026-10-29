@@ -56,6 +56,8 @@ pub struct Task {
     pub started: Instant,
     /// An agent's latest tool, from its progress reports.
     pub last_tool: Option<String>,
+    /// Asked to stop; it leaves `running` once the CLI reports it stopped.
+    pub stopping: bool,
 }
 
 /// A task ended (or a Monitor saw something), for the transcript.
@@ -100,6 +102,7 @@ impl Tasks {
                     output_file,
                     started: Instant::now(),
                     last_tool: None,
+                    stopping: false,
                 });
                 None
             }

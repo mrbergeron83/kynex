@@ -54,18 +54,25 @@ pub fn ago_unix(secs: i64) -> String {
 }
 
 /// The one-line recap after a turn: "12.3s · 4 tool calls · edited a.rs, b.rs · $0.05".
+/// `files` are paths; the recap names them.
 pub fn recap(duration_ms: u64, tools: usize, files: &[String], cost: f64) -> String {
     let mut parts = vec![duration(duration_ms)];
     if tools > 0 {
         parts.push(format!("{tools} tool call{}", if tools == 1 { "" } else { "s" }));
     }
-    match files.len() {
+    let names: Vec<&str> = files.iter().map(|f| file_name(f)).collect();
+    match names.len() {
         0 => {}
-        1..=3 => parts.push(format!("edited {}", files.join(", "))),
-        n => parts.push(format!("edited {}, {} and {} more", files[0], files[1], n - 2)),
+        1..=3 => parts.push(format!("edited {}", names.join(", "))),
+        n => parts.push(format!("edited {}, {} and {} more", names[0], names[1], n - 2)),
     }
     parts.push(format!("${cost:.2}"));
     parts.join(" · ")
+}
+
+/// The last part of a path, with either separator: `C:\x\main.rs` → `main.rs`.
+pub fn file_name(path: &str) -> &str {
+    path.rsplit(['/', '\\']).find(|n| !n.is_empty()).unwrap_or(path)
 }
 
 /// A token count, short: "950", "36k", "1.2M".
@@ -190,7 +197,8 @@ mod tests {
     #[test]
     fn recaps() {
         assert_eq!(recap(1_000, 0, &[], 0.0), "1.0s · $0.00");
-        assert_eq!(recap(1_000, 1, &["a.rs".into()], 0.5), "1.0s · 1 tool call · edited a.rs · $0.50");
+        assert_eq!(recap(1_000, 1, &["C:\\w\\a.rs".into()], 0.5), "1.0s · 1 tool call · edited a.rs · $0.50");
+        assert_eq!(file_name("/w/src/"), "src");
         let files: Vec<String> = ["a", "b", "c", "d", "e"].map(String::from).into();
         assert_eq!(recap(1_000, 5, &files, 0.0), "1.0s · 5 tool calls · edited a, b and 3 more · $0.00");
     }

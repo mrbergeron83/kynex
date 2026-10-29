@@ -106,3 +106,17 @@ path = "fuzz_targets/mcp_config.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "file_links"
+path = "fuzz_targets/file_links.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "highlight"
+path = "fuzz_targets/highlight.rs"
+test = false
+doc = false
+bench = false

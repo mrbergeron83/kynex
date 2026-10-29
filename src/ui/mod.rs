@@ -1,12 +1,14 @@
 //! Kynex's handful of components, in the spirit of Zed's `ui` crate: small
 //! `RenderOnce`-style builders over `div`, styled from the theme global.
 
+pub mod code;
 pub mod completions;
 pub mod ease_height;
 pub mod image_viewer;
 pub mod input;
 pub mod mark;
 pub mod motion;
+pub mod scrollbar;
 pub mod selectable;
 pub mod smooth_scroll;
 pub mod wash;

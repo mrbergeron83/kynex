@@ -7,7 +7,7 @@ use kynex_core::git::{self, Branch, Head, Sync};
 
 use super::GitView;
 use crate::theme::{Palette, mono, theme};
-use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, outline_button, popover, spinner};
+use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, outline_button, popover, scrollbar, spinner};
 
 impl GitView {
     pub(super) fn render_top_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -201,7 +201,16 @@ impl GitView {
                                 ),
                         )
                         .child(div().my_1().h(px(1.)).bg(t.border_variant))
-                        .child(div().id("git-branch-list").max_h(px(320.)).overflow_y_scroll().children(rows)),
+                        .child({
+                            let scroll = scrollbar::handle("git-branch-list");
+                            let area = div()
+                                .id("git-branch-list")
+                                .max_h(px(320.))
+                                .overflow_y_scroll()
+                                .track_scroll(&scroll)
+                                .children(rows);
+                            scrollbar::vertical_over("git-branch-bar", scroll, area, |d| d)
+                        }),
                 ),
             ))
             .into_any_element()

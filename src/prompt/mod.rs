@@ -26,7 +26,7 @@ use kynex_core::session::{Answer, Kind};
 use crate::markdown;
 use crate::theme::{Palette, mono, theme};
 use crate::ui::input::{InputEvent, TextInput};
-use crate::ui::{Icon, icon};
+use crate::ui::{Icon, icon, scrollbar};
 pub use preview::{diff_stat, preview, title};
 use preview::{rules_label, session_label};
 
@@ -341,18 +341,18 @@ impl PromptView {
             .gap_2()
             .child(self.header(cx))
             .when(show_desc, |d| d.child(div().text_sm().text_color(t.text_muted).child(self.req.description.clone())))
-            .child(
-                div()
-                    .id("preview")
-                    .max_h(max_h)
-                    .overflow_y_scroll()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(t.border_variant)
-                    .bg(t.editor)
-                    .p_2()
-                    .child(preview(&self.req.tool, &self.req.input, &t)),
-            )
+            .child({
+                let scroll = scrollbar::handle("preview");
+                let area =
+                    div().id("preview").max_h(max_h).overflow_y_scroll().track_scroll(&scroll).p_2().child(preview(
+                        &self.req.tool,
+                        &self.req.input,
+                        &t,
+                    ));
+                scrollbar::vertical_over("preview-bar", scroll, area, |d| {
+                    d.rounded_md().overflow_hidden().border_1().border_color(t.border_variant).bg(t.editor)
+                })
+            })
             .child(self.choice_list(cx))
     }
 
@@ -365,20 +365,21 @@ impl PromptView {
             .flex_col()
             .gap_2()
             .child(self.header(cx))
-            .child(
-                div()
+            .child({
+                let scroll = scrollbar::handle("plan");
+                let area = div()
                     .id("plan")
                     .max_h(max_h)
                     .overflow_y_scroll()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(t.border_variant)
-                    .bg(t.editor)
+                    .track_scroll(&scroll)
                     .px_3()
                     .py_2()
                     .text_sm()
-                    .child(markdown::render("plan-md", &plan, 0, 0, None, cx)),
-            )
+                    .child(markdown::render("plan-md", &plan, 0, 0, None, None, cx));
+                scrollbar::vertical_over("plan-bar", scroll, area, |d| {
+                    d.rounded_md().overflow_hidden().border_1().border_color(t.border_variant).bg(t.editor)
+                })
+            })
             .child(self.choice_list(cx))
     }
 

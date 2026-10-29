@@ -70,6 +70,8 @@ pub struct GitView {
     confirm_discard: Option<String>,
     history_scroll: UniformListScrollHandle,
     diff_scroll: UniformListScrollHandle,
+    /// A file to show once the status has been read (`show_file`).
+    show_pending: Option<PathBuf>,
 }
 
 impl GitView {
@@ -118,6 +120,7 @@ impl GitView {
             confirm_discard: None,
             history_scroll: UniformListScrollHandle::new(),
             diff_scroll: UniformListScrollHandle::new(),
+            show_pending: None,
         };
         view.refresh(cx);
         view
@@ -193,7 +196,32 @@ impl GitView {
         if matches!(self.selected, Some(Selection::File { .. })) {
             self.load_diff(cx);
         }
+        if let Some(path) = self.show_pending.take() {
+            self.show_file(&path, cx);
+        }
         cx.notify();
+    }
+
+    /// Shows the changes to the file at `path` (absolute, or as Claude wrote it),
+    /// unstaged if it has any; once the status is read if it isn't yet.
+    pub fn show_file(&mut self, path: &Path, cx: &mut Context<Self>) {
+        let Some(status) = &self.status else {
+            self.show_pending = Some(path.to_path_buf());
+            return;
+        };
+        // Status paths are from the repository's root, which may sit above `root`.
+        let wanted = path.to_string_lossy().replace('\\', "/");
+        let file = status
+            .files
+            .iter()
+            .filter(|f| wanted == f.path || wanted.ends_with(&format!("/{}", f.path)))
+            .max_by_key(|f| f.path.len());
+        if let Some(f) = file {
+            let staged = f.unstaged.is_none() && f.staged.is_some();
+            let selection = Selection::File { path: f.path.clone(), staged };
+            self.tab = Tab::Changes;
+            self.select(selection, cx);
+        }
     }
 
     fn select(&mut self, selection: Selection, cx: &mut Context<Self>) {

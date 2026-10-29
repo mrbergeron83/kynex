@@ -1,6 +1,6 @@
 //! Background tasks (`run_in_background` commands, background agents,
 //! Monitors): the strip of running ones over the composer, where Watch
-//! streams a task's output into the terminal panel; the row in the transcript
+//! streams a task's output into the terminal panel and Stop ends it; the row in the transcript
 //! when one ends; and a toast when that happens in a session that isn't shown.
 
 use std::path::{Path, PathBuf};
@@ -92,6 +92,25 @@ impl KynexApp {
                 if let Some(tool) = &task.last_tool {
                     detail = format!("{detail} · {tool}");
                 }
+                let id = task.id.clone();
+                let stop = if task.stopping {
+                    div().flex_none().px_1p5().text_color(t.text_placeholder).child("Stopping…").into_any_element()
+                } else {
+                    ghost_button(("task-stop", i), cx)
+                        .h(px(20.))
+                        .text_xs()
+                        .text_color(t.text_muted)
+                        .child(icon(Icon::Stop, t.text_muted).size_3())
+                        .child("Stop")
+                        .tooltip(Tooltip::text(format!("Stop this {}", what.to_lowercase())))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(s) = this.session_mut() {
+                                s.stop_task(&id);
+                            }
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                };
                 let watch = task.output_file.clone().filter(|_| can_watch).map(|path| {
                     ghost_button(("task-watch", i), cx)
                         .h(px(20.))
@@ -120,6 +139,7 @@ impl KynexApp {
                     .child(div().flex_1().min_w_0().truncate().text_color(t.text_muted).child(task.description.clone()))
                     .child(div().flex_none().text_color(t.text_placeholder).child(detail))
                     .children(watch)
+                    .child(stop)
             })
             .collect();
         Some(div().flex().flex_col().gap_1().children(rows).into_any_element())

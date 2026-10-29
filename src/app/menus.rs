@@ -10,7 +10,7 @@ use kynex_core::update;
 use super::{KynexApp, models};
 use crate::theme::{self, DEFAULT_CODE_FONT, DEFAULT_UI_FONT, SUGGESTED_CODE_FONTS, SUGGESTED_UI_FONTS, THEMES, theme};
 use crate::ui::motion::pop;
-use crate::ui::{Icon, Tooltip, divider, icon, menu_item, popover};
+use crate::ui::{Icon, Tooltip, divider, icon, menu_item, popover, scrollbar};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Menu {
@@ -408,8 +408,14 @@ impl KynexApp {
                         }))
                         .map(|d| {
                             if scroll {
-                                d.w(px(280.))
-                                    .child(div().id("menu-scroll").max_h(px(420.)).overflow_y_scroll().children(items))
+                                let scroll = scrollbar::handle("menu-scroll");
+                                let area = div()
+                                    .id("menu-scroll")
+                                    .max_h(px(420.))
+                                    .overflow_y_scroll()
+                                    .track_scroll(&scroll)
+                                    .children(items);
+                                d.w(px(280.)).child(scrollbar::vertical_over("menu-bar", scroll, area, |d| d))
                             } else {
                                 d.children(items)
                             }
