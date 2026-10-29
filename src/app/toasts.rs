@@ -1,15 +1,17 @@
 //! The toast stack: one corner for every note (a background task ending in
-//! another session, a new version, an error), bottom right over the
-//! conversation, above the composer's controls. The rules (how long each
-//! stays, pausing, merging, how many show) are `kynex_core::toasts`; here they
-//! draw, tick, and do what their button says.
+//! another session, a new version, an error), the window's corner picked in
+//! Settings › Appearance, clear of the bars and the composer. The rules (how
+//! long each stays, pausing, merging, how many show, where) are
+//! `kynex_core::toasts`; here they draw, tick, and do what their button says.
 
 use std::time::{Duration, Instant};
 
-use gpui::{AnyElement, Context, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, Window, canvas, div, prelude::*, px};
 use kynex_core::toasts::{Action, Kind, Toast};
 
 use super::KynexApp;
+use super::footer::FOOTER_HEIGHT;
+use crate::chrome::TITLE_BAR_HEIGHT;
 use crate::theme::{Palette, theme};
 use crate::ui::motion::{self, pop};
 use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button};
@@ -68,16 +70,47 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// The stack, newest at the bottom; `None` with nothing to show. Only the
-    /// toasts take the mouse, not the space around them.
-    pub(super) fn render_toasts(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// Measures the conversation's free area, laid over it, for the toasts to
+    /// stay clear of its header and composer; repaints if it moved.
+    pub(super) fn toast_room_probe(&self) -> impl IntoElement + use<> {
+        let room = self.toast_room.clone();
+        canvas(
+            move |bounds, window, _| {
+                if room.get() != Some(bounds) {
+                    room.set(Some(bounds));
+                    window.refresh();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0()
+    }
+
+    /// The stack in its corner of the window, newest nearest the edge; `None`
+    /// with nothing to show. Only the toasts take the mouse, not the space
+    /// around them.
+    pub(super) fn render_toasts(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.toasts.is_empty() {
             return None;
         }
         let t = theme(cx).clone();
         let exit = if cx.reduce_motion() { Duration::ZERO } else { motion::QUICK };
+        let corner = self.saved.toast_corner;
+        // Clear of the title bar and footer, and in the conversation of its
+        // header above and the composer below.
+        let height = f32::from(window.viewport_size().height);
+        let (mut top, mut bottom) = (f32::from(TITLE_BAR_HEIGHT), f32::from(FOOTER_HEIGHT));
+        if let Some(room) = self.toast_room.get() {
+            top = top.max(f32::from(room.top()));
+            bottom = bottom.max(height - f32::from(room.bottom()));
+        }
+        let place = corner.place(top, bottom);
         let (shown, more) = self.toasts.visible();
-        let rows: Vec<AnyElement> = shown.iter().map(|toast| toast_row(toast, exit, &t, cx)).collect();
+        let mut rows: Vec<AnyElement> = shown.iter().map(|toast| toast_row(toast, exit, &t, cx)).collect();
+        if corner.is_top() {
+            rows.reverse();
+        }
         let more = (more > 0).then(|| {
             ghost_button("toasts-more", cx)
                 .h(px(22.))
@@ -93,21 +126,27 @@ impl KynexApp {
                     cx.notify();
                 }))
         });
+        let stack = div()
+            .id("toasts")
+            .flex()
+            .flex_col()
+            .map(|d| if corner.is_left() { d.items_start() } else { d.items_end() })
+            .gap(px(6.))
+            .max_w(px(460.))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                this.toast_hover = *hovered;
+                this.toasts_paused = *hovered;
+                cx.notify();
+            }))
+            .map(|d| if corner.is_top() { d.children(rows).children(more) } else { d.children(more).children(rows) });
         Some(
             div()
-                .id("toasts")
-                .flex()
-                .flex_col()
-                .items_end()
-                .gap(px(6.))
-                .max_w(px(460.))
-                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                    this.toast_hover = *hovered;
-                    this.toasts_paused = *hovered;
-                    cx.notify();
-                }))
-                .children(more)
-                .children(rows)
+                .absolute()
+                .when_some(place.top, |d, v| d.top(px(v)))
+                .when_some(place.bottom, |d, v| d.bottom(px(v)))
+                .when_some(place.left, |d, v| d.left(px(v)))
+                .when_some(place.right, |d, v| d.right(px(v)))
+                .child(stack)
                 .into_any_element(),
         )
     }

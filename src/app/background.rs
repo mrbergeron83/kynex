@@ -140,7 +140,7 @@ impl KynexApp {
         }
         let model = self.active_model();
         if let Some(s) = self.session_mut().filter(|s| !s.is_running()) {
-            s.model = model;
+            s.use_model(model);
             s.warm();
         }
     }

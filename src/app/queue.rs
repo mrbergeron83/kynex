@@ -31,9 +31,7 @@ impl KynexApp {
         }
         let model = self.active_model();
         if let Some(s) = self.session_mut() {
-            if !s.is_running() {
-                s.model = model;
-            }
+            s.use_model(model);
             s.send_queue_now();
         }
         self.follow_tail(cx);

@@ -158,6 +158,7 @@ impl KynexApp {
         }
         let closed = live.prune();
         self.forget(&closed);
+        self.warm_shown();
         true
     }
 

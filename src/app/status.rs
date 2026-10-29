@@ -1,4 +1,4 @@
-//! What the title bar keeps in sight on the right: the account's usage limits
+//! What the footer keeps in sight on the right: the account's usage limits
 //! (`kynex_core::usage`, from the CLI's `rate_limit_event`s) and a pill while a
 //! Kynex or Claude Code update waits, which opens the About modal.
 
@@ -93,9 +93,7 @@ impl KynexApp {
                 .flex()
                 .items_center()
                 .gap_3()
-                .mr_2()
                 .px_1p5()
-                .h(px(24.))
                 .text_xs()
                 .children(meters)
                 .tooltip(Tooltip::with_meta("Claude usage limits", limits.describe(now)))
@@ -125,7 +123,8 @@ impl KynexApp {
         };
         Some(
             ghost_button("update-pill", cx)
-                .mr_2()
+                .h(px(20.))
+                .text_xs()
                 .border_1()
                 .border_color(t.border)
                 .text_color(t.accent)

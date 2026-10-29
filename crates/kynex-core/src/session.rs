@@ -154,6 +154,9 @@ impl Timing {
     }
 }
 
+/// How much of a streaming tool call's input is read for its target.
+const PARTIAL_INPUT_MAX: usize = 16 * 1024;
+
 /// A tool call's time limit in ms (Bash's `timeout`), from its pretty-printed input.
 pub fn timeout_ms(input: &str) -> Option<u64> {
     serde_json::from_str::<Value>(input).ok()?["timeout"].as_u64().filter(|&ms| ms > 0)
@@ -298,6 +301,21 @@ pub struct Session {
     stdin: Option<Arc<Mutex<ChildStdin>>>,
     rx: Option<Receiver<Event>>,
     streaming_text: bool,
+    /// When the process started, whether it has said anything yet, and whether
+    /// it has been sent a message (or was only warmed up).
+    spawned: Option<Instant>,
+    ready: bool,
+    talked: bool,
+    /// A content block (text, thinking, a tool call's input) is streaming in.
+    in_block: bool,
+    /// Something of Claude's reply came since the last message went.
+    answered: bool,
+    /// When the transcript last stopped showing live progress, for [`Self::pulse`].
+    quiet_since: Instant,
+    /// The input of the tool call streaming in, until its summary can be read from it.
+    tool_input: String,
+    /// Goes up when an item changes in a way that changes the transcript's layout.
+    revision: u64,
     next_request: u64,
     /// `stop_task` requests awaiting an answer: request id → task id.
     stopping: HashMap<String, String>,
@@ -311,12 +329,6 @@ pub struct Session {
     resume_at: Option<String>,
     /// The log being read back, on [`Self::resume`] or a rewind.
     loader: Option<Loader>,
-    /// The process has answered `initialize`, so it's up and reading messages.
-    ready: bool,
-    /// The last message sent (its item) and when, until anything comes after it.
-    sent: Option<(usize, Instant)>,
-    /// Started by [`Self::warm`] on this model and not sent anything yet.
-    warmed: Option<String>,
     /// While replaying: the log and line the entry came from, so its images stay there.
     origin: Option<(Arc<PathBuf>, Span)>,
 }
@@ -399,14 +411,6 @@ pub struct Init {
     pub models: Vec<ModelInfo>,
 }
 
-/// A sent message nothing has come back for yet ([`Session::awaiting`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Awaiting {
-    /// The process hasn't answered `initialize` yet: it's still starting.
-    pub starting: bool,
-    pub since: Instant,
-}
-
 /// The request id of the `initialize` handshake each process starts with.
 const INIT_ID: &str = "kynex-init";
 
@@ -437,6 +441,14 @@ impl Session {
             stdin: None,
             rx: None,
             streaming_text: false,
+            spawned: None,
+            ready: false,
+            talked: false,
+            in_block: false,
+            answered: false,
+            quiet_since: Instant::now(),
+            tool_input: String::new(),
+            revision: 0,
             next_request: 0,
             stopping: HashMap::new(),
             reply_model: String::new(),
@@ -444,9 +456,6 @@ impl Session {
             limits: None,
             resume_at: None,
             loader: None,
-            ready: false,
-            sent: None,
-            warmed: None,
             origin: None,
         }
     }
@@ -652,9 +661,11 @@ impl Session {
         spawn_readers(stdout, stderr, tx, self.wake.clone());
 
         self.child = Some(child);
-        self.ready = false;
         self.stdin = Some(Arc::new(Mutex::new(stdin)));
         self.rx = Some(rx);
+        self.spawned = Some(Instant::now());
+        self.ready = false;
+        self.talked = false;
         // Ask for the commands and models first, as the Agent SDK does; the
         // answer comes before any reply, and nothing else about the session changes.
         self.write(json!({ "type": "control_request", "request_id": INIT_ID, "request": { "subtype": "initialize" } }));
@@ -689,10 +700,6 @@ impl Session {
             self.queue.push(text, attachments);
             return;
         }
-        // Started early on a model since changed: start again on the new one.
-        if self.warmed.take().is_some_and(|m| m != self.model) {
-            self.kill();
-        }
         if self.child.is_none()
             && let Err(e) = self.spawn()
         {
@@ -712,8 +719,10 @@ impl Session {
             content.push(json!({ "type": "text", "text": text }));
         }
         self.items.push(Item::User { text, images });
-        self.sent = Some((self.items.len() - 1, Instant::now()));
         self.busy = true;
+        self.talked = true;
+        self.answered = false;
+        self.quiet_since = Instant::now();
         self.write(json!({ "type": "user", "message": { "role": "user", "content": content } }));
     }
 
@@ -722,16 +731,46 @@ impl Session {
     /// likely: the composer focused, typing, the session shown. Does nothing if
     /// it's running; a failure to start is left for [`Self::send`] to report.
     pub fn warm(&mut self) {
-        if self.child.is_none() && self.spawn().is_ok() {
-            self.warmed = Some(self.model.clone());
+        if self.child.is_none() {
+            let _ = self.spawn();
         }
     }
 
-    /// Between sending a message and the first thing back: whether the process
-    /// is still starting, and since when it's been waited on.
-    pub fn awaiting(&self) -> Option<Awaiting> {
-        let (at, since) = self.sent?;
-        (self.busy && self.items.len() == at + 1).then_some(Awaiting { starting: !self.ready, since })
+    /// Sets the model it starts on. A process warmed up but not talked to yet
+    /// stops, to start again on it; one in use keeps its model until it next starts.
+    pub fn use_model(&mut self, model: String) {
+        if self.child.is_some() {
+            if self.talked || model == self.model {
+                return;
+            }
+            self.kill();
+        }
+        self.model = model;
+    }
+
+    /// What it's doing when nothing in the transcript shows it: starting, waiting
+    /// for Claude, between steps. `None` when idle, or while a block streams
+    /// in, a tool runs or a prompt waits, which show themselves.
+    pub fn pulse(&self) -> Option<crate::pulse::Pulse> {
+        use crate::pulse::{Activity, Pulse};
+        if !self.busy || self.in_block || self.waiting() {
+            return None;
+        }
+        let mut turn = self.items.iter().rev().take_while(|i| !matches!(i, Item::User { .. }));
+        if turn.any(|i| matches!(i, Item::ToolUse { timing, .. } if timing.is_running())) {
+            return None;
+        }
+        Some(match (self.ready, self.answered) {
+            (false, _) => Pulse { activity: Activity::Starting, since: self.spawned.unwrap_or(self.quiet_since) },
+            (true, false) => Pulse { activity: Activity::Waiting, since: self.quiet_since },
+            (true, true) => Pulse { activity: Activity::Working, since: self.quiet_since },
+        })
+    }
+
+    /// Goes up when an item changed in place in a way that lays the transcript
+    /// out differently (a tool call's input came in full), not just when items come.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Stops the turn. Anything queued goes out as soon as it has ended.
@@ -903,9 +942,9 @@ impl Session {
         self.stdin = None;
         self.rx = None;
         self.busy = false;
+        self.spawned = None;
         self.ready = false;
-        self.sent = None;
-        self.warmed = None;
+        self.in_block = false;
         self.settle_thoughts();
         self.tasks.clear();
         self.stopping.clear();
@@ -937,7 +976,10 @@ impl Session {
         let mut exited = false;
         for ev in events {
             match ev {
-                Event::Line(v) => self.handle(v),
+                Event::Line(v) => {
+                    self.process_up();
+                    self.handle(v);
+                }
                 Event::Stderr(s) => {
                     if !s.trim().is_empty() {
                         self.items.push(Item::Error(s));
@@ -970,7 +1012,7 @@ impl Session {
             "control_response" if v["response"]["request_id"] == INIT_ID => {
                 let r = &v["response"]["response"];
                 self.init = Some(Init { commands: crate::commands::from_init(r), models: models_from_init(r) });
-                self.ready = true;
+                self.process_up();
             }
             // The answer to a Stop: on success the task's end follows as a notification.
             "control_response"
@@ -1039,6 +1081,12 @@ impl Session {
                             let summary = tool_summary(&name, &block["input"]);
                             let input = serde_json::to_string_pretty(&block["input"]).unwrap_or_default();
                             let id = block["id"].as_str().unwrap_or("").to_string();
+                            // Streamed in already: it gets its whole input.
+                            if let Some(Item::ToolUse { name: n, summary: s, input: i, .. }) = self.streamed_call(&id) {
+                                (*n, *s, *i) = (name, summary, input);
+                                self.revision += 1;
+                                continue;
+                            }
                             // Only a call watched live has a start; a log's are long done.
                             let started = self.child.is_some().then(Instant::now);
                             let timing = Timing { started, took: None };
@@ -1048,10 +1096,12 @@ impl Session {
                     }
                 }
                 self.streaming_text = false;
+                self.answered = true;
             }
             "user" => {
                 for (k, block) in v["message"]["content"].as_array().into_iter().flatten().enumerate() {
                     if block["type"] == "tool_result" {
+                        self.quiet_since = Instant::now();
                         let id = block["tool_use_id"].as_str().unwrap_or("").to_string();
                         let content = tool_result_text(&block["content"]);
                         self.tasks.tool_result(&id, &content);
@@ -1171,29 +1221,74 @@ impl Session {
         }
     }
 
-    /// A call with a time limit is running: its elapsed time ticks in the transcript.
-    pub fn timed_call_running(&self) -> bool {
-        self.busy
-            && self.items.iter().rev().take_while(|i| !matches!(i, Item::User { .. })).any(|i| {
-                matches!(i, Item::ToolUse { input, timing, .. } if timing.is_running() && timeout_ms(input).is_some())
-            })
+    /// The process said something: it's up. A message already sent now waits on Claude.
+    fn process_up(&mut self) {
+        if !self.ready {
+            self.ready = true;
+            if self.busy && !self.answered {
+                self.quiet_since = Instant::now();
+            }
+        }
+    }
+
+    /// The call `id` this turn, if it streamed in before its message came whole.
+    fn streamed_call(&mut self, id: &str) -> Option<&mut Item> {
+        if id.is_empty() {
+            return None;
+        }
+        let mut turn = self.items.iter_mut().rev().take_while(|i| !matches!(i, Item::User { .. }));
+        turn.find(|i| matches!(i, Item::ToolUse { id: c, .. } if c == id))
     }
 
     fn handle_stream(&mut self, ev: &Value) {
         match ev["type"].as_str() {
-            Some("content_block_start") if ev["content_block"]["type"] == "text" => {
-                self.items.push(Item::Assistant(String::new()));
-                self.streaming_text = true;
-            }
-            Some("content_block_start") if ev["content_block"]["type"] == "thinking" => {
-                self.items.push(Item::Thinking(Thought::live()));
+            Some("content_block_start") => {
+                self.answered = true;
+                self.in_block = true;
+                let block = &ev["content_block"];
+                match block["type"].as_str() {
+                    Some("text") => {
+                        self.items.push(Item::Assistant(String::new()));
+                        self.streaming_text = true;
+                    }
+                    Some("thinking") => self.items.push(Item::Thinking(Thought::live())),
+                    // A call shows as soon as Claude starts writing it, named, with
+                    // its target once that much of the input is in.
+                    Some("tool_use") => {
+                        self.tool_input.clear();
+                        self.items.push(Item::ToolUse {
+                            id: block["id"].as_str().unwrap_or("").into(),
+                            name: block["name"].as_str().unwrap_or("tool").into(),
+                            summary: String::new(),
+                            input: String::new(),
+                            timing: Timing { started: Some(Instant::now()), took: None },
+                        });
+                    }
+                    // Redacted thinking and the like: nothing to show, so the pulse does.
+                    _ => self.in_block = false,
+                }
             }
             Some("content_block_delta") => match self.items.last_mut() {
                 Some(Item::Assistant(s)) => s.push_str(ev["delta"]["text"].as_str().unwrap_or("")),
                 Some(Item::Thinking(t)) => t.text.push_str(ev["delta"]["thinking"].as_str().unwrap_or("")),
+                // Big inputs (a `Write`) stream long: read the target from the first
+                // part, and stop reading once it's found or it's clearly not coming.
+                Some(Item::ToolUse { name, summary, input, .. })
+                    if summary.is_empty() && self.tool_input.len() < PARTIAL_INPUT_MAX =>
+                {
+                    self.tool_input.push_str(ev["delta"]["partial_json"].as_str().unwrap_or(""));
+                    if let Some(v) = crate::pulse::partial_input(&self.tool_input) {
+                        *summary = tool_summary(name, &v);
+                        *input = serde_json::to_string_pretty(&v).unwrap_or_default();
+                        self.revision += 1;
+                    }
+                }
                 _ => {}
             },
             Some("content_block_stop") => {
+                self.in_block = false;
+                self.quiet_since = Instant::now();
+                self.tool_input.clear();
                 if let Some(Item::Thinking(t)) = self.items.last_mut() {
                     t.finish("");
                 }
@@ -1601,17 +1696,16 @@ mod tests {
     }
 
     #[test]
-    fn awaiting_lasts_from_send_to_the_first_thing_back() {
+    fn the_initialize_answer_ends_starting() {
+        use crate::pulse::Activity;
         let mut s = Session::new(Kind::Chat, std::env::temp_dir());
-        assert_eq!(s.awaiting(), None);
-        let since = Instant::now();
         s.items.push(Item::User { text: "hi".into(), images: Vec::new() });
-        (s.sent, s.busy) = (Some((0, since)), true);
-        assert_eq!(s.awaiting(), Some(Awaiting { starting: true, since }));
+        s.busy = true;
+        assert_eq!(s.pulse().map(|p| p.activity), Some(Activity::Starting));
         s.handle(json!({ "type": "control_response", "response": { "request_id": INIT_ID, "response": {} } }));
-        assert_eq!(s.awaiting(), Some(Awaiting { starting: false, since }));
+        assert_eq!(s.pulse().map(|p| p.activity), Some(Activity::Waiting));
         s.handle(json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "hello" }] } }));
-        assert_eq!(s.awaiting(), None);
+        assert_eq!(s.pulse().map(|p| p.activity), Some(Activity::Working));
     }
 
     #[test]
@@ -1636,12 +1730,9 @@ mod tests {
             timing: Timing { started, took: None },
         });
         s.busy = true;
-        assert!(s.timed_call_running());
-        assert!(
-            matches!(s.items.last(), Some(Item::ToolUse { timing, .. }) if timing.elapsed().unwrap().as_secs() >= 5)
-        );
+        assert!(matches!(s.items.last(), Some(Item::ToolUse { timing, .. })
+            if timing.is_running() && timing.elapsed().unwrap().as_secs() >= 5));
         s.handle(json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "b", "content": "ok" }] } }));
-        assert!(!s.timed_call_running());
         let Some(Item::ToolUse { timing, .. }) = s.items.iter().rev().find(|i| matches!(i, Item::ToolUse { .. }))
         else {
             panic!()
@@ -1687,6 +1778,71 @@ mod tests {
         s.busy = true;
         s.handle(json!({ "type": "result", "duration_ms": 10 }));
         assert!(s.items.iter().all(|i| !matches!(i, Item::Thinking(t) if t.is_live())));
+    }
+
+    #[test]
+    fn the_pulse_covers_the_gaps_nothing_else_shows() {
+        use crate::pulse::Activity;
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        let stream = |e: Value| json!({ "type": "stream_event", "event": e });
+        let activity = |s: &Session| s.pulse().map(|p| p.activity);
+        assert_eq!(activity(&s), None, "idle");
+        s.items.push(Item::User { text: "hi".into(), images: Vec::new() });
+        s.busy = true;
+        assert_eq!(activity(&s), Some(Activity::Starting));
+        s.process_up();
+        assert_eq!(activity(&s), Some(Activity::Waiting));
+        // A thinking block shows itself; the gap after it doesn't.
+        s.handle(stream(json!({ "type": "content_block_start", "content_block": { "type": "thinking" } })));
+        assert_eq!(activity(&s), None);
+        s.handle(stream(json!({ "type": "content_block_stop" })));
+        assert_eq!(activity(&s), Some(Activity::Working));
+        // A tool call shows from its first byte, and while it runs.
+        s.handle(stream(json!({ "type": "content_block_start",
+            "content_block": { "type": "tool_use", "id": "t1", "name": "Write", "input": {} } })));
+        assert_eq!(activity(&s), None);
+        s.handle(stream(json!({ "type": "content_block_stop" })));
+        assert_eq!(activity(&s), None, "running");
+        s.handle(json!({ "type": "user", "message": { "content": [{ "type": "tool_result", "tool_use_id": "t1", "content": "ok" }] } }));
+        assert_eq!(activity(&s), Some(Activity::Working));
+        // Redacted thinking has nothing to show: the pulse stays.
+        s.handle(stream(json!({ "type": "content_block_start", "content_block": { "type": "redacted_thinking" } })));
+        assert_eq!(activity(&s), Some(Activity::Working));
+        s.handle(json!({ "type": "result", "duration_ms": 10 }));
+        assert_eq!(activity(&s), None, "the turn ended");
+    }
+
+    #[test]
+    fn a_tool_call_shows_while_its_input_streams() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        let stream = |e: Value| json!({ "type": "stream_event", "event": e });
+        let delta = |p: &str| {
+            stream(json!({ "type": "content_block_delta", "delta": { "type": "input_json_delta", "partial_json": p } }))
+        };
+        s.items.push(Item::User { text: "write it".into(), images: Vec::new() });
+        s.handle(stream(json!({ "type": "content_block_start",
+            "content_block": { "type": "tool_use", "id": "w", "name": "Write", "input": {} } })));
+        let call = |s: &Session| match s.items.last() {
+            Some(Item::ToolUse { name, summary, timing, .. }) => (name.clone(), summary.clone(), timing.is_running()),
+            _ => panic!("no call"),
+        };
+        assert_eq!(call(&s), ("Write".into(), String::new(), true));
+        let before = s.revision();
+        s.handle(delta(r#"{"file_path": "src/ma"#));
+        assert_eq!(call(&s).1, "");
+        s.handle(delta(r#"in.rs", "content": "fn main() {"#));
+        assert_eq!(call(&s).1, "src/main.rs");
+        assert!(s.revision() > before, "the run's summary is laid out again");
+        s.handle(delta(r#"}"}"#));
+        s.handle(stream(json!({ "type": "content_block_stop" })));
+        // The whole message fills the same call in instead of adding one.
+        s.handle(
+            json!({ "type": "assistant", "message": { "content": [{ "type": "tool_use", "id": "w", "name": "Write",
+            "input": { "file_path": "src/main.rs", "content": "fn main() {}" } }] } }),
+        );
+        assert_eq!(s.items.iter().filter(|i| matches!(i, Item::ToolUse { .. })).count(), 1);
+        let Some(Item::ToolUse { input, .. }) = s.items.last() else { panic!() };
+        assert!(input.contains("fn main() {}"));
     }
 
     #[test]

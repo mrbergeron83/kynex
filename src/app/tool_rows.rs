@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
-use kynex_core::session::{Item, PermState, Session};
+use kynex_core::session::{Item, PermState};
 use kynex_core::transcript::{Call, Run, shows_result};
 use kynex_core::{fmt, links, mcp};
 
@@ -89,21 +89,22 @@ impl KynexApp {
             .into_any_element()
     }
 
-    /// While the shown session runs a call with a time limit, or waits for its
-    /// first reply, repaints once a second so the elapsed time counts up; stops
-    /// when neither is going on.
-    pub(super) fn tick_timed_calls(&mut self, cx: &mut Context<Self>) {
-        if self.calls_ticking || !self.active_session().is_some_and(ticks) {
+    /// While the shown session works, repaints once a second so its clocks
+    /// count up ("Thinking… 4s", a call's "1m 12s / max 2m", the pulse), even
+    /// when no output comes; stops when it's done.
+    pub(super) fn tick_clocks(&mut self, cx: &mut Context<Self>) {
+        let busy = |this: &Self| this.active_session().is_some_and(|s| s.busy);
+        if self.clocks_ticking || !busy(self) {
             return;
         }
-        self.calls_ticking = true;
+        self.clocks_ticking = true;
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let going = this.update(cx, |this, cx| {
-                    this.calls_ticking = this.active_session().is_some_and(ticks);
+                    this.clocks_ticking = busy(this);
                     cx.notify();
-                    this.calls_ticking
+                    this.clocks_ticking
                 });
                 if !matches!(going, Ok(true)) {
                     break;
@@ -270,9 +271,4 @@ fn stat(add: usize, del: usize, t: &crate::theme::Palette) -> impl IntoElement +
         .text_xs()
         .when(add > 0, |d| d.child(div().text_color(t.success).child(format!("+{add}"))))
         .when(del > 0, |d| d.child(div().text_color(t.error).child(format!("−{del}"))))
-}
-
-/// A session whose transcript shows a time counting up.
-fn ticks(s: &Session) -> bool {
-    s.timed_call_running() || s.awaiting().is_some()
 }

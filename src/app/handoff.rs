@@ -16,9 +16,7 @@ impl KynexApp {
     fn continue_after_handoff(&mut self, cx: &mut Context<Self>) {
         let model = self.active_model();
         if let Some(s) = self.session_mut().filter(|s| !s.busy) {
-            if !s.is_running() {
-                s.model = model;
-            }
+            s.use_model(model);
             s.send(mcp::CONTINUE.into(), Vec::new());
         }
         self.follow_tail(cx);

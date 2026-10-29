@@ -5,6 +5,27 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The "Starting Claude…" / "Waiting for Claude…" line stays for the whole turn: between
+  steps (after thinking, after a tool's result) it says "Working…" with the seconds, so the
+  transcript never sits there looking stuck.
+- A tool call shows as soon as Claude starts writing it, with its file or command once that
+  much is in, instead of only once its whole input arrived (a long `Write` showed nothing).
+- The last two sessions you left stay open, with their Claude still running, so switching
+  back is instant. Changing the model before the first message restarts the early-started
+  Claude on it.
+- "Thinking… 4s" keeps counting even when nothing else changes, and no longer repaints the
+  window every frame to do it.
+- A status footer along the bottom of the window shows what Kynex and the processes it
+  started use (CPU and memory, with a breakdown on hover). The usage-limit meters and the
+  update pill moved there from the title bar.
+- Toasts sit in a corner of the window you pick (Settings → Appearance → Notification
+  position; bottom right by default), the same in every view, clear of the title bar, the
+  footer and the message box instead of over the conversation.
+- The model and effort pickers under the message box are one chip, "Fable 5.1 · max"; effort
+  is a section of the model menu.
+
 ## [0.0.9] - 2026-10-29
 
 ### Added
