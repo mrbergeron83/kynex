@@ -210,6 +210,8 @@ pub struct KynexApp {
     wheel: SmoothWheel,
     /// An image opened over the window.
     viewer: Option<Entity<ImageViewer>>,
+    /// Thumbnails of screenshots still in session logs (drawn from `&self`, hence the cell).
+    logged: std::cell::RefCell<viewer::LoggedImages>,
     /// The About Kynex modal is open; the installed Claude Code version, once read.
     about_open: bool,
     claude_version: Option<String>,
@@ -382,6 +384,7 @@ impl KynexApp {
             toasts_ticking: false,
             wheel: SmoothWheel::default(),
             viewer: None,
+            logged: Default::default(),
             about_open: false,
             claude_version: None,
             cli_check: CliCheck::default(),

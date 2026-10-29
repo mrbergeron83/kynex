@@ -78,7 +78,7 @@ pub fn session_log(bytes: &[u8]) {
         let mut buf = Vec::new();
         let older: Vec<Value> = w.older.iter().rev().filter_map(|s| read_span(&mut r, *s, &mut buf)).collect();
         let mut s = Session::new(Kind::Chat, PathBuf::new());
-        for v in older.into_iter().chain(recent.into_iter().rev()) {
+        for v in older.into_iter().chain(recent.into_iter().rev().map(|(_, v)| v)) {
             s.replay_entry(v);
         }
     }

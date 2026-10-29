@@ -63,6 +63,32 @@ pub fn images_in(content: &Value) -> Vec<Found> {
         .collect()
 }
 
+/// Base64 image data's bytes.
+pub fn decode_base64(data: &str) -> Option<Vec<u8>> {
+    base64::engine::general_purpose::STANDARD.decode(data).ok()
+}
+
+/// The size of the image in base64 `data`, from its header alone: only the
+/// start is decoded. `None` if the header isn't in the first 64 KB.
+pub fn base64_dimensions(data: &str) -> Option<(u32, u32)> {
+    let head = data.get(..data.len().min(64 * 1024) / 4 * 4)?;
+    dimensions(&decode_base64(head)?)
+}
+
+/// A copy of an image at most `max_w` × `max_h`, for a thumbnail: decoded and
+/// scaled down, never up. Blocks on the decoding; call it off the UI thread.
+pub fn thumbnail(bytes: &[u8], max_w: u32, max_h: u32) -> Option<image::RgbaImage> {
+    let img = image::load_from_memory(bytes).ok()?;
+    let (w, h) = fit((img.width(), img.height()), max_w as f32, max_h as f32);
+    let (w, h) = ((w.round() as u32).max(1), (h.round() as u32).max(1));
+    let img = if (w, h) == (img.width(), img.height()) {
+        img
+    } else {
+        img.resize_exact(w, h, image::imageops::FilterType::Triangle)
+    };
+    Some(img.to_rgba8())
+}
+
 /// An image's width and height in pixels, read from its header.
 pub fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().ok()?.into_dimensions().ok()
@@ -109,6 +135,18 @@ mod tests {
         assert_eq!(found[0].media_type, "image/png");
         assert_eq!(dimensions(&found[0].bytes), Some((3, 2)));
         assert!(images_in(&json!("text only")).is_empty());
+    }
+
+    #[test]
+    fn sizes_from_the_header_and_thumbnails() {
+        let bytes = png(400, 300);
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        assert_eq!(base64_dimensions(&data), Some((400, 300)));
+        assert_eq!(base64_dimensions("!!"), None);
+        let thumb = thumbnail(&bytes, 200, 200).unwrap();
+        assert_eq!(thumb.dimensions(), (200, 150));
+        assert_eq!(thumbnail(&png(10, 5), 200, 200).unwrap().dimensions(), (10, 5));
+        assert!(thumbnail(b"nope", 10, 10).is_none());
     }
 
     #[test]

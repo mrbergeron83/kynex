@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 use crate::commands::SlashCommand;
 use crate::queue::Queue;
+use crate::session_log::{LoggedImage, Span};
 use crate::tasks::{self, Tasks};
 use crate::{project, wsl};
 
@@ -47,6 +48,26 @@ pub fn set_preview_maker(make: MakePreview) {
 fn previews_in(content: &Value) -> Vec<Preview> {
     let Some(make) = MAKE_PREVIEW.get() else { return Vec::new() };
     crate::attach::images_in(content).into_iter().filter_map(|i| make(&i.media_type, i.bytes)).collect()
+}
+
+/// The images among `content`'s blocks (at JSON pointer `at` in a line of a
+/// log) as [`LoggedImage`]s: where they are, and their size, but not their bytes.
+fn logged_in(content: &Value, (path, span): &(Arc<PathBuf>, Span), at: &str) -> Vec<Preview> {
+    let blocks = content.as_array().into_iter().flatten().enumerate();
+    blocks
+        .filter(|(_, b)| b["type"] == "image" && b["source"]["type"] == "base64")
+        .filter_map(|(i, b)| {
+            let data = b["source"]["data"].as_str()?;
+            let image = LoggedImage {
+                path: path.clone(),
+                span: *span,
+                pointer: format!("{at}/{i}"),
+                media_type: b["source"]["media_type"].as_str()?.to_string(),
+                size: crate::attach::base64_dimensions(data),
+            };
+            Some(Arc::new(image) as Preview)
+        })
+        .collect()
 }
 
 pub struct Attachment {
@@ -254,6 +275,8 @@ pub struct Session {
     resume_at: Option<String>,
     /// The log being read back, on [`Self::resume`] or a rewind.
     loader: Option<Loader>,
+    /// While replaying: the log and line the entry came from, so its images stay there.
+    origin: Option<(Arc<PathBuf>, Span)>,
 }
 
 /// A session log being read back on a thread: its newest turns, then the rest.
@@ -278,12 +301,15 @@ struct Replayed {
 }
 
 impl Replayed {
-    /// `entries` replayed, oldest first.
-    fn of(entries: impl IntoIterator<Item = Value>) -> Self {
+    /// `entries` of log `path` replayed, oldest first. Their images stay in
+    /// the log, as [`LoggedImage`]s, when the log is known.
+    fn of(path: Option<&Arc<PathBuf>>, entries: impl IntoIterator<Item = (Span, Value)>) -> Self {
         let mut s = Session::new(Kind::Chat, PathBuf::new());
-        for v in entries {
+        for (span, v) in entries {
+            s.origin = path.map(|p| (p.clone(), span));
             s.replay_entry(v);
         }
+        s.origin = None;
         Self {
             items: std::mem::take(&mut s.items),
             context: s.context,
@@ -307,18 +333,21 @@ fn read_history(cwd: &Path, id: &str, until: Option<&str>, tx: &Sender<Loaded>, 
         wake();
         sent
     };
-    let Some(mut file) = find_transcript(cwd, id).and_then(|p| std::fs::File::open(p).ok()) else { return };
+    let Some(path) = find_transcript(cwd, id) else { return };
+    let Ok(mut file) = std::fs::File::open(&path) else { return };
+    let path = Some(Arc::new(path));
     let walked = Branch { recent: RECENT_ENTRIES }.walk(&mut file, until, |mut recent| {
         recent.reverse();
-        send(Loaded::Recent(Replayed::of(recent)))
+        send(Loaded::Recent(Replayed::of(path.as_ref(), recent)))
     });
     let Ok(Some(walked)) = walked else { return };
     if walked.older.is_empty() {
         return;
     }
+    // One entry at a time: only the transcript's text is kept, not the lines.
     let mut buf = Vec::new();
-    let older = walked.older.iter().rev().filter_map(|s| read_span(&mut file, *s, &mut buf)).collect::<Vec<_>>();
-    send(Loaded::Older(Replayed::of(older).items));
+    let older = walked.older.iter().rev().filter_map(|s| Some((*s, read_span(&mut file, *s, &mut buf)?)));
+    send(Loaded::Older(Replayed::of(path.as_ref(), older).items));
 }
 
 /// What a session's process reports as it starts (the `initialize` handshake):
@@ -364,6 +393,7 @@ impl Session {
             limits: None,
             resume_at: None,
             loader: None,
+            origin: None,
         }
     }
 
@@ -494,7 +524,10 @@ impl Session {
         }
         // A slash command is logged in `<command-name>` wrappers; show it as typed.
         let text = crate::commands::unwrap(&text).unwrap_or(text);
-        let images = previews_in(content);
+        let images = match &self.origin {
+            Some(origin) => logged_in(content, origin, "/message/content"),
+            None => previews_in(content),
+        };
         // Images that can't be shown are at least counted.
         let missing = sent.saturating_sub(images.len());
         let text = if missing > 0 { format!("[{missing} image(s)] {text}") } else { text };
@@ -906,15 +939,22 @@ impl Session {
                 self.streaming_text = false;
             }
             "user" => {
-                for block in v["message"]["content"].as_array().into_iter().flatten() {
+                for (k, block) in v["message"]["content"].as_array().into_iter().flatten().enumerate() {
                     if block["type"] == "tool_result" {
                         let id = block["tool_use_id"].as_str().unwrap_or("").to_string();
                         let content = tool_result_text(&block["content"]);
                         self.tasks.tool_result(&id, &content);
+                        // Read back from a log, screenshots stay there until shown.
+                        let images = match &self.origin {
+                            Some(origin) => {
+                                logged_in(&block["content"], origin, &format!("/message/content/{k}/content"))
+                            }
+                            None => previews_in(&block["content"]),
+                        };
                         self.items.push(Item::ToolResult {
                             id,
                             content,
-                            images: previews_in(&block["content"]),
+                            images,
                             is_error: block["is_error"].as_bool().unwrap_or(false),
                         });
                     }
@@ -1679,6 +1719,93 @@ mod tests {
         assert_eq!(images.iter().map(said).collect::<Vec<_>>(), ["image/png 6"]);
     }
 
+    /// Entries as if read from no log.
+    fn unlogged<const N: usize>(entries: [Value; N]) -> [(Span, Value); N] {
+        entries.map(|v| (Span { offset: 0, len: 0 }, v))
+    }
+
+    #[test]
+    fn logged_screenshots_stay_in_the_log_until_loaded() {
+        use base64::Engine;
+        let mut bytes = Vec::new();
+        image::RgbaImage::new(4, 3).write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let image = json!({ "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": data } });
+        let sent = json!({ "type": "user", "uuid": "a", "message": { "role": "user", "content": [image, { "type": "text", "text": "see" }] } });
+        let shot = json!({ "type": "user", "uuid": "b", "parentUuid": "a", "message": { "content": [
+            { "type": "tool_result", "tool_use_id": "t", "content": "x" },
+            { "type": "tool_result", "tool_use_id": "u", "content": [{ "type": "text", "text": "shot" }, image] }
+        ] } });
+        let first = format!("{sent}\n");
+        let path = std::env::temp_dir().join(format!("kynex-logged-{}.jsonl", std::process::id()));
+        std::fs::write(&path, format!("{first}{shot}\n")).unwrap();
+        let spans = [
+            Span { offset: 0, len: first.len() - 1 },
+            Span { offset: first.len() as u64, len: shot.to_string().len() },
+        ];
+        let path = Arc::new(path);
+        let r = Replayed::of(Some(&path), [(spans[0], sent), (spans[1], shot)]);
+        let logged: Vec<&LoggedImage> = r
+            .items
+            .iter()
+            .flat_map(|i| match i {
+                Item::User { images, .. } | Item::ToolResult { images, .. } => images.as_slice(),
+                _ => &[],
+            })
+            .map(|p| p.downcast_ref::<LoggedImage>().expect("kept as where it is"))
+            .collect();
+        let pointers: Vec<_> = logged.iter().map(|i| (i.span, i.pointer.as_str(), i.size)).collect();
+        assert_eq!(
+            pointers,
+            [(spans[0], "/message/content/0", Some((4, 3))), (spans[1], "/message/content/1/content/1", Some((4, 3)))]
+        );
+        for i in logged {
+            assert_eq!(i.load().unwrap(), bytes);
+        }
+        let _ = std::fs::remove_file(&*path);
+    }
+
+    /// Replays every real log under `KYNEX_LOGS_DIR` (read only) as a session
+    /// opens, and reads back each screenshot it found. Run with
+    /// `cargo test --release -- --ignored --nocapture real_logged_images`.
+    #[test]
+    #[ignore = "reads your real Claude Code logs"]
+    fn real_logged_images_load() {
+        use crate::session_log::{Branch, read_span};
+        let dir = PathBuf::from(std::env::var_os("KYNEX_LOGS_DIR").expect("KYNEX_LOGS_DIR"));
+        let (mut images, mut bytes) = (0, 0);
+        for e in std::fs::read_dir(dir).unwrap().filter_map(Result::ok) {
+            let path = Arc::new(e.path());
+            if path.extension().is_none_or(|x| x != "jsonl") {
+                continue;
+            }
+            let mut file = std::fs::File::open(&*path).unwrap();
+            let mut recent = Vec::new();
+            let w = Branch { recent: 60 }
+                .walk(&mut file, None, |v| {
+                    recent = v;
+                    true
+                })
+                .unwrap()
+                .unwrap();
+            let mut buf = Vec::new();
+            let older: Vec<_> =
+                w.older.iter().rev().filter_map(|s| Some((*s, read_span(&mut file, *s, &mut buf)?))).collect();
+            let r = Replayed::of(Some(&path), older.into_iter().chain(recent.into_iter().rev()));
+            for i in &r.items {
+                let (Item::User { images: shown, .. } | Item::ToolResult { images: shown, .. }) = i else { continue };
+                for p in shown {
+                    let logged = p.downcast_ref::<LoggedImage>().expect("logged");
+                    let got = logged.load().unwrap_or_else(|e| panic!("{e}: {logged:?}"));
+                    assert_eq!(crate::attach::dimensions(&got), logged.size.or(crate::attach::dimensions(&got)));
+                    images += 1;
+                    bytes += got.len();
+                }
+            }
+        }
+        println!("{images} screenshots read back, {} MB no longer kept in memory", bytes / 1_000_000);
+    }
+
     #[test]
     fn history_comes_newest_first_and_older_goes_in_front() {
         let text = |t: &str| json!({ "type": "assistant", "message": { "role": "assistant", "content": [{ "type": "text", "text": t }] } });
@@ -1699,10 +1826,10 @@ mod tests {
         assert!(s.items.is_empty());
         s.queue.remove(0);
 
-        tx.send(Loaded::Recent(Replayed::of([text("c"), text("d")]))).unwrap();
+        tx.send(Loaded::Recent(Replayed::of(None, unlogged([text("c"), text("d")])))).unwrap();
         assert_eq!(s.take_history(), Some(2));
         assert!(!s.loading());
-        tx.send(Loaded::Older(Replayed::of([text("a"), text("b")]).items)).unwrap();
+        tx.send(Loaded::Older(Replayed::of(None, unlogged([text("a"), text("b")])).items)).unwrap();
         drop(tx);
         assert_eq!(s.take_history(), Some(2));
         assert_eq!(said(&s), ["a", "b", "c", "d"]);

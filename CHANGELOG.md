@@ -11,6 +11,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   from the ends of each transcript, read in the background, and a session's history loads
   off the UI thread: its newest turns show at once and older ones follow above them. A
   message sent while it loads waits in the queue.
+- Open sessions no longer hold every screenshot in their history in memory. They stay
+  in the session log and are read, as small thumbnails, when they scroll into view; the
+  viewer reads the full image when one is opened.
 
 ## [0.0.8] - 2026-10-28
 

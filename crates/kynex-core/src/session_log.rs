@@ -7,12 +7,42 @@
 //! follows the current branch back through its parent links on it, parsing
 //! only the lines it's looking for, so the newest turns are there after a few
 //! milliseconds and the rest of the history follows.
+//!
+//! Screenshots stay in the log: a [`LoggedImage`] says where one is, and it's
+//! read again only when it's shown.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::Value;
+
+/// An image in a session log, kept as where it is rather than its bytes
+/// (screenshots run to hundreds of KB each). A session replayed from its log
+/// has these as its images' [`crate::session::Preview`]s.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct LoggedImage {
+    pub path: Arc<PathBuf>,
+    /// The log line it's in.
+    pub span: Span,
+    /// The image block in that line, as a JSON pointer (`/message/content/0/content/1`).
+    pub pointer: String,
+    pub media_type: String,
+    /// Its size in pixels, from its header, if that could be read.
+    pub size: Option<(u32, u32)>,
+}
+
+impl LoggedImage {
+    /// The image's bytes, read from the log. Blocks on the file.
+    pub fn load(&self) -> Result<Vec<u8>, String> {
+        let mut file = std::fs::File::open(&*self.path).map_err(|e| format!("Couldn't open the session log: {e}"))?;
+        let v = read_span(&mut file, self.span, &mut Vec::new()).ok_or("The image's log entry is gone.")?;
+        let data = v.pointer(&self.pointer).and_then(|b| b["source"]["data"].as_str()).ok_or("No image there.")?;
+        crate::attach::decode_base64(data).ok_or_else(|| "The image doesn't decode.".into())
+    }
+}
 
 /// Bytes read at a time going back through a whole log: big enough that a
 /// screenshot's line spans only a few.
@@ -98,8 +128,8 @@ impl Link {
 }
 
 /// Where an entry's line is in the log.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Span {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Span {
     pub offset: u64,
     pub len: usize,
 }
@@ -123,7 +153,7 @@ pub(crate) struct Branch {
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct Walked {
     /// The newest entries, from the start of a turn on, parsed.
-    pub recent: Vec<Value>,
+    pub recent: Vec<(Span, Value)>,
     /// Where the rest of the branch is.
     pub older: Vec<Span>,
 }
@@ -138,7 +168,7 @@ impl Branch {
         &self,
         r: &mut R,
         from: Option<&str>,
-        mut on_recent: impl FnMut(Vec<Value>) -> bool,
+        mut on_recent: impl FnMut(Vec<(Span, Value)>) -> bool,
     ) -> io::Result<Option<Walked>> {
         let len = r.seek(SeekFrom::End(0))?;
         let mut out = Walked::default();
@@ -171,7 +201,7 @@ impl Branch {
             if handed {
                 out.older.push(Span { offset, len: line.len() });
             } else if let Ok(v) = serde_json::from_slice::<Value>(line) {
-                out.recent.push(v);
+                out.recent.push((Span { offset, len: line.len() }, v));
                 if turn && out.recent.len() >= self.recent {
                     handed = true;
                     if !on_recent(std::mem::take(&mut out.recent)) {
@@ -198,7 +228,7 @@ impl Branch {
                 let mut buf = Vec::new();
                 for span in rest {
                     if let Some(v) = read_span(r, span, &mut buf) {
-                        out.recent.push(v);
+                        out.recent.push((span, v));
                     }
                 }
             }
@@ -348,7 +378,8 @@ mod tests {
         let mut buf = Vec::new();
         let older: Vec<Value> = w.older.iter().filter_map(|s| read_span(&mut r, *s, &mut buf)).collect();
         let n = first.len();
-        let uuids = first.iter().chain(&older).rev().map(|v| v["uuid"].as_str().unwrap().to_string()).collect();
+        let uuids =
+            first.iter().map(|(_, v)| v).chain(&older).rev().map(|v| v["uuid"].as_str().unwrap().to_string()).collect();
         (uuids, n)
     }
 
@@ -431,8 +462,13 @@ mod tests {
                 .unwrap();
             let mut buf = Vec::new();
             let older: Vec<Value> = w.older.iter().filter_map(|s| read_span(&mut file, *s, &mut buf)).collect();
-            let got: Vec<String> =
-                recent.iter().chain(&older).rev().map(|v| v["uuid"].as_str().unwrap().to_string()).collect();
+            let got: Vec<String> = recent
+                .iter()
+                .map(|(_, v)| v)
+                .chain(&older)
+                .rev()
+                .map(|v| v["uuid"].as_str().unwrap().to_string())
+                .collect();
             assert_eq!(got, want, "{}", path.display());
             if first > slowest.0 {
                 slowest = (first, format!("{} ({} MB)", path.display(), text.len() / 1_000_000));
