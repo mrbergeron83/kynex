@@ -231,11 +231,27 @@ impl KynexApp {
     /// order: pinned, ungrouped, then each group; the archive is skipped.
     fn step_session(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(s) = self.active_session() else { return };
-        let (kind, cwd, current) = (s.kind, s.cwd.clone(), s.session_id.clone());
-        let items = match &self.sessions {
-            Some(l) if l.cwd == cwd => l.items.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
-            _ => kynex_core::session::list_sessions(&cwd).into_iter().map(|i| i.id).collect(),
+        let cwd = s.cwd.clone();
+        let Some(list) = self.sessions.as_ref().filter(|l| l.read.cwd == cwd) else {
+            // The panel is collapsed, so its list isn't read: read it off the UI thread first.
+            let dir = cwd.clone();
+            cx.spawn_in(window, async move |this, cx| {
+                let list = async move { kynex_core::session::list_sessions(&dir) };
+                let items = gpui::AppContext::background_spawn(cx, list).await;
+                let ids = items.into_iter().map(|i| i.id).collect();
+                this.update_in(cx, |this, window, cx| this.step_through(ids, by, window, cx)).ok();
+            })
+            .detach();
+            return;
         };
+        let items: Vec<String> = list.items.iter().map(|i| i.id.clone()).collect();
+        self.step_through(items, by, window, cx);
+    }
+
+    /// [`Self::step_session`] in the folder's sessions `items`, newest first.
+    fn step_through(&mut self, items: Vec<String>, by: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(s) = self.active_session() else { return };
+        let (kind, cwd, current) = (s.kind, s.cwd.clone(), s.session_id.clone());
         let arranged = self.groups_for(&cwd).arrange(items.iter().map(String::as_str));
         let order: Vec<String> =
             arranged.pinned.into_iter().chain(arranged.top).chain(arranged.groups.into_iter().flatten()).collect();

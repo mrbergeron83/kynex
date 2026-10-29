@@ -229,7 +229,7 @@ mod tests {
 
     fn call(id: &str, name: &str, input: Value) -> Item {
         let input = input.to_string();
-        Item::ToolUse { id: id.into(), name: name.into(), summary: String::new(), input }
+        Item::ToolUse { id: id.into(), name: name.into(), summary: String::new(), input, timing: Default::default() }
     }
 
     fn result(id: &str, is_error: bool) -> Item {

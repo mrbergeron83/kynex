@@ -4,6 +4,13 @@ A native desktop workspace for Claude Code, written in Rust on gpui (Zed's UI fr
 from crates.io as `gpui-pre`). It drives the installed `claude` CLI over its stream-json
 protocol, so no API key is needed.
 
+## Reporting and proposing
+
+- When reporting results or proposing next steps, be brief: the outcome, decisions I need
+  to make, and real risks. Nothing else.
+- No step-by-step recaps, no lists of files touched, no restating the request.
+- Extra text hides the important parts. If I want detail, I'll ask.
+
 ## Platform
 
 - Kynex is **OS-agnostic**: it must build and run on Windows, macOS and Linux. Keep

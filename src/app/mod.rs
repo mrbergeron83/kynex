@@ -100,7 +100,7 @@ pub use keys::{SHELL_KEYS, ToggleTerminal, bind_keys};
 use menus::OpenMenu;
 use prompts::ActivePrompt;
 use session_groups::Organize;
-use sessions_panel::SessionList;
+use sessions_panel::{ListRead, SessionList};
 use settings::SettingsView;
 use setup::{CliCheck, Setup};
 use slash::Slash;
@@ -162,6 +162,8 @@ pub struct KynexApp {
     draft_for: Option<(Key, String)>,
     slash: Slash,
     sessions: Option<SessionList>,
+    /// The sessions list being read in the background, for this.
+    sessions_reading: Option<ListRead>,
     /// The sessions panel's title filter, while it's open.
     session_filter: Entity<TextInput>,
     filtering_sessions: bool,
@@ -204,10 +206,14 @@ pub struct KynexApp {
     toast_hover: bool,
     toasts_paused: bool,
     toasts_ticking: bool,
+    /// A running call's elapsed time is being repainted once a second.
+    calls_ticking: bool,
     /// Mouse-wheel turns made smooth for every scroll area.
     wheel: SmoothWheel,
     /// An image opened over the window.
     viewer: Option<Entity<ImageViewer>>,
+    /// Thumbnails of screenshots still in session logs (drawn from `&self`, hence the cell).
+    logged: std::cell::RefCell<viewer::LoggedImages>,
     /// The About Kynex modal is open; the installed Claude Code version, once read.
     about_open: bool,
     claude_version: Option<String>,
@@ -243,7 +249,7 @@ impl KynexApp {
         Self::watch_usage(cx);
 
         let mut chat = match saved.chat_session_id.clone() {
-            Some(id) => Session::resume(Kind::Chat, chat_dir(), id),
+            Some(id) => Session::resume(Kind::Chat, chat_dir(), id, wake.clone()),
             None => Session::new(Kind::Chat, chat_dir()),
         };
         chat.model = saved.model.clone();
@@ -352,6 +358,7 @@ impl KynexApp {
             draft_for: None,
             slash: Slash::default(),
             sessions: None,
+            sessions_reading: None,
             session_filter,
             filtering_sessions: false,
             organize: Organize::new(group_name),
@@ -377,8 +384,10 @@ impl KynexApp {
             toast_hover: false,
             toasts_paused: false,
             toasts_ticking: false,
+            calls_ticking: false,
             wheel: SmoothWheel::default(),
             viewer: None,
+            logged: Default::default(),
             about_open: false,
             claude_version: None,
             cli_check: CliCheck::default(),
@@ -406,7 +415,13 @@ impl KynexApp {
         // The shown session finishing a turn scrolls to its end; others keep their place.
         let shown = self.active_key();
         let mut shown_ended = false;
+        // Sessions whose history came in from their log, and how many items went in front.
+        let mut histories = Vec::new();
         for s in self.all_sessions_mut() {
+            // Before `seen`: history isn't news (no toasts for old tasks).
+            if let Some(n) = s.take_history() {
+                histories.push((s.uid, n));
+            }
             let before = s.wants_you();
             let (was_busy, seen) = (s.busy, s.items.len());
             s.poll();
@@ -434,6 +449,9 @@ impl KynexApp {
                     None => newer,
                 });
             }
+        }
+        for (key, n) in histories {
+            self.history_came(key, n);
         }
         if let Some(limits) = limits {
             self.limits_reported(limits, cx);

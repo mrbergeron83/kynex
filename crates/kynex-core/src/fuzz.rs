@@ -41,6 +41,49 @@ pub fn transcript(text: &str) {
     }
 }
 
+/// A session log read back from its end: every line, at a chunk size the first
+/// byte picks, must come out as reading forward finds it; then the branch is
+/// walked and replayed as a session opens.
+pub fn session_log(bytes: &[u8]) {
+    use std::io::Cursor;
+
+    use crate::session_log::{Branch, lines_back, read_span};
+    let chunk = u64::from(bytes.first().copied().unwrap_or(1) % 64) + 1;
+    let mut back = Vec::new();
+    lines_back(&mut Cursor::new(bytes), bytes.len() as u64, chunk, u64::MAX, |offset, line| {
+        back.push((offset, line.to_vec()));
+        true
+    })
+    .unwrap();
+    let mut forward = Vec::new();
+    let mut offset = 0;
+    for line in bytes.split_inclusive(|b| *b == b'\n') {
+        let l = line.strip_suffix(b"\n").unwrap_or(line);
+        let l = l.strip_suffix(b"\r").unwrap_or(l);
+        if !l.is_empty() {
+            forward.push((offset, l.to_vec()));
+        }
+        offset += line.len() as u64;
+    }
+    forward.reverse();
+    assert_eq!(back, forward);
+
+    let mut r = Cursor::new(bytes);
+    let mut recent = Vec::new();
+    let walked = Branch { recent: chunk as usize }.walk(&mut r, None, |v| {
+        recent = v;
+        true
+    });
+    if let Ok(Some(w)) = walked {
+        let mut buf = Vec::new();
+        let older: Vec<Value> = w.older.iter().rev().filter_map(|s| read_span(&mut r, *s, &mut buf)).collect();
+        let mut s = Session::new(Kind::Chat, PathBuf::new());
+        for v in older.into_iter().chain(recent.into_iter().rev().map(|(_, v)| v)) {
+            s.replay_entry(v);
+        }
+    }
+}
+
 /// `git status --porcelain=v2 -z`.
 pub fn git_status(text: &str) {
     let _ = git::status::parse(text);
@@ -125,6 +168,7 @@ mod tests {
         for t in inputs {
             stream_json(t);
             transcript(t);
+            session_log(t.as_bytes());
             git_status(t);
             git_diff(t);
             git_log(t);

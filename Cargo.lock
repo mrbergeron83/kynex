@@ -2698,6 +2698,7 @@ dependencies = [
  "async-channel",
  "gpui-pre",
  "gpui-pre-platform",
+ "image",
  "kynex-core",
  "serde",
  "serde_json",

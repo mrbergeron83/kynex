@@ -386,7 +386,13 @@ mod tests {
     }
 
     fn call(name: &str) -> Item {
-        Item::ToolUse { id: "x".into(), name: name.into(), summary: String::new(), input: "{}".into() }
+        Item::ToolUse {
+            id: "x".into(),
+            name: name.into(),
+            summary: String::new(),
+            input: "{}".into(),
+            timing: Default::default(),
+        }
     }
 
     fn shot() -> Item {

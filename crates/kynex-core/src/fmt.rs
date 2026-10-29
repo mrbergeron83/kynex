@@ -12,6 +12,17 @@ pub fn duration(ms: u64) -> String {
     }
 }
 
+/// Time running so far, in whole seconds, for a count that ticks once a
+/// second: "8s", "1m 12s", "1h 3m".
+pub fn elapsed(d: std::time::Duration) -> String {
+    let s = d.as_secs();
+    match s {
+        0..60 => format!("{s}s"),
+        60..3600 => format!("{}m {}s", s / 60, s % 60),
+        _ => format!("{}h {}m", s / 3600, s % 3600 / 60),
+    }
+}
+
 /// A time limit, in whole units: "45s", "2m", "1m 30s", "1h", "1h 30m".
 pub fn limit(ms: u64) -> String {
     let s = ms.div_ceil(1000);
@@ -150,6 +161,10 @@ mod tests {
         assert_eq!(duration(8_200), "8.2s");
         assert_eq!(duration(252_000), "4m 12s");
         assert_eq!(duration(3_780_000), "1h 3m");
+        let secs = std::time::Duration::from_secs;
+        assert_eq!(elapsed(std::time::Duration::from_millis(8_900)), "8s");
+        assert_eq!(elapsed(secs(72)), "1m 12s");
+        assert_eq!(elapsed(secs(3_780)), "1h 3m");
     }
 
     #[test]

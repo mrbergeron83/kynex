@@ -38,6 +38,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "session_log"
+path = "fuzz_targets/session_log.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "git_status"
 path = "fuzz_targets/git_status.rs"
 test = false
