@@ -12,7 +12,7 @@ use kynex_core::open::Opener;
 use kynex_core::paths::data_dir;
 use kynex_core::terminal::ShellKind;
 
-use kynex_core::toasts::Toast;
+use kynex_core::toasts::{Corner, Toast};
 
 use super::KynexApp;
 use super::menus::{FontRole, Menu};
@@ -348,7 +348,22 @@ impl KynexApp {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_column(w, cx)))
             }));
 
-        div().flex().flex_col().gap_6().child(themes).child(fonts).child(column).child(motion)
+        let corner = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(heading("Notification position", "Where notes like a task ending or an update show.", t))
+            .children(Corner::ALL.into_iter().enumerate().map(|(n, c)| {
+                choice(("app-toast-corner", n), self.saved.toast_corner == c, c.label().to_string(), t).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.saved.toast_corner = c;
+                        this.save();
+                        cx.notify();
+                    }),
+                )
+            }));
+
+        div().flex().flex_col().gap_6().child(themes).child(fonts).child(column).child(corner).child(motion)
     }
 
     fn set_column(&mut self, w: ColumnWidth, cx: &mut Context<Self>) {

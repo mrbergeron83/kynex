@@ -15,6 +15,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
   it to start up. The last two sessions you left stay open, so switching back is instant.
 - "Thinking… 4s" keeps counting even when nothing else changes, and no longer repaints the
   window every frame to do it.
+- A status footer along the bottom of the window shows what Kynex and the processes it
+  started use (CPU and memory, with a breakdown on hover). The usage-limit meters and the
+  update pill moved there from the title bar.
+- Toasts sit in a corner of the window you pick (Settings → Appearance → Notification
+  position; bottom right by default), the same in every view, clear of the title bar, the
+  footer and the message box instead of over the conversation.
+- The model and effort pickers under the message box are one chip, "Fable 5.1 · max"; effort
+  is a section of the model menu.
 
 ## [0.0.9] - 2026-10-29
 

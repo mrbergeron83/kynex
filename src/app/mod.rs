@@ -8,7 +8,8 @@
 //! | `keys.rs`           | actions, `keymap.json`, tab / Esc / mode shortcuts   |
 //! | `workspace.rs`      | tabs, projects, and which session is shown           |
 //! | `title_bar.rs`      | title bar and project tabs                           |
-//! | `status.rs`         | title bar's usage-limits meter and update pill       |
+//! | `footer.rs`         | status footer: Kynex's CPU / memory, meters, update  |
+//! | `status.rs`         | the footer's usage-limits meter and update pill      |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_groups.rs` | session groups and the archive, their menus          |
@@ -53,6 +54,7 @@ mod composer;
 mod drafts;
 mod extensions;
 mod extensions_add;
+mod footer;
 mod git_modal;
 mod handoff;
 mod history;
@@ -208,6 +210,11 @@ pub struct KynexApp {
     toast_hover: bool,
     toasts_paused: bool,
     toasts_ticking: bool,
+    /// The conversation's free area last frame (between its header and the
+    /// composer), which the toasts stay clear of; `None` in other views.
+    toast_room: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// What Kynex and its processes use, as last read (`footer.rs`).
+    resources: Option<kynex_core::resources::Usage>,
     /// The shown session's clocks (thinking, calls, pulse) are repainted once a second.
     clocks_ticking: bool,
     /// Mouse-wheel turns made smooth for every scroll area.
@@ -257,6 +264,7 @@ impl KynexApp {
         Self::watch_cli_updates(cx);
         Self::watch_app_updates(cx);
         Self::watch_usage(cx);
+        Self::watch_resources(cx);
 
         let mut chat = match saved.chat_session_id.clone() {
             Some(id) => Session::resume(Kind::Chat, chat_dir(), id, wake.clone()),
@@ -397,6 +405,8 @@ impl KynexApp {
             toast_hover: false,
             toasts_paused: false,
             toasts_ticking: false,
+            toast_room: Default::default(),
+            resources: None,
             clocks_ticking: false,
             wheel: SmoothWheel::default(),
             viewer: None,
@@ -549,9 +559,13 @@ impl Render for KynexApp {
             self.focus.focus(window, cx);
         }
 
-        // Toasts sit over the conversation, above the composer and the terminal
-        // dock; elsewhere (the Git view, setup) in the window's corner.
-        let mut toasts = self.render_toasts(cx);
+        // Toasts sit in the corner picked in Settings, the same in every view;
+        // the conversation's own bars and composer are measured to stay clear of.
+        let toasts = self.render_toasts(window, cx);
+        let in_conversation = matches!(self.setup, Setup::Checking | Setup::Ready) && view != Some(View::Git);
+        if !in_conversation {
+            self.toast_room.set(None);
+        }
         let main = if let Some(setup) = self.render_setup(cx) {
             setup
         } else if view == Some(View::Git) {
@@ -616,11 +630,7 @@ impl Render for KynexApp {
                                                 .flex_1()
                                                 .min_h_0()
                                                 .child(self.render_thread(window, cx))
-                                                .children(
-                                                    toasts
-                                                        .take()
-                                                        .map(|t| div().absolute().bottom_2().right_4().child(t)),
-                                                ),
+                                                .child(self.toast_room_probe()),
                                         )
                                         .child(self.render_composer(window, cx)),
                                 )
@@ -719,7 +729,8 @@ impl Render for KynexApp {
             .child(self.wheel.listener())
             .child(self.render_title_bar(window, cx))
             .child(main)
-            .children(toasts.map(|t| div().absolute().bottom_4().right_4().child(t)))
+            .child(self.render_footer(cx))
+            .children(toasts)
             .children(git_modal)
             .children(settings)
             .children(app_settings)

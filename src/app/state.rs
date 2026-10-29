@@ -8,6 +8,7 @@ use kynex_core::column::ColumnWidth;
 use kynex_core::motion::Motion;
 use kynex_core::paths::data_dir;
 use kynex_core::terminal::ShellKind;
+use kynex_core::toasts::Corner;
 use serde::{Deserialize, Serialize};
 
 use crate::theme::Theme;
@@ -90,6 +91,8 @@ pub struct Saved {
     pub shortcuts_stamped: bool,
     /// How wide the transcript and composer are.
     pub column: ColumnWidth,
+    /// The window corner toasts gather in.
+    pub toast_corner: Corner,
 }
 
 impl Default for Saved {
@@ -117,6 +120,7 @@ impl Default for Saved {
             notify: false,
             shortcuts_stamped: false,
             column: ColumnWidth::default(),
+            toast_corner: Corner::default(),
         }
     }
 }

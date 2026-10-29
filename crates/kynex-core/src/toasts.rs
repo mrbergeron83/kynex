@@ -7,6 +7,8 @@
 
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::live::Key;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -238,9 +240,78 @@ impl Toasts {
     }
 }
 
+/// The corner of the window toasts gather in (Settings › Appearance). The
+/// same in every view, newest nearest the edge.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Corner {
+    #[default]
+    BottomRight,
+    BottomLeft,
+    TopRight,
+    TopLeft,
+}
+
+impl Corner {
+    pub const ALL: [Corner; 4] = [Corner::BottomRight, Corner::BottomLeft, Corner::TopRight, Corner::TopLeft];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Corner::BottomRight => "Bottom right",
+            Corner::BottomLeft => "Bottom left",
+            Corner::TopRight => "Top right",
+            Corner::TopLeft => "Top left",
+        }
+    }
+
+    pub fn is_top(self) -> bool {
+        matches!(self, Corner::TopRight | Corner::TopLeft)
+    }
+
+    pub fn is_left(self) -> bool {
+        matches!(self, Corner::BottomLeft | Corner::TopLeft)
+    }
+
+    /// Where the stack goes, in from the window's edges. `top` and `bottom` are
+    /// how far in from each edge it must stay clear of: the title bar and the
+    /// footer, or further where the shown view has controls there (the
+    /// toolbar, the composer).
+    pub fn place(self, top: f32, bottom: f32) -> Place {
+        let (vertical, horizontal) = (if self.is_top() { top } else { bottom } + MARGIN, MARGIN);
+        Place {
+            top: self.is_top().then_some(vertical),
+            bottom: (!self.is_top()).then_some(vertical),
+            left: self.is_left().then_some(horizontal),
+            right: (!self.is_left()).then_some(horizontal),
+        }
+    }
+}
+
+/// Room between the stack and what it stays clear of.
+const MARGIN: f32 = 12.;
+
+/// A toast stack's offsets from the window's edges; one of each pair is set.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Place {
+    pub top: Option<f32>,
+    pub bottom: Option<f32>,
+    pub left: Option<f32>,
+    pub right: Option<f32>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corners_stay_clear_of_the_bars() {
+        let p = Corner::BottomRight.place(40., 120.);
+        assert_eq!((p.top, p.bottom, p.left, p.right), (None, Some(132.), None, Some(12.)));
+        let p = Corner::TopLeft.place(40., 120.);
+        assert_eq!((p.top, p.bottom, p.left, p.right), (Some(52.), None, Some(12.), None));
+        assert_eq!(serde_json::to_string(&Corner::TopRight).unwrap(), "\"top_right\"");
+        assert!(Corner::ALL.iter().all(|c| !c.label().is_empty()));
+    }
 
     const EXIT: Duration = Duration::from_millis(150);
 

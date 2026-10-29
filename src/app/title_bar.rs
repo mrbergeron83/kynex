@@ -1,5 +1,5 @@
-//! The custom title bar: app name, one tab per project (Chat first), usage
-//! limits and the update pill (`status.rs`), Settings and the window buttons.
+//! The custom title bar: app name, one tab per project (Chat first), Settings
+//! and the window buttons. Usage limits and the update pill are in the footer.
 //! The theme lives in Settings and the Kynex menu's Appearance.
 
 use gpui::{
@@ -77,8 +77,6 @@ impl KynexApp {
             )
             // The empty middle of the bar is the window's title bar.
             .child(chrome::drag_area(div().id("drag").flex_1().h_full()))
-            .children(self.render_usage(cx))
-            .children(self.render_update_pill(cx))
             .child(
                 icon_button("app-settings", Icon::Settings, cx)
                     .mr_2()

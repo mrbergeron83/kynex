@@ -1,10 +1,11 @@
-//! Popup menus: model, appearance (theme and fonts), permission mode, effort, and the
+//! Popup menus: model (with effort under it), appearance (theme and fonts), permission mode, effort, and the
 //! right-click menus of project tabs, sessions and session groups. One is open at a time, anchored where it was clicked.
 
 use gpui::{Anchor, AnyElement, Context, Pixels, Point, SharedString, anchored, deferred, div, prelude::*, px};
 use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
 use kynex_core::project::{self, Mode};
+use kynex_core::session::Kind;
 use kynex_core::update;
 
 use super::{KynexApp, models};
@@ -41,6 +42,38 @@ pub struct OpenMenu {
 }
 
 impl KynexApp {
+    /// The effort levels, for the settings modal's project or the active one:
+    /// only those the selected model takes, once the CLI has said which.
+    fn effort_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let path =
+            self.settings.as_ref().map(|s| s.path.clone()).or_else(|| self.active_project().map(|p| p.path.clone()));
+        let current = match (&self.settings, &path) {
+            (Some(s), _) => s.claude.effort.clone(),
+            (None, Some(p)) => self.claude_settings(p).effort,
+            _ => String::new(),
+        };
+        let allowed = models::current_model(&self.active_model()).map(|m| m.efforts);
+        let levels = project::EFFORTS
+            .iter()
+            .filter(|(id, _)| id.is_empty() || allowed.as_ref().is_none_or(|a| a.iter().any(|e| e == id)));
+        levels
+            .enumerate()
+            .map(|(n, (id, name))| {
+                let id = id.to_string();
+                let path = path.clone();
+                menu_item(("effort", n), *name, current == id, cx)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.menu = None;
+                        if let Some(path) = &path {
+                            this.set_effort(path.clone(), id.clone(), cx);
+                        }
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            })
+            .collect()
+    }
+
     /// Opens `which` at `at`, or closes it if it's already open.
     pub(super) fn open_menu(&mut self, which: Menu, at: Point<Pixels>, anchor: Anchor, cx: &mut Context<Self>) {
         self.menu = if self.menu.as_ref().is_some_and(|m| m.which == which) {
@@ -219,6 +252,21 @@ impl KynexApp {
                             .into_any_element(),
                     );
                 }
+                // A Claude Code session's effort, per project, under the models (#123).
+                let code = self.active_session().is_some_and(|s| s.kind == Kind::Code);
+                if code && self.active_project().is_some() {
+                    items.push(div().my_1().child(divider(cx)).into_any_element());
+                    items.push(
+                        div()
+                            .px_2()
+                            .py_0p5()
+                            .text_xs()
+                            .text_color(t.text_placeholder)
+                            .child("Effort")
+                            .into_any_element(),
+                    );
+                    items.extend(self.effort_items(cx));
+                }
             }
             Menu::Theme => {
                 for (n, (th, name)) in THEMES.iter().enumerate() {
@@ -321,39 +369,7 @@ impl KynexApp {
                     );
                 }
             }
-            Menu::Effort => {
-                // From the settings modal, or from the composer for the active project.
-                let path = self
-                    .settings
-                    .as_ref()
-                    .map(|s| s.path.clone())
-                    .or_else(|| self.active_project().map(|p| p.path.clone()));
-                let current = match (&self.settings, &path) {
-                    (Some(s), _) => s.claude.effort.clone(),
-                    (None, Some(p)) => self.claude_settings(p).effort,
-                    _ => String::new(),
-                };
-                // Only the levels the selected model takes, once the CLI has said which.
-                let allowed = models::current_model(&self.active_model()).map(|m| m.efforts);
-                let levels = project::EFFORTS
-                    .iter()
-                    .filter(|(id, _)| id.is_empty() || allowed.as_ref().is_none_or(|a| a.iter().any(|e| e == id)));
-                for (n, (id, name)) in levels.enumerate() {
-                    let id = id.to_string();
-                    let path = path.clone();
-                    items.push(
-                        menu_item(("effort", n), *name, current == id, cx)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.menu = None;
-                                if let Some(path) = &path {
-                                    this.set_effort(path.clone(), id.clone(), cx);
-                                }
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    );
-                }
-            }
+            Menu::Effort => items = self.effort_items(cx),
             Menu::Tab(i) => {
                 let i = *i;
                 let path = self.saved.projects.get(i).map(|p| p.path.clone()).unwrap_or_default();

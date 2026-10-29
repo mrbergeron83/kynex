@@ -31,6 +31,7 @@ pub mod project;
 pub mod pulse;
 pub mod questions;
 pub mod queue;
+pub mod resources;
 pub mod rewind;
 pub mod session;
 pub mod session_log;
