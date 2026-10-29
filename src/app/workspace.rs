@@ -119,6 +119,20 @@ impl KynexApp {
         let Some(live) = self.live_mut() else { return };
         let closed = live.show(s);
         self.forget(&closed);
+        self.warm_up();
+    }
+
+    /// Starts the shown session's `claude` ahead of its next message, so you
+    /// don't wait for it to start up after pressing Enter (#157).
+    pub(super) fn warm_up(&mut self) {
+        if !matches!(self.setup, super::setup::Setup::Ready) {
+            return;
+        }
+        let model = self.active_model();
+        if let Some(s) = self.session_mut().filter(|s| !s.is_running()) {
+            s.use_model(model);
+            s.warm_up();
+        }
     }
 
     /// Shows the open session with this CLI id, or resumes it from its transcript.
@@ -153,6 +167,7 @@ impl KynexApp {
         }
         let closed = live.prune();
         self.forget(&closed);
+        self.warm_up();
         true
     }
 

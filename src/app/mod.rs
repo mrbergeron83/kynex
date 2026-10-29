@@ -208,8 +208,8 @@ pub struct KynexApp {
     toast_hover: bool,
     toasts_paused: bool,
     toasts_ticking: bool,
-    /// A running call's elapsed time is being repainted once a second.
-    calls_ticking: bool,
+    /// The shown session's clocks (thinking, calls, pulse) are repainted once a second.
+    clocks_ticking: bool,
     /// Mouse-wheel turns made smooth for every scroll area.
     wheel: SmoothWheel,
     /// An image opened over the window.
@@ -264,7 +264,7 @@ impl KynexApp {
         };
         chat.model = saved.model.clone();
         chat.wake = wake.clone();
-        let chat = Live { sessions: vec![chat], active: 0 };
+        let chat = Live::of(chat);
 
         let composer = cx.new(|cx| TextInput::new(cx).multiline());
         cx.subscribe_in(&composer, window, |this, _, ev, window, cx| match ev {
@@ -274,7 +274,8 @@ impl KynexApp {
                     this.attach_bytes(&i.bytes, cx);
                 }
             }
-            InputEvent::Changed => {}
+            // Typing: start Claude now, so it's up when the message goes.
+            InputEvent::Changed => this.warm_up(),
         })
         .detach();
         let login_code = cx.new(|cx| TextInput::new(cx).mono().placeholder("Paste the code here"));
@@ -396,7 +397,7 @@ impl KynexApp {
             toast_hover: false,
             toasts_paused: false,
             toasts_ticking: false,
-            calls_ticking: false,
+            clocks_ticking: false,
             wheel: SmoothWheel::default(),
             viewer: None,
             wants: HashMap::new(),

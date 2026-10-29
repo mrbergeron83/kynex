@@ -16,6 +16,7 @@ pub fn stream_json(text: &str) {
         if let Ok(v) = serde_json::from_str::<Value>(line) {
             s.handle(v);
         }
+        let _ = s.pulse().map(|p| p.label());
     }
     let _ = crate::mcp::handoff(&s.items);
     let _ = crate::mcp::health(&s.mcp);

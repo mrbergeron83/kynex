@@ -39,6 +39,10 @@ pub struct Thread {
     pub list: ListState,
     pub(super) rows: Vec<Row>,
     items: usize,
+    /// The session's [`Session::revision`] they were laid out at.
+    ///
+    /// [`Session::revision`]: kynex_core::session::Session::revision
+    revision: u64,
     /// Smooth scrolling in progress, and when its last frame ran.
     glide: Glide,
     last_frame: Option<Instant>,
@@ -198,10 +202,11 @@ impl KynexApp {
                 .into_any_element();
         }
         let Some(key) = key else { return div().into_any_element() };
-        self.tick_timed_calls(cx);
-        // Lay the rows out again when items come or go; only the rows that
-        // changed (usually the last few) are measured again.
-        let stale = self.threads.get(&key).is_none_or(|t| t.items != count);
+        self.tick_clocks(cx);
+        // Lay the rows out again when items come or go, or one changed how it
+        // lays out; only the rows that changed (usually the last few) are measured again.
+        let revision = self.active_session().map_or(0, |s| s.revision());
+        let stale = self.threads.get(&key).is_none_or(|t| t.items != count || t.revision != revision);
         let rows = stale.then(|| self.active_session().map(|s| transcript::rows(&s.items)).unwrap_or_default());
         let thread = self.threads.entry(key).or_insert_with(|| {
             let list = ListState::new(0, ListAlignment::Top, px(1000.));
@@ -210,6 +215,7 @@ impl KynexApp {
                 list,
                 rows: Vec::new(),
                 items: 0,
+                revision: 0,
                 glide: Glide::default(),
                 last_frame: None,
                 follow_after: false,
@@ -233,6 +239,7 @@ impl KynexApp {
             }
             thread.rows = rows;
             thread.items = count;
+            thread.revision = revision;
         }
         // The last row grows while a reply streams in.
         let n = thread.rows.len();
@@ -282,8 +289,8 @@ impl KynexApp {
         .absolute()
         .inset_0();
         let bar = scrollbar::vertical(("thread-bar", uid), state.clone());
-        let thread =
-            list(state, cx.processor(|this, ix, window, cx| this.render_item(ix, window, cx))).flex_1().size_full();
+        let pulse = busy.then(|| self.render_pulse(&t));
+        let thread = list(state, cx.processor(|this, ix, _, cx| this.render_item(ix, cx))).flex_1().size_full();
         div()
             .relative()
             .flex()
@@ -294,9 +301,35 @@ impl KynexApp {
             .child(probe)
             // Switching sessions fades the new one in instead of swapping in one frame.
             .child(fade_in(("thread-in", uid), thread, motion::NORMAL))
+            .children(pulse)
             .child(bar)
             .when(!at_latest, |d| d.child(self.render_jump_to_latest(uid, &t, cx)))
             .into_any_element()
+    }
+
+    /// One quiet line under the transcript while Claude works, saying what's
+    /// going on when nothing above shows it: "Starting Claude…", "Waiting for
+    /// Claude… 3s", "Working… 5s" (#157, #177). Text only, no spinner (#115).
+    /// Its room stays for the whole turn, so the transcript doesn't hop as
+    /// steps start and end.
+    fn render_pulse(&self, t: &Palette) -> impl IntoElement + use<> {
+        let label = self.active_session().and_then(|s| s.pulse()).map(|p| p.label());
+        let available = self.active_key().and_then(|k| self.threads.get(&k)).map_or(0., |th| th.width.get());
+        let column = (available > 0.).then(|| self.saved.column.columns(available - ROW_PADDING * 2.));
+        let line = div()
+            .flex()
+            .items_center()
+            .h(px(22.))
+            .px_1()
+            .text_xs()
+            .italic()
+            .text_color(t.text_placeholder)
+            .children(label)
+            .map(|d| match column {
+                Some(c) => d.flex_none().w(px(c.prose)),
+                None => d.w_full().when_some(self.saved.column.max_prose(), |d, w| d.max_w(px(w))),
+            });
+        div().flex_none().w_full().flex().justify_center().px(px(ROW_PADDING)).child(line)
     }
 
     /// The floating "Jump to latest" over a transcript scrolled up.
@@ -428,7 +461,7 @@ impl KynexApp {
         }
     }
 
-    fn render_item(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_item(&mut self, row: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(key) = self.active_key() else { return div().into_any_element() };
         let Some(thread) = self.threads.get(&key) else { return div().into_any_element() };
         let last = row + 1 == thread.rows.len();
@@ -444,7 +477,7 @@ impl KynexApp {
                 let compact =
                     matches!(item, Some(Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking(_)));
                 let wide = matches!(item, Some(Item::ToolResult { .. }));
-                (self.render_entry(ix, row, window, cx), compact, wide)
+                (self.render_entry(ix, row, cx), compact, wide)
             }
             None => return div().into_any_element(),
         };
@@ -482,7 +515,7 @@ impl KynexApp {
     }
 
     /// Item `ix` drawn on its own, as transcript row `row`.
-    fn render_entry(&mut self, ix: usize, row: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_entry(&mut self, ix: usize, row: usize, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let Some(session) = self.active_session() else { return div().into_any_element() };
         let key = session.uid;
@@ -580,9 +613,8 @@ impl KynexApp {
             // opens to the text when the CLI shared it.
             Item::Thinking(thought) => {
                 let label = div().text_xs().text_color(t.text_placeholder).child(thought.label());
+                // Its seconds count up on `tick_clocks`.
                 if thought.is_live() {
-                    // The seconds count up while nothing else redraws.
-                    window.request_animation_frame();
                     return label.italic().px_1().into_any_element();
                 }
                 if thought.text.trim().is_empty() {

@@ -12,9 +12,22 @@ pub struct Live {
     pub sessions: Vec<Session>,
     /// The one shown, and talked to from the composer.
     pub active: usize,
+    /// Sessions in the order they were last shown, latest last.
+    shown: Vec<Key>,
 }
 
+/// Idle sessions left behind that stay open, latest first: switching back to
+/// one costs nothing, and its process (if warmed up) is still there (#157).
+const KEEP_IDLE: usize = 2;
+
 impl Live {
+    /// Just `s`, shown.
+    pub fn of(s: Session) -> Self {
+        let mut live = Self::default();
+        live.show(s);
+        live
+    }
+
     pub fn current(&self) -> Option<&Session> {
         self.sessions.get(self.active)
     }
@@ -41,6 +54,7 @@ impl Live {
         match self.sessions.iter().position(f) {
             Some(i) => {
                 self.active = i;
+                self.mark_shown();
                 true
             }
             None => false,
@@ -48,28 +62,45 @@ impl Live {
     }
 
     /// Shows `s`. Sessions left behind keep running while busy, waiting on
-    /// you or holding queued messages; idle ones close (their process with them) and resume from the
-    /// transcript if picked again. Returns the uids that closed.
+    /// you or holding queued messages, and the last [`KEEP_IDLE`] shown stay
+    /// open too; other idle ones close (their process with them) and resume
+    /// from the transcript if picked again. Returns the uids that closed.
     pub fn show(&mut self, s: Session) -> Vec<Key> {
         self.sessions.push(s);
         self.active = self.sessions.len() - 1;
+        self.mark_shown();
         self.prune()
     }
 
-    /// Closes the idle sessions that aren't shown.
+    fn mark_shown(&mut self) {
+        let Some(uid) = self.current().map(|s| s.uid) else { return };
+        self.shown.retain(|k| *k != uid);
+        self.shown.push(uid);
+    }
+
+    /// Closes the idle sessions that aren't shown or among the last shown.
     pub fn prune(&mut self) -> Vec<Key> {
         let active = self.current().map(|s| s.uid);
+        let recent: Vec<Key> =
+            self.shown.iter().rev().filter(|k| Some(**k) != active).take(KEEP_IDLE).copied().collect();
         let mut closed = Vec::new();
         self.sessions.retain(|s| {
             // Closing the process would also stop its background tasks.
-            let keep =
-                Some(s.uid) == active || s.busy || s.waiting() || s.finished || !s.queue.is_empty() || s.has_tasks();
+            let keep = Some(s.uid) == active
+                || recent.contains(&s.uid)
+                || s.busy
+                || s.waiting()
+                || s.finished
+                || !s.queue.is_empty()
+                || s.has_tasks();
             if !keep {
                 closed.push(s.uid);
             }
             keep
         });
         self.active = self.sessions.iter().position(|s| Some(s.uid) == active).unwrap_or(0);
+        let open: Vec<Key> = self.sessions.iter().map(|s| s.uid).collect();
+        self.shown.retain(|k| open.contains(k));
         closed
     }
 
@@ -79,6 +110,7 @@ impl Live {
         let Some(i) = self.sessions.iter().position(|s| s.uid == key && !s.busy) else { return false };
         let shown = self.current().map(|s| s.uid);
         self.sessions.remove(i);
+        self.shown.retain(|k| *k != key);
         self.active = self.sessions.iter().position(|s| Some(s.uid) == shown).unwrap_or(0);
         true
     }
@@ -96,18 +128,22 @@ mod tests {
     }
 
     #[test]
-    fn showing_a_session_closes_idle_ones_but_keeps_busy_ones() {
+    fn showing_a_session_keeps_the_last_ones_and_busy_ones() {
         let mut live = Live::default();
-        let (a, mut b) = (session(), session());
-        let (a_uid, b_uid) = (a.uid, b.uid);
-        b.busy = true;
-        live.show(a);
-        assert!(live.show(b).contains(&a_uid));
-        let c = session();
-        let c_uid = c.uid;
-        assert!(live.show(c).is_empty(), "busy b stays open");
-        assert_eq!(live.sessions.iter().map(|s| s.uid).collect::<Vec<_>>(), [b_uid, c_uid]);
-        assert_eq!(live.current().map(|s| s.uid), Some(c_uid));
+        let mut s: Vec<Session> = (0..5).map(|_| session()).collect();
+        let uids: Vec<Key> = s.iter().map(|s| s.uid).collect();
+        s[0].busy = true;
+        for s in s.drain(..4) {
+            assert!(live.show(s).is_empty(), "busy, or among the last {KEEP_IDLE} shown");
+        }
+        // The fifth leaves the second (idle, no longer recent) behind.
+        assert_eq!(live.show(s.remove(0)), [uids[1]]);
+        assert_eq!(live.sessions.iter().map(|s| s.uid).collect::<Vec<_>>(), [uids[0], uids[2], uids[3], uids[4]]);
+        assert_eq!(live.current().map(|s| s.uid), Some(uids[4]));
+        // Going back to the third makes it the latest again; then the fourth goes.
+        assert!(live.show_where(|s| s.uid == uids[2]));
+        assert!(live.prune().is_empty());
+        assert_eq!(live.show(session()), [uids[3]]);
     }
 
     #[test]

@@ -5,6 +5,17 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The transcript says what Claude is doing while nothing else shows it: "Starting Claude…",
+  "Waiting for Claude…" and "Working…" with the seconds, in one quiet line at its end.
+- A tool call shows as soon as Claude starts writing it, with its file or command once that
+  much is in, instead of only once its whole input arrived (a long `Write` showed nothing).
+- Claude starts while you type, and when you switch to a session, so sending doesn't wait for
+  it to start up. The last two sessions you left stay open, so switching back is instant.
+- "Thinking… 4s" keeps counting even when nothing else changes, and no longer repaints the
+  window every frame to do it.
+
 ## [0.0.9] - 2026-10-29
 
 ### Added

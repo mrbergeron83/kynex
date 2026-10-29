@@ -28,6 +28,7 @@ pub mod open;
 pub mod paths;
 pub mod process;
 pub mod project;
+pub mod pulse;
 pub mod questions;
 pub mod queue;
 pub mod rewind;
