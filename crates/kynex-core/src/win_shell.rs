@@ -84,7 +84,7 @@ pub fn stamp_shortcuts(folders: &[PathBuf], exe: &Path, id: &str) -> Vec<PathBuf
     // SAFETY: COM for this thread, as the shell objects below need; a thread
     // that has it already gets S_FALSE, which is fine too.
     let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-    let exe = exe.to_string_lossy().to_lowercase();
+    let exe = same_path(exe);
     let links = folders
         .iter()
         .filter_map(|f| std::fs::read_dir(f).ok())
@@ -95,7 +95,12 @@ pub fn stamp_shortcuts(folders: &[PathBuf], exe: &Path, id: &str) -> Vec<PathBuf
     links.filter(|link| matches!(stamp(link, &exe, id), Ok(true))).collect()
 }
 
-/// Sets `id` on `link` if it starts `exe` (lowercase) and has another ID; true if it did.
+/// A path to compare with others: long names (not `RUNNER~1`), any case.
+fn same_path(path: &Path) -> String {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()).to_string_lossy().to_lowercase()
+}
+
+/// Sets `id` on `link` if it starts `exe` (see [`same_path`]) and has another ID; true if it did.
 fn stamp(link: &Path, exe: &str, id: &str) -> windows::core::Result<bool> {
     // SAFETY: COM objects used and dropped on this thread; the path buffer is ours.
     unsafe {
@@ -106,7 +111,7 @@ fn stamp(link: &Path, exe: &str, id: &str) -> windows::core::Result<bool> {
         let mut target = [0u16; 1024];
         shell.GetPath(&mut target, std::ptr::null_mut(), 0)?;
         let len = target.iter().position(|c| *c == 0).unwrap_or(target.len());
-        if String::from_utf16_lossy(&target[..len]).to_lowercase() != exe {
+        if same_path(Path::new(&String::from_utf16_lossy(&target[..len]))) != exe {
             return Ok(false);
         }
         let store: IPropertyStore = shell.cast()?;
