@@ -43,6 +43,8 @@ gpui_platform.workspace = true
 # The same as gpui's: screenshots are decoded to thumbnails as `RenderImage` frames.
 image.workspace = true
 kynex-core.workspace = true
+# The same as gpui's: the window's HWND, for the taskbar's "needs you" dot.
+raw-window-handle = "0.6"
 serde.workspace = true
 serde_json.workspace = true
 unicode-segmentation.workspace = true

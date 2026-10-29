@@ -85,6 +85,9 @@ A cargo workspace with two crates:
     `queue.rs` — messages written while Claude works, sent together when the turn ends
   - `mcp.rs` — MCP tools and servers in words, server status, browser handoff;
     `tasks.rs` — background tasks (`run_in_background`, agents, Monitors) from stream-json
+  - `attention.rs` — why a session wants you, for OS notifications and the icon's "needs
+    you" dot (Dock badge on macOS); `win_shell.rs` — the taskbar dot and app ID on Kynex's
+    shortcuts (Windows)
   - `zoom.rs` — the image viewer's fit, zoom and pan; `column.rs` — the Transcript width
     setting and the prose / tool-row widths it gives; `env_path.rs` — the login shell's PATH
     for an app started from Finder or the Dock (macOS)

@@ -43,12 +43,57 @@
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
 
+    # The shortcuts carry Kynex's AppUserModelID (attention::APP_ID), as its window
+    # does: the taskbar keeps a pinned Kynex with the running one, and notifications
+    # come from "Kynex". WScript.Shell can't set it, so a little C# does.
+    if (-not ('KynexInstall.Shortcut' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace KynexInstall {
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    public struct PropertyKey { public Guid fmtid; public uint pid; }
+    [StructLayout(LayoutKind.Explicit, Size = 24)]
+    public struct PropVariant { [FieldOffset(0)] public ushort vt; [FieldOffset(8)] public IntPtr p; }
+    [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IPropertyStore {
+        int GetCount(out uint count);
+        int GetAt(uint index, out PropertyKey key);
+        int GetValue(ref PropertyKey key, out PropVariant value);
+        int SetValue(ref PropertyKey key, ref PropVariant value);
+        int Commit();
+    }
+    public static class Shortcut {
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+        static extern void SHGetPropertyStoreFromParsingName(string path, IntPtr bindContext, int flags, ref Guid iid,
+            [MarshalAs(UnmanagedType.Interface)] out IPropertyStore store);
+        public static void SetAppId(string path, string id) {
+            Guid iid = typeof(IPropertyStore).GUID;
+            IPropertyStore store;
+            SHGetPropertyStoreFromParsingName(path, IntPtr.Zero, 2 /* GPS_READWRITE */, ref iid, out store);
+            // PKEY_AppUserModel_ID, as a VT_LPWSTR.
+            PropertyKey key = new PropertyKey { fmtid = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), pid = 5 };
+            PropVariant value = new PropVariant { vt = 31, p = Marshal.StringToCoTaskMemUni(id) };
+            try {
+                Marshal.ThrowExceptionForHR(store.SetValue(ref key, ref value));
+                Marshal.ThrowExceptionForHR(store.Commit());
+            } finally {
+                Marshal.FreeCoTaskMem(value.p);
+                Marshal.ReleaseComObject(store);
+            }
+        }
+    }
+}
+'@
+    }
     $shell = New-Object -ComObject WScript.Shell
     foreach ($folder in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
-        $link = $shell.CreateShortcut((Join-Path $folder 'Kynex.lnk'))
+        $path = Join-Path $folder 'Kynex.lnk'
+        $link = $shell.CreateShortcut($path)
         $link.TargetPath = $exe
         $link.WorkingDirectory = $dir
         $link.Save()
+        try { [KynexInstall.Shortcut]::SetAppId($path, 'Kynex.Kynex') } catch { Write-Warning "Couldn't set Kynex's app ID on ${path}: $_" }
     }
 
     # `knx` from any terminal: a shim that starts Kynex without holding the console.

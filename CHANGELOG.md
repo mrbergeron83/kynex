@@ -7,6 +7,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Notifications (Settings → General, off by default): while Kynex is in the background, an
+  OS notification says which session finished or needs your answer; clicking it opens
+  that session. Kynex's icon shows a dot while any session needs you (taskbar on
+  Windows, Dock on macOS). On Windows, `install.ps1` gives Kynex's shortcuts its app ID,
+  and Kynex does it once for shortcuts from an older install; if Kynex is pinned to the
+  taskbar from before, pin it again once.
 - A running command with a time limit shows how long it has been going, "1m 12s / max 2m",
   counting up once a second; once it's done, how long it took.
 

@@ -158,7 +158,7 @@ impl KynexApp {
     }
 
     /// An open session's name: its title, else its first message.
-    fn session_title(&self, key: Key) -> Option<String> {
+    pub(super) fn session_title(&self, key: Key) -> Option<String> {
         let s = self
             .chat
             .sessions
