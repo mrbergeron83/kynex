@@ -1,6 +1,7 @@
-//! Organising the sessions panel: groups that collapse, an archive, their
-//! right-click menus, renaming a group in place, and dragging sessions between
-//! them. The rules live in `kynex_core::groups`; this draws them.
+//! Organising the sessions panel: groups that collapse, an archive, pinned
+//! sessions, their right-click menus, renaming a group or session in place,
+//! and dragging sessions between them. The rules live in `kynex_core::groups`;
+//! this draws them.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -22,11 +23,20 @@ use crate::ui::{Icon, divider, icon, menu_item, popover};
 /// What a session menu item does when clicked.
 type MenuAction = Box<dyn Fn(&mut KynexApp, &mut Window, &mut Context<KynexApp>)>;
 
+/// What the name field is renaming.
+#[derive(Clone, PartialEq)]
+enum Editing {
+    /// Group `i` in this folder.
+    Group(PathBuf, usize),
+    /// A session, in its panel row or (`in_header`) the session header.
+    Session { cwd: PathBuf, id: String, in_header: bool },
+}
+
 /// Each folder's groups as loaded, and the panel's own view state.
 pub(super) struct Organize {
     by_folder: HashMap<PathBuf, SessionGroups>,
-    /// The group whose name is being edited, in which folder.
-    editing: Option<(PathBuf, usize)>,
+    /// What's being renamed, if anything.
+    editing: Option<Editing>,
     name: Entity<TextInput>,
     /// The archived section is open (this run only; it starts closed).
     pub(super) show_archived: bool,
@@ -35,6 +45,11 @@ pub(super) struct Organize {
 impl Organize {
     pub(super) fn new(name: Entity<TextInput>) -> Self {
         Self { by_folder: HashMap::new(), editing: None, name, show_archived: false }
+    }
+
+    /// A session's name given by hand, if its folder's groups are loaded.
+    pub(super) fn name_of(&self, cwd: &Path, id: &str) -> Option<String> {
+        self.by_folder.get(cwd)?.name_of(id).map(str::to_string)
     }
 }
 
@@ -79,11 +94,51 @@ impl KynexApp {
 
     /// Shows the name field in place of group `i`'s header.
     fn start_rename(&mut self, cwd: PathBuf, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        // One open at a time: the field moves, so keep what the last one had.
+        self.commit_rename(cx);
         let name = self.groups_for(&cwd).groups.get(i).map(|g| g.name.clone()).unwrap_or_default();
         self.organize.name.update(cx, |input, cx| input.set_text(name, cx));
         self.organize.name.read(cx).focus_handle(cx).focus(window, cx);
-        self.organize.editing = Some((cwd, i));
+        self.organize.editing = Some(Editing::Group(cwd, i));
         cx.notify();
+    }
+
+    /// Shows the name field in place of a session's name: in its panel row, or
+    /// in the session header (`in_header`), filled with the name it has now.
+    pub(super) fn start_session_rename(
+        &mut self,
+        cwd: PathBuf,
+        id: String,
+        in_header: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit_rename(cx);
+        let listed = self.sessions.as_ref().and_then(|l| l.items.iter().find(|i| i.id == id)).map(|i| i.title.clone());
+        let name = self.groups_for(&cwd).name_of(&id).map(str::to_string).or(listed).unwrap_or_default();
+        self.organize.name.update(cx, |input, cx| input.set_text(name, cx));
+        self.organize.name.read(cx).focus_handle(cx).focus(window, cx);
+        self.organize.editing = Some(Editing::Session { cwd, id, in_header });
+        cx.notify();
+    }
+
+    /// The name field, while it's renaming session `id` in the panel row or (`in_header`) the header.
+    pub(super) fn session_name_field(&self, id: &str, in_header: bool, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        matches!(&self.organize.editing, Some(Editing::Session { id: e, in_header: h, .. }) if e == id && *h == in_header)
+            .then(|| self.rename_field(cx))
+    }
+
+    /// The name field in place: Enter or a click anywhere else keeps the name,
+    /// Esc leaves it as it was.
+    fn rename_field(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let t = theme(cx).clone();
+        crate::ui::name_field(self.organize.name.clone(), &t)
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.commit_rename(cx)))
+    }
+
+    /// A session's name given by hand, which wins over generated ones.
+    pub(super) fn given_name(&mut self, cwd: &Path, id: &str) -> Option<String> {
+        self.groups_for(cwd).name_of(id).map(str::to_string)
     }
 
     /// The Sessions header's new-group button: an empty group, its name open for editing.
@@ -93,11 +148,19 @@ impl KynexApp {
         self.start_rename(cwd, at, window, cx);
     }
 
-    /// Enter in the name field: keeps the new name.
+    /// Enter in the name field: keeps the new name. A session's blank name
+    /// goes back to the generated one.
     pub(super) fn commit_rename(&mut self, cx: &mut Context<Self>) {
-        let Some((cwd, i)) = self.organize.editing.take() else { return };
+        let Some(editing) = self.organize.editing.take() else { return };
         let name = self.organize.name.read(cx).text().to_string();
-        self.edit_groups(&cwd, |g| g.rename_group(i, &name));
+        match editing {
+            Editing::Group(cwd, i) => self.edit_groups(&cwd, |g| g.rename_group(i, &name)),
+            Editing::Session { cwd, id, .. } => {
+                self.edit_groups(&cwd, |g| g.rename(&id, &name));
+                // Re-read the list so the new name shows everywhere.
+                self.sessions = None;
+            }
+        }
         cx.notify();
     }
 
@@ -106,7 +169,7 @@ impl KynexApp {
         self.organize.editing.take().is_some()
     }
 
-    /// The menu for a session row: move it between groups, archive it.
+    /// The menu for a session row: rename or pin it, move it between groups, archive it.
     pub(super) fn session_menu_items(&mut self, id: &str, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let Some(cwd) = self.active_session().map(|s| s.cwd.clone()) else { return Vec::new() };
         let groups = self.groups_for(&cwd).clone();
@@ -121,6 +184,23 @@ impl KynexApp {
                 }))
                 .into_any_element()
         };
+        let (rename_id, rename_cwd) = (id.to_string(), cwd.clone());
+        items.push(item(
+            "Rename".into(),
+            2000,
+            cx,
+            Box::new(move |this, window, cx| {
+                this.start_session_rename(rename_cwd.clone(), rename_id.clone(), false, window, cx)
+            }),
+        ));
+        let (pin_id, pin_cwd) = (id.to_string(), cwd.clone());
+        items.push(item(
+            if groups.is_pinned(id) { "Unpin".into() } else { "Pin to top".into() },
+            2001,
+            cx,
+            Box::new(move |this, _, _| this.edit_groups(&pin_cwd, |g| g.toggle_pin(&pin_id))),
+        ));
+        items.push(div().my_1().child(divider(cx)).into_any_element());
         for (i, g) in groups.groups.iter().enumerate().filter(|(i, _)| Some(*i) != current) {
             let (id, cwd) = (id.to_string(), cwd.clone());
             items.push(item(
@@ -207,7 +287,7 @@ impl KynexApp {
     ) -> AnyElement {
         let t = theme(cx).clone();
         let Some(group) = self.groups_for(cwd).groups.get(i).cloned() else { return div().into_any_element() };
-        let editing = self.organize.editing.as_ref().is_some_and(|(p, e)| p == cwd && *e == i);
+        let editing = matches!(&self.organize.editing, Some(Editing::Group(p, e)) if p == cwd && *e == i);
         let (count, hover) = (rows.len(), t.hover);
         let (toggle_cwd, drop_cwd) = (cwd.to_path_buf(), cwd.to_path_buf());
         let header = div()
@@ -226,16 +306,7 @@ impl KynexApp {
                 icon(if group.collapsed { Icon::ChevronRight } else { Icon::ChevronDown }, t.text_placeholder).size_3(),
             )
             .child(if editing {
-                div()
-                    .flex_1()
-                    .px_1()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(t.border_focused)
-                    .bg(t.editor)
-                    .text_sm()
-                    .child(self.organize.name.clone())
-                    .into_any_element()
+                self.rename_field(cx).flex_1().into_any_element()
             } else {
                 div()
                     .flex_1()

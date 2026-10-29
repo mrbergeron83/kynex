@@ -2,7 +2,7 @@
 //! where it runs (branch, and whether that's a separate worktree), how many
 //! turns it has taken, what it has cost and how full its context is.
 
-use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
+use gpui::{AnyElement, ClickEvent, Context, FontWeight, div, prelude::*, px};
 use kynex_core::git::Worktree;
 use kynex_core::session::{Item, Kind};
 use kynex_core::{fmt, mcp};
@@ -24,7 +24,10 @@ impl KynexApp {
         });
         let turns = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
         let (cost, kind, cwd, context, busy) = (s.total_cost, s.kind, s.cwd.clone(), s.context, s.busy);
+        let id = s.session_id.clone();
         let servers = mcp_status(&s.mcp, &t, cx);
+        // Double-clicking the name renames the session in place.
+        let field = id.as_deref().and_then(|id| self.session_name_field(id, true, cx));
 
         let place = if kind == Kind::Code { self.worktrees(&cwd, cx).read(cx).at(&cwd).cloned() } else { None };
         // Where a project session runs: its branch, flagged when it's a linked
@@ -168,12 +171,27 @@ impl KynexApp {
                 .px_3()
                 .border_b_1()
                 .border_color(t.border_variant)
-                .child({
-                    let title = div().flex_1().min_w_0().truncate().text_sm();
-                    match (name, stand_in) {
-                        (Some(name), _) => title.font_weight(FontWeight::MEDIUM).text_color(t.text).child(name),
-                        (None, Some(words)) => title.text_color(t.text_muted).child(words),
-                        (None, None) => title.text_color(t.text_placeholder).child("New session"),
+                .child(match field {
+                    Some(field) => field.flex_1().into_any_element(),
+                    None => {
+                        let title = div().id("session-title").flex_1().min_w_0().truncate().text_sm();
+                        let title = match (name, stand_in) {
+                            (Some(name), _) => title.font_weight(FontWeight::MEDIUM).text_color(t.text).child(name),
+                            (None, Some(words)) => title.text_color(t.text_muted).child(words),
+                            (None, None) => title.text_color(t.text_placeholder).child("New session"),
+                        };
+                        // A session not saved yet has nothing to name.
+                        match id {
+                            Some(id) => title
+                                .tooltip(Tooltip::text("Double-click to rename"))
+                                .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                                    if ev.click_count() == 2 {
+                                        this.start_session_rename(cwd.clone(), id.clone(), true, window, cx);
+                                    }
+                                }))
+                                .into_any_element(),
+                            None => title.into_any_element(),
+                        }
                     }
                 })
                 .children(place)

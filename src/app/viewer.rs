@@ -3,9 +3,12 @@
 //! `ui::image_viewer`; this opens and closes it, and draws the thumbnails
 //! that open it.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use gpui::{AnyElement, Context, DismissEvent, ElementId, Focusable, Image, Window, div, img, prelude::*, px};
+use kynex_core::attach;
 use kynex_core::session::Preview;
 
 use super::KynexApp;
@@ -47,6 +50,16 @@ impl KynexApp {
         // Previews are `gpui::Image`s (the composer's, or `ui::image_viewer::preview`).
         let images = images.iter().filter_map(|i| i.clone().downcast::<Image>().ok());
         div().id(id).flex().flex_wrap().gap_2().children(images.enumerate().map(|(n, image)| {
+            // A known size, not the decoded one: an image still decoding has
+            // none, and the transcript would keep its row measured without it,
+            // so the picture vanished once a later row came in (#106).
+            let sized = match size_of(&image) {
+                Some(size) => {
+                    let (w, h) = attach::fit(size, max_h * 2., max_h);
+                    img(image.clone()).w(px(w)).h(px(h))
+                }
+                None => img(image.clone()).max_h(px(max_h)).max_w(px(max_h * 2.)),
+            };
             div()
                 .id(n)
                 .rounded_md()
@@ -55,9 +68,19 @@ impl KynexApp {
                 .overflow_hidden()
                 .cursor_pointer()
                 .hover(|s| s.opacity(0.85))
-                .child(img(image.clone()).max_h(px(max_h)).max_w(px(max_h * 2.)))
+                .child(sized)
                 .tooltip(Tooltip::text("Click to view"))
                 .on_click(cx.listener(move |this, _, window, cx| this.open_image(image.clone(), window, cx)))
         }))
     }
+}
+
+thread_local! {
+    /// Image sizes by `Image::id`, so frames don't read headers again.
+    static SIZES: RefCell<HashMap<u64, Option<(u32, u32)>>> = RefCell::default();
+}
+
+/// An image's size in pixels, from its header.
+fn size_of(image: &Image) -> Option<(u32, u32)> {
+    SIZES.with_borrow_mut(|sizes| *sizes.entry(image.id).or_insert_with(|| attach::dimensions(&image.bytes)))
 }

@@ -4,6 +4,7 @@
 
 pub mod attach;
 pub mod cli;
+pub mod column;
 pub mod commands;
 pub mod dates;
 pub mod env_path;

@@ -5,6 +5,32 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Shortcuts for a new session (Ctrl+N / Cmd+N), the next and previous session in the
+  project (Ctrl+PageDown / PageUp; Cmd+Shift+] / [ on macOS), and closing the project tab (Ctrl+W / Cmd+W; if Claude is
+  working there, press it twice). All rebindable in `keymap.json`.
+- A project can have its own model: "This project" at the top of the composer's model
+  menu pins one, "Everywhere" goes back to the one for every tab. The chip shows a folder
+  when the project's own model applies.
+- Sessions can be renamed (Rename in a session's right-click menu, or double-click its
+  name above the conversation) and pinned above the date groups (Pin to top). A blank
+  name goes back to the generated one.
+- A setting for session names: by default only the session you open is named by Claude
+  Haiku; naming the 10 most recent past sessions too is opt-in.
+
+### Changed
+
+- On wide windows, tool calls, diffs and their output grow to the right, up to 1040 px,
+  lined up with the text, which keeps its readable width. A Transcript width setting
+  (Appearance) offers Wide and Full width for big screens.
+
+### Fixed
+
+- Screenshots and other images in tool results no longer flash and disappear when Claude
+  takes several in a turn.
+- Clicking a menu item, toast or popup no longer also clicks what's underneath it.
+
 ## [0.0.7] - 2026-10-28
 
 ### Added

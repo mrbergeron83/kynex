@@ -68,6 +68,14 @@ pub fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().ok()?.into_dimensions().ok()
 }
 
+/// The size to draw an image of `size` in a `max_w` × `max_h` box: scaled down
+/// to fit, keeping its shape, never up.
+pub fn fit((w, h): (u32, u32), max_w: f32, max_h: f32) -> (f32, f32) {
+    let (w, h) = (w.max(1) as f32, h.max(1) as f32);
+    let scale = (max_w / w).min(max_h / h).min(1.);
+    (w * scale, h * scale)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +85,14 @@ mod tests {
         let mut bytes = Vec::new();
         image::RgbaImage::new(w, h).write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
         bytes
+    }
+
+    #[test]
+    fn fits_without_growing() {
+        assert_eq!(fit((1600, 800), 320., 160.), (320., 160.));
+        assert_eq!(fit((800, 1600), 320., 160.), (80., 160.));
+        assert_eq!(fit((100, 50), 320., 160.), (100., 50.), "small images keep their size");
+        assert_eq!(fit((0, 0), 320., 160.), (1., 1.));
     }
 
     #[test]

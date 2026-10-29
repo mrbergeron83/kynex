@@ -68,17 +68,19 @@ impl KynexApp {
     /// The open sessions in the active tab's folder, created (with the saved
     /// session resumed) on first use.
     pub(super) fn live_mut(&mut self) -> Option<&mut Live> {
-        let (kind, path, resume, live) = match self.saved.active {
-            Active::Chat => (Kind::Chat, chat_dir(), None, &mut self.chat),
+        let wake = self.wake.clone();
+        let (kind, path, resume, model, live) = match self.saved.active {
+            Active::Chat => (Kind::Chat, chat_dir(), None, self.saved.model.clone(), &mut self.chat),
             Active::Project(i) => {
                 let p = self.saved.projects.get(i)?;
                 if p.view != View::Code {
                     return None;
                 }
-                (Kind::Code, p.path.clone(), p.session_id.clone(), self.code.entry(p.path.clone()).or_default())
+                let (path, resume) = (p.path.clone(), p.session_id.clone());
+                let model = self.claude_settings(&path).model_or(&self.saved.model).to_string();
+                (Kind::Code, path.clone(), resume, model, self.code.entry(path).or_default())
             }
         };
-        let (model, wake) = (self.saved.model.clone(), self.wake.clone());
         if live.sessions.is_empty() {
             let mut s = match resume {
                 Some(id) => Session::resume(kind, path, id),
@@ -112,7 +114,7 @@ impl KynexApp {
     /// Shows `s` in the active tab. Sessions it replaces keep running if
     /// they're working; idle ones close.
     pub(super) fn open_session(&mut self, mut s: Session) {
-        s.model = self.saved.model.clone();
+        s.model = self.active_model();
         s.wake = self.wake.clone();
         let Some(live) = self.live_mut() else { return };
         let closed = live.show(s);
@@ -128,6 +130,19 @@ impl KynexApp {
         if !self.show_open(|s| s.session_id.as_deref() == Some(id.as_str())) {
             self.open_session(Session::resume(kind, cwd, id));
         }
+    }
+
+    /// A new session in the active tab, unless the shown one is still new.
+    pub(super) fn new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_code_view();
+        cx.notify();
+        if let Some(s) = self.session_mut()
+            && s.session_id.is_some()
+        {
+            let (kind, cwd) = (s.kind, s.cwd.clone());
+            self.open_session(Session::new(kind, cwd));
+        }
+        self.focus_input(window, cx);
     }
 
     /// Shows an open session in the active tab, if one matches.

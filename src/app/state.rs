@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use kynex_core::column::ColumnWidth;
 use kynex_core::motion::Motion;
 use kynex_core::paths::data_dir;
 use kynex_core::terminal::ShellKind;
@@ -79,6 +80,11 @@ pub struct Saved {
     pub timeline_open: bool,
     /// Unsent messages, by Claude Code session id.
     pub drafts: HashMap<String, String>,
+    /// Claude names the most recent unnamed sessions too, not only the one
+    /// shown (a small Haiku call each, on the user's quota).
+    pub name_past_sessions: bool,
+    /// How wide the transcript and composer are.
+    pub column: ColumnWidth,
 }
 
 impl Default for Saved {
@@ -102,6 +108,8 @@ impl Default for Saved {
             terminal_height: 280.,
             timeline_open: false,
             drafts: HashMap::new(),
+            name_past_sessions: false,
+            column: ColumnWidth::default(),
         }
     }
 }

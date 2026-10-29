@@ -264,6 +264,7 @@ impl TerminalPanel {
                 anchored().snap_to_window_with_margin(px(8.)).child(
                     popover(cx)
                         .min_w(px(180.))
+                        .occlude()
                         .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                             this.new_menu = false;
                             cx.notify();

@@ -245,8 +245,7 @@ impl KynexApp {
                     .into_iter()
                     .find(|i| i.value.eq_ignore_ascii_case(&m) || i.name.eq_ignore_ascii_case(&m));
                 let value = found.map_or(m, |i| i.value);
-                self.saved.model = if value == "default" { String::new() } else { value };
-                self.save();
+                self.set_model(if value == "default" { String::new() } else { value }, cx);
             }
             Action::Effort(e) => {
                 let project = self.active_session().filter(|s| s.kind == Kind::Code).map(|s| s.cwd.clone());

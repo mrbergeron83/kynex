@@ -467,6 +467,21 @@ pub fn divider(cx: &App) -> impl IntoElement + use<> {
     div().h(px(1.)).w_full().flex_none().bg(theme(cx).border_variant)
 }
 
+/// A text field shown in place of a name while it's renamed (a group, a
+/// session). Clicks stay in it, so the row or title under it doesn't react.
+pub fn name_field(input: gpui::Entity<input::TextInput>, t: &crate::theme::Palette) -> gpui::Div {
+    div()
+        .min_w_0()
+        .px_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(t.border_focused)
+        .bg(t.editor)
+        .text_sm()
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(input)
+}
+
 /// A rounded, bordered panel for menus, popovers and modals.
 pub fn popover(cx: &App) -> gpui::Div {
     let t = theme(cx);

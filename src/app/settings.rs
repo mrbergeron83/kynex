@@ -85,6 +85,48 @@ impl KynexApp {
         self.claude_settings.get(path).cloned().unwrap_or_else(|| ClaudeSettings::load(path))
     }
 
+    /// The model the active tab's new sessions start on: the project's own, if
+    /// it has one, else the one for every tab.
+    pub(super) fn active_model(&self) -> String {
+        match self.active_project() {
+            Some(p) => self.claude_settings(&p.path).model_or(&self.saved.model).to_string(),
+            None => self.saved.model.clone(),
+        }
+    }
+
+    /// The active project's own model, if it has one.
+    pub(super) fn project_model(&self) -> Option<String> {
+        self.active_project().and_then(|p| self.claude_settings(&p.path).model)
+    }
+
+    /// Picks a model where it applies now: the project's own, if it has one,
+    /// else every tab's. Sessions start on it from their next start.
+    pub(super) fn set_model(&mut self, id: String, cx: &mut Context<Self>) {
+        match self.active_project().filter(|_| self.project_model().is_some()) {
+            Some(p) => self.set_project_model(p.path.clone(), Some(id), cx),
+            None => {
+                self.saved.model = id;
+                self.save();
+            }
+        }
+        cx.notify();
+    }
+
+    /// Gives a project its own model (`Some`), or has it follow every tab's (`None`).
+    pub(super) fn set_project_model(&mut self, path: PathBuf, model: Option<String>, cx: &mut Context<Self>) {
+        if self.settings.as_ref().is_some_and(|s| s.path == path) {
+            return self.edit_settings(cx, |v| v.claude.model = model);
+        }
+        let mut claude = self.claude_settings(&path);
+        if claude.model != model {
+            claude.model = model;
+            if let Err(e) = claude.save(&path) {
+                self.toast(Toast::error(e));
+            }
+            self.claude_settings.insert(path, claude);
+        }
+    }
+
     /// Sets a project's effort, from the modal or the composer's picker.
     pub(super) fn set_effort(&mut self, path: PathBuf, id: String, cx: &mut Context<Self>) {
         if self.settings.is_some() {
@@ -338,7 +380,9 @@ impl KynexApp {
                             .pt_2()
                             .text_xs()
                             .text_color(t.text_muted)
-                            .child("The model and effort are also in the composer. The model applies to every tab."),
+                            .child(
+                                "The model and effort are also in the composer. The model applies to every tab, unless its menu gives this project its own.",
+                            ),
                     )
             }
             _ => self.render_colour_picker(&path, &t, cx),

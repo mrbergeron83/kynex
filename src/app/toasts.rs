@@ -131,6 +131,8 @@ fn toast_row(toast: &Toast, exit: Duration, t: &Palette, cx: &mut Context<KynexA
     let row = div()
         .id(("toast", id as usize))
         .group("toast")
+        // Clicks on a toast stay on it, not the transcript or composer under it.
+        .occlude()
         .h(px(32.))
         .max_w(px(460.))
         .flex()
