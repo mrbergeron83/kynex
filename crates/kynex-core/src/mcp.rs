@@ -226,49 +226,30 @@ pub struct Handoff {
 
 /// Whether the last turn in `items` handed the browser to you; see [`Handoff`].
 pub fn handoff(items: &[Item]) -> Option<Handoff> {
-    let start = items.iter().rposition(|i| matches!(i, Item::User { .. })).map_or(0, |i| i + 1);
-    let turn = &items[start..];
     // Only a finished turn waits for you.
-    if !matches!(turn.last(), Some(Item::Result { is_error: false, .. })) {
+    let (end, Item::Result { is_error: false, .. }) = (items.len().checked_sub(1)?, items.last()?) else {
         return None;
-    }
-    let last_call = turn.iter().rposition(|i| matches!(i, Item::ToolUse { .. }))?;
+    };
+    // The last turn alone: one a background task started (no message from you)
+    // ends the one before, which may have asked you to log in an hour ago.
+    let start = items[..end]
+        .iter()
+        .rposition(|i| matches!(i, Item::User { .. } | Item::Task(_) | Item::Result { .. }))
+        .map_or(0, |i| i + 1);
+    let turn = &items[start..end];
     let browsed =
         turn.iter().any(|i| matches!(i, Item::ToolUse { name, .. } if split(name).is_some_and(|(_, t)| is_browser(t))));
     if !browsed {
         return None;
     }
-    let said: String = turn[last_call..]
-        .iter()
-        .filter_map(|i| match i {
-            Item::Assistant(t) => Some(t.to_lowercase()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    const CUES: &[&str] = &[
-        "log in",
-        "login",
-        "log-in",
-        "sign in",
-        "sign-in",
-        "signin",
-        "authenticate",
-        "mfa",
-        "2fa",
-        "two-factor",
-        "verification code",
-        "captcha",
-        "consent",
-        "let me know when",
-        "let me know once",
-        "once you've",
-        "once you have",
-        "when you're done",
-        "when you are done",
-        "when you're ready",
-    ];
-    if !CUES.iter().any(|c| said.contains(c)) {
+    // What Claude said last, after its last call: the ask has to be there, not
+    // in a note on the way ("fixed the login form").
+    let last_call = turn.iter().rposition(|i| matches!(i, Item::ToolUse { .. }))?;
+    let said = match turn[last_call..].iter().rev().find(|i| matches!(i, Item::Assistant(t) if !t.trim().is_empty())) {
+        Some(Item::Assistant(t)) => t.to_lowercase().replace('’', "'"),
+        _ => return None,
+    };
+    if !asks_you_in_the_browser(&said) {
         return None;
     }
     let screenshot = turn
@@ -278,8 +259,68 @@ pub fn handoff(items: &[Item]) -> Option<Handoff> {
     Some(Handoff { screenshot })
 }
 
-/// What the Continue button of a [`Handoff`] sends.
-pub const CONTINUE: &str = "Done, I've finished in the browser. Please continue.";
+/// Whether `said` (lowercase) asks you to do something in the browser yourself:
+/// log in, pass MFA, solve a captcha. Mentioning a login isn't enough, and
+/// neither is "let me know when" on its own: that ends plenty of proposals.
+fn asks_you_in_the_browser(said: &str) -> bool {
+    const ACTS: &[&str] = &[
+        "log in",
+        "log into",
+        "login",
+        "sign in",
+        "sign into",
+        "authenticate",
+        "mfa",
+        "2fa",
+        "two-factor",
+        "verification code",
+        "one-time code",
+        "captcha",
+        "logged in",
+        "signed in",
+        "logging in",
+        "signing in",
+    ];
+    // Words that may come between the ask and the act: "once you've finished the MFA".
+    const FILLER: &[&str] =
+        &["finish", "finished", "complete", "completed", "done", "pass", "passed", "the", "with", "your", "a"];
+    const ASKS: &[&str] = &[
+        "please ",
+        "you'll need to ",
+        "you will need to ",
+        "you need to ",
+        "need you to ",
+        "could you ",
+        "can you ",
+        "go ahead and ",
+        "complete the ",
+        "finish the ",
+        "enter the ",
+        "solve the ",
+        "once you're ",
+        "once you've ",
+        "once you have ",
+        "after you ",
+        "when you've ",
+        "when you have ",
+        "when you're ",
+    ];
+    // An ask right before an act: "please log in", "once you've finished the
+    // MFA prompt", but not "please review the login fix".
+    ASKS.iter().any(|ask| {
+        said.match_indices(ask).any(|(at, _)| {
+            let words: Vec<&str> =
+                said[at + ask.len()..].split_whitespace().skip_while(|w| FILLER.contains(w)).take(3).collect();
+            let rest = words.join(" ");
+            ACTS.iter().any(|act| rest.starts_with(act))
+        })
+    })
+}
+
+/// What the Continue button of a [`Handoff`] sends: only that the browser
+/// step is done, so it can't read as a yes to anything else Claude proposed.
+pub const CONTINUE: &str =
+    "I've done the step you asked for in the browser (logging in, confirming). Carry on with the browser task.";
 
 /// "create_issue" reads as "Create issue".
 fn humanize(tool: &str) -> String {
@@ -423,5 +464,40 @@ mod tests {
         let mut after = turn(CLICK, asks);
         after.push(Item::User { text: "ok".into(), images: Vec::new() });
         assert_eq!(handoff(&after), None);
+        // So does a turn a background task started, which proposes something else.
+        let mut task = turn(CLICK, asks);
+        task.push(Item::Task(crate::tasks::parse_notification(NOTE).expect("a notice")));
+        task.extend([Item::Assistant("CI passed. Want me to merge the PR?".into()), end()]);
+        assert_eq!(handoff(&task), None);
+    }
+
+    const NOTE: &str = "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>CI</summary>\n</task-notification>";
+
+    #[test]
+    fn a_mention_is_not_an_ask() {
+        const CLICK: &str = "mcp__playwright-edge__browser_click";
+        for said in [
+            "Fixed the login form; the consent banner shows again.",
+            "Please review the login fix when you have a moment.",
+            "Let me know when you want the next step.",
+            "Once you've reviewed the PR I can merge it.",
+            "Want me to also add a sign-in test?",
+        ] {
+            assert_eq!(handoff(&turn(CLICK, said)), None, "{said}");
+        }
+        for said in [
+            "The page wants a password. Please log in, then press Continue.",
+            "You’ll need to sign in to GitHub first.",
+            "Once you're logged in I'll carry on.",
+            "Let me know once you've finished the MFA prompt.",
+            "Could you solve the captcha?",
+            "Please enter the verification code from your phone.",
+        ] {
+            assert!(handoff(&turn(CLICK, said)).is_some(), "{said}");
+        }
+        // The ask has to be the last thing said, not a note before more work.
+        let mut later = turn(CLICK, "Please log in.");
+        later.insert(4, Item::Assistant("Logged in already, so I went on. Done.".into()));
+        assert_eq!(handoff(&later), None);
     }
 }

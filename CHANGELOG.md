@@ -12,6 +12,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The "Claude is waiting for you in the browser" banner no longer shows when Claude only
+  mentions a login or ends with "let me know when…", or after a background task's turn
+  proposed something else. Its Continue message now only says the browser step is done,
+  so it can't be read as a yes to another proposal.
 - Opening a project or a past session no longer freezes the window. Session titles come
   from the ends of each transcript, read in the background, and a session's history loads
   off the UI thread: its newest turns show at once and older ones follow above them. A
