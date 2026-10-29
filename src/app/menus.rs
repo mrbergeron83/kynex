@@ -94,6 +94,18 @@ impl KynexApp {
                         }))
                         .into_any_element(),
                 );
+                // Theme, fonts and motion, a step away without a picker in the bar.
+                let current = THEMES.iter().find(|x| x.0 == self.saved.theme).map_or("", |x| x.1);
+                items.push(
+                    menu_item("kynex-appearance", "Appearance", false, cx)
+                        .child(div().flex_none().text_color(t.text_placeholder).child(current))
+                        .child(icon(Icon::ChevronRight, t.text_placeholder).size_3())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = Some(OpenMenu { which: Menu::Theme, at, anchor });
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                );
                 items.push(
                     menu_item("kynex-extensions", "Extensions", false, cx)
                         .on_click(cx.listener(|this, _, _, cx| {

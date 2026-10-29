@@ -11,6 +11,8 @@ use gpui::{
 use kynex_core::paths::project_name;
 use kynex_core::project::{self, ClaudeSettings, Mode, Permissions};
 
+use kynex_core::toasts::Toast;
+
 use super::KynexApp;
 use super::menus::Menu;
 use crate::theme::{Palette, mono, theme};
@@ -72,7 +74,7 @@ impl KynexApp {
             self.restart_idle();
         }
         if let Some(e) = errors.pop() {
-            self.notice = Some(e);
+            self.toast(Toast::error(e));
         }
         cx.notify();
     }
@@ -92,7 +94,7 @@ impl KynexApp {
         if claude.effort != id {
             claude.effort = id;
             if let Err(e) = claude.save(&path) {
-                self.notice = Some(e);
+                self.toast(Toast::error(e));
             }
             self.claude_settings.insert(path.clone(), claude);
             // The CLI reads it at startup: restart once idle; `--resume` keeps the conversation.

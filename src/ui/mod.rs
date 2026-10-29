@@ -61,6 +61,7 @@ pub enum Icon {
     Play,
     Shield,
     Timeline,
+    Search,
     /// The pointer on the mark's knob, drawn filled.
     MarkPointer,
 }
@@ -101,13 +102,14 @@ impl Icon {
             Icon::Play => "icons/play.svg",
             Icon::Shield => "icons/shield.svg",
             Icon::Timeline => "icons/timeline.svg",
+            Icon::Search => "icons/search.svg",
             Icon::MarkPointer => "icons/mark-pointer.svg",
         }
     }
 }
 
 /// Line icons drawn on a 24px grid, Lucide style.
-const ICONS: [(&str, &str); 34] = [
+const ICONS: [(&str, &str); 35] = [
     // Steps on a line, for the session timeline.
     (
         "timeline",
@@ -166,6 +168,7 @@ const ICONS: [(&str, &str); 34] = [
         r#"<path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z" fill="black"/>"#,
     ),
     ("shield", r#"<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>"#),
+    ("search", r#"<circle cx="11" cy="11" r="7"/><path d="m20 20-4.35-4.35"/>"#),
     // The knob's box: the mark's pointer (x 47 y 27, 6×21, rotated 38° about the
     // knob centre) scaled from the 62-unit knob to 24, so the svg rotates about the knob.
     (

@@ -11,7 +11,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::{Value, json};
 
@@ -55,6 +55,58 @@ pub struct Attachment {
     pub preview: Preview,
 }
 
+/// A thinking block: its text when the CLI shares it, and how long it took
+/// when it was watched live. One read back from a log has no timing.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Thought {
+    pub text: String,
+    /// When it started streaming in.
+    pub started: Option<Instant>,
+    /// How long it took, once done.
+    pub took: Option<Duration>,
+}
+
+impl Thought {
+    /// One starting now, from the stream.
+    pub fn live() -> Self {
+        Self { started: Some(Instant::now()), ..Self::default() }
+    }
+
+    /// One read whole, from a finished message or a log.
+    pub fn logged(text: &str) -> Self {
+        Self { text: text.to_string(), ..Self::default() }
+    }
+
+    /// Still streaming in.
+    pub fn is_live(&self) -> bool {
+        self.started.is_some() && self.took.is_none()
+    }
+
+    /// Done: keeps how long it took, and `text` if none streamed in. A second
+    /// block straight after joins this one.
+    fn finish(&mut self, text: &str) {
+        if self.text.is_empty() {
+            self.text = text.to_string();
+        } else if !text.is_empty() && self.text != text {
+            self.text.push_str("\n\n");
+            self.text.push_str(text);
+        }
+        if let (Some(started), None) = (self.started, self.took) {
+            self.took = Some(started.elapsed());
+        }
+    }
+
+    /// "Thinking… 4s" while live, "Thought for 6s" after, or just "Thought"
+    /// when its timing isn't known.
+    pub fn label(&self) -> String {
+        match (self.started, self.took) {
+            (Some(started), None) => format!("Thinking… {}s", started.elapsed().as_secs()),
+            (_, Some(took)) => format!("Thought for {}", crate::fmt::duration(took.as_millis() as u64)),
+            (None, None) => "Thought".into(),
+        }
+    }
+}
+
 /// Called from the reader threads whenever the process has news, so the UI drains it.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
@@ -64,7 +116,7 @@ pub enum Item {
         images: Vec<Preview>,
     },
     Assistant(String),
-    Thinking,
+    Thinking(Thought),
     ToolUse {
         /// The call's `tool_use_id`, which its result names.
         id: String,
@@ -648,6 +700,7 @@ impl Session {
             }
         }
         if exited {
+            self.settle_thoughts();
             if self.busy {
                 self.items.push(Item::Error("claude process exited".into()));
             }
@@ -710,9 +763,13 @@ impl Session {
                         // Already rendered live from the stream deltas.
                         Some("text") if self.streaming_text => {}
                         Some("text") => self.items.push(Item::Assistant(block["text"].as_str().unwrap_or("").into())),
+                        // Streamed in already, or the block right before: finish
+                        // that one. Otherwise (a log, no partial messages) it's new.
                         Some("thinking") => {
-                            if !matches!(self.items.last(), Some(Item::Thinking)) {
-                                self.items.push(Item::Thinking);
+                            let text = block["thinking"].as_str().unwrap_or("");
+                            match self.items.last_mut() {
+                                Some(Item::Thinking(t)) => t.finish(text),
+                                _ => self.items.push(Item::Thinking(Thought::logged(text))),
                             }
                         }
                         Some("tool_use") => {
@@ -779,6 +836,7 @@ impl Session {
                 self.context.window = known_window(&self.reply_model).or(biggest).or(self.context.window);
                 let cost = v["total_cost_usd"].as_f64().unwrap_or(0.0);
                 self.total_cost = cost.max(self.total_cost);
+                self.settle_thoughts();
                 let (tools, files) = self.turn_recap();
                 self.items.push(Item::Result {
                     cost,
@@ -818,17 +876,35 @@ impl Session {
         (tools, files)
     }
 
+    /// Thinking cut short (the turn was stopped, the process ended) stops
+    /// counting where it is.
+    fn settle_thoughts(&mut self) {
+        for item in self.items.iter_mut().rev().take_while(|i| !matches!(i, Item::Result { .. })) {
+            if let Item::Thinking(t) = item
+                && t.is_live()
+            {
+                t.finish("");
+            }
+        }
+    }
+
     fn handle_stream(&mut self, ev: &Value) {
         match ev["type"].as_str() {
             Some("content_block_start") if ev["content_block"]["type"] == "text" => {
                 self.items.push(Item::Assistant(String::new()));
                 self.streaming_text = true;
             }
-            Some("content_block_delta") => {
-                if let Some(t) = ev["delta"]["text"].as_str()
-                    && let Some(Item::Assistant(s)) = self.items.last_mut()
-                {
-                    s.push_str(t);
+            Some("content_block_start") if ev["content_block"]["type"] == "thinking" => {
+                self.items.push(Item::Thinking(Thought::live()));
+            }
+            Some("content_block_delta") => match self.items.last_mut() {
+                Some(Item::Assistant(s)) => s.push_str(ev["delta"]["text"].as_str().unwrap_or("")),
+                Some(Item::Thinking(t)) => t.text.push_str(ev["delta"]["thinking"].as_str().unwrap_or("")),
+                _ => {}
+            },
+            Some("content_block_stop") => {
+                if let Some(Item::Thinking(t)) = self.items.last_mut() {
+                    t.finish("");
                 }
             }
             _ => {}
@@ -1209,6 +1285,45 @@ mod tests {
         let Some(Item::Result { tools, files, .. }) = s.items.last() else { panic!("no result") };
         assert_eq!(*tools, 4);
         assert_eq!(files, &["a.rs", "b.md"]);
+    }
+
+    #[test]
+    fn thinking_is_timed_while_streamed_and_kept_once_done() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        let stream = |e: Value| json!({ "type": "stream_event", "event": e });
+        s.handle(stream(json!({ "type": "content_block_start", "content_block": { "type": "thinking" } })));
+        s.handle(stream(
+            json!({ "type": "content_block_delta", "delta": { "type": "thinking_delta", "thinking": "hm, " } }),
+        ));
+        s.handle(stream(
+            json!({ "type": "content_block_delta", "delta": { "type": "thinking_delta", "thinking": "yes" } }),
+        ));
+        let Some(Item::Thinking(t)) = s.items.last() else { panic!("no thinking") };
+        assert!(t.is_live() && t.label().starts_with("Thinking…"));
+        s.handle(stream(json!({ "type": "content_block_stop" })));
+        // The whole message comes after; it doesn't add the block again.
+        s.handle(
+            json!({ "type": "assistant", "message": { "content": [{ "type": "thinking", "thinking": "hm, yes" }] } }),
+        );
+        assert_eq!(s.items.len(), 1);
+        let Some(Item::Thinking(t)) = s.items.last() else { panic!("no thinking") };
+        assert!(!t.is_live() && t.label().starts_with("Thought for "), "{}", t.label());
+        assert_eq!(t.text, "hm, yes");
+    }
+
+    #[test]
+    fn thinking_from_a_log_or_cut_short() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        s.handle(
+            json!({ "type": "assistant", "message": { "content": [{ "type": "thinking", "thinking": "plan" }] } }),
+        );
+        let Some(Item::Thinking(t)) = s.items.last() else { panic!("no thinking") };
+        assert_eq!((t.label().as_str(), t.text.as_str()), ("Thought", "plan"));
+        // Stopped mid-thought: the turn's end stops the clock.
+        s.handle(json!({ "type": "stream_event", "event": { "type": "content_block_start", "content_block": { "type": "thinking" } } }));
+        s.busy = true;
+        s.handle(json!({ "type": "result", "duration_ms": 10 }));
+        assert!(s.items.iter().all(|i| !matches!(i, Item::Thinking(t) if t.is_live())));
     }
 
     #[test]

@@ -211,6 +211,8 @@ impl Builder<'_> {
                 div()
                     .id(scroll_id)
                     .overflow_x_scroll()
+                    // A wheel turned over it scrolls the transcript, not the code sideways.
+                    .restrict_scroll_to_axis()
                     .px_3()
                     .py_2()
                     .font_family(mono())
@@ -250,6 +252,7 @@ impl Builder<'_> {
         div()
             .id(id)
             .overflow_x_scroll()
+            .restrict_scroll_to_axis()
             .child(div().flex().flex_col().rounded_md().border_1().border_color(p.border_variant).children(
                 rows.into_iter().enumerate().map(|(i, (head, cells))| {
                     div()

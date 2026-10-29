@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use gpui::{AnyElement, Context, Div, Hsla, Pixels, div, prelude::*, px};
 use kynex_core::project::{self, Appearance, COLOURS, ClaudeSettings, Colour};
 
+use kynex_core::toasts::Toast;
+
 use super::KynexApp;
 use super::settings::heading;
 use crate::theme::{Palette, theme};
@@ -145,7 +147,7 @@ impl KynexApp {
     pub(super) fn set_project_colour(&mut self, path: PathBuf, colour: Colour, cx: &mut Context<Self>) {
         let appearance = Appearance { colour };
         if let Err(e) = appearance.save(&path) {
-            self.notice = Some(e);
+            self.toast(Toast::error(e));
         }
         self.appearances.insert(path, appearance);
         cx.notify();

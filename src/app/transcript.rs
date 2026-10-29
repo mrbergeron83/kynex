@@ -194,14 +194,18 @@ impl KynexApp {
             }
         });
         if let Some(rows) = rows {
+            let (old, new) = (thread.rows.len(), rows.len());
             let same = thread.rows.iter().zip(&rows).take_while(|(a, b)| a == b).count();
-            let top = thread.list.logical_scroll_top();
-            thread.list.splice(same..thread.rows.len(), rows.len() - same);
-            // gpui moves a view anchored inside a replaced row to that row's
-            // top, so a reply being read or trailed jumped to its start (#88).
-            // The row is the same one continued: keep the view where it was.
-            if !thread.list.is_following_tail() && (same..thread.rows.len().min(rows.len())).contains(&top.item_ix) {
-                thread.list.scroll_to(top);
+            // A row that changed in place (a reply streaming, a tool run
+            // growing) is the same row continued: measure it again. Splicing
+            // it would drop its height until the next layout, so the end of
+            // the list moved up for a frame and a glide there jumped back
+            // (#105); and a view anchored in it went to its top (#88).
+            thread.list.remeasure_items(same..old.min(new));
+            match new.cmp(&old) {
+                std::cmp::Ordering::Greater => thread.list.splice(old..old, new - old),
+                std::cmp::Ordering::Less => thread.list.splice(new..old, 0),
+                std::cmp::Ordering::Equal => {}
             }
             thread.rows = rows;
             thread.items = count;
@@ -233,16 +237,18 @@ impl KynexApp {
         let state = thread.list.clone();
         let at_latest = thread.at_latest();
         let uid = self.active_session().map_or(0, |s| s.uid as usize);
-        let thread = list(state, cx.processor(|this, ix, window, cx| this.render_item(ix, window, cx)))
-            .flex_1()
-            .size_full()
-            .py_2();
+        // No padding on the list itself: gpui scrolls past it but leaves it
+        // out of `max_offset_for_scrollbar`, so the glides here stopped short
+        // of the end and pulled back from it (#105).
+        let thread =
+            list(state, cx.processor(|this, ix, window, cx| this.render_item(ix, window, cx))).flex_1().size_full();
         div()
             .relative()
             .flex()
             .flex_col()
             .flex_1()
             .min_h_0()
+            .py_2()
             // Switching sessions fades the new one in instead of swapping in one frame.
             .child(fade_in(("thread-in", uid), thread, motion::NORMAL))
             .when(!at_latest, |d| d.child(self.render_jump_to_latest(uid, &t, cx)))
@@ -355,7 +361,7 @@ impl KynexApp {
         }
     }
 
-    fn render_item(&mut self, row: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_item(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(key) = self.active_key() else { return div().into_any_element() };
         let Some(thread) = self.threads.get(&key) else { return div().into_any_element() };
         let last = row + 1 == thread.rows.len();
@@ -367,9 +373,12 @@ impl KynexApp {
             }
             Some(Row::Item(ix)) => {
                 let compact = self.active_session().is_some_and(|s| {
-                    matches!(s.items.get(ix), Some(Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking))
+                    matches!(
+                        s.items.get(ix),
+                        Some(Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking(_))
+                    )
                 });
-                (self.render_entry(ix, row, cx), compact)
+                (self.render_entry(ix, row, window, cx), compact)
             }
             None => return div().into_any_element(),
         };
@@ -393,7 +402,7 @@ impl KynexApp {
     }
 
     /// Item `ix` drawn on its own, as transcript row `row`.
-    fn render_entry(&mut self, ix: usize, row: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_entry(&mut self, ix: usize, row: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let Some(session) = self.active_session() else { return div().into_any_element() };
         let key = session.uid;
@@ -484,8 +493,32 @@ impl KynexApp {
                     )
                     .into_any_element()
             }
-            Item::Thinking => {
-                div().text_sm().italic().text_color(t.text_placeholder).child("Thinking…").into_any_element()
+            // "Thinking… 4s" while it streams; after, "Thought for 6s", which
+            // opens to the text when the CLI shared it.
+            Item::Thinking(thought) => {
+                let label = div().text_xs().text_color(t.text_placeholder).child(thought.label());
+                if thought.is_live() {
+                    // The seconds count up while nothing else redraws.
+                    window.request_animation_frame();
+                    return label.italic().px_1().into_any_element();
+                }
+                if thought.text.trim().is_empty() {
+                    return label.px_1().into_any_element();
+                }
+                let head = disclosure_row(("thought", ix), expanded, &t).child(label).on_click(toggle);
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(head)
+                    .when(expanded, |d| {
+                        d.child(div().pl_6().pr_1().pt_1().text_sm().text_color(t.text_muted).child(selectable(
+                            key,
+                            Spot::new(ix, 0),
+                            thought.text.clone(),
+                            t.selection,
+                        )))
+                    })
+                    .into_any_element()
             }
             // Calls are laid out in runs, drawn by `render_run`.
             Item::ToolUse { .. } => div().into_any_element(),

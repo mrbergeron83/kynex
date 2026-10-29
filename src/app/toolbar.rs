@@ -1,11 +1,13 @@
-//! The bar above the transcript: Code / Git switch, the project path, and
-//! buttons to open the project in other apps. The session's own details are in
+//! The bar above the transcript: Code / Git switch, the project path, the
+//! project's Claude settings, and buttons to open the project in other apps. The session's own details are in
 //! the session header below it.
 
 use std::path::PathBuf;
 
 use gpui::{Context, FontWeight, div, prelude::*, px};
 use kynex_core::open::{Opener, open_project};
+
+use kynex_core::toasts::Toast;
 
 use super::KynexApp;
 use super::keys::{ToggleSessions, ToggleTerminal, ToggleTimeline};
@@ -96,6 +98,13 @@ impl KynexApp {
                     .child(path.display().to_string()),
             )
             .when(view == View::Code, |d| d.child(timeline))
+            .child({
+                // The project's Claude settings: permissions, mode, effort.
+                let path = path.clone();
+                icon_button("claude-settings", Icon::Shield, cx)
+                    .tooltip(Tooltip::with_meta("Claude settings", "permissions, mode and effort for this project"))
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_settings(path.clone(), cx)))
+            })
             .child(open("open-code", Icon::Code, "Open in VS Code", Opener::Code, path.clone(), cx))
             .child(open("open-files", Icon::Folder, "Open in file manager", Opener::Explorer, path.clone(), cx))
             .child(
@@ -109,7 +118,7 @@ impl KynexApp {
     /// Opens a project folder in another app; a failure shows as a notice.
     pub(super) fn open_in(&mut self, opener: Opener, path: &std::path::Path) {
         if let Err(e) = open_project(opener, path) {
-            self.notice = Some(e);
+            self.toast(Toast::error(e));
         }
     }
 }

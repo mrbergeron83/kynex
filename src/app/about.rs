@@ -25,7 +25,7 @@ const COMMIT: &str = env!("KYNEX_COMMIT");
 impl KynexApp {
     pub(super) fn open_about(&mut self, cx: &mut Context<Self>) {
         self.about_open = true;
-        self.update_toast = false;
+        self.close_update_toast();
         if self.claude_version.is_none() {
             cx.spawn(async move |this, cx| {
                 let v = cx.background_spawn(async { cli::installed_version() }).await;

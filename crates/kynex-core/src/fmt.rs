@@ -69,6 +69,17 @@ pub fn tokens(n: u64) -> String {
     }
 }
 
+/// The first `n` words of a message, on one line, with "…" when there's more:
+/// a stand-in title until a session has its own name.
+pub fn first_words(text: &str, n: usize) -> String {
+    let mut words = text.split_whitespace();
+    let mut s = words.by_ref().take(n).collect::<Vec<_>>().join(" ");
+    if words.next().is_some() {
+        s.push('…');
+    }
+    s
+}
+
 /// Modifier keys held in a shortcut; `platform` is Cmd on macOS.
 #[derive(Clone, Copy, Default)]
 pub struct Mods {
@@ -114,6 +125,13 @@ pub fn keystroke(mods: Mods, key: &str, mac: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_words_make_a_short_title() {
+        assert_eq!(first_words("Fix the\nscrolling  bug", 8), "Fix the scrolling bug");
+        assert_eq!(first_words("one two three four five", 3), "one two three…");
+        assert_eq!(first_words("   ", 8), "");
+    }
 
     #[test]
     fn shortcuts_read_per_platform() {

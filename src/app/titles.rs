@@ -11,14 +11,19 @@ use super::KynexApp;
 const NAME_RECENT: usize = 30;
 
 impl KynexApp {
-    /// Starts naming the next unnamed session in `items`, unless one is underway.
+    /// Starts naming the next unnamed session in `items`, unless one is underway:
+    /// the shown one first, so its header has a name soon after its first message.
     pub(super) fn name_sessions(&mut self, items: &[SessionInfo], cx: &mut Context<Self>) {
         if self.naming.is_some() {
             return;
         }
-        let Some(next) = items.iter().take(NAME_RECENT).find(|s| !s.named && !self.naming_tried.contains(&s.id)) else {
-            return;
-        };
+        let shown = self.active_session().and_then(|s| s.session_id.clone());
+        let wanted = |s: &&SessionInfo| !s.named && !self.naming_tried.contains(&s.id);
+        let next = items
+            .iter()
+            .find(|s| shown.as_deref() == Some(s.id.as_str()) && wanted(s))
+            .or_else(|| items.iter().take(NAME_RECENT).find(wanted));
+        let Some(next) = next else { return };
         let (id, first) = (next.id.clone(), next.first.clone());
         self.naming = Some(id.clone());
         self.naming_tried.insert(id.clone());

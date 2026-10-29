@@ -3,17 +3,15 @@
 //! turns up, then download, swap and restart from the About modal
 //! (`kynex_core::update`). Tabs and sessions come back after the restart.
 
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
-use gpui::{AnyElement, Context, div, prelude::*, px};
+use gpui::{Context, prelude::*};
 use kynex_core::cli::UpdateState;
+use kynex_core::toasts::{Action, Toast};
 use kynex_core::update;
 
 use super::KynexApp;
 use super::setup::CLI_CHECK_EVERY;
-use crate::chrome::TITLE_BAR_HEIGHT;
-use crate::theme::theme;
-use crate::ui::{Icon, ghost_button, icon, icon_button, popover};
 
 pub(super) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -59,9 +57,13 @@ impl KynexApp {
         }
         match found {
             Ok(Some(latest)) => {
-                // Toast once per version found, not on every periodic check.
+                // Toast once per version found, not on every periodic check; the
+                // title bar's Update pill carries it after that.
                 let new = !matches!(&self.app_update, UpdateState::Available { latest: l, .. } if *l == latest);
-                self.update_toast |= new && !self.about_open;
+                if new && !self.about_open {
+                    let toast = Toast::info(format!("Kynex {latest} is available"));
+                    self.toast(toast.action(Action::ViewUpdate).lasting(Duration::from_secs(8)));
+                }
                 self.app_update = UpdateState::Available { installed: VERSION.to_string(), latest };
             }
             Ok(None) => self.app_update = UpdateState::Idle,
@@ -81,7 +83,7 @@ impl KynexApp {
         let UpdateState::Available { latest, .. } = &self.app_update else { return };
         let latest = latest.clone();
         self.app_update = UpdateState::Updating { latest: latest.clone() };
-        self.update_toast = false;
+        self.close_update_toast();
         cx.notify();
         cx.spawn(async move |this, cx| {
             let version = latest.clone();
@@ -109,43 +111,8 @@ impl KynexApp {
         }
     }
 
-    /// The toast under the title bar when a new version turns up: out of the way,
-    /// one click to the About modal.
-    pub(super) fn render_update_toast(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let UpdateState::Available { latest, .. } = &self.app_update else { return None };
-        if !self.update_toast {
-            return None;
-        }
-        let t = theme(cx).clone();
-        Some(
-            div()
-                .absolute()
-                .top(TITLE_BAR_HEIGHT + px(8.))
-                .right_4()
-                .child(
-                    popover(cx)
-                        .flex_row()
-                        .items_center()
-                        .gap_2()
-                        .pl_3()
-                        .pr_1()
-                        .py_1()
-                        .child(icon(Icon::ArrowUp, t.accent).size_3p5())
-                        .child(div().text_sm().child(format!("Kynex {latest} is available")))
-                        .child(
-                            ghost_button("update-toast-view", cx)
-                                .text_color(t.accent)
-                                .child("View")
-                                .on_click(cx.listener(|this, _, _, cx| this.open_about(cx))),
-                        )
-                        .child(icon_button("update-toast-close", Icon::Close, cx).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.update_toast = false;
-                                cx.notify();
-                            },
-                        ))),
-                )
-                .into_any_element(),
-        )
+    /// The "new version" toast has said its piece: About is open, or it's installing.
+    pub(super) fn close_update_toast(&mut self) {
+        self.toasts.dismiss_where(|t| t.action == Some(Action::ViewUpdate));
     }
 }

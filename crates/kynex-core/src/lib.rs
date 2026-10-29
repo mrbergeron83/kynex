@@ -5,6 +5,7 @@
 pub mod attach;
 pub mod cli;
 pub mod commands;
+pub mod dates;
 pub mod env_path;
 pub mod extensions;
 pub mod fmt;
@@ -30,6 +31,7 @@ pub mod tasks;
 pub mod terminal;
 pub mod timeline;
 pub mod titles;
+pub mod toasts;
 pub mod transcript;
 pub mod update;
 pub mod usage;

@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 use gpui::{AnyElement, Context, Window, prelude::*, px};
 use kynex_core::history::{History, Stash};
 
+use kynex_core::toasts::Toast;
+
 use super::KynexApp;
 use super::keys::StashDraft;
 use crate::ui::completions::{Completion, completions};
@@ -83,10 +85,13 @@ impl KynexApp {
         match h.toggle_stash(&current) {
             Stash::Stashed => {
                 self.set_composer(String::new(), cx);
-                self.notice = Some(match crate::ui::shortcut(&StashDraft, cx) {
-                    Some(keys) => format!("Draft stashed. {keys} on an empty message box brings it back."),
-                    None => "Draft stashed.".into(),
-                });
+                let toast = match crate::ui::shortcut(&StashDraft, cx) {
+                    Some(keys) => {
+                        Toast::info("Draft stashed").detail(format!("{keys} on an empty message box brings it back"))
+                    }
+                    None => Toast::info("Draft stashed"),
+                };
+                self.toast(toast);
             }
             Stash::Restored(text) => self.set_composer(text, cx),
             Stash::Nothing => return,
@@ -133,7 +138,7 @@ impl KynexApp {
             this.update(cx, |this, cx| match result {
                 Ok(text) => this.set_composer(text, cx),
                 Err(e) => {
-                    this.notice = Some(e);
+                    this.toast(Toast::error(e));
                     cx.notify();
                 }
             })

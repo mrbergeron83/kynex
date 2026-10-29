@@ -13,6 +13,9 @@ pub struct SessionGroups {
     pub groups: Vec<Group>,
     /// Session ids hidden from the list until unarchived.
     pub archived: Vec<String>,
+    /// Date headers ([`crate::dates::Bucket::key`]) opened or folded away
+    /// from how they start.
+    pub dates_toggled: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,6 +55,22 @@ impl SessionGroups {
 
     pub fn is_archived(&self, id: &str) -> bool {
         self.archived.iter().any(|s| s == id)
+    }
+
+    /// Whether a date header is open: recent ones start open, older ones folded.
+    pub fn date_open(&self, bucket: crate::dates::Bucket) -> bool {
+        bucket.open_by_default() != self.dates_toggled.contains(&bucket.key())
+    }
+
+    /// Folds an open date header, or opens a folded one.
+    pub fn toggle_date(&mut self, bucket: crate::dates::Bucket) {
+        let key = bucket.key();
+        match self.dates_toggled.iter().position(|k| *k == key) {
+            Some(i) => {
+                self.dates_toggled.remove(i);
+            }
+            None => self.dates_toggled.push(key),
+        }
     }
 
     /// Hides a session; it leaves its group, and comes back at the top level.
@@ -148,6 +167,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn date_headers_fold_and_remember() {
+        use crate::dates::Bucket;
+        let mut g = SessionGroups::default();
+        assert!(g.date_open(Bucket::Today) && !g.date_open(Bucket::MonthOf(2026, 3)));
+        g.toggle_date(Bucket::Today);
+        g.toggle_date(Bucket::MonthOf(2026, 3));
+        assert!(!g.date_open(Bucket::Today) && g.date_open(Bucket::MonthOf(2026, 3)));
+        g.toggle_date(Bucket::Today);
+        assert!(g.date_open(Bucket::Today));
+        // Older files without the field still load.
+        let old: SessionGroups = serde_json::from_str(r#"{"groups":[],"archived":[]}"#).unwrap();
+        assert!(old.dates_toggled.is_empty());
+    }
+
+    #[test]
     fn arranges_newest_first_into_top_groups_and_archive() {
         let mut g = SessionGroups::default();
         let work = g.add_group("Work");
@@ -218,7 +252,14 @@ mod tests {
         g.archive("c");
         g.forget("b");
         g.forget("c");
-        assert_eq!(g, SessionGroups { groups: vec![Group { name: "G".into(), ..Group::default() }], archived: vec![] });
+        assert_eq!(
+            g,
+            SessionGroups {
+                groups: vec![Group { name: "G".into(), ..Group::default() }],
+                archived: vec![],
+                ..SessionGroups::default()
+            }
+        );
     }
 
     #[test]

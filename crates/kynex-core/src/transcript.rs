@@ -57,7 +57,7 @@ pub fn rows(items: &[Item]) -> Vec<Row> {
     }
     for (ix, item) in items.iter().enumerate() {
         match item {
-            Item::Thinking => thinking.push(ix),
+            Item::Thinking(_) => thinking.push(ix),
             Item::ToolUse { .. } => {
                 thinking.clear();
                 run.push(Call { ix, result: None, permission: None });
@@ -281,13 +281,13 @@ mod tests {
     #[test]
     fn thinking_between_calls_joins_the_run() {
         let items = [
-            Item::Thinking,
+            Item::Thinking(Default::default()),
             edit("a", "a.rs"),
             result("a", false),
-            Item::Thinking,
+            Item::Thinking(Default::default()),
             edit("b", "b.rs"),
             result("b", false),
-            Item::Thinking,
+            Item::Thinking(Default::default()),
         ];
         let rows = rows(&items);
         assert_eq!(rows.len(), 2, "{rows:?}");

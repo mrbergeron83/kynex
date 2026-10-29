@@ -10,6 +10,33 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Smoother scrolling and streaming: no frame reads files or searches PATH any more (the
   composer's effort label, task output buttons, the CLI path in Settings), and the timeline
   only goes over the messages that changed instead of the whole session every frame.
+- Scrolling the transcript while Claude runs commands no longer jitters or jumps back near
+  the end, and new output is followed again once you scroll back down. A wheel turned over
+  a code block scrolls the conversation instead of the code sideways.
+- Starting a new session or picking one in the sessions panel puts the cursor in the
+  composer, or in the session's waiting prompt, so you can type right away.
+- Finished turns no longer say "Thinking…" forever: thinking counts up while it runs, then
+  reads "Thought for 6s", and opens to the thinking text when Claude Code shares it.
+- Notifications are one compact stack at the bottom right, above the composer, instead of
+  toasts over the top-right controls. They close on their own (errors wait for you), pause
+  while you point at them or are away, show three at a time, and several background tasks
+  ending in one session merge into one.
+- The session header shows the session's name, or its first few words (muted) until the
+  name comes, instead of repeating the whole first message; the shown session is named
+  first. Its context chip is just the percentage, with the tokens in the tooltip.
+- The theme picker left the title bar: theme, fonts and motion are under Appearance in the
+  Kynex menu, and in Settings.
+- A terminal whose shell exited shrinks to a one-line strip instead of keeping its full
+  height; Enter or a click on it restarts the shell at the dock's saved height.
+- The sessions panel is quieter: rows show just their title (the time is in the tooltip),
+  a lamp only when a session is working, waiting or just finished, and a search button
+  filters by title. Claude settings moved to a shield in the toolbar.
+- Ungrouped sessions sit under date headers: Today, Yesterday, Previous 7 and 30 days,
+  then months and years. Older ones start folded; a click folds or opens a header, and
+  it's remembered per project.
+- Quieter while Claude works: the "Working…" strip above the composer and the stop square
+  in the Stop button are gone; the lamps, Stop's spinner and the running step say it.
+
 ### Added
 
 - The usage meter in the title bar shows Fable's own weekly limit next to the 5-hour and

@@ -7,6 +7,8 @@ use gpui::{AnyElement, Context, prelude::*, px};
 use kynex_core::live::Key;
 use kynex_core::rewind::{self, Point};
 
+use kynex_core::toasts::Toast;
+
 use super::KynexApp;
 use crate::ui::completions::{Completion, completions};
 
@@ -71,11 +73,11 @@ impl KynexApp {
     pub(super) fn open_rewind_at(&mut self, message: Option<String>, cx: &mut Context<Self>) {
         let Some(s) = self.active_session() else { return };
         if s.busy {
-            self.notice = Some("Stop Claude or let it finish before rewinding.".into());
+            self.toast(Toast::warning("Stop Claude or let it finish before rewinding."));
             return cx.notify();
         }
         let Some(id) = s.session_id.clone() else {
-            self.notice = Some("Nothing to rewind to yet.".into());
+            self.toast(Toast::info("Nothing to rewind to yet."));
             return cx.notify();
         };
         let (key, cwd) = (s.uid, s.cwd.clone());
@@ -83,18 +85,22 @@ impl KynexApp {
             let points = cx.background_spawn(async move { rewind::points(&cwd, &id) }).await;
             this.update(cx, |this, cx| {
                 match points {
-                    Ok(p) if p.is_empty() => this.notice = Some("Nothing to rewind to yet.".into()),
+                    Ok(p) if p.is_empty() => {
+                        this.toast(Toast::info("Nothing to rewind to yet."));
+                    }
                     Ok(points) if this.active_key() == Some(key) => {
                         // Newest first, so a message sent twice finds its latest copy.
                         let picked =
                             message.as_deref().and_then(|m| points.iter().position(|p| p.text.trim() == m.trim()));
                         if message.is_some() && picked.is_none() {
-                            this.notice = Some("Can't rewind to that message; pick it from the list.".into());
+                            this.toast(Toast::warning("Can't rewind to that message; pick it from the list."));
                         }
                         this.rewind = Some(RewindMenu { key, points, selected: 0, picked });
                     }
                     Ok(_) => {}
-                    Err(e) => this.notice = Some(e),
+                    Err(e) => {
+                        this.toast(Toast::error(e));
+                    }
                 }
                 cx.notify();
             })
@@ -160,19 +166,24 @@ impl KynexApp {
         if !restore.code() {
             return self.rewind_conversation(key, &point, cx);
         }
-        self.notice = Some("Restoring files…".into());
+        self.toast(Toast::info("Restoring files…"));
         cx.spawn(async move |this, cx| {
             let p = point.clone();
             let done = cx.background_spawn(async move { rewind::restore_files(&cwd, &id, &p) }).await;
             this.update(cx, |this, cx| {
                 match done {
                     Ok(()) => {
-                        this.notice = Some(format!("Restored {} to before that message.", files(point.changed.len())));
+                        this.toast(Toast::success(format!(
+                            "Restored {} to before that message.",
+                            files(point.changed.len())
+                        )));
                         if restore.conversation() {
                             this.rewind_conversation(key, &point, cx);
                         }
                     }
-                    Err(e) => this.notice = Some(e),
+                    Err(e) => {
+                        this.toast(Toast::error(e));
+                    }
                 }
                 cx.notify();
             })
