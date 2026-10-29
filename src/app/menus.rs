@@ -143,9 +143,51 @@ impl KynexApp {
                 }
             }
             Menu::Model => {
+                // In a project: whether picks apply everywhere or only here (#136).
+                // Switching keeps the menu open; "This project" starts from the model in use.
+                if let Some(path) = self.active_project().map(|p| p.path.clone()) {
+                    let own = self.project_model().is_some();
+                    let current = self.active_model();
+                    let hover = t.hover;
+                    let scope = |n: usize, label: &'static str, on: bool, cx: &mut Context<Self>| {
+                        let path = path.clone();
+                        let pin = (n == 1).then(|| current.clone());
+                        div()
+                            .id(("model-scope", n))
+                            .flex_1()
+                            .flex()
+                            .justify_center()
+                            .py_0p5()
+                            .rounded_md()
+                            .text_xs()
+                            .cursor_pointer()
+                            .text_color(if on { t.text } else { t.text_muted })
+                            .when(on, |d| d.bg(t.active))
+                            .when(!on, |d| d.hover(move |s| s.bg(hover)))
+                            .child(label)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.set_project_model(path.clone(), pin.clone(), cx);
+                                cx.notify();
+                            }))
+                    };
+                    items.push(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .p_0p5()
+                            .mb_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(t.border_variant)
+                            .child(scope(0, "Everywhere", !own, cx))
+                            .child(scope(1, "This project", own, cx))
+                            .into_any_element(),
+                    );
+                }
+                let current = self.active_model();
                 for (n, m) in models::models().into_iter().enumerate() {
                     let id = if m.value == "default" { String::new() } else { m.value.clone() };
-                    let selected = self.saved.model == id;
+                    let selected = current == id;
                     let hover = t.hover;
                     items.push(
                         div()
@@ -171,10 +213,8 @@ impl KynexApp {
                             )
                             .when(selected, |d| d.child(icon(Icon::Check, t.text_muted)))
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.saved.model = id.clone();
                                 this.menu = None;
-                                this.save();
-                                cx.notify();
+                                this.set_model(id.clone(), cx);
                             }))
                             .into_any_element(),
                     );
@@ -294,7 +334,7 @@ impl KynexApp {
                     _ => String::new(),
                 };
                 // Only the levels the selected model takes, once the CLI has said which.
-                let allowed = models::current_model(&self.saved.model).map(|m| m.efforts);
+                let allowed = models::current_model(&self.active_model()).map(|m| m.efforts);
                 let levels = project::EFFORTS
                     .iter()
                     .filter(|(id, _)| id.is_empty() || allowed.as_ref().is_none_or(|a| a.iter().any(|e| e == id)));

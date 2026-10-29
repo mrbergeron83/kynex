@@ -14,7 +14,7 @@ use crate::ui::{Icon, Tooltip, ghost_button, icon};
 impl KynexApp {
     /// Tells Claude you've finished in the browser.
     fn continue_after_handoff(&mut self, cx: &mut Context<Self>) {
-        let model = self.saved.model.clone();
+        let model = self.active_model();
         if let Some(s) = self.session_mut().filter(|s| !s.busy) {
             if !s.is_running() {
                 s.model = model;

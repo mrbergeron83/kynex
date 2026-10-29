@@ -43,7 +43,7 @@ impl KynexApp {
             return self.queue_message(text, cx);
         }
         let atts = std::mem::take(&mut self.attachments);
-        let model = self.saved.model.clone();
+        let model = self.active_model();
         if let Some(s) = self.session_mut() {
             if !s.is_running() {
                 s.model = model;
@@ -57,7 +57,7 @@ impl KynexApp {
 
     /// Has Claude summarize the conversation so far, freeing up its context.
     pub(super) fn compact(&mut self, cx: &mut Context<Self>) {
-        let model = self.saved.model.clone();
+        let model = self.active_model();
         if let Some(s) = self.session_mut().filter(|s| !s.busy) {
             if !s.is_running() {
                 s.model = model;
@@ -245,7 +245,9 @@ impl KynexApp {
         let busy = session.is_some_and(|s| s.busy);
         let mode = session.filter(|s| s.kind == Kind::Code).map(|s| s.mode);
         models::fetch_models(cx);
-        let model_label = models::model_label(&self.saved.model);
+        let model_label = models::model_label(&self.active_model());
+        // A project with its own model marks the chip with a folder.
+        let own_model = self.project_model().is_some();
         // Effort lives in the project's Claude settings (a tiny file); chat has none.
         let effort_label = self.active_project().filter(|_| mode.is_some()).map(|p| {
             let effort = self.claude_settings(&p.path).effort;
@@ -447,9 +449,14 @@ impl KynexApp {
                     .child(
                         ghost_button("model", cx)
                             .text_color(t.text_muted)
+                            .when(own_model, |b| b.gap_1().child(icon(Icon::Folder, t.text_placeholder).size_3()))
                             .child(model_label)
                             .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
-                            .tooltip(Tooltip::text("Model, for every tab; applies from the next session start"))
+                            .tooltip(Tooltip::text(if own_model {
+                                "Model for this project; applies from the next session start"
+                            } else {
+                                "Model, for every tab; applies from the next session start"
+                            }))
                             .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
                                 this.open_menu(Menu::Model, ev.position(), Anchor::BottomLeft, cx)
                             })),

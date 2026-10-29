@@ -29,7 +29,7 @@ impl KynexApp {
         if !text.is_empty() || !self.attachments.is_empty() {
             self.queue_message(text, cx);
         }
-        let model = self.saved.model.clone();
+        let model = self.active_model();
         if let Some(s) = self.session_mut() {
             if !s.is_running() {
                 s.model = model;

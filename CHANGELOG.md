@@ -10,6 +10,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Shortcuts for a new session (Ctrl+N / Cmd+N), the next and previous session in the
   project (Ctrl+PageDown / PageUp; Cmd+Shift+] / [ on macOS), and closing the project tab (Ctrl+W / Cmd+W; if Claude is
   working there, press it twice). All rebindable in `keymap.json`.
+- A project can have its own model: "This project" at the top of the composer's model
+  menu pins one, "Everywhere" goes back to the one for every tab. The chip shows a folder
+  when the project's own model applies.
 - A setting for session names: by default only the session you open is named by Claude
   Haiku; naming the 10 most recent past sessions too is opt-in.
 
