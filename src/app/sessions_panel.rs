@@ -22,7 +22,7 @@ use super::session_groups::DraggedSession;
 use crate::theme::{Palette, theme};
 use crate::ui::motion::grow;
 use crate::ui::wash::row_wash;
-use crate::ui::{Icon, Lamp, Tooltip, icon_button, lamp, section_label};
+use crate::ui::{Icon, Lamp, Tooltip, icon_button, lamp, scrollbar, section_label};
 
 /// Past sessions for the active conversation's folder, re-read when the folder
 /// or the current session changes, or a reply starts or finishes.
@@ -427,21 +427,27 @@ impl KynexApp {
             )
         });
 
-        div().flex().flex_col().size_full().child(header).children(filter).child(
-            div()
-                .id("session-list")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .px_1p5()
-                .pb_1()
-                // Dropped outside any group: back to the top level.
-                .on_drop(cx.listener(move |this, d: &DraggedSession, _, cx| {
-                    this.edit_groups(&drop_cwd, |g| g.move_to(&d.id, None));
-                    cx.notify();
-                }))
-                .children(rows),
-        )
+        let scroll = scrollbar::handle("session-list");
+        let list = div()
+            .id("session-list")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&scroll)
+            .px_1p5()
+            .pb_1()
+            // Dropped outside any group: back to the top level.
+            .on_drop(cx.listener(move |this, d: &DraggedSession, _, cx| {
+                this.edit_groups(&drop_cwd, |g| g.move_to(&d.id, None));
+                cx.notify();
+            }))
+            .children(rows);
+        div().flex().flex_col().size_full().child(header).children(filter).child(scrollbar::vertical_over(
+            "session-list-bar",
+            scroll,
+            list,
+            |d| d.flex_1().min_h_0(),
+        ))
     }
 
     /// A date header: one line of small muted text that folds its sessions

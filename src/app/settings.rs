@@ -17,7 +17,7 @@ use super::KynexApp;
 use super::menus::Menu;
 use crate::theme::{Palette, mono, theme};
 use crate::ui::motion::{self, fade, pop};
-use crate::ui::{Icon, Tooltip, icon, icon_button, menu_item, outline_button};
+use crate::ui::{Icon, Tooltip, icon, icon_button, menu_item, outline_button, scrollbar};
 
 #[derive(Clone)]
 pub struct SettingsView {
@@ -449,18 +449,19 @@ pub(super) fn settings_modal(
                         })),
                 ),
         )
-        .child(
-            div().flex().flex_1().min_h_0().child(nav).child(
-                div()
-                    .id("settings-body")
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_y_scroll()
-                    .p_5()
-                    .child(content)
-                    .child(div().pt_6().text_xs().text_color(t.text_placeholder).child(footer)),
-            ),
-        );
+        .child(div().flex().flex_1().min_h_0().child(nav).child({
+            let scroll = scrollbar::handle("settings-body");
+            let body = div()
+                .id("settings-body")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&scroll)
+                .p_5()
+                .child(content)
+                .child(div().pt_6().text_xs().text_color(t.text_placeholder).child(footer));
+            scrollbar::vertical_over("settings-bar", scroll, body, |d| d.flex_1().min_w_0())
+        }));
 
     fade(
         "settings-fade",

@@ -7,14 +7,15 @@ use std::time::Duration;
 use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
 use kynex_core::session::{Item, PermState, Session};
 use kynex_core::transcript::{Call, Run, shows_result};
-use kynex_core::{fmt, mcp};
+use kynex_core::{fmt, links, mcp};
 
 use super::KynexApp;
 use super::transcript::{code_box, diff_box, disclosure_row};
+use crate::file_links;
 use crate::prompt;
 use crate::theme::mono;
 use crate::theme::theme;
-use crate::ui::{Icon, Tooltip, icon, spinner};
+use crate::ui::{Icon, Tooltip, icon, icon_button, spinner};
 
 impl KynexApp {
     /// A run of tool calls at transcript row `row`. While Claude is still in
@@ -201,7 +202,24 @@ impl KynexApp {
             this.remeasure_row(key, row);
             cx.notify();
         });
+        // Calls on a file (Read, Edit, Write…) open it in the editor, on hover.
+        let open_file = parsed
+            .as_ref()
+            .and_then(|v| v["file_path"].as_str().or(v["notebook_path"].as_str()))
+            .map(|p| links::resolve(&session.cwd, p))
+            .map(|path| {
+                let tip = path.display().to_string();
+                div().flex_none().invisible().group_hover("tool-head", |s| s.visible()).child(
+                    icon_button(("tool-open", ix), Icon::Code, cx)
+                        .tooltip(Tooltip::with_meta("Open in editor", tip))
+                        .on_click(move |_, _, cx| {
+                            cx.stop_propagation();
+                            file_links::open(path.clone(), None, None, cx);
+                        }),
+                )
+            });
         let head = disclosure_row(("tool", ix), expanded, &t)
+            .group("tool-head")
             .child(if running {
                 spinner(("tool-spin", ix), t.accent, px(12.)).into_any_element()
             } else {
@@ -213,6 +231,7 @@ impl KynexApp {
             .children(timeout)
             .children(error_mark)
             .children(stat_lines.filter(|&(add, del)| add + del > 0).map(|(add, del)| stat(add, del, &t)))
+            .children(open_file)
             .on_click(toggle);
         let mut body: Vec<AnyElement> = Vec::new();
         // Pictures it returned (a screenshot, a `Read` of an image) show even folded.

@@ -6,7 +6,7 @@ use gpui::{Context, FontWeight, SharedString, Window, div, prelude::*, px};
 
 use super::{PromptView, choice_row, hint};
 use crate::theme::{Palette, theme};
-use crate::ui::{Icon, icon};
+use crate::ui::{Icon, icon, scrollbar};
 
 impl PromptView {
     pub(super) fn render_questions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
@@ -26,7 +26,11 @@ impl PromptView {
             .gap_2()
             .child(self.header(cx))
             .when(self.form.has_tabs(), |d| d.child(self.render_tabs(&t, cx)))
-            .child(div().id("question").max_h(max_h).overflow_y_scroll().child(body))
+            .child({
+                let scroll = scrollbar::handle("question");
+                let area = div().id("question").max_h(max_h).overflow_y_scroll().track_scroll(&scroll).child(body);
+                scrollbar::vertical_over("question-bar", scroll, area, |d| d)
+            })
             .child(hint(keys, cx))
     }
 

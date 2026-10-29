@@ -202,6 +202,7 @@ pub enum Item {
         duration_ms: u64,
         is_error: bool,
         tools: usize,
+        /// The files it edited, as the tools were given them (usually absolute).
         files: Vec<String>,
     },
     /// A background task ended (or a Monitor saw something); Claude's turn about it follows.
@@ -1054,7 +1055,7 @@ impl Session {
         }
     }
 
-    /// Tool calls since the last user message, and the file names they wrote to.
+    /// Tool calls since the last user message, and the paths they wrote to.
     fn turn_recap(&self) -> (usize, Vec<String>) {
         let start = self.items.iter().rposition(|i| matches!(i, Item::User { .. })).map_or(0, |i| i + 1);
         let mut tools = 0;
@@ -1067,9 +1068,8 @@ impl Session {
             }
             let v: Value = serde_json::from_str(input).unwrap_or_default();
             let path = v["file_path"].as_str().or(v["notebook_path"].as_str()).unwrap_or("");
-            let file = Path::new(path).file_name().map(|f| f.to_string_lossy().into_owned());
-            if let Some(f) = file.filter(|f| !files.contains(f)) {
-                files.push(f);
+            if !path.is_empty() && !files.iter().any(|f| f == path) {
+                files.push(path.to_string());
             }
         }
         (tools, files)
@@ -1524,7 +1524,7 @@ mod tests {
         assert!(!s.busy && s.finished);
         let Some(Item::Result { tools, files, .. }) = s.items.last() else { panic!("no result") };
         assert_eq!(*tools, 4);
-        assert_eq!(files, &["a.rs", "b.md"]);
+        assert_eq!(files, &["C:/x/a.rs", "/y/b.md"]);
     }
 
     #[test]

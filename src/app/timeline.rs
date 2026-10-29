@@ -16,7 +16,7 @@ use super::KynexApp;
 use super::keys::{NextTurn, PrevTurn, ToggleTimeline};
 use crate::theme::{Palette, theme};
 use crate::ui::ease_height::ease_height;
-use crate::ui::{Icon, Tooltip, icon, icon_button, section_label};
+use crate::ui::{Icon, Tooltip, icon, icon_button, scrollbar, section_label};
 
 const WIDTH: f32 = 260.;
 
@@ -210,7 +210,12 @@ impl KynexApp {
                 .border_l_1()
                 .border_color(t.border)
                 .child(header)
-                .child(div().id("timeline-scroll").flex_1().min_h_0().overflow_y_scroll().py_1().children(body))
+                .child({
+                    let scroll = scrollbar::handle("timeline-scroll");
+                    let area =
+                        div().id("timeline-scroll").flex_1().min_h_0().overflow_y_scroll().track_scroll(&scroll).py_1();
+                    scrollbar::vertical_over("timeline-bar", scroll, area.children(body), |d| d.flex_1().min_h_0())
+                })
                 .into_any_element(),
         )
     }

@@ -156,6 +156,52 @@ pub fn mcp_config(text: &str) {
     let _ = mcp_config::parse_list(text);
 }
 
+/// File paths in Claude's text, for clickable links.
+pub fn file_links(text: &str) {
+    let mut last = 0;
+    for r in crate::links::find(text) {
+        assert!(last <= r.range.start && r.range.start < r.range.end && r.range.end <= text.len(), "{r:?}");
+        assert!(text.is_char_boundary(r.range.start) && text.is_char_boundary(r.range.end), "{r:?}");
+        last = r.range.end;
+        let _ = crate::links::resolve(std::path::Path::new("/w"), &r.path);
+    }
+}
+
+/// Code in every language the highlighter knows, whole and line by line:
+/// ranges sorted, not overlapping, in bounds and on char boundaries.
+pub fn highlight(text: &str) {
+    use crate::highlight::{Highlighter, Lang, Side, Token};
+    fn check(text: &str, ranges: &[(std::ops::Range<usize>, Token)]) {
+        let mut last = 0;
+        for (r, _) in ranges {
+            assert!(last <= r.start && r.start < r.end && r.end <= text.len(), "{ranges:?}");
+            assert!(text.is_char_boundary(r.start) && text.is_char_boundary(r.end), "{ranges:?}");
+            last = r.end;
+        }
+    }
+    for lang in Lang::ALL {
+        check(text, &crate::highlight::highlight(lang, text));
+        let mut h = Highlighter::new(lang);
+        for line in text.split('\n') {
+            check(line, &h.line(line));
+        }
+        // As a unified diff: `-` old, `+` new, the rest context.
+        let lines: Vec<_> = text
+            .split('\n')
+            .map(|l| match l.as_bytes().first() {
+                Some(b'-') => (Side::Old, &l[1..]),
+                Some(b'+') => (Side::New, &l[1..]),
+                _ => (Side::Both, l),
+            })
+            .collect();
+        let tokens = crate::highlight::diff(lang, lines.iter().copied());
+        assert_eq!(tokens.len(), lines.len());
+        for ((_, line), ranges) in lines.iter().zip(&tokens) {
+            check(line, ranges);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,6 +224,8 @@ mod tests {
             versions(t.as_bytes());
             claude_config(t);
             mcp_config(t);
+            file_links(t);
+            highlight(t);
         }
         claude_config(
             r#"{"mcpServers":{"a":{"command":"x","args":[1]}},"projects":{"/work/app":{}},"plugins":{"p":[{}]}}"#,

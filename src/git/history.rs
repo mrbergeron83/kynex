@@ -6,8 +6,8 @@ use kynex_core::git::{Commit, Ref, RefKind};
 
 use super::{GitView, Selection};
 use crate::theme::{Palette, mono, theme};
-use crate::ui::Tooltip;
 use crate::ui::wash::row_wash;
+use crate::ui::{Tooltip, scrollbar};
 
 impl GitView {
     pub(super) fn render_history(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -20,7 +20,7 @@ impl GitView {
             Some(Selection::Commit(sha)) => Some(sha.clone()),
             _ => None,
         };
-        uniform_list(
+        let list = uniform_list(
             "git-history",
             commits.len(),
             cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
@@ -37,8 +37,9 @@ impl GitView {
         .flex_1()
         .w_full()
         .px_1p5()
-        .py_1()
-        .into_any_element()
+        .py_1();
+        let bar = scrollbar::vertical("git-history-bar", self.history_scroll.clone());
+        div().relative().flex().flex_col().flex_1().min_h_0().child(list).child(bar).into_any_element()
     }
 }
 

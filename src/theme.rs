@@ -5,7 +5,8 @@
 use std::borrow::Cow;
 use std::sync::{OnceLock, RwLock};
 
-use gpui::{App, Global, Hsla, SharedString, rgb};
+use gpui::{App, FontStyle, Global, HighlightStyle, Hsla, SharedString, rgb};
+use kynex_core::highlight::Token;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -54,6 +55,8 @@ pub struct Palette {
     /// Inputs and code blocks, a step away from the surface they sit on.
     pub element: Hsla,
     pub selection: Hsla,
+    /// Selected text in the transcript: clearer than a selected row.
+    pub text_selection: Hsla,
     pub success: Hsla,
     pub warning: Hsla,
     pub error: Hsla,
@@ -61,6 +64,20 @@ pub struct Palette {
     /// Added and removed line backgrounds in diffs.
     pub diff_add: Hsla,
     pub diff_del: Hsla,
+    /// Syntax highlighting (`kynex_core::highlight::Token`); comments draw italic.
+    pub syntax: Syntax,
+}
+
+/// Code colours: low chroma, so code doesn't out-shout the prose.
+#[derive(Clone, Copy)]
+pub struct Syntax {
+    pub keyword: Hsla,
+    pub string: Hsla,
+    pub r#type: Hsla,
+    pub number: Hsla,
+    pub comment: Hsla,
+    pub function: Hsla,
+    pub punctuation: Hsla,
 }
 
 fn c(hex: u32) -> Hsla {
@@ -95,12 +112,23 @@ impl Theme {
                 active: c(0x2e2c29),
                 element: c(0x22201e),
                 selection: c(0x18323a),
+                text_selection: c(0x24505c),
                 success: c(0x6fc082),
                 warning: c(0xf2af48),
                 error: c(0xe8796c),
                 info: c(0x77becf),
                 diff_add: c(0x1a321f),
                 diff_del: c(0x3f221f),
+                // Warm keywords on Claude's side, petrol types on the operator's.
+                syntax: Syntax {
+                    keyword: c(0xcf9a74),
+                    string: c(0x9fc48a),
+                    r#type: c(0x9ec6d4),
+                    number: c(0xd9b36a),
+                    comment: c(0x777471),
+                    function: c(0xe5e2df),
+                    punctuation: c(0xa7a4a0),
+                },
             },
             Theme::KynexLight => Palette {
                 title_bar: c(0xe8e6e3),
@@ -119,12 +147,22 @@ impl Theme {
                 active: c(0xdedcd9),
                 element: c(0xf0edea),
                 selection: c(0xd7ecf4),
+                text_selection: c(0xb9dbe8),
                 success: c(0x348f4f),
                 warning: c(0xd78c00),
                 error: c(0xc8443a),
                 info: c(0x07657d),
                 diff_add: c(0xd9f3dd),
                 diff_del: c(0xffe3de),
+                syntax: Syntax {
+                    keyword: c(0xa4542a),
+                    string: c(0x3f7f2f),
+                    r#type: c(0x07657d),
+                    number: c(0x8a6a12),
+                    comment: c(0x888682),
+                    function: c(0x292622),
+                    punctuation: c(0x5d5a56),
+                },
             },
             // Zed's One Dark.
             Theme::OneDark => Palette {
@@ -144,12 +182,22 @@ impl Theme {
                 active: c(0x454a56),
                 element: c(0x2e343e),
                 selection: ca(0x74ade8, 0.25),
+                text_selection: ca(0x74ade8, 0.3),
                 success: c(0xa1c181),
                 warning: c(0xdec184),
                 error: c(0xd07277),
                 info: c(0x74ade8),
                 diff_add: ca(0xa1c181, 0.12),
                 diff_del: ca(0xd07277, 0.12),
+                syntax: Syntax {
+                    keyword: c(0xb477cf),
+                    string: c(0xa1c181),
+                    r#type: c(0x6eb4bf),
+                    number: c(0xbf956a),
+                    comment: c(0x5d636f),
+                    function: c(0x73ade9),
+                    punctuation: c(0xacb2be),
+                },
             },
             Theme::Hyprland => Palette {
                 title_bar: c(0x11111b),
@@ -168,12 +216,23 @@ impl Theme {
                 active: c(0x45475a),
                 element: c(0x181825),
                 selection: ca(0x89b4fa, 0.25),
+                text_selection: ca(0x89b4fa, 0.3),
                 success: c(0xa6e3a1),
                 warning: c(0xf9e2af),
                 error: c(0xf38ba8),
                 info: c(0x89b4fa),
                 diff_add: ca(0xa6e3a1, 0.12),
                 diff_del: ca(0xf38ba8, 0.12),
+                // Mauve, green, yellow, peach, overlay.
+                syntax: Syntax {
+                    keyword: c(0xcba6f7),
+                    string: c(0xa6e3a1),
+                    r#type: c(0xf9e2af),
+                    number: c(0xfab387),
+                    comment: c(0x7f849c),
+                    function: c(0x89b4fa),
+                    punctuation: c(0x9399b2),
+                },
             },
             // VS Code's Dark Modern.
             Theme::VsCode => Palette {
@@ -193,14 +252,41 @@ impl Theme {
                 active: c(0x37373d),
                 element: c(0x313131),
                 selection: ca(0x264f78, 0.9),
+                text_selection: c(0x264f78),
                 success: c(0x89d185),
                 warning: c(0xe2c08d),
                 error: c(0xf14c4c),
                 info: c(0x3794ff),
                 diff_add: ca(0x89d185, 0.12),
                 diff_del: ca(0xf14c4c, 0.12),
+                syntax: Syntax {
+                    keyword: c(0x569cd6),
+                    string: c(0xce9178),
+                    r#type: c(0x4ec9b0),
+                    number: c(0xb5cea8),
+                    comment: c(0x6a9955),
+                    function: c(0xdcdcaa),
+                    punctuation: c(0xd4d4d4),
+                },
             },
         }
+    }
+}
+
+impl Syntax {
+    /// How a highlighted token draws: its colour, and italic for comments.
+    pub fn style(&self, token: Token) -> HighlightStyle {
+        let color = match token {
+            Token::Keyword => self.keyword,
+            Token::String => self.string,
+            Token::Type => self.r#type,
+            Token::Number => self.number,
+            Token::Comment => self.comment,
+            Token::Function => self.function,
+            Token::Punctuation => self.punctuation,
+        };
+        let font_style = (token == Token::Comment).then_some(FontStyle::Italic);
+        HighlightStyle { color: Some(color), font_style, ..Default::default() }
     }
 }
 

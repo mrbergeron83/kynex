@@ -2,16 +2,20 @@
 //! headers, numbered lines) in a virtualized list, under a header for the
 //! selected file or commit.
 
+use std::ops::Range;
+use std::rc::Rc;
+
 use gpui::{
-    AnyElement, Context, FontWeight, Hsla, ListHorizontalSizingBehavior, SharedString, div, prelude::*, px,
+    AnyElement, Context, FontWeight, Hsla, ListHorizontalSizingBehavior, SharedString, StyledText, div, prelude::*, px,
     uniform_list,
 };
 use kynex_core::fmt::ago_unix;
 use kynex_core::git::{self, FileDiff, LineKind};
+use kynex_core::highlight::{self, Lang, Side, Token};
 
 use super::{GitView, Selection};
 use crate::theme::{Palette, mono, theme};
-use crate::ui::{Icon, Tooltip, icon, outline_button, spinner};
+use crate::ui::{Icon, Tooltip, code, icon, outline_button, scrollbar, spinner};
 
 const ROW_HEIGHT: f32 = 20.;
 
@@ -19,14 +23,14 @@ const ROW_HEIGHT: f32 = 20.;
 enum Row {
     File { path: SharedString, old_path: Option<SharedString>, added: usize, removed: usize },
     Hunk(SharedString),
-    Line { kind: LineKind, old: Option<u32>, new: Option<u32>, text: SharedString },
+    Line { kind: LineKind, old: Option<u32>, new: Option<u32>, text: SharedString, tokens: Rc<[(Range<usize>, Token)]> },
     Note(SharedString),
 }
 
 /// A loaded diff, flattened into rows.
 #[derive(Default)]
 pub struct DiffState {
-    rows: Vec<Row>,
+    rows: Rc<Vec<Row>>,
     /// The row with the most characters, which sizes the list's width.
     widest: usize,
     added: usize,
@@ -63,14 +67,24 @@ impl DiffState {
                     if f.old_path.is_some() { "Renamed, no content changes" } else { "No content changes" }.into(),
                 ));
             }
+            let lang = Lang::from_path(&f.path);
             for h in &f.hunks {
                 rows.push(Row::Hunk(h.header.clone().into()));
-                rows.extend(h.lines.iter().map(|l| Row::Line {
+                // Tabs would render as nothing.
+                let texts: Vec<String> = h.lines.iter().map(|l| l.text.replace('\t', "    ")).collect();
+                let mut tokens = lang
+                    .map(|lang| {
+                        let sides = h.lines.iter().zip(&texts).map(|(l, t)| (side(l.kind), t.as_str()));
+                        highlight::diff(lang, sides)
+                    })
+                    .unwrap_or_default()
+                    .into_iter();
+                rows.extend(h.lines.iter().zip(texts).map(|(l, text)| Row::Line {
                     kind: l.kind,
                     old: l.old,
                     new: l.new,
-                    // Tabs would render as nothing.
-                    text: l.text.replace('\t', "    ").into(),
+                    text: text.into(),
+                    tokens: tokens.next().unwrap_or_default().into(),
                 }));
             }
         }
@@ -83,7 +97,7 @@ impl DiffState {
             widest,
             added: files.iter().map(|f| f.added).sum(),
             removed: files.iter().map(|f| f.removed).sum(),
-            rows,
+            rows: Rc::new(rows),
             loading: false,
             error: None,
         }
@@ -119,13 +133,24 @@ impl GitView {
         } else {
             let rows = self.diff.rows.clone();
             let t2 = t.clone();
-            uniform_list("git-diff", rows.len(), move |range, _, _| range.map(|i| render_row(&rows[i], &t2)).collect())
-                .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-                .with_width_from_item(Some(self.diff.widest))
-                .track_scroll(&self.diff_scroll)
+            let list = uniform_list("git-diff", rows.len(), move |range, _, _| {
+                range.map(|i| render_row(&rows[i], &t2)).collect()
+            })
+            .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+            .with_width_from_item(Some(self.diff.widest))
+            .track_scroll(&self.diff_scroll)
+            .flex_1()
+            .font_family(mono())
+            .text_size(px(12.5));
+            div()
+                .relative()
+                .flex()
+                .flex_col()
                 .flex_1()
-                .font_family(mono())
-                .text_size(px(12.5))
+                .min_h_0()
+                .child(list)
+                .child(scrollbar::vertical("git-diff-bar", self.diff_scroll.clone()))
+                .child(scrollbar::scrollbar("git-diff-hbar", self.diff_scroll.clone(), gpui::Axis::Horizontal))
                 .into_any_element()
         };
         div().flex().flex_col().size_full().child(header).child(body).into_any_element()
@@ -271,7 +296,7 @@ fn render_row(row: &Row, t: &Palette) -> AnyElement {
         Row::Note(text) => {
             base.pl(px(104.)).text_color(t.text_placeholder).italic().child(text.clone()).into_any_element()
         }
-        Row::Line { kind, old, new, text } => {
+        Row::Line { kind, old, new, text, tokens } => {
             let (bg, gutter, sign, fg): (Option<Hsla>, Option<Hsla>, &str, Hsla) = match kind {
                 LineKind::Added => (Some(t.diff_add), Some(t.success.opacity(0.12)), "+", t.text),
                 LineKind::Removed => (Some(t.diff_del), Some(t.error.opacity(0.12)), "-", t.text),
@@ -308,10 +333,23 @@ fn render_row(row: &Row, t: &Palette) -> AnyElement {
                         .child(sign),
                 )
                 .child(
-                    div().pr_4().text_color(fg).when(*kind == LineKind::NoNewline, |d| d.italic()).child(text.clone()),
+                    div()
+                        .pr_4()
+                        .text_color(fg)
+                        .when(*kind == LineKind::NoNewline, |d| d.italic())
+                        .child(StyledText::new(text.clone()).with_highlights(code::styles(tokens, &t.syntax))),
                 )
                 .into_any_element()
         }
+    }
+}
+
+/// Which side of the diff a line is on, for highlighting each side's code.
+fn side(kind: LineKind) -> Side {
+    match kind {
+        LineKind::Added => Side::New,
+        LineKind::Removed => Side::Old,
+        LineKind::Context | LineKind::NoNewline => Side::Both,
     }
 }
 

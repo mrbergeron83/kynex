@@ -15,9 +15,28 @@ and versions follow [Semantic Versioning](https://semver.org/).
   taskbar from before, pin it again once.
 - A running command with a time limit shows how long it has been going, "1m 12s / max 2m",
   counting up once a second; once it's done, how long it took.
+- Syntax highlighting in code blocks, the diffs under edits, and the Git view, in every theme
+  (Rust, TypeScript / JavaScript, Python, Go, C-family, shell, PowerShell, JSON, TOML, YAML,
+  CSS, HTML and SQL).
+- Scrollbars on the transcript, sessions list, timeline, settings, menus, prompts and the Git
+  view. They stay out of the way: a thin bar that shows while you scroll or point at it.
+  Drag one to scroll, or click the track to page.
+- File paths in Claude's replies, like `src/app/mod.rs:123`, are links when the file exists:
+  click to open it in VS Code at that line (or in the default app). Tool calls on a file
+  open it from a button on hover.
+- A turn now ends with a quiet rule giving its time and cost, and a chip for each file it
+  edited; click one to see that file's changes in the Git view.
+
+### Changed
+
+- Code blocks have a header row with the language, Copy and Run, so the buttons no longer
+  cover the code. Long lines stay on one line and the block scrolls sideways: drag its
+  scrollbar, use Shift+wheel, or drag a selection past its edge to select a whole line.
 
 ### Fixed
 
+- Selected text in the transcript is easier to see, and the selection no longer has gaps
+  over inline code.
 - The "Claude is waiting for you in the browser" banner no longer shows when Claude only
   mentions a login or ends with "let me know when…", or after a background task's turn
   proposed something else. Its Continue message now only says the browser step is done,

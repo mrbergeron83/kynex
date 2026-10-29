@@ -23,6 +23,13 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// Opens the Git modal for the folder `cwd`, on the changes to `file`.
+    pub(super) fn open_git_file(&mut self, cwd: PathBuf, file: PathBuf, cx: &mut Context<Self>) {
+        self.open_git_modal(cwd.clone(), cx);
+        let git = self.git.entry(cwd.clone()).or_insert_with(|| cx.new(|cx| GitView::new(cwd, cx))).clone();
+        git.update(cx, |g, cx| g.show_file(&file, cx));
+    }
+
     pub(super) fn close_git_modal(&mut self, cx: &mut Context<Self>) {
         // A Git view only the modal was showing stops polling with it.
         if let Some(path) = self.git_modal.take()

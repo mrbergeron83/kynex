@@ -15,7 +15,7 @@ use kynex_core::motion::Glide;
 use kynex_core::paths::project_name;
 use kynex_core::session::{Item, Kind, PermState};
 use kynex_core::transcript::{self, Row};
-use kynex_core::{commands, fmt};
+use kynex_core::{commands, fmt, links};
 
 use super::KynexApp;
 use super::state::{Active, View};
@@ -24,6 +24,7 @@ use crate::prompt;
 use crate::theme::{Palette, label_font, mono, theme};
 use crate::ui::ease_height::ease_height;
 use crate::ui::motion::{self, fade_in, pop_in};
+use crate::ui::scrollbar;
 use crate::ui::selectable::{Spot, selectable};
 use crate::ui::wash::wash;
 use crate::ui::{Icon, Tooltip, ghost_button, icon};
@@ -116,6 +117,11 @@ impl Thread {
 
     /// Moves the list this frame's share of the glide, stopping at either end.
     fn glide_frame(&mut self) {
+        // A held scrollbar thumb has the list; any glide gives way to it.
+        if self.list.is_scrollbar_dragging() {
+            self.glide.stop();
+            self.follow_after = false;
+        }
         let now = Instant::now();
         // The first frame after a notch: assume one 120 Hz frame went by.
         let dt = self.last_frame.map_or(1. / 120., |t| now.duration_since(t).as_secs_f32());
@@ -275,6 +281,7 @@ impl KynexApp {
         )
         .absolute()
         .inset_0();
+        let bar = scrollbar::vertical(("thread-bar", uid), state.clone());
         let thread =
             list(state, cx.processor(|this, ix, window, cx| this.render_item(ix, window, cx))).flex_1().size_full();
         div()
@@ -287,6 +294,7 @@ impl KynexApp {
             .child(probe)
             // Switching sessions fades the new one in instead of swapping in one frame.
             .child(fade_in(("thread-in", uid), thread, motion::NORMAL))
+            .child(bar)
             .when(!at_latest, |d| d.child(self.render_jump_to_latest(uid, &t, cx)))
             .into_any_element()
     }
@@ -525,13 +533,16 @@ impl KynexApp {
                                     key,
                                     Spot::new(ix, 0),
                                     args.to_string(),
-                                    t.selection,
+                                    t.text_selection,
                                 )))
                             }),
                     ),
-                    None => {
-                        d.child(div().text_sm().child(selectable(key, Spot::new(ix, 0), text.clone(), t.selection)))
-                    }
+                    None => d.child(div().text_sm().child(selectable(
+                        key,
+                        Spot::new(ix, 0),
+                        text.clone(),
+                        t.text_selection,
+                    ))),
                 })
                 .into_any_element(),
             Item::Assistant(text) => {
@@ -547,7 +558,7 @@ impl KynexApp {
                     .group("assistant")
                     .relative()
                     .text_sm()
-                    .child(markdown::render(("md", ix), text, key, ix, run, cx))
+                    .child(markdown::render(("md", ix), text, key, ix, run, Some(&session.cwd), cx))
                     .child(
                         div()
                             .absolute()
@@ -587,7 +598,7 @@ impl KynexApp {
                             key,
                             Spot::new(ix, 0),
                             thought.text.clone(),
-                            t.selection,
+                            t.text_selection,
                         )))
                     })
                     .into_any_element()
@@ -645,25 +656,57 @@ impl KynexApp {
                     .child(div().text_color(color).child(note))
                     .into_any_element()
             }
-            // A clear end to the turn, with a one-line recap of it.
+            // A quiet rule ends the turn: how long it took and what it cost, and
+            // a chip per file it edited, each opening that file's diff.
             Item::Result { cost, duration_ms, is_error, tools, files } => {
-                let (which, color, label) =
-                    if *is_error { (Icon::Close, t.error, "Stopped") } else { (Icon::Check, t.success, "Finished") };
+                const MAX_CHIPS: usize = 6;
+                let mut recap = vec![fmt::duration(*duration_ms)];
+                if *tools > 0 {
+                    recap.push(format!("{tools} tool{}", if *tools == 1 { "" } else { "s" }));
+                }
+                recap.push(format!("${cost:.2}"));
+                let color = if *is_error { t.error } else { t.text_placeholder };
+                let cwd = session.cwd.clone();
+                let chips = files.iter().take(MAX_CHIPS).enumerate().map(|(n, f)| {
+                    let path = links::resolve(&cwd, f);
+                    let cwd = cwd.clone();
+                    div()
+                        .id(("turn-file", ix * 64 + n))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .h(px(18.))
+                        .px_1p5()
+                        .rounded_sm()
+                        .bg(t.element)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(t.hover).text_color(t.text))
+                        .font_family(mono())
+                        .text_size(px(11.))
+                        .text_color(t.text_muted)
+                        .child(fmt::file_name(f).to_string())
+                        .tooltip(Tooltip::with_meta("Show its changes", path.display().to_string()))
+                        .on_click(cx.listener(move |this, _, _, cx| this.open_git_file(cwd.clone(), path.clone(), cx)))
+                });
+                let more = files.len().saturating_sub(MAX_CHIPS);
+                let rule = || div().flex_1().min_w(px(16.)).h(px(1.)).bg(t.border_variant);
                 div()
                     .flex()
                     .items_center()
-                    .gap_1p5()
-                    .px_1()
+                    .gap_2()
                     .pt_1()
                     .text_xs()
-                    .child(icon(which, color).size_3p5().flex_none())
-                    .child(div().flex_none().font_weight(FontWeight::MEDIUM).text_color(color).child(label))
-                    .child(div().min_w_0().truncate().text_color(t.text_muted).child(fmt::recap(
-                        *duration_ms,
-                        *tools,
-                        files,
-                        *cost,
-                    )))
+                    .child(rule())
+                    .when(*is_error, |d| {
+                        d.child(div().flex_none().font_weight(FontWeight::MEDIUM).text_color(color).child("Stopped"))
+                    })
+                    .child(div().flex_none().text_color(color).child(recap.join(" · ")))
+                    .when(!files.is_empty(), |d| {
+                        d.child(div().flex().flex_wrap().gap_1().children(chips).when(more > 0, |d| {
+                            d.child(div().text_color(t.text_placeholder).child(format!("+{more} more")))
+                        }))
+                    })
+                    .child(rule())
                     .into_any_element()
             }
             Item::Task(n) => self.render_task_notice(ix, n, cx),
@@ -671,7 +714,7 @@ impl KynexApp {
                 .px_1()
                 .text_sm()
                 .text_color(t.error)
-                .child(selectable(key, Spot::new(ix, 0), e.clone(), t.selection))
+                .child(selectable(key, Spot::new(ix, 0), e.clone(), t.text_selection))
                 .into_any_element(),
         }
     }
@@ -695,19 +738,12 @@ pub(super) fn disclosure_row(id: impl Into<gpui::ElementId>, expanded: bool, t: 
 
 /// A file edit drawn as a diff, in the same frame as [`code_box`].
 pub(super) fn diff_box<E: IntoElement>(id: gpui::ElementId, diff: E, t: &Palette) -> impl IntoElement + use<E> {
-    div()
-        .id(id)
-        .ml_6()
-        .mt_1()
-        .max_h(px(420.))
-        .overflow_y_scroll()
-        .rounded_md()
-        .border_1()
-        .border_color(t.border_variant)
-        .bg(t.panel)
-        .px_2()
-        .py_2()
-        .child(diff)
+    let scroll = scrollbar::handle(id.clone());
+    let bar = gpui::ElementId::NamedChild(std::sync::Arc::new(id.clone()), "bar".into());
+    let area = div().id(id).max_h(px(420.)).overflow_scroll().track_scroll(&scroll).py_1().child(diff);
+    scrollbar::vertical_over(bar, scroll, area, |d| {
+        d.ml_6().mt_1().rounded_md().overflow_hidden().border_1().border_color(t.border_variant).bg(t.panel)
+    })
 }
 
 /// A tool's input or output, selectable as item `item` of transcript `group`.
@@ -717,21 +753,21 @@ pub(super) fn code_box(
     (group, item): (Key, usize),
     t: &Palette,
 ) -> impl IntoElement + use<> {
-    let text = selectable(group, Spot::new(item, 0), text, t.selection);
-    div()
+    let text = selectable(group, Spot::new(item, 0), text, t.text_selection);
+    let scroll = scrollbar::handle(id.clone());
+    let bar = gpui::ElementId::NamedChild(std::sync::Arc::new(id.clone()), "bar".into());
+    let area = div()
         .id(id)
-        .ml_6()
-        .mt_1()
         .max_h(px(320.))
         .overflow_y_scroll()
-        .rounded_md()
-        .border_1()
-        .border_color(t.border_variant)
-        .bg(t.panel)
+        .track_scroll(&scroll)
         .px_3()
         .py_2()
         .font_family(mono())
         .text_xs()
         .text_color(t.text_muted)
-        .child(text)
+        .child(text);
+    scrollbar::vertical_over(bar, scroll, area, |d| {
+        d.ml_6().mt_1().rounded_md().overflow_hidden().border_1().border_color(t.border_variant).bg(t.panel)
+    })
 }
