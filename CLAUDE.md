@@ -78,7 +78,8 @@ A cargo workspace with two crates:
     `queue.rs` — messages written while Claude works, sent together when the turn ends
   - `mcp.rs` — MCP tools and servers in words, server status, browser handoff;
     `tasks.rs` — background tasks (`run_in_background`, agents, Monitors) from stream-json
-  - `zoom.rs` — the image viewer's fit, zoom and pan; `env_path.rs` — the login shell's PATH
+  - `zoom.rs` — the image viewer's fit, zoom and pan; `column.rs` — the Transcript width
+    setting and the prose / tool-row widths it gives; `env_path.rs` — the login shell's PATH
     for an app started from Finder or the Dock (macOS)
   - `rewind.rs` — going back to an earlier message: the log's current branch, the points with
     their file checkpoints, restoring files (`--rewind-files`); the session resumes with

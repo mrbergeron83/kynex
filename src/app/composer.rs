@@ -17,7 +17,6 @@ use kynex_core::toasts::Toast;
 use super::keys::{CycleMode, Interrupt};
 use super::menus::Menu;
 use super::state::{Active, View};
-use super::transcript::THREAD_WIDTH;
 use super::{KynexApp, models};
 use crate::theme::theme;
 use crate::ui::completions::completions;
@@ -183,7 +182,7 @@ impl KynexApp {
             div().w_full().flex().justify_center().px_6().pb_4().pt_1().child(
                 div()
                     .w_full()
-                    .max_w(THREAD_WIDTH)
+                    .when_some(self.saved.column.max_prose(), |d, w| d.max_w(px(w)))
                     .flex()
                     .flex_col()
                     .gap_1p5()

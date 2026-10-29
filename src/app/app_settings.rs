@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use gpui::{Anchor, ClickEvent, Context, PathPromptOptions, Window, div, prelude::*, px};
 use kynex_core::cli;
+use kynex_core::column::ColumnWidth;
 use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
 use kynex_core::paths::data_dir;
@@ -243,7 +244,33 @@ impl KynexApp {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_shell(kind, cx)))
             }));
 
-        div().flex().flex_col().gap_6().child(cli).child(shell)
+        let past = self.saved.name_past_sessions;
+        let recent = format!("Also the {} most recent unnamed ones", super::titles::NAME_RECENT);
+        let naming = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(heading(
+                "Session names",
+                "Claude Haiku names sessions from their first message, one short call each on your plan.",
+                t,
+            ))
+            .children([(false, "Only the session you open".to_string()), (true, recent)].into_iter().map(
+                |(on, label)| {
+                    choice(("name-past", usize::from(on)), past == on, label, t)
+                        .on_click(cx.listener(move |this, _, _, cx| this.set_name_past_sessions(on, cx)))
+                },
+            ));
+
+        div().flex().flex_col().gap_6().child(cli).child(shell).child(naming)
+    }
+
+    fn set_name_past_sessions(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.saved.name_past_sessions = on;
+        self.save();
+        // Re-read the list so naming picks up (or stops after the current one).
+        self.sessions = None;
+        cx.notify();
     }
 
     fn render_appearance(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
@@ -289,7 +316,27 @@ impl KynexApp {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_motion(m, cx)))
             }));
 
-        div().flex().flex_col().gap_6().child(themes).child(fonts).child(motion)
+        let column = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(heading("Transcript width", "How wide the conversation and the message box are.", t))
+            .children(ColumnWidth::ALL.into_iter().enumerate().map(|(n, w)| {
+                choice(("app-column", n), self.saved.column == w, format!("{} · {}", w.label(), w.help()), t)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_column(w, cx)))
+            }));
+
+        div().flex().flex_col().gap_6().child(themes).child(fonts).child(column).child(motion)
+    }
+
+    fn set_column(&mut self, w: ColumnWidth, cx: &mut Context<Self>) {
+        self.saved.column = w;
+        self.save();
+        // Row heights change with their width.
+        for th in self.threads.values() {
+            th.list.remeasure();
+        }
+        cx.notify();
     }
 
     fn render_keyboard(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {

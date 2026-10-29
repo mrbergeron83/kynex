@@ -16,7 +16,7 @@ use kynex_core::session::{self, Item, Session, SessionInfo};
 use kynex_core::toasts::Toast;
 
 use super::KynexApp;
-use super::keys::ToggleSessions;
+use super::keys::{NewSession, ToggleSessions};
 use super::menus::Menu;
 use super::session_groups::DraggedSession;
 use crate::theme::{Palette, theme};
@@ -27,7 +27,7 @@ use crate::ui::{Icon, Lamp, Tooltip, icon_button, lamp, section_label};
 /// Past sessions for the active conversation's folder, re-read when the folder
 /// or the current session changes, or a reply starts or finishes.
 pub struct SessionList {
-    cwd: PathBuf,
+    pub(super) cwd: PathBuf,
     current: Option<String>,
     /// The folder's open sessions and whether each is busy: titles and times
     /// move when a reply starts or finishes.
@@ -164,17 +164,9 @@ impl KynexApp {
             .child(
                 icon_button("new-session", Icon::Plus, cx)
                     .when(current.is_none(), |b| b.opacity(0.4))
-                    .tooltip(Tooltip::text(if current.is_none() { "Already a new session" } else { "New session" }))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.show_code_view();
-                        cx.notify();
-                        let Some(s) = this.session_mut() else { return };
-                        if s.session_id.is_some() {
-                            let (kind, cwd) = (s.kind, s.cwd.clone());
-                            this.open_session(Session::new(kind, cwd));
-                        }
-                        this.focus_input(window, cx);
-                    })),
+                    .when(current.is_none(), |b| b.tooltip(Tooltip::text("Already a new session")))
+                    .when(current.is_some(), |b| b.tooltip(Tooltip::for_action("New session", NewSession, "")))
+                    .on_click(cx.listener(|this, _, window, cx| this.new_session(window, cx))),
             )
             .child(
                 icon_button("hide-sessions", Icon::PanelLeft, cx)

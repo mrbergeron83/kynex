@@ -5,6 +5,25 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Shortcuts for a new session (Ctrl+N / Cmd+N), the next and previous session in the
+  project (Ctrl+PageDown / PageUp; Cmd+Shift+] / [ on macOS), and closing the project tab (Ctrl+W / Cmd+W; if Claude is
+  working there, press it twice). All rebindable in `keymap.json`.
+- A setting for session names: by default only the session you open is named by Claude
+  Haiku; naming the 10 most recent past sessions too is opt-in.
+
+### Changed
+
+- On wide windows, tool calls, diffs and their output grow to the right, up to 1040 px,
+  lined up with the text, which keeps its readable width. A Transcript width setting
+  (Appearance) offers Wide and Full width for big screens.
+
+### Fixed
+
+- Screenshots and other images in tool results no longer flash and disappear when Claude
+  takes several in a turn.
+
 ## [0.0.7] - 2026-10-28
 
 ### Added

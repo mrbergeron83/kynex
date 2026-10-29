@@ -130,6 +130,19 @@ impl KynexApp {
         }
     }
 
+    /// A new session in the active tab, unless the shown one is still new.
+    pub(super) fn new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_code_view();
+        cx.notify();
+        if let Some(s) = self.session_mut()
+            && s.session_id.is_some()
+        {
+            let (kind, cwd) = (s.kind, s.cwd.clone());
+            self.open_session(Session::new(kind, cwd));
+        }
+        self.focus_input(window, cx);
+    }
+
     /// Shows an open session in the active tab, if one matches.
     pub(super) fn show_open(&mut self, f: impl Fn(&Session) -> bool) -> bool {
         let Some(live) = self.live_mut() else { return false };

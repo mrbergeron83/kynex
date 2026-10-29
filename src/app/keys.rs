@@ -8,6 +8,7 @@ use gpui::{App, Context, KeyBinding, KeyDownEvent, Window, actions};
 use kynex_core::paths::data_dir;
 use kynex_core::project::Mode;
 use kynex_core::session::Kind;
+use kynex_core::toasts::Toast;
 
 use super::KynexApp;
 use super::state::Active;
@@ -17,6 +18,10 @@ actions!(
     kynex,
     [
         OpenProject,
+        NewSession,
+        NextSession,
+        PrevSession,
+        CloseTab,
         NextTab,
         PrevTab,
         ToggleSessions,
@@ -46,9 +51,15 @@ actions!(
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 21] = [
+const SHORTCUTS: [(&str, &str); 25] = [
     ("open_project", "secondary-o"),
     ("open_settings", "secondary-,"),
+    ("new_session", "secondary-n"),
+    // The sessions panel's list, top to bottom. Brackets move around on
+    // non-US layouts, so outside macOS it's the browsers' Ctrl+PageDown / Up.
+    ("next_session", if cfg!(target_os = "macos") { "cmd-shift-]" } else { "ctrl-pagedown" }),
+    ("prev_session", if cfg!(target_os = "macos") { "cmd-shift-[" } else { "ctrl-pageup" }),
+    ("close_tab", "secondary-w"),
     ("next_tab", "ctrl-tab"),
     ("prev_tab", "ctrl-shift-tab"),
     ("toggle_sessions", "secondary-b"),
@@ -90,8 +101,22 @@ pub(super) fn esc_esc_rewinds() -> bool {
 }
 
 /// The keys above a terminal sends to its shell instead (see `terminal::view`).
-pub const SHELL_KEYS: [&str; 12] =
-    ["ctrl-r", "ctrl-s", "ctrl-g", "alt-p", "pageup", "pagedown", "ctrl-home", "ctrl-end", "home", "end", "up", "down"];
+pub const SHELL_KEYS: [&str; 14] = [
+    "ctrl-r",
+    "ctrl-s",
+    "ctrl-g",
+    "ctrl-n",
+    "ctrl-w",
+    "alt-p",
+    "pageup",
+    "pagedown",
+    "ctrl-home",
+    "ctrl-end",
+    "home",
+    "end",
+    "up",
+    "down",
+];
 
 pub fn bind_keys(cx: &mut App) {
     let path = data_dir().join("keymap.json");
@@ -135,6 +160,10 @@ pub fn bind_keys(cx: &mut App) {
         bindings.push(match name {
             "open_project" => KeyBinding::new(keys, OpenProject, c),
             "open_settings" => KeyBinding::new(keys, OpenSettings, c),
+            "new_session" => KeyBinding::new(keys, NewSession, c),
+            "next_session" => KeyBinding::new(keys, NextSession, c),
+            "prev_session" => KeyBinding::new(keys, PrevSession, c),
+            "close_tab" => KeyBinding::new(keys, CloseTab, c),
             "next_tab" => KeyBinding::new(keys, NextTab, c),
             "prev_tab" => KeyBinding::new(keys, PrevTab, c),
             "toggle_sessions" => KeyBinding::new(keys, ToggleSessions, c),
@@ -184,6 +213,62 @@ impl KynexApp {
 
     pub(super) fn open_settings_action(&mut self, _: &OpenSettings, _: &mut Window, cx: &mut Context<Self>) {
         self.open_app_settings(cx);
+    }
+
+    pub(super) fn new_session_action(&mut self, _: &NewSession, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_session(window, cx);
+    }
+
+    pub(super) fn next_session(&mut self, _: &NextSession, window: &mut Window, cx: &mut Context<Self>) {
+        self.step_session(1, window, cx);
+    }
+
+    pub(super) fn prev_session(&mut self, _: &PrevSession, window: &mut Window, cx: &mut Context<Self>) {
+        self.step_session(-1, window, cx);
+    }
+
+    /// The session `by` rows down the sessions panel (up if negative), in its
+    /// order: ungrouped, then each group; the archive is skipped.
+    fn step_session(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(s) = self.active_session() else { return };
+        let (kind, cwd, current) = (s.kind, s.cwd.clone(), s.session_id.clone());
+        let items = match &self.sessions {
+            Some(l) if l.cwd == cwd => l.items.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
+            _ => kynex_core::session::list_sessions(&cwd).into_iter().map(|i| i.id).collect(),
+        };
+        let arranged = self.groups_for(&cwd).arrange(items.iter().map(String::as_str));
+        let order: Vec<String> = arranged.top.into_iter().chain(arranged.groups.into_iter().flatten()).collect();
+        if order.is_empty() {
+            return;
+        }
+        let n = order.len() as isize;
+        // A new session sits above the list: down goes to the first, up to the last.
+        let next = match current.and_then(|id| order.iter().position(|o| *o == id)) {
+            Some(i) => (i as isize + by).rem_euclid(n),
+            None if by > 0 => 0,
+            None => n - 1,
+        };
+        self.show_code_view();
+        self.switch_session(kind, cwd, order[next as usize].clone());
+        self.focus_input(window, cx);
+        cx.notify();
+    }
+
+    /// Ctrl+W: closes the project tab, like middle-clicking it. If Claude is
+    /// working there, the first press only warns; a second within a few
+    /// seconds closes it and stops the work.
+    pub(super) fn close_tab(&mut self, _: &CloseTab, _: &mut Window, cx: &mut Context<Self>) {
+        let Active::Project(i) = self.saved.active else { return };
+        let Some(p) = self.saved.projects.get(i) else { return };
+        let busy = self.code.get(&p.path).is_some_and(|l| l.sessions.iter().any(|s| s.busy));
+        let confirmed = self.confirm_close.take().is_some_and(|(at, when)| at == i && when.elapsed().as_secs() < 4);
+        if busy && !confirmed {
+            self.confirm_close = Some((i, std::time::Instant::now()));
+            self.toast(Toast::warning("Claude is still working here. Press again to close the tab and stop it."));
+            return cx.notify();
+        }
+        self.close_project(i);
+        cx.notify();
     }
 
     fn tab_count(&self) -> usize {

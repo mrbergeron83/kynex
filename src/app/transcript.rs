@@ -2,12 +2,13 @@
 //! tail while a reply streams, and how each [`Item`] draws. The list's rows
 //! come from `kynex_core::transcript::rows`; tool calls draw in `tool_rows.rs`.
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, App, Context, FollowMode, FontWeight, ListAlignment, ListOffset, ListState, Pixels, ScrollEvent,
-    Window, div, list, prelude::*, px,
+    AnyElement, App, Context, FollowMode, FontWeight, ListAlignment, ListOffset, ListState, ScrollEvent, Window,
+    canvas, div, list, prelude::*, px,
 };
 use kynex_core::live::Key;
 use kynex_core::motion::Glide;
@@ -27,8 +28,9 @@ use crate::ui::selectable::{Spot, selectable};
 use crate::ui::wash::wash;
 use crate::ui::{Icon, Tooltip, ghost_button, icon};
 
-/// The transcript and composer's column width.
-pub const THREAD_WIDTH: Pixels = px(780.);
+/// Room either side of a transcript row (`px_6`). The column's widths are
+/// `kynex_core::column`, from the Transcript width setting.
+const ROW_PADDING: f32 = 24.;
 
 /// The transcript list for one conversation, its rows, and how many items
 /// they were laid out from.
@@ -43,6 +45,8 @@ pub struct Thread {
     follow_after: bool,
     /// A turn just finished here while shown: go to its end.
     turn_ended: bool,
+    /// The list's width from the last layout; 0 before the first.
+    width: Rc<Cell<f32>>,
 }
 
 /// How far ↑ / ↓ scroll the transcript, as a browser's arrow keys do.
@@ -191,6 +195,7 @@ impl KynexApp {
                 last_frame: None,
                 follow_after: false,
                 turn_ended: false,
+                width: Rc::default(),
             }
         });
         if let Some(rows) = rows {
@@ -234,12 +239,29 @@ impl KynexApp {
             thread.glide_frame();
             window.request_animation_frame();
         }
-        let state = thread.list.clone();
+        let (state, width) = (thread.list.clone(), thread.width.clone());
         let at_latest = thread.at_latest();
         let uid = self.active_session().map_or(0, |s| s.uid as usize);
         // No padding on the list itself: gpui scrolls past it but leaves it
         // out of `max_offset_for_scrollbar`, so the glides here stopped short
         // of the end and pulled back from it (#105).
+        // The list's width, for the rows' columns. Rows can't ask the list (it's
+        // borrowed while it lays them out), so this reads it from layout first,
+        // and has the rows measured again when it changes.
+        let measure = state.clone();
+        let probe = canvas(
+            move |bounds, window, _| {
+                let w = f32::from(bounds.size.width);
+                if (width.get() - w).abs() >= 0.5 {
+                    width.set(w);
+                    measure.remeasure();
+                    window.refresh();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0();
         let thread =
             list(state, cx.processor(|this, ix, window, cx| this.render_item(ix, window, cx))).flex_1().size_full();
         div()
@@ -249,6 +271,7 @@ impl KynexApp {
             .flex_1()
             .min_h_0()
             .py_2()
+            .child(probe)
             // Switching sessions fades the new one in instead of swapping in one frame.
             .child(fade_in(("thread-in", uid), thread, motion::NORMAL))
             .when(!at_latest, |d| d.child(self.render_jump_to_latest(uid, &t, cx)))
@@ -366,36 +389,49 @@ impl KynexApp {
         let Some(thread) = self.threads.get(&key) else { return div().into_any_element() };
         let last = row + 1 == thread.rows.len();
         // Tool traffic sits tight together; messages get room to breathe.
-        let (body, compact) = match thread.rows.get(row).cloned() {
+        // Tool calls and results (diffs, output) may use the wider column.
+        let (body, compact, wide) = match thread.rows.get(row).cloned() {
             Some(Row::Tools(run)) => {
                 let live = last && self.active_session().is_some_and(|s| s.busy);
-                (self.render_run(&run, row, live, cx), true)
+                (self.render_run(&run, row, live, cx), true, true)
             }
             Some(Row::Item(ix)) => {
-                let compact = self.active_session().is_some_and(|s| {
-                    matches!(
-                        s.items.get(ix),
-                        Some(Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking(_))
-                    )
-                });
-                (self.render_entry(ix, row, window, cx), compact)
+                let item = self.active_session().and_then(|s| s.items.get(ix));
+                let compact =
+                    matches!(item, Some(Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking(_)));
+                let wide = matches!(item, Some(Item::ToolResult { .. }));
+                (self.render_entry(ix, row, window, cx), compact, wide)
             }
             None => return div().into_any_element(),
         };
         let t = theme(cx).clone();
+        // Tool blocks and results ease as they open or shut; messages, which
+        // stream, follow the reply's own glide instead.
+        let body = match compact {
+            true => ease_height(("row-ease", row), body).into_any_element(),
+            false => body,
+        };
+        // The column's widths in the list's width, less the row's padding. Until
+        // the list has been laid out once its width isn't known: plain prose width.
+        let setting = self.saved.column;
+        let available = self.threads.get(&key).map_or(0., |th| th.width.get());
+        let column = (available > 0.).then(|| setting.columns(available - ROW_PADDING * 2.));
+        let inner = match column {
+            // Tool rows start where prose does and grow to the right (#122).
+            Some(c) => div().flex_none().w(px(c.prose)).map(|d| match wide {
+                true => d.child(div().flex_none().w(px(c.tools)).child(body)),
+                false => d.child(body),
+            }),
+            None => div().w_full().when_some(setting.max_prose(), |d, w| d.max_w(px(w))).child(body),
+        };
         let el = div()
             .id(("row", row))
             .w_full()
             .flex()
             .justify_center()
-            .px_6()
+            .px(px(ROW_PADDING))
             .map(|d| if compact { d.py_0p5() } else { d.py_2() })
-            // Tool blocks and results ease as they open or shut; messages, which
-            // stream, follow the reply's own glide instead.
-            .child(div().w_full().max_w(THREAD_WIDTH).map(|d| match compact {
-                true => d.child(ease_height(("row-ease", row), body)),
-                false => d.child(body),
-            }))
+            .child(inner)
             .on_scroll(cx.listener(move |this, _: &ScrollEvent, _, _| this.scrolled(key)));
         // Lit up for a moment when the timeline jumps here.
         self.flash_row(key, row, el, &t)

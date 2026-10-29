@@ -1,5 +1,6 @@
 //! Names for sessions that Claude Code didn't name: one at a time, in the
-//! background, for the most recent ones in the sessions panel.
+//! background. The shown session gets one; past sessions only if the user
+//! turned that on in Settings, since each name is a call on their quota.
 
 use gpui::{Context, prelude::*};
 use kynex_core::session::SessionInfo;
@@ -7,8 +8,9 @@ use kynex_core::titles;
 
 use super::KynexApp;
 
-/// Older sessions keep their first message as the name.
-const NAME_RECENT: usize = 30;
+/// With past sessions named, the most recent ones; older ones keep their
+/// first message as the name.
+pub(super) const NAME_RECENT: usize = 10;
 
 impl KynexApp {
     /// Starts naming the next unnamed session in `items`, unless one is underway:
@@ -19,10 +21,11 @@ impl KynexApp {
         }
         let shown = self.active_session().and_then(|s| s.session_id.clone());
         let wanted = |s: &&SessionInfo| !s.named && !self.naming_tried.contains(&s.id);
+        let recent = if self.saved.name_past_sessions { NAME_RECENT } else { 0 };
         let next = items
             .iter()
             .find(|s| shown.as_deref() == Some(s.id.as_str()) && wanted(s))
-            .or_else(|| items.iter().take(NAME_RECENT).find(wanted));
+            .or_else(|| items.iter().take(recent).find(wanted));
         let Some(next) = next else { return };
         let (id, first) = (next.id.clone(), next.first.clone());
         self.naming = Some(id.clone());

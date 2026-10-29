@@ -169,6 +169,9 @@ pub struct KynexApp {
     organize: Organize,
     /// Session id whose delete button was clicked once and is awaiting confirmation.
     confirm_delete: Option<String>,
+    /// Project tab Ctrl+W was pressed on while Claude worked in it, and when:
+    /// a second press soon after closes it.
+    confirm_close: Option<(usize, std::time::Instant)>,
     /// The session being named right now, and every one tried this run.
     naming: Option<String>,
     naming_tried: HashSet<String>,
@@ -350,6 +353,7 @@ impl KynexApp {
             filtering_sessions: false,
             organize: Organize::new(group_name),
             confirm_delete: None,
+            confirm_close: None,
             naming: None,
             naming_tried: HashSet::new(),
             settings: None,
@@ -610,6 +614,10 @@ impl Render for KynexApp {
             .text_sm()
             .on_action(cx.listener(Self::open_project))
             .on_action(cx.listener(Self::open_settings_action))
+            .on_action(cx.listener(Self::new_session_action))
+            .on_action(cx.listener(Self::next_session))
+            .on_action(cx.listener(Self::prev_session))
+            .on_action(cx.listener(Self::close_tab))
             .on_action(cx.listener(Self::next_tab))
             .on_action(cx.listener(Self::prev_tab))
             .on_action(cx.listener(Self::toggle_sessions))
