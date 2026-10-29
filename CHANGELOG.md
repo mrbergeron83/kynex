@@ -26,6 +26,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   open it from a button on hover.
 - A turn now ends with a quiet rule giving its time and cost, and a chip for each file it
   edited; click one to see that file's changes in the Git view.
+- Background tasks can be stopped: each one in the strip over the composer has Stop next
+  to Watch.
 
 ### Changed
 
