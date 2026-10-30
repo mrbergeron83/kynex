@@ -19,8 +19,8 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub use branch::{
-    Branch, branches, create_branch, create_branch_at, delete_branch, delete_remote_branch, publish_branch,
-    rename_branch, switch_branch,
+    Branch, branches, create_branch, create_branch_at, default_branch, delete_branch, delete_remote_branch,
+    publish_branch, rename_branch, switch_branch,
 };
 pub use diff::{DiffLine, FileDiff, Hunk, LineKind, commit_diff, compare_diff, diff_stat, file_diff};
 pub use log::{Commit, CommitDetail, Ref, RefKind, commit_detail, log};

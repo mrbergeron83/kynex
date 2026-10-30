@@ -94,6 +94,8 @@ enum Cmd {
     ProjectScratch,
     About,
     CheckForUpdates,
+    /// Archive the project's sessions not used in this many days.
+    ArchiveOlder(u32),
     Theme(Theme),
     Quit,
 }
@@ -167,6 +169,9 @@ fn commands() -> Vec<(Cmd, String, &'static str)> {
     .into_iter()
     .map(|(c, label, words)| (c, label.to_string(), words))
     .collect();
+    list.extend(super::session_tidy::TIDY_AGES.iter().map(|(days, label)| {
+        (Cmd::ArchiveOlder(*days), format!("Archive sessions older than {label}"), "tidy old clean up hide")
+    }));
     list.extend(THEMES.iter().map(|&(t, name)| (Cmd::Theme(t), format!("Theme: {name}"), "appearance colours")));
     list.push((Cmd::Quit, "Quit Kynex".into(), "exit close"));
     list
@@ -361,6 +366,7 @@ impl KynexApp {
                 self.check_for_update(cx);
                 self.check_cli_now(cx);
             }
+            Cmd::ArchiveOlder(days) => self.archive_older_than(days, cx),
             Cmd::Theme(t) => self.set_theme(t, cx),
             _ => {}
         }

@@ -48,6 +48,8 @@ pub(super) struct Organize {
     pub(super) shown: Vec<String>,
     /// "Delete" was clicked on the picked sessions and waits for Yes.
     pub(super) confirm_bulk_delete: bool,
+    /// The row the list's ↑ / ↓ keys are on.
+    pub(super) cursor: Option<String>,
 }
 
 impl Organize {
@@ -61,6 +63,7 @@ impl Organize {
             selection_cwd: None,
             shown: Vec::new(),
             confirm_bulk_delete: false,
+            cursor: None,
         }
     }
 
@@ -70,25 +73,38 @@ impl Organize {
     }
 }
 
-/// A session being dragged onto a group.
+/// Sessions being dragged onto a group, the archive or a pinned row: the one
+/// grabbed, and with it every other picked one.
 #[derive(Clone)]
 pub(super) struct DraggedSession {
-    pub id: String,
+    pub ids: Vec<String>,
     pub title: SharedString,
+}
+
+/// A group header being dragged to another place among the groups.
+#[derive(Clone)]
+pub(super) struct DraggedGroup {
+    pub index: usize,
+    pub name: SharedString,
+}
+
+impl Render for DraggedGroup {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme(cx);
+        popover(cx).font_family(ui_font()).px_2().py_1().text_sm().text_color(t.text_muted).child(self.name.clone())
+    }
 }
 
 impl Render for DraggedSession {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
         // Drawn outside the window's root, so it doesn't inherit the font.
-        popover(cx)
-            .font_family(ui_font())
-            .px_2()
-            .py_1()
-            .max_w(px(240.))
-            .text_sm()
-            .text_color(t.text)
-            .child(div().truncate().child(self.title.clone()))
+        popover(cx).font_family(ui_font()).px_2().py_1().max_w(px(240.)).text_sm().text_color(t.text).child(
+            div().truncate().child(match self.ids.len() {
+                1 => self.title.clone(),
+                n => format!("{n} sessions").into(),
+            }),
+        )
     }
 }
 
@@ -112,7 +128,7 @@ impl KynexApp {
     }
 
     /// Shows the name field in place of group `i`'s header.
-    fn start_rename(&mut self, cwd: PathBuf, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn start_group_rename(&mut self, cwd: PathBuf, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         // One open at a time: the field moves, so keep what the last one had.
         self.commit_rename(cx);
         let name = self.groups_for(&cwd).groups.get(i).map(|g| g.name.clone()).unwrap_or_default();
@@ -164,7 +180,7 @@ impl KynexApp {
     pub(super) fn new_group(&mut self, cwd: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let mut at = 0;
         self.edit_groups(&cwd, |g| at = g.add_group(""));
-        self.start_rename(cwd, at, window, cx);
+        self.start_group_rename(cwd, at, window, cx);
     }
 
     /// Enter in the name field: keeps the new name. A session's blank name
@@ -240,7 +256,7 @@ impl KynexApp {
                     at = g.add_group("");
                     g.move_to(&new_id, Some(at));
                 });
-                this.start_rename(new_cwd.clone(), at, window, cx);
+                this.start_group_rename(new_cwd.clone(), at, window, cx);
             }),
         ));
         if let Some(i) = current {
@@ -285,19 +301,28 @@ impl KynexApp {
     pub(super) fn group_menu_items(&mut self, i: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let Some(cwd) = self.active_session().map(|s| s.cwd.clone()) else { return Vec::new() };
         let t = theme(cx).clone();
-        let rename_cwd = cwd.clone();
+        let (rename_cwd, archive_cwd) = (cwd.clone(), cwd.clone());
         vec![
             menu_item("group-rename", "Rename", false, cx)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.menu = None;
-                    this.start_rename(rename_cwd.clone(), i, window, cx);
+                    this.start_group_rename(rename_cwd.clone(), i, window, cx);
                 }))
                 .into_any_element(),
-            menu_item("group-delete", "Delete group", false, cx)
+            div().my_1().child(divider(cx)).into_any_element(),
+            menu_item("group-delete", "Delete group, keep its sessions", false, cx)
                 .text_color(t.error)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.menu = None;
                     this.edit_groups(&cwd, |g| g.delete_group(i));
+                    cx.notify();
+                }))
+                .into_any_element(),
+            menu_item("group-delete-archive", "Delete group and archive its sessions", false, cx)
+                .text_color(t.error)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.menu = None;
+                    this.edit_groups(&archive_cwd, |g| g.delete_group_archiving(i));
                     cx.notify();
                 }))
                 .into_any_element(),
@@ -339,7 +364,10 @@ impl KynexApp {
             cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                 this.open_menu(Menu::Group(i), ev.position, gpui::Anchor::TopLeft, cx)
             }),
-        );
+        )
+        // Dragged onto another group, it takes that group's place.
+        .on_drag(DraggedGroup { index: i, name: group.name.clone().into() }, |d, _, _, cx| cx.new(|_| d.clone()));
+        let reorder_cwd = cwd.to_path_buf();
         div()
             .id(("group-block", i))
             .flex()
@@ -348,7 +376,14 @@ impl KynexApp {
             .drag_over::<DraggedSession>(move |s, _, _, _| s.bg(hover))
             .on_drop(cx.listener(move |this, d: &DraggedSession, _, cx| {
                 cx.stop_propagation();
-                this.edit_groups(&drop_cwd, |g| g.move_to(&d.id, Some(i)));
+                this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.move_to(id, Some(i))));
+                this.organize.selection.clear();
+                cx.notify();
+            }))
+            .drag_over::<DraggedGroup>(move |s, _, _, _| s.bg(hover))
+            .on_drop(cx.listener(move |this, d: &DraggedGroup, _, cx| {
+                cx.stop_propagation();
+                this.edit_groups(&reorder_cwd, |g| g.move_group(d.index, i));
                 cx.notify();
             }))
             .child(header)
@@ -371,7 +406,8 @@ impl KynexApp {
             .drag_over::<DraggedSession>(move |s, _, _, _| s.bg(hover))
             .on_drop(cx.listener(move |this, d: &DraggedSession, _, cx| {
                 cx.stop_propagation();
-                this.edit_groups(&drop_cwd, |g| g.archive(&d.id));
+                this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.archive(id)));
+                this.organize.selection.clear();
                 cx.notify();
             }))
             .child(

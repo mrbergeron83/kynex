@@ -1465,8 +1465,22 @@ pub struct SessionInfo {
     /// `title` is a real name, not just the first message.
     pub named: bool,
     pub modified: SystemTime,
+    /// The branch it started on and the folder it ran in, as its log says.
+    pub branch: Option<String>,
+    pub ran_in: Option<PathBuf>,
 }
 
+impl SessionInfo {
+    /// The branch to show beside it in project `project`'s list: the one it
+    /// started on, when that was another worktree's folder or a branch other
+    /// than `default`. Sessions of the main worktree on the default branch
+    /// show nothing.
+    pub fn ran_elsewhere(&self, project: &Path, default: Option<&str>) -> Option<&str> {
+        let branch = self.branch.as_deref().filter(|b| *b != "HEAD")?;
+        let other_folder = self.ran_in.as_deref().is_some_and(|d| project::normalize(d) != project::normalize(project));
+        (other_folder || default.is_some_and(|d| d != branch)).then_some(branch)
+    }
+}
 /// `~/.claude/projects`, under the WSL user's home for projects that live in WSL.
 fn projects_dir(cwd: &Path) -> Option<PathBuf> {
     let home = match wsl::parse(cwd) {
@@ -1655,6 +1669,8 @@ pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
                 first: names.first,
                 id,
                 modified,
+                branch: names.branch,
+                ran_in: names.ran_in,
             })
         })
         .collect();
@@ -1668,6 +1684,9 @@ struct Names {
     first: String,
     /// When its last message was said, if the log's tail has one.
     last: Option<SystemTime>,
+    /// Where its first message was said: the git branch and the folder.
+    branch: Option<String>,
+    ran_in: Option<PathBuf>,
 }
 
 /// How far into a log to look for its first message, and back from its end for its title.
@@ -1690,7 +1709,7 @@ fn read_names(path: &Path) -> Option<Names> {
     let mut file = std::fs::File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
     // A first message too big for the head (a pasted screenshot) is looked for further.
-    let first =
+    let (first, branch, ran_in) =
         first_in(&mut file, HEAD_CAP).or_else(|| (len > HEAD_CAP).then(|| first_in(&mut file, u64::MAX)).flatten())?;
     let (mut custom, mut ai) = (None, None);
     let title = |line: &[u8], kind: &str, key: &str| {
@@ -1711,7 +1730,7 @@ fn read_names(path: &Path) -> Option<Names> {
         }
         custom.is_none() || last.is_none()
     });
-    Some(Names { title: custom.or(ai), first, last })
+    Some(Names { title: custom.or(ai), first, last, branch, ran_in })
 }
 
 /// When a log line was said, if it's a message of the conversation: not the
@@ -1751,7 +1770,9 @@ fn cwd_in(line: &str) -> Option<PathBuf> {
 }
 
 /// The first real user message in the first `cap` bytes of a log.
-fn first_in(file: &mut std::fs::File, cap: u64) -> Option<String> {
+/// The first user message in a log's first `cap` bytes, with the git branch
+/// and folder that line was logged in.
+fn first_in(file: &mut std::fs::File, cap: u64) -> Option<(String, Option<String>, Option<PathBuf>)> {
     use std::io::{Read, Seek};
     file.seek(std::io::SeekFrom::Start(0)).ok()?;
     let mut reader = BufReader::new((&mut *file).take(cap));
@@ -1765,7 +1786,9 @@ fn first_in(file: &mut std::fs::File, cap: u64) -> Option<String> {
             && l.contains(r#""type":"user""#)
             && let Some(first) = first_message(l.trim_end())
         {
-            return Some(first);
+            let v: Value = serde_json::from_str(l.trim_end()).unwrap_or_default();
+            let text = |k: &str| v[k].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+            return Some((first, text("gitBranch"), text("cwd").map(PathBuf::from)));
         }
     }
 }
@@ -2476,6 +2499,33 @@ mod tests {
         lines.insert(1, r#"{"type":"custom-title","customTitle":"Worktrees","sessionId":"x"}"#);
         std::fs::write(&path, lines.join("\n")).unwrap();
         assert_eq!(read_names(&path).unwrap().title.as_deref(), Some("Worktrees"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn sessions_say_where_they_ran_off_the_main_line() {
+        let path = std::env::temp_dir().join(format!("kynex-ranin-{}.jsonl", std::process::id()));
+        let line = r#"{"type":"user","message":{"role":"user","content":"hi"},"gitBranch":"feat/x","cwd":"C:\\repos\\app-feat","timestamp":"2026-10-30T10:00:00.000Z"}"#;
+        std::fs::write(&path, format!("{line}\n")).unwrap();
+        let names = read_names(&path).unwrap();
+        assert_eq!(names.branch.as_deref(), Some("feat/x"));
+        let info = |branch: &str, ran_in: &str| SessionInfo {
+            id: "s".into(),
+            title: String::new(),
+            first: String::new(),
+            named: false,
+            modified: SystemTime::UNIX_EPOCH,
+            branch: Some(branch.into()),
+            ran_in: Some(PathBuf::from(ran_in)),
+        };
+        let main = Path::new("/repos/app");
+        // Main worktree, default branch: nothing to say.
+        assert_eq!(info("main", "/repos/app").ran_elsewhere(main, Some("main")), None);
+        // Another branch, or another worktree's folder: its branch.
+        assert_eq!(info("fix", "/repos/app").ran_elsewhere(main, Some("main")), Some("fix"));
+        assert_eq!(info("main", "/repos/app-wt").ran_elsewhere(main, Some("main")), Some("main"));
+        // A detached HEAD has no branch to show.
+        assert_eq!(info("HEAD", "/repos/app-wt").ran_elsewhere(main, Some("main")), None);
         let _ = std::fs::remove_file(path);
     }
 

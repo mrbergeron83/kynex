@@ -20,7 +20,7 @@ use super::KynexApp;
 use super::keys::{NewSession, ToggleSessions};
 use super::menus::Menu;
 use super::session_groups::DraggedSession;
-use crate::theme::{Palette, theme};
+use crate::theme::{Palette, mono, theme};
 use crate::ui::motion::grow;
 use crate::ui::wash::row_wash;
 use crate::ui::{Icon, Lamp, Tooltip, icon_button, lamp, scrollbar, section_label};
@@ -34,6 +34,8 @@ pub struct SessionList {
     /// Each session's local day of last activity, for the date headers;
     /// worked out once per read, not every frame.
     days: HashMap<String, dates::Day>,
+    /// The repository's default branch: sessions on another one say theirs.
+    default_branch: Option<String>,
     /// Something it shows changed (a rename, a setting): read it again.
     stale: bool,
 }
@@ -67,7 +69,9 @@ impl KynexApp {
         self.sessions_reading = Some(read.clone());
         let cwd = read.cwd.clone();
         cx.spawn(async move |this, cx| {
-            let mut items = cx.background_spawn(async move { session::list_sessions(&cwd) }).await;
+            let (mut items, default_branch) = cx
+                .background_spawn(async move { (session::list_sessions(&cwd), kynex_core::git::default_branch(&cwd)) })
+                .await;
             this.update(cx, |this, cx| {
                 // A newer read is on its way.
                 if this.sessions_reading.as_ref() != Some(&read) {
@@ -82,7 +86,7 @@ impl KynexApp {
                     }
                 }
                 let days = items.iter().map(|i| (i.id.clone(), dates::local_day(i.modified))).collect();
-                this.sessions = Some(SessionList { read, items, days, stale: false });
+                this.sessions = Some(SessionList { read, items, days, default_branch, stale: false });
                 cx.notify();
             })
             .ok();
@@ -115,7 +119,7 @@ impl KynexApp {
                 .bg(t.panel)
                 .border_r_1()
                 .border_color(t.border)
-                .child(self.render_sessions_panel(cx))
+                .child(self.render_sessions_panel(window, cx))
                 .child(
                     div()
                         .id("sessions-resize")
@@ -140,7 +144,7 @@ impl KynexApp {
         ))
     }
 
-    fn render_sessions_panel(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_sessions_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         let Some(live) = self.live_mut() else { return div() };
         let Some(s) = live.current() else { return div() };
@@ -184,6 +188,12 @@ impl KynexApp {
         self.sync_picks(&cwd, &items.iter().map(|i| i.id.clone()).collect::<Vec<_>>());
         let picking = self.organize.selection.on;
         let busy: Vec<String> = open.iter().filter(|o| o.busy).filter_map(|o| o.id.clone()).collect();
+        // Working, waiting for you, or finished and unseen: the Active section.
+        let active: Vec<String> =
+            open.iter().filter(|o| o.busy || o.waiting || o.finished).filter_map(|o| o.id.clone()).collect();
+        let default_branch = self.sessions.as_ref().and_then(|l| l.default_branch.clone());
+        let cursor = self.organize.cursor.clone().filter(|_| self.sessions_focus.is_focused(window));
+        let picked_ids = self.organize.selection.ids.clone();
         let open_state = |id: &str| {
             open.iter()
                 .find(|o| o.id.as_deref() == Some(id))
@@ -230,13 +240,22 @@ impl KynexApp {
                     .on_click(cx.listener(|this, _, window, cx| this.new_session(window, cx))),
             )
             .child(
+                icon_button("sessions-more", Icon::ChevronDown, cx)
+                    .tooltip(Tooltip::text("Tidy old sessions"))
+                    .on_click(cx.listener(|this, ev: &gpui::ClickEvent, _, cx| {
+                        this.open_menu(Menu::SessionsPanel, ev.position(), Anchor::TopLeft, cx)
+                    })),
+            )
+            .child(
                 icon_button("hide-sessions", Icon::PanelLeft, cx)
                     .tooltip(Tooltip::for_action("Hide sessions", ToggleSessions, ""))
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_sessions(&ToggleSessions, window, cx))),
             );
 
         let mut rows: Vec<AnyElement> = Vec::new();
-        // Open sessions with no transcript listed yet: new ones, before or just after their first message.
+        // Open sessions with no transcript listed yet: new ones, before or just
+        // after their first message. Working ones join the Active section.
+        let (mut fresh, mut fresh_active): (Vec<AnyElement>, Vec<AnyElement>) = (Vec::new(), Vec::new());
         let unlisted = open.iter().filter(|o| o.id.as_ref().is_none_or(|id| !all.iter().any(|i| i.id == *id)));
         for o in unlisted {
             let (uid, is_current) = (o.uid, o.uid == current_uid);
@@ -244,7 +263,8 @@ impl KynexApp {
             if !matches(&title) {
                 continue;
             }
-            rows.push(
+            let to = if o.busy || o.waiting || o.finished { &mut fresh_active } else { &mut fresh };
+            to.push(
                 session_row(("open", uid as usize), title.into(), is_current, &t)
                     .children(news_lamp(("open-status", uid as usize), o.busy, o.waiting, o.finished, cx))
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -296,12 +316,50 @@ impl KynexApp {
             } else {
                 icon_button(("delete", n), Icon::Trash, cx).invisible().group_hover("session-row", |s| s.visible())
             };
-            let (menu_id, drag) = (id.clone(), DraggedSession { id: id.clone(), title: info.title.clone().into() });
+            // A picked row takes the other picked ones with it, in a drag or its menu.
+            let with_picks = picked && picked_ids.len() > 1;
+            let group_ids = if with_picks { picked_ids.clone() } else { vec![id.clone()] };
+            let drag = DraggedSession { ids: group_ids.clone(), title: info.title.clone().into() };
+            let menu = if with_picks { Menu::Sessions(group_ids) } else { Menu::Session(id.clone()) };
+            let elsewhere = info.ran_elsewhere(&cwd, default_branch.as_deref()).map(str::to_string);
             // When it was last used is in the tooltip; the row is just its title,
             // or the field renaming it.
             let title = match self.session_name_field(&id, false, cx) {
                 Some(field) => field.flex_1().into_any_element(),
-                None => title_text(info.title.clone().into(), is_current || picked, &t),
+                None => {
+                    let text = match &elsewhere {
+                        // Only as wide as the title, so the branch follows it.
+                        Some(_) => div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(if is_current || picked { t.text } else { t.text_muted })
+                            .child(info.title.clone())
+                            .into_any_element(),
+                        None => title_text(info.title.clone().into(), is_current || picked, &t),
+                    };
+                    match &elsewhere {
+                        // Where it ran, after its title: small, muted, mono.
+                        Some(branch) => div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .items_center()
+                            .gap_1p5()
+                            .child(text)
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .max_w(px(120.))
+                                    .truncate()
+                                    .font_family(mono())
+                                    .text_xs()
+                                    .text_color(t.text_placeholder)
+                                    .child(branch.clone()),
+                            )
+                            .into_any_element(),
+                        None => text,
+                    }
+                }
             };
             let title = match picking {
                 true => div()
@@ -317,18 +375,28 @@ impl KynexApp {
             };
             let row = session_row_with(("session", n), title, is_current || picked, &t)
                 .group("session-row")
-                .tooltip(Tooltip::with_meta(info.title.clone(), ago(info.modified)))
+                .tooltip(Tooltip::with_meta(
+                    info.title.clone(),
+                    match &elsewhere {
+                        Some(branch) => format!("{} · on {branch}", ago(info.modified)),
+                        None => ago(info.modified),
+                    },
+                ))
+                .when(cursor.as_deref() == Some(id.as_str()), |row| row.bg(t.hover))
                 .children(news_lamp(("session-status", n), busy, waiting, finished, cx))
                 .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                        this.open_menu(Menu::Session(menu_id.clone()), ev.position, Anchor::TopLeft, cx)
+                        this.open_menu(menu.clone(), ev.position, Anchor::TopLeft, cx)
                     }),
                 )
                 .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, window, cx| {
                     this.confirm_delete = None;
+                    this.organize.cursor = Some(open_id.clone());
                     if this.pick_click(&cwd2, &open_id, &ev.modifiers(), cx) {
+                        // Picking: the list keeps the keys (Delete, Shift+Delete, Esc).
+                        this.sessions_focus.focus(window, cx);
                         return;
                     }
                     this.show_code_view();
@@ -366,28 +434,63 @@ impl KynexApp {
                             })),
                     )
                 });
+            // A pinned row takes other sessions dropped on it in its place,
+            // which reorders the pinned ones.
+            let row = match self.groups_for(&cwd).is_pinned(&id) {
+                true => {
+                    let (pin_id, pin_cwd, hover) = (id.clone(), cwd.clone(), t.hover);
+                    row.drag_over::<DraggedSession>(move |s, _, _, _| s.bg(hover)).on_drop(cx.listener(
+                        move |this, d: &DraggedSession, _, cx| {
+                            cx.stop_propagation();
+                            this.edit_groups(&pin_cwd, |g| {
+                                d.ids.iter().filter(|i| **i != pin_id).for_each(|i| g.move_pin(i, Some(&pin_id)))
+                            });
+                            cx.notify();
+                        },
+                    ))
+                }
+                false => row,
+            };
             past.insert(id, row.into_any_element());
         }
 
-        // Ungrouped first, then each group, then the archive.
-        let arranged = self.groups_for(&cwd).arrange(items.iter().map(|i| i.id.as_str()));
+        // Active first, then pinned, the dates, each group, the archive.
+        let arranged = self.groups_for(&cwd).arrange_with(items.iter().map(|i| i.id.as_str()), &active);
+        // Headers only when there's more than one section to tell apart.
+        let headers = arranged.sections() + usize::from(arranged.active.is_empty() && !fresh_active.is_empty()) > 1;
         let mut take = |ids: Vec<String>| ids.iter().filter_map(|id| past.remove(id)).collect::<Vec<_>>();
-        // The rows in the order drawn, for Shift+click runs and "All".
-        let mut order: Vec<String> = arranged.pinned.clone();
-        // Pinned sessions first, above the dates.
+        // The rows in the order drawn, for Shift+click runs, "All" and the list's keys.
+        let mut order: Vec<String> = arranged.active.clone();
+        order.extend(arranged.pinned.iter().cloned());
+        // A new session, before its first message: above everything.
+        rows.extend(fresh);
+        let active_rows: Vec<AnyElement> = fresh_active.into_iter().chain(take(arranged.active)).collect();
+        if !active_rows.is_empty() {
+            if headers {
+                rows.push(list_header("Active", rows.is_empty(), cx).into_any_element());
+            }
+            rows.extend(active_rows);
+        }
         let pinned = take(arranged.pinned);
         if !pinned.is_empty() {
-            rows.push(list_header("Pinned", true, cx).into_any_element());
+            if headers {
+                rows.push(list_header("Pinned", rows.is_empty(), cx).into_any_element());
+            }
             rows.extend(pinned);
         }
-        // The ungrouped sessions under date headers, unless filtering or they
-        // all fall on one: then a flat list.
+        // The ungrouped sessions under date headers, unless filtering or
+        // headers aren't drawn: then a flat list.
         let no_days = HashMap::new();
         let days = self.sessions.as_ref().map_or(&no_days, |l| &l.days);
         let today = dates::today();
         let dated: Vec<(String, dates::Day)> =
             arranged.top.iter().map(|id| (id.clone(), days.get(id).copied().unwrap_or(today))).collect();
-        match dates::sections(&dated, today).filter(|_| query.is_empty()) {
+        let sections = match headers && query.is_empty() {
+            // With other sections about, even a single day gets its header.
+            true => dates::sections(&dated, today).or_else(|| dates::lone_section(&dated, today)),
+            false => dates::sections(&dated, today).filter(|_| query.is_empty()),
+        };
+        match sections {
             Some(sections) => {
                 for (bucket, ids) in sections {
                     let open = self.groups_for(&cwd).date_open(bucket);
@@ -463,9 +566,19 @@ impl KynexApp {
             .pb_1()
             // Dropped outside any group: back to the top level.
             .on_drop(cx.listener(move |this, d: &DraggedSession, _, cx| {
-                this.edit_groups(&drop_cwd, |g| g.move_to(&d.id, None));
+                this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.move_to(id, None)));
+                this.organize.selection.clear();
                 cx.notify();
             }))
+            // Its own keys while it has the focus: ↑ / ↓, Enter, F2, Delete, Shift+Delete.
+            .key_context("SessionList")
+            .track_focus(&self.sessions_focus)
+            .on_action(cx.listener(Self::list_up))
+            .on_action(cx.listener(Self::list_down))
+            .on_action(cx.listener(Self::list_open))
+            .on_action(cx.listener(Self::list_rename))
+            .on_action(cx.listener(Self::list_archive))
+            .on_action(cx.listener(Self::list_delete))
             .children(rows);
         let picks = self.render_pick_bar(kind, cwd, order, busy, cx);
         div()

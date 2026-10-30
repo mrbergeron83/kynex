@@ -14,6 +14,7 @@
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_groups.rs` | session groups and the archive, their menus          |
 //! | `session_select.rs` | picking sessions to archive or delete together       |
+//! | `session_tidy.rs`   | many sessions at once: menu, tidying, list keys      |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `terminal_dock.rs`  | the project's terminal panel under the conversation  |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
@@ -81,6 +82,7 @@ mod scratch_modal;
 mod session_groups;
 mod session_header;
 mod session_select;
+mod session_tidy;
 mod sessions_panel;
 mod settings;
 mod setup;
@@ -207,6 +209,8 @@ pub struct KynexApp {
     filtering_sessions: bool,
     /// Groups and the archive in the sessions panel.
     organize: Organize,
+    /// The sessions list, for its own keys (↑ / ↓, Enter, F2, Delete).
+    sessions_focus: FocusHandle,
     /// Session id whose delete button was clicked once and is awaiting confirmation.
     confirm_delete: Option<String>,
     /// Project tab Ctrl+W was pressed on while Claude worked in it, and when:
@@ -446,6 +450,7 @@ impl KynexApp {
             session_filter,
             filtering_sessions: false,
             organize: Organize::new(group_name),
+            sessions_focus: cx.focus_handle(),
             confirm_delete: None,
             confirm_close: None,
             tab_drag: None,

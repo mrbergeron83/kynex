@@ -17,6 +17,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Select several sessions in the sessions panel (the Select button, Ctrl+click or Shift+click)
   and archive or delete them together, with one confirmation that says how many. Sessions
   still working are kept.
+- The sessions panel is organised in sections: Active (working, waiting for you, or finished
+  and unseen) at the top, then Pinned in your order, the date headers, groups, and Archived.
+  Headers only show when there's more than one section. Sessions from another worktree or
+  branch show it after their title.
+  - Right-click picked sessions to archive, group or delete them all; drag them together.
+  - Delete archives the picked sessions, and Shift+Delete deletes them after asking. In the
+    list, ↑ / ↓, Enter and F2 move, open and rename.
+  - "Archive sessions older than 30 days / 90 days / a year" in the panel's menu and in
+    Ctrl+K. Pinned and grouped sessions stay.
+  - Drag pinned sessions and group headers to reorder them. Deleting a group asks whether to
+    keep its sessions or archive them.
+  - Ctrl+Shift+] / [ move between sessions too.
 - Drag project tabs along the title bar to reorder them; the order is kept across restarts.
   Ctrl+Shift+PageUp / PageDown move the shown tab one place without the mouse.
 - A Branches tab in the Git view: every branch with its upstream, pull request and checks

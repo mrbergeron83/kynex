@@ -52,14 +52,30 @@ actions!(
         ZoomOut,
         ZoomReset,
         CommandPalette,
-        FindInTranscript
+        FindInTranscript,
+        ListUp,
+        ListDown,
+        ListOpen,
+        ListRename,
+        ListArchive,
+        ListDelete
     ]
 );
+
+/// The sessions list's own keys, while it has the focus.
+const LIST_KEYS: [(&str, &str); 6] = [
+    ("up", "up"),
+    ("down", "down"),
+    ("enter", "open"),
+    ("f2", "rename"),
+    ("delete", "archive"),
+    ("shift-delete", "delete"),
+];
 
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 33] = [
+const SHORTCUTS: [(&str, &str); 35] = [
     ("command_palette", "secondary-k"),
     ("find", "secondary-f"),
     ("open_project", "secondary-o"),
@@ -69,6 +85,9 @@ const SHORTCUTS: [(&str, &str); 33] = [
     // non-US layouts, so outside macOS it's the browsers' Ctrl+PageDown / Up.
     ("next_session", if cfg!(target_os = "macos") { "cmd-shift-]" } else { "ctrl-pagedown" }),
     ("prev_session", if cfg!(target_os = "macos") { "cmd-shift-[" } else { "ctrl-pageup" }),
+    // Ctrl+Shift+] / [ as well, where they don't already belong to the line above.
+    ("next_session_too", if cfg!(target_os = "macos") { "" } else { "ctrl-shift-]" }),
+    ("prev_session_too", if cfg!(target_os = "macos") { "" } else { "ctrl-shift-[" }),
     ("close_tab", "secondary-w"),
     ("next_tab", "ctrl-tab"),
     ("prev_tab", "ctrl-shift-tab"),
@@ -184,8 +203,8 @@ pub fn bind_keys(cx: &mut App) {
             "open_project" => KeyBinding::new(keys, OpenProject, c),
             "open_settings" => KeyBinding::new(keys, OpenSettings, c),
             "new_session" => KeyBinding::new(keys, NewSession, c),
-            "next_session" => KeyBinding::new(keys, NextSession, c),
-            "prev_session" => KeyBinding::new(keys, PrevSession, c),
+            "next_session" | "next_session_too" => KeyBinding::new(keys, NextSession, c),
+            "prev_session" | "prev_session_too" => KeyBinding::new(keys, PrevSession, c),
             "close_tab" => KeyBinding::new(keys, CloseTab, c),
             "next_tab" => KeyBinding::new(keys, NextTab, c),
             "prev_tab" => KeyBinding::new(keys, PrevTab, c),
@@ -224,6 +243,18 @@ pub fn bind_keys(cx: &mut App) {
     }
     // Copies text selected in the transcript; the composer has its own Ctrl+C.
     bindings.push(KeyBinding::new(crate::ui::keys("secondary-c"), CopySelection, c));
+    // The sessions list's keys: a deeper context, so they win over the transcript's ↑ / ↓.
+    let list = Some("SessionList");
+    for (key, what) in LIST_KEYS {
+        bindings.push(match what {
+            "up" => KeyBinding::new(key, ListUp, list),
+            "down" => KeyBinding::new(key, ListDown, list),
+            "open" => KeyBinding::new(key, ListOpen, list),
+            "rename" => KeyBinding::new(key, ListRename, list),
+            "archive" => KeyBinding::new(key, ListArchive, list),
+            _ => KeyBinding::new(key, ListDelete, list),
+        });
+    }
     cx.bind_keys(bindings);
 }
 
