@@ -6,6 +6,8 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 use std::path::Path;
 
+use crate::fuzzy;
+
 /// Most entries listed outside git, where nothing says what to skip.
 const WALK_LIMIT: usize = 20_000;
 
@@ -101,7 +103,7 @@ impl Files {
             all.insert(f);
         }
         let entries: Vec<String> = all.into_iter().collect();
-        let lower = entries.iter().map(|e| e.to_ascii_lowercase()).collect();
+        let lower = entries.iter().map(|e| fuzzy::lower(e)).collect();
         Self { entries, lower }
     }
 
@@ -145,25 +147,11 @@ fn score(path: &str, query: &str) -> Option<(i64, Vec<usize>)> {
     let trimmed = path.trim_end_matches('/');
     let name_start = trimmed.rfind('/').map_or(0, |i| i + 1);
     // Prefer a match inside the file name; else anywhere in the path.
-    let (positions, in_name) = match find(path, query, name_start) {
+    let (positions, in_name) = match fuzzy::find(path, query, name_start) {
         Some(p) => (p, true),
-        None => (find(path, query, 0)?, false),
+        None => (fuzzy::find(path, query, 0)?, false),
     };
-    let bytes = path.as_bytes();
-    let mut score = 0i64;
-    let mut last: Option<usize> = None;
-    for &p in &positions {
-        let boundary = p == 0 || matches!(bytes[p - 1], b'/' | b'_' | b'-' | b'.' | b' ');
-        if boundary {
-            score += 10;
-        }
-        match last {
-            Some(l) if p == l + 1 => score += 8,
-            Some(l) => score -= (p - l - 1).min(10) as i64,
-            None => {}
-        }
-        last = Some(p);
-    }
+    let mut score = fuzzy::score(path, &positions);
     if in_name {
         score += 30;
         if positions.first() == Some(&name_start) {
@@ -176,33 +164,6 @@ fn score(path: &str, query: &str) -> Option<(i64, Vec<usize>)> {
     }
     score -= path.len() as i64 / 8;
     Some((score, positions))
-}
-
-/// Byte offsets of `query`'s characters in `path` from `from` on, taken in
-/// order. Each one jumps ahead to a word start where there is one (`ac` →
-/// `app/composer`); if that leaves the rest unmatched, plain first occurrences.
-fn find(path: &str, query: &str, from: usize) -> Option<Vec<usize>> {
-    let chars: Vec<(usize, char)> = path[from..].char_indices().map(|(i, c)| (i + from, c)).collect();
-    find_in(path, &chars, query, true).or_else(|| find_in(path, &chars, query, false))
-}
-
-fn find_in(path: &str, chars: &[(usize, char)], query: &str, jump: bool) -> Option<Vec<usize>> {
-    let word_start = |i: usize| i == 0 || matches!(path.as_bytes()[i - 1], b'/' | b'_' | b'-' | b'.' | b' ');
-    let mut positions: Vec<usize> = Vec::with_capacity(query.len());
-    let mut at = 0;
-    for q in query.chars() {
-        let first = at + chars[at..].iter().position(|&(_, c)| c == q)?;
-        // A match running straight on from the previous one stays put.
-        let runs_on = !positions.is_empty() && at == first;
-        let pick = if jump && !runs_on {
-            chars[first..].iter().position(|&(i, c)| c == q && word_start(i)).map_or(first, |o| first + o)
-        } else {
-            first
-        };
-        positions.push(chars[pick].0);
-        at = pick + 1;
-    }
-    Some(positions)
 }
 
 #[cfg(test)]
@@ -268,9 +229,6 @@ mod tests {
         assert_eq!(names(&f, "mod")[0], "src/app/mod.rs");
         assert_eq!(names(&f, "kcc")[0], "crates/kynex-core/src/commands.rs");
         assert!(names(&f, "zzz").is_empty());
-        // Jumping to a word start would strand the rest: plain order still matches.
-        let f = Files::new(vec!["xcb_c".into()]);
-        assert_eq!(f.matching("cb", 1)[0].positions, [1, 2]);
     }
 
     #[test]

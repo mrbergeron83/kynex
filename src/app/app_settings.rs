@@ -26,7 +26,7 @@ use crate::ui::{Icon, Tooltip, icon, outline_button};
 
 #[derive(Clone)]
 pub struct AppSettingsView {
-    section: usize,
+    pub(super) section: usize,
     /// The `claude` in use and what it says its version is, once asked.
     cli: Option<CliInfo>,
 }

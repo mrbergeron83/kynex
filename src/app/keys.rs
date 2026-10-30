@@ -48,14 +48,16 @@ actions!(
         Quit,
         ZoomIn,
         ZoomOut,
-        ZoomReset
+        ZoomReset,
+        CommandPalette
     ]
 );
 
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 29] = [
+const SHORTCUTS: [(&str, &str); 30] = [
+    ("command_palette", "secondary-k"),
     ("open_project", "secondary-o"),
     ("open_settings", "secondary-,"),
     ("new_session", "secondary-n"),
@@ -111,7 +113,8 @@ pub(super) fn esc_esc_rewinds() -> bool {
 }
 
 /// The keys above a terminal sends to its shell instead (see `terminal::view`).
-pub const SHELL_KEYS: [&str; 14] = [
+pub const SHELL_KEYS: [&str; 15] = [
+    "ctrl-k",
     "ctrl-r",
     "ctrl-s",
     "ctrl-g",
@@ -168,6 +171,7 @@ pub fn bind_keys(cx: &mut App) {
             crate::ui::keys(default)
         };
         bindings.push(match name {
+            "command_palette" => KeyBinding::new(keys, CommandPalette, c),
             "open_project" => KeyBinding::new(keys, OpenProject, c),
             "open_settings" => KeyBinding::new(keys, OpenSettings, c),
             "new_session" => KeyBinding::new(keys, NewSession, c),
@@ -341,6 +345,7 @@ impl KynexApp {
     /// stops a running reply. Otherwise the key goes on to whoever else wants it.
     pub(super) fn interrupt_action(&mut self, _: &Interrupt, _: &mut Window, cx: &mut Context<Self>) {
         if self.menu.take().is_some()
+            || self.palette.take().is_some()
             || self.settings.take().is_some()
             || self.app_settings.take().is_some()
             || self.extensions.take().is_some()

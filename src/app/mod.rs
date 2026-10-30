@@ -35,6 +35,7 @@
 //! | `mentions.rs`       | the `@file` mention popup                            |
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
+//! | `palette.rs`        | the command palette (Ctrl+K)                         |
 //! | `leaving.rs`        | menus, modals and panels animating out as they close |
 //! | `settings.rs`       | the project's Claude settings modal                  |
 //! | `app_settings.rs`   | the app's Settings modal: CLI, shell, appearance     |
@@ -66,6 +67,7 @@ mod leaving;
 mod mentions;
 mod menus;
 mod models;
+mod palette;
 mod prompts;
 mod queue;
 mod rewind;
@@ -107,6 +109,7 @@ use keys::{CopySelection, copy_selection};
 pub use keys::{SHELL_KEYS, ToggleTerminal, bind_keys};
 use mentions::Mentions;
 use menus::OpenMenu;
+use palette::PaletteView;
 use prompts::ActivePrompt;
 use session_groups::Organize;
 use sessions_panel::{ListRead, SessionList};
@@ -171,6 +174,9 @@ pub struct KynexApp {
     draft_for: Option<(Key, String)>,
     slash: Slash,
     mentions: Mentions,
+    palette: Option<PaletteView>,
+    /// Actions last run from the palette, newest first.
+    palette_recent: Vec<String>,
     sessions: Option<SessionList>,
     /// The sessions list being read in the background, for this.
     sessions_reading: Option<ListRead>,
@@ -402,6 +408,8 @@ impl KynexApp {
             draft_for: None,
             slash: Slash::default(),
             mentions: Mentions::default(),
+            palette: None,
+            palette_recent: Vec::new(),
             sessions: None,
             sessions_reading: None,
             session_filter,
@@ -679,6 +687,7 @@ impl Render for KynexApp {
         let extensions =
             self.draw_leaving(|s| &mut s.extensions, |e| &mut e.extensions, window, cx, Self::render_extensions);
         let about = self.render_about(window, cx);
+        let palette = self.draw_leaving(|s| &mut s.palette, |e| &mut e.palette, window, cx, Self::render_palette);
         let git_modal =
             self.draw_leaving(|s| &mut s.git_modal, |e| &mut e.git_modal, window, cx, Self::render_git_modal);
         let viewer =
@@ -695,6 +704,7 @@ impl Render for KynexApp {
             .font_family(ui_font())
             .text_color(t.text)
             .text_sm()
+            .on_action(cx.listener(Self::toggle_palette))
             .on_action(cx.listener(Self::open_project))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(|_, _: &keys::Quit, _, cx| cx.quit()))
@@ -771,6 +781,7 @@ impl Render for KynexApp {
             .children(app_settings)
             .children(extensions)
             .children(about)
+            .children(palette)
             .children(menu)
             .children(viewer)
     }

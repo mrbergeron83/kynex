@@ -16,6 +16,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `@file` mentions: typing `@` in a project session lists the project's files and folders,
   fuzzy-matched as you type (matched letters in bold). Tab or Enter puts `@path` in the
   message; picking a folder lists what's inside it.
+- Command palette (Ctrl+K / Cmd+K, rebindable as `command_palette`): search every open
+  project's sessions, the tabs, and actions (settings pages, themes, panels, zoom…) with
+  their shortcuts, and jump or run with Enter. With nothing typed it shows recent sessions
+  and the actions you used last.
 
 ### Changed
 

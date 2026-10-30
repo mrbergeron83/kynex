@@ -11,6 +11,7 @@ use super::KynexApp;
 use super::app_settings::AppSettingsView;
 use super::extensions::ExtensionsView;
 use super::menus::OpenMenu;
+use super::palette::PaletteView;
 use super::settings::SettingsView;
 use crate::prompt::PromptView;
 use crate::ui::completions::Completion;
@@ -20,6 +21,7 @@ use crate::ui::motion::{Leaving, NORMAL, QUICK};
 /// What's on its way out, one tracker per closable thing.
 pub(super) struct Exits {
     pub menu: Leaving<OpenMenu>,
+    pub palette: Leaving<PaletteView>,
     pub settings: Leaving<SettingsView>,
     pub app_settings: Leaving<AppSettingsView>,
     pub extensions: Leaving<ExtensionsView>,
@@ -38,6 +40,7 @@ impl Default for Exits {
     fn default() -> Self {
         Self {
             menu: Leaving::new(QUICK),
+            palette: Leaving::new(QUICK),
             settings: Leaving::new(QUICK),
             app_settings: Leaving::new(QUICK),
             extensions: Leaving::new(QUICK),

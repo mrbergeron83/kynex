@@ -14,6 +14,7 @@ pub mod extensions;
 pub mod fmt;
 #[doc(hidden)]
 pub mod fuzz;
+pub mod fuzzy;
 pub mod git;
 pub mod groups;
 pub mod highlight;
@@ -27,6 +28,7 @@ pub mod mcp_config;
 pub mod mentions;
 pub mod motion;
 pub mod open;
+pub mod palette;
 pub mod paths;
 pub mod process;
 pub mod project;
