@@ -34,6 +34,7 @@ pub mod questions;
 pub mod queue;
 pub mod resources;
 pub mod rewind;
+pub mod scale;
 pub mod session;
 pub mod session_log;
 pub mod tasks;

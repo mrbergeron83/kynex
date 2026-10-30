@@ -13,9 +13,14 @@ use super::view::TerminalView;
 use crate::theme::{Palette as Theme, mono, theme};
 use crate::ui::device_px;
 
-pub const FONT_SIZE: Pixels = px(13.);
-/// Space between the grid and the panel's edges.
-pub const PADDING: Pixels = px(10.);
+/// The terminal font size at normal size; it follows the UI zoom like the rest.
+const FONT_SIZE: gpui::Rems = gpui::Rems(13. / 16.);
+/// Space between the grid and the panel's edges, at normal size.
+const PADDING: gpui::Rems = gpui::Rems(10. / 16.);
+
+fn font_size(window: &Window) -> Pixels {
+    FONT_SIZE.to_pixels(window.rem_size())
+}
 
 pub struct TerminalElement {
     view: Entity<TerminalView>,
@@ -40,8 +45,9 @@ pub struct Prepaint {
 /// pixels tall, so at 125% or 175% every line sits the same distance apart.
 pub fn cell_size(window: &mut Window) -> gpui::Size<Pixels> {
     let font_id = window.text_system().resolve_font(&font(mono()));
-    let width = window.text_system().advance(font_id, FONT_SIZE, 'm').map_or(px(8.), |s| s.width);
-    size(width, device_px(f32::from(FONT_SIZE) * 1.4, window))
+    let font_size = font_size(window);
+    let width = window.text_system().advance(font_id, font_size, 'm').map_or(px(8.), |s| s.width);
+    size(width, device_px(f32::from(font_size) * 1.4, window))
 }
 
 impl IntoElement for TerminalElement {
@@ -87,12 +93,13 @@ impl Element for TerminalElement {
         cx: &mut App,
     ) -> Prepaint {
         let cell = cell_size(window);
-        let inner = size(bounds.size.width - PADDING * 2., bounds.size.height - PADDING * 2.);
+        let (font_size, padding) = (font_size(window), PADDING.to_pixels(window.rem_size()));
+        let inner = size(bounds.size.width - padding * 2., bounds.size.height - padding * 2.);
         let grid = Size {
             columns: (inner.width / cell.width).floor().max(2.) as usize,
             lines: (inner.height / cell.height).floor().max(1.) as usize,
         };
-        let origin = bounds.origin + point(PADDING, PADDING);
+        let origin = bounds.origin + point(padding, padding);
         let t = theme(cx).clone();
         let palette = palette(&t);
         let snapshot = self.view.update(cx, |view, _| {
@@ -144,7 +151,7 @@ impl Element for TerminalElement {
                 let width = if run.wide { cell.width * 2. } else { cell.width };
                 let shaped = window.text_system().shape_line(
                     SharedString::from(text.to_string()),
-                    FONT_SIZE,
+                    font_size,
                     &[style],
                     Some(width),
                 );

@@ -4,7 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{AnyElement, Context, Entity, Focusable, MouseButton, Window, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, Entity, Focusable, MouseButton, Window, div, prelude::*};
 use kynex_core::terminal::ShellKind;
 
 use super::KynexApp;
@@ -105,8 +106,9 @@ impl KynexApp {
         let max = (f32::from(window.viewport_size().height) - MIN_CONVERSATION).max(MIN_HEIGHT);
         // Every shell exited: a strip until one restarts, then the saved height again.
         let collapsed = panel.read(cx).collapsed(cx);
-        let height = if collapsed { STRIP_HEIGHT } else { self.saved.terminal_height.clamp(MIN_HEIGHT, max) };
-        let dock = div().relative().w_full().h(px(height)).border_t_1().border_color(t.border).child(panel).when(
+        let height =
+            if collapsed { STRIP_HEIGHT * self.saved.zoom } else { self.saved.terminal_height.clamp(MIN_HEIGHT, max) };
+        let dock = div().relative().w_full().h(gpui::px(height)).border_t_1().border_color(t.border).child(panel).when(
             !collapsed,
             |d| {
                 d.child(

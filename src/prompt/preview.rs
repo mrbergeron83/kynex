@@ -1,7 +1,8 @@
 //! What a request will do, in words and as a preview: titles, the "don't ask
 //! again" wording, and diffs of the edits it makes.
 
-use gpui::{StyledText, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{StyledText, div, prelude::*};
 use serde_json::Value;
 
 use kynex_core::highlight::{Lang, Side};

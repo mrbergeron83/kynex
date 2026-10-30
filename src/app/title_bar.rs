@@ -2,8 +2,9 @@
 //! and the window buttons. Usage limits and the update pill are in the footer.
 //! The theme lives in Settings and the Kynex menu's Appearance.
 
+use crate::ui::px;
 use gpui::{
-    Anchor, AnyElement, ClickEvent, Context, FontWeight, Hsla, MouseButton, SharedString, Window, div, prelude::*, px,
+    Anchor, AnyElement, ClickEvent, Context, FontWeight, Hsla, MouseButton, SharedString, Window, div, prelude::*,
 };
 use kynex_core::live::Live;
 use kynex_core::paths::project_name;
@@ -45,7 +46,7 @@ impl KynexApp {
                 }
                 None => d.bg(t.title_bar).border_b_1().border_color(t.border),
             })
-            .pl(chrome::leading_inset() + px(10.))
+            .pl(chrome::leading_inset() + gpui::px(10.))
             // The mark and name open the Kynex menu (About, updates).
             .child(
                 div()
@@ -60,11 +61,11 @@ impl KynexApp {
                     .rounded_md()
                     .cursor_pointer()
                     .hover(move |s| s.bg(hover))
-                    .child(mark("title-mark", px(22.), shown, cx))
+                    .child(mark("title-mark", gpui::px(22.), shown, cx))
                     .child(section_label("Kynex", cx).font_weight(FontWeight::EXTRA_BOLD))
-                    .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                    .on_click(cx.listener(|this, ev: &ClickEvent, window, cx| {
                         // Drop the menu from under the bar rather than from the cursor.
-                        let at = gpui::point(ev.position().x, TITLE_BAR_HEIGHT);
+                        let at = gpui::point(ev.position().x, TITLE_BAR_HEIGHT.to_pixels(window.rem_size()));
                         this.open_menu(Menu::Kynex, at, Anchor::TopLeft, cx)
                     })),
             )

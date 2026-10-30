@@ -2,7 +2,8 @@
 //! with a tab per question (checked once answered) and a Submit tab that sums
 //! up the answers. The rules are `kynex_core::questions::Form`.
 
-use gpui::{Context, FontWeight, SharedString, Window, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{Context, FontWeight, SharedString, Window, div, prelude::*};
 
 use super::{PromptView, choice_row, hint};
 use crate::theme::{Palette, theme};

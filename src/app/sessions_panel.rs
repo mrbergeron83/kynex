@@ -5,8 +5,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::ui::px;
 use gpui::{
-    Anchor, AnyElement, Context, Focusable, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px,
+    Anchor, AnyElement, Context, Focusable, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*,
 };
 use kynex_core::dates::{self, Bucket};
 use kynex_core::fmt::ago;
@@ -133,7 +134,8 @@ impl KynexApp {
                             }),
                         ),
                 ),
-            self.saved.sessions_width,
+            // Saved at normal size, so it grows with the zoom like what's in it.
+            self.saved.sessions_width * self.saved.zoom,
             leaving,
         ))
     }

@@ -4,7 +4,8 @@
 
 use std::rc::Rc;
 
-use gpui::{App, SharedString, Window, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{App, SharedString, Window, div, prelude::*};
 
 use super::popover;
 use crate::theme::{mono, theme};

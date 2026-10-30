@@ -5,8 +5,9 @@
 //! between turns, and each turn can be rewound to. `kynex_core::timeline`
 //! builds the entries.
 
+use crate::ui::px;
 use gpui::{
-    Animation, AnimationExt, AnyElement, Context, FontWeight, ListOffset, MouseButton, Window, div, prelude::*, px,
+    Animation, AnimationExt, AnyElement, Context, FontWeight, ListOffset, MouseButton, Window, div, prelude::*,
 };
 use kynex_core::live::Key;
 use kynex_core::timeline::{self, StepKind, Turn};
@@ -105,7 +106,7 @@ impl KynexApp {
         let Some(th) = self.threads.get_mut(&key) else { return };
         let Some(row) = row_of(&th.rows, item) else { return };
         if reduce || !th.glide_to_row(row) {
-            th.list.scroll_to(ListOffset { item_ix: row, offset_in_item: px(0.) });
+            th.list.scroll_to(ListOffset { item_ix: row, offset_in_item: gpui::px(0.) });
         }
         let generation = self.flash.as_ref().map_or(0, |f| f.generation + 1);
         self.flash = Some(Flash { key, row, generation });

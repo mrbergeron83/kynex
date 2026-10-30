@@ -1,7 +1,8 @@
 //! The Git view's top bar: the branch (a picker to switch or create one), how
 //! it stands against its upstream, and fetch / pull / push.
 
-use gpui::{AnyElement, Context, Focusable, FontWeight, SharedString, Window, anchored, deferred, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, Focusable, FontWeight, SharedString, Window, anchored, deferred, div, prelude::*};
 use kynex_core::fmt::ago_unix;
 use kynex_core::git::{self, Branch, Head, Sync};
 
@@ -168,7 +169,7 @@ impl GitView {
             .top(px(28.))
             .left_0()
             .child(deferred(
-                anchored().snap_to_window_with_margin(px(8.)).child(
+                anchored().snap_to_window_with_margin(gpui::px(8.)).child(
                     popover(cx)
                         .w(px(340.))
                         .occlude()

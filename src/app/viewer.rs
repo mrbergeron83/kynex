@@ -7,9 +7,10 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::ui::px;
 use gpui::{
     AnyElement, Context, DismissEvent, ElementId, Focusable, Image, ObjectFit, RenderImage, Window, div, img,
-    prelude::*, px,
+    prelude::*,
 };
 use kynex_core::attach;
 use kynex_core::lru::Lru;

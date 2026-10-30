@@ -6,9 +6,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::ui::px;
 use gpui::{
     AnyElement, ClickEvent, Context, Entity, Focusable, MouseButton, MouseDownEvent, SharedString, Window, div,
-    prelude::*, px,
+    prelude::*,
 };
 use kynex_core::groups::SessionGroups;
 

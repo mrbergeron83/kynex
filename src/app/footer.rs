@@ -4,14 +4,14 @@
 
 use std::time::Duration;
 
-use gpui::{Context, Pixels, div, prelude::*, px};
+use gpui::{Context, div, prelude::*};
 use kynex_core::resources::Sampler;
 
 use super::KynexApp;
 use crate::theme::theme;
 use crate::ui::Tooltip;
 
-pub(super) const FOOTER_HEIGHT: Pixels = px(26.);
+pub(super) const FOOTER_HEIGHT: gpui::Rems = gpui::Rems(26. / 16.);
 
 /// How often Kynex reads its processes' CPU and memory.
 const SAMPLE_EVERY: Duration = Duration::from_secs(3);

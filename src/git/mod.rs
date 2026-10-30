@@ -20,7 +20,8 @@ mod top_bar;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use gpui::{Context, Entity, FontWeight, SharedString, UniformListScrollHandle, Window, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{Context, Entity, FontWeight, SharedString, UniformListScrollHandle, Window, div, prelude::*};
 use kynex_core::git::{self, Branch, Change, Commit, CommitDetail, Status};
 
 use self::diff_view::DiffState;

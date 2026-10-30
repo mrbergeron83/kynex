@@ -12,9 +12,10 @@
 mod preview;
 mod questions;
 
+use crate::ui::px;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyBinding, KeyDownEvent, Window, actions,
-    div, prelude::*, px,
+    div, prelude::*,
 };
 use serde_json::Value;
 

@@ -8,10 +8,11 @@ use std::hash::{BuildHasher, RandomState};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use crate::ui::px;
 use gpui::{
     AnyElement, App, Axis, Bounds, ClipboardItem, DispatchPhase, ElementId, FontStyle, FontWeight, HighlightStyle,
     MouseMoveEvent, Pixels, ScrollHandle, SharedString, StrikethroughStyle, UnderlineStyle, Window, canvas, div,
-    prelude::*, px,
+    prelude::*,
 };
 use kynex_core::highlight::Lang;
 use kynex_core::markdown::{self, Block, Doc, Inline, ListItem, TableRow};
@@ -117,7 +118,7 @@ fn follow_drag(scroll: ScrollHandle, bounds: Bounds<Pixels>, group: u64, spot: S
         let max = f32::from(scroll.max_offset().x);
         let to = (-f32::from(o.x) + step).clamp(0., max.max(0.));
         if (to + f32::from(o.x)).abs() > 0.5 {
-            o.x = px(-to);
+            o.x = gpui::px(-to);
             scroll.set_offset(o);
             window.refresh();
         }
@@ -214,7 +215,7 @@ impl Builder<'_> {
                 style.font_style = Some(FontStyle::Italic);
             }
             if span.style.strike {
-                style.strikethrough = Some(StrikethroughStyle { thickness: px(1.), color: None });
+                style.strikethrough = Some(StrikethroughStyle { thickness: gpui::px(1.), color: None });
             }
             if span.style.code {
                 style.background_color = Some(self.p.element);
@@ -222,7 +223,8 @@ impl Builder<'_> {
             }
             if let Some(url) = &span.link {
                 style.color = Some(self.p.accent);
-                style.underline = Some(UnderlineStyle { thickness: px(1.), color: Some(self.p.accent), wavy: false });
+                style.underline =
+                    Some(UnderlineStyle { thickness: gpui::px(1.), color: Some(self.p.accent), wavy: false });
                 links.push((span.range.clone(), Link::Url(url.clone())));
             }
             highlights.push((span.range.clone(), style));

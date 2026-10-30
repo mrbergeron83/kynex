@@ -4,9 +4,10 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::ui::px;
 use gpui::{
     Anchor, AnyElement, ClickEvent, Context, FontWeight, MouseButton, PathPromptOptions, SharedString, Window, div,
-    prelude::*, px,
+    prelude::*,
 };
 use kynex_core::paths::project_name;
 use kynex_core::project::{self, ClaudeSettings, Mode, Permissions};
@@ -416,8 +417,8 @@ pub(super) fn settings_modal(
         .occlude()
         .flex()
         .flex_col()
-        .w(px(760.).min(vp.width - px(80.)))
-        .h(px(560.).min(vp.height - px(100.)))
+        .w(gpui::px(760.).min(vp.width - gpui::px(80.)))
+        .h(gpui::px(560.).min(vp.height - gpui::px(100.)))
         .rounded_lg()
         .border_1()
         .border_color(t.border)
@@ -481,7 +482,7 @@ pub(super) fn settings_modal(
                     cx.notify();
                 }),
             )
-            .child(pop("settings-in", card, px(8.), leaving)),
+            .child(pop("settings-in", card, gpui::px(8.), leaving)),
         motion::QUICK,
         leaving,
     )

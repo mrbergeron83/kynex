@@ -1,7 +1,8 @@
 //! Popup menus: model (with effort under it), appearance (theme and fonts), permission mode, effort, and the
 //! right-click menus of project tabs, sessions and session groups. One is open at a time, anchored where it was clicked.
 
-use gpui::{Anchor, AnyElement, Context, Pixels, Point, SharedString, anchored, deferred, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{Anchor, AnyElement, Context, Pixels, Point, SharedString, anchored, deferred, div, prelude::*};
 use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
 use kynex_core::project::{self, Mode};
@@ -411,7 +412,7 @@ impl KynexApp {
         }
         Some(
             deferred(
-                anchored().position(at).anchor(anchor).snap_to_window_with_margin(px(8.)).child(pop(
+                anchored().position(at).anchor(anchor).snap_to_window_with_margin(gpui::px(8.)).child(pop(
                     SharedString::from(format!("menu-in-{which:?}")),
                     popover(cx)
                         .min_w(px(if which == Menu::Theme { 300. } else { 200. }))
@@ -437,7 +438,7 @@ impl KynexApp {
                             }
                         }),
                     // Drops down into place.
-                    px(-4.),
+                    gpui::px(-4.),
                     leaving,
                 )),
             )

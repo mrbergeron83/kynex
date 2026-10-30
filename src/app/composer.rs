@@ -4,9 +4,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::ui::px;
 use gpui::{
     Anchor, AnyElement, ClickEvent, Context, ExternalPaths, Focusable, Image, ImageFormat, KeyDownEvent,
-    PathPromptOptions, SharedString, Window, canvas, deferred, div, img, prelude::*, px,
+    PathPromptOptions, SharedString, Window, canvas, deferred, div, img, prelude::*,
 };
 use kynex_core::attach::{is_image, prepare_image};
 use kynex_core::project::{self, Mode};
@@ -206,7 +207,7 @@ impl KynexApp {
                                 d.child(deferred(pop(
                                     "composer-popup-in",
                                     div().absolute().bottom_full().left_0().w_full().pb_1().occlude().child(popup),
-                                    px(4.),
+                                    gpui::px(4.),
                                     popup_leaving,
                                 )))
                             })

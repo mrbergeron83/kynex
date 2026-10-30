@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt, AnyView, App, AssetSource, Context, ElementId, FontWeight, Hsla, IntoElement, Pixels,
-    SharedString, Stateful, Transformation, Window, div, percentage, prelude::*, px, svg,
+    SharedString, Stateful, Transformation, Window, div, percentage, prelude::*, svg,
 };
 
 use kynex_core::fmt::Mods;
@@ -212,7 +212,7 @@ impl AssetSource for Assets {
 /// 1.5px caret would be 1 or 2 device pixels wide depending on where it sits.
 pub fn device_px(logical: f32, window: &Window) -> Pixels {
     let scale = window.scale_factor();
-    px((logical * scale).round().max(1.) / scale)
+    gpui::px((logical * scale).round().max(1.) / scale)
 }
 
 pub fn icon(icon: Icon, color: Hsla) -> gpui::Svg {
@@ -220,7 +220,7 @@ pub fn icon(icon: Icon, color: Hsla) -> gpui::Svg {
 }
 
 /// A spinning loader icon.
-pub fn spinner(id: impl Into<ElementId>, color: Hsla, size: Pixels) -> gpui::AnimationElement<gpui::Svg> {
+pub fn spinner(id: impl Into<ElementId>, color: Hsla, size: gpui::Rems) -> gpui::AnimationElement<gpui::Svg> {
     icon(Icon::Loader, color).size(size).with_animation(
         id,
         Animation::new(Duration::from_millis(900)).repeat(),
@@ -395,6 +395,14 @@ impl Render for Tooltip {
         );
         div().pl_2().pt_2().child(card)
     }
+}
+
+/// A size in pixels at normal size that grows and shrinks with the UI zoom
+/// (Ctrl+= / Ctrl+-): `n` pixels at 100%, as rems. Layout sizes use this;
+/// measured pixels (bounds, pointer positions, scroll offsets, window
+/// geometry) stay `gpui::px`.
+pub fn px(n: f32) -> gpui::Rems {
+    gpui::rems(n / 16.)
 }
 
 /// A key binding with `secondary` as Cmd on macOS and Ctrl elsewhere.

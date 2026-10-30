@@ -3,7 +3,8 @@
 //! changed since, or both. The popup sits above the composer like the history
 //! search; `kynex_core::rewind` reads the points and restores files.
 
-use gpui::{AnyElement, Context, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, prelude::*};
 use kynex_core::live::Key;
 use kynex_core::rewind::{self, Point};
 

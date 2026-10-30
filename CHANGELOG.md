@@ -5,6 +5,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Zoom: Ctrl+= / Ctrl+- / Ctrl+0 (Cmd on macOS; rebindable in `keymap.json`) make the whole
+  window bigger or smaller, text, icons and spacing together, from 67% to 250%. It's also
+  in Settings → Appearance, and Kynex remembers it.
+- A "System" theme that follows the OS's light / dark setting as it changes (Kynex Light or
+  Kynex Dark).
+- Settings → Appearance → Status footer: hide the footer if you don't want it.
+
 ### Changed
 
 - The "Starting Claude…" / "Waiting for Claude…" line stays for the whole turn: between

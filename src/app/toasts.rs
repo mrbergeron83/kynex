@@ -6,7 +6,8 @@
 
 use std::time::{Duration, Instant};
 
-use gpui::{AnyElement, Context, Window, canvas, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, Window, canvas, div, prelude::*};
 use kynex_core::toasts::{Action, Kind, Toast};
 
 use super::KynexApp;
@@ -100,7 +101,9 @@ impl KynexApp {
         // Clear of the title bar and footer, and in the conversation of its
         // header above and the composer below.
         let height = f32::from(window.viewport_size().height);
-        let (mut top, mut bottom) = (f32::from(TITLE_BAR_HEIGHT), f32::from(FOOTER_HEIGHT));
+        let rem = window.rem_size();
+        let footer = if self.saved.footer { f32::from(FOOTER_HEIGHT.to_pixels(rem)) } else { 0. };
+        let (mut top, mut bottom) = (f32::from(TITLE_BAR_HEIGHT.to_pixels(rem)), footer);
         if let Some(room) = self.toast_room.get() {
             top = top.max(f32::from(room.top()));
             bottom = bottom.max(height - f32::from(room.bottom()));
@@ -142,10 +145,10 @@ impl KynexApp {
         Some(
             div()
                 .absolute()
-                .when_some(place.top, |d, v| d.top(px(v)))
-                .when_some(place.bottom, |d, v| d.bottom(px(v)))
-                .when_some(place.left, |d, v| d.left(px(v)))
-                .when_some(place.right, |d, v| d.right(px(v)))
+                .when_some(place.top, |d, v| d.top(gpui::px(v)))
+                .when_some(place.bottom, |d, v| d.bottom(gpui::px(v)))
+                .when_some(place.left, |d, v| d.left(gpui::px(v)))
+                .when_some(place.right, |d, v| d.right(gpui::px(v)))
                 .child(stack)
                 .into_any_element(),
         )
@@ -213,5 +216,5 @@ fn toast_row(toast: &Toast, exit: Duration, t: &Palette, cx: &mut Context<KynexA
         .when_some(action, |d, a| {
             d.cursor_pointer().on_click(cx.listener(move |this, _, window, cx| this.toast_act(id, a, window, cx)))
         });
-    pop(("toast-in", id as usize), row, px(6.), toast.leaving(exit))
+    pop(("toast-in", id as usize), row, gpui::px(6.), toast.leaving(exit))
 }

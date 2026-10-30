@@ -6,7 +6,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use gpui::{AnyElement, Context, Window, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, Window, prelude::*};
 use kynex_core::history::{History, Stash};
 
 use kynex_core::toasts::Toast;

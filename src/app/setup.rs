@@ -3,7 +3,8 @@
 
 use std::time::Duration;
 
-use gpui::{AnyElement, Context, FontWeight, Hsla, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, FontWeight, Hsla, div, prelude::*};
 use kynex_core::cli::{self, UpdateState};
 
 use super::{KynexApp, models};

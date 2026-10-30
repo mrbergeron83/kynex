@@ -5,7 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{AnyElement, Context, FontWeight, Window, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, FontWeight, Window, div, prelude::*};
 use kynex_core::fmt;
 use kynex_core::live::Key;
 use kynex_core::session::Item;

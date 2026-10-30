@@ -15,9 +15,10 @@ mod view;
 
 use std::path::PathBuf;
 
+use crate::ui::px;
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, SharedString, Subscription,
-    Window, anchored, deferred, div, prelude::*, px,
+    Window, anchored, deferred, div, prelude::*,
 };
 use kynex_core::terminal::{self as core, ShellKind};
 
@@ -261,7 +262,7 @@ impl TerminalPanel {
             .top(px(28.))
             .right_0()
             .child(deferred(
-                anchored().snap_to_window_with_margin(px(8.)).child(
+                anchored().snap_to_window_with_margin(gpui::px(8.)).child(
                     popover(cx)
                         .min_w(px(180.))
                         .occlude()

@@ -6,9 +6,10 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Instant;
 
+use crate::ui::px;
 use gpui::{
     AnyElement, App, Context, FollowMode, FontWeight, ListAlignment, ListOffset, ListState, ScrollEvent, Window,
-    canvas, div, list, prelude::*, px,
+    canvas, div, list, prelude::*,
 };
 use kynex_core::live::Key;
 use kynex_core::motion::Glide;
@@ -102,7 +103,7 @@ impl Thread {
             // Swap the "past the end" anchor for the same spot as an offset,
             // which layout leaves alone.
             let max = self.list.max_offset_for_scrollbar().y;
-            self.list.scroll_to(ListOffset { item_ix: 0, offset_in_item: px(0.) });
+            self.list.scroll_to(ListOffset { item_ix: 0, offset_in_item: gpui::px(0.) });
             self.list.scroll_by(max);
             self.follow_after = true;
         } else if !self.follow_after {
@@ -134,7 +135,7 @@ impl Thread {
         let (offset, max) = (self.offset(), f32::from(self.list.max_offset_for_scrollbar().y));
         let moved = (offset + step).clamp(0., max.max(0.)) - offset;
         if moved != 0. {
-            self.list.scroll_by(px(moved));
+            self.list.scroll_by(gpui::px(moved));
         }
         if moved != step {
             self.glide.stop();
@@ -209,7 +210,7 @@ impl KynexApp {
         let stale = self.threads.get(&key).is_none_or(|t| t.items != count || t.revision != revision);
         let rows = stale.then(|| self.active_session().map(|s| transcript::rows(&s.items)).unwrap_or_default());
         let thread = self.threads.entry(key).or_insert_with(|| {
-            let list = ListState::new(0, ListAlignment::Top, px(1000.));
+            let list = ListState::new(0, ListAlignment::Top, gpui::px(1000.));
             list.set_follow_mode(FollowMode::Tail);
             Thread {
                 list,
@@ -315,6 +316,8 @@ impl KynexApp {
     fn render_pulse(&self, t: &Palette) -> impl IntoElement + use<> {
         let label = self.active_session().and_then(|s| s.pulse()).map(|p| p.label());
         let available = self.active_key().and_then(|k| self.threads.get(&k)).map_or(0., |th| th.width.get());
+        // Measured in pixels; the columns are in sizes at 100%, which `px` scales back.
+        let available = available / self.saved.zoom;
         let column = (available > 0.).then(|| self.saved.column.columns(available - ROW_PADDING * 2.));
         let line = div()
             .flex()
@@ -348,7 +351,7 @@ impl KynexApp {
         div().absolute().bottom_3().left_0().right_0().flex().justify_center().child(pop_in(
             ("jump-to-latest-in", uid),
             button,
-            px(6.),
+            gpui::px(6.),
         ))
     }
 
@@ -403,11 +406,11 @@ impl KynexApp {
         if reduce {
             t.glide.stop();
             if by == Scroll::Top {
-                t.list.scroll_to(ListOffset { item_ix: 0, offset_in_item: px(0.) });
+                t.list.scroll_to(ListOffset { item_ix: 0, offset_in_item: gpui::px(0.) });
             } else {
                 let max = f32::from(t.list.max_offset_for_scrollbar().y);
                 let offset = t.offset();
-                t.list.scroll_by(px((offset + distance).clamp(0., max.max(0.)) - offset));
+                t.list.scroll_by(gpui::px((offset + distance).clamp(0., max.max(0.)) - offset));
             }
         } else {
             t.glide.push(distance);
@@ -492,6 +495,7 @@ impl KynexApp {
         // the list has been laid out once its width isn't known: plain prose width.
         let setting = self.saved.column;
         let available = self.threads.get(&key).map_or(0., |th| th.width.get());
+        let available = available / self.saved.zoom;
         let column = (available > 0.).then(|| setting.columns(available - ROW_PADDING * 2.));
         let inner = match column {
             // Tool rows start where prose does and grow to the right (#122).

@@ -4,7 +4,8 @@
 
 use std::time::Duration;
 
-use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, FontWeight, div, prelude::*};
 use kynex_core::session::{Item, PermState};
 use kynex_core::transcript::{Call, Run, shows_result};
 use kynex_core::{fmt, links, mcp};
