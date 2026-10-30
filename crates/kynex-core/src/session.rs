@@ -295,6 +295,9 @@ pub struct Session {
     pub tasks: Tasks,
     /// The MCP servers its process reported when it started, and how they're doing.
     pub mcp: Vec<crate::mcp::Server>,
+    /// Its running process has driven a browser, so its browser server holds a
+    /// pairing (and tabs) that stopping the process would lose.
+    pub browser: bool,
     /// Set by the UI so it hears about new events; a no-op until then.
     pub wake: Wake,
     child: Option<Child>,
@@ -436,6 +439,7 @@ impl Session {
             queue: Queue::default(),
             tasks: Tasks::default(),
             mcp: Vec::new(),
+            browser: false,
             wake: Arc::new(|| {}),
             child: None,
             stdin: None,
@@ -945,6 +949,7 @@ impl Session {
         self.spawned = None;
         self.ready = false;
         self.in_block = false;
+        self.browser = false;
         self.settle_thoughts();
         self.tasks.clear();
         self.stopping.clear();
@@ -1081,6 +1086,11 @@ impl Session {
                             let summary = tool_summary(&name, &block["input"]);
                             let input = serde_json::to_string_pretty(&block["input"]).unwrap_or_default();
                             let id = block["id"].as_str().unwrap_or("").to_string();
+                            if self.child.is_some()
+                                && crate::mcp::split(&name).is_some_and(|(_, t)| crate::mcp::is_browser(t))
+                            {
+                                self.browser = true;
+                            }
                             // Streamed in already: it gets its whole input.
                             if let Some(Item::ToolUse { name: n, summary: s, input: i, .. }) = self.streamed_call(&id) {
                                 (*n, *s, *i) = (name, summary, input);

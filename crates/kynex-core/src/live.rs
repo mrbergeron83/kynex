@@ -62,7 +62,7 @@ impl Live {
     }
 
     /// Shows `s`. Sessions left behind keep running while busy, waiting on
-    /// you or holding queued messages, and the last [`KEEP_IDLE`] shown stay
+    /// you, holding queued messages or driving a browser, and the last [`KEEP_IDLE`] shown stay
     /// open too; other idle ones close (their process with them) and resume
     /// from the transcript if picked again. Returns the uids that closed.
     pub fn show(&mut self, s: Session) -> Vec<Key> {
@@ -85,14 +85,16 @@ impl Live {
             self.shown.iter().rev().filter(|k| Some(**k) != active).take(KEEP_IDLE).copied().collect();
         let mut closed = Vec::new();
         self.sessions.retain(|s| {
-            // Closing the process would also stop its background tasks.
+            // Closing the process would also stop its background tasks, and
+            // drop its browser pairing.
             let keep = Some(s.uid) == active
                 || recent.contains(&s.uid)
                 || s.busy
                 || s.waiting()
                 || s.finished
                 || !s.queue.is_empty()
-                || s.has_tasks();
+                || s.has_tasks()
+                || s.browser;
             if !keep {
                 closed.push(s.uid);
             }
@@ -165,6 +167,19 @@ mod tests {
         let a_uid = a.uid;
         live.show(a);
         assert!(live.show(session()).is_empty());
+        assert_eq!(live.sessions[0].uid, a_uid);
+    }
+
+    #[test]
+    fn a_session_driving_a_browser_stays_open() {
+        let mut live = Live::default();
+        let mut a = session();
+        a.browser = true;
+        let a_uid = a.uid;
+        live.show(a);
+        for _ in 0..KEEP_IDLE + 1 {
+            assert!(live.show(session()).is_empty());
+        }
         assert_eq!(live.sessions[0].uid, a_uid);
     }
 

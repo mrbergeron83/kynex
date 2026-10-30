@@ -27,10 +27,19 @@ impl KynexApp {
         self.change_servers(busy, move |cwd| mcp_config::add(cwd, &server), cx);
     }
 
-    fn add_browser(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn add_browser(&mut self, cx: &mut Context<Self>) {
         let Some(form) = self.extensions.as_ref().and_then(|v| v.adding.as_ref()) else { return };
-        let server = form.browser.preset(form.own_profile);
+        let server = form.browser.preset(form.own_profile, form.token.read(cx).text());
         self.add_server(server, cx);
+    }
+
+    fn open_token_page(&mut self, browser: Browser, cx: &mut Context<Self>) {
+        if let Err(e) = browser.open_token_page()
+            && let Some(view) = &mut self.extensions
+        {
+            view.error = Some(e);
+        }
+        cx.notify();
     }
 
     /// Adds what's typed in the panel's own-server fields.
@@ -51,7 +60,7 @@ impl KynexApp {
     pub(super) fn render_add_server(&self, form: &AddForm, t: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let busy = self.extensions.as_ref().is_some_and(|v| v.busy.is_some());
         let browser = form.browser;
-        let preset = browser.preset(form.own_profile);
+        let preset = browser.preset(form.own_profile, "");
         let browsers = div().flex().gap_1().children(Browser::ALL.into_iter().enumerate().map(|(n, b)| {
             let installed = form.installed.contains(&b);
             let label = if installed { b.label().to_string() } else { format!("{} (not found)", b.label()) };
@@ -67,7 +76,7 @@ impl KynexApp {
                     form.own_profile,
                     "Your own browser".into(),
                     Some(format!(
-                        "Keeps your logins. Needs the Playwright extension in {}, which asks before each connection.",
+                        "Keeps your logins. Needs the Playwright extension in {}; with its token it connects without asking.",
                         browser.label()
                     )),
                     t,
@@ -92,6 +101,19 @@ impl KynexApp {
                     .on_click(|_, _, cx| cx.open_url(BROWSER_EXTENSION_URL)),
                 t,
             )
+        });
+        let token_step = form.own_profile.then(|| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(step(
+                    "Copy the extension's token from its status page, so it connects without asking each time.".into(),
+                    outline_button("ext-token-page", "Open token page", cx)
+                        .on_click(cx.listener(move |this, _, _, cx| this.open_token_page(browser, cx))),
+                    t,
+                ))
+                .child(div().px_2().child(field("Extension token", form.token.clone(), t)))
         });
         let node_step = (!form.npx).then(|| {
             step(
@@ -155,6 +177,7 @@ impl KynexApp {
                     .child(browsers)
                     .child(profiles)
                     .children(extension_step)
+                    .children(token_step)
                     .children(node_step)
                     .child(
                         div()

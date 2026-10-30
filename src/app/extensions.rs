@@ -50,6 +50,8 @@ pub(super) struct AddForm {
     pub(super) browser: Browser,
     /// Attach to your own browser through its extension, keeping your logins.
     pub(super) own_profile: bool,
+    /// The extension's token, so it connects without asking each time.
+    pub(super) token: Entity<TextInput>,
     pub(super) name: Entity<TextInput>,
     /// A command line, or an http(s) URL.
     pub(super) what: Entity<TextInput>,
@@ -92,10 +94,18 @@ impl KynexApp {
             .detach();
             input
         };
+        let token = cx.new(|cx| TextInput::new(cx).mono().placeholder("Paste the token (optional)"));
+        cx.subscribe(&token, |this, _, ev, cx| {
+            if let InputEvent::Submit = ev {
+                this.add_browser(cx);
+            }
+        })
+        .detach();
         let installed: Vec<Browser> = Browser::ALL.into_iter().filter(|b| b.installed()).collect();
         let form = AddForm {
             browser: installed.first().copied().unwrap_or(Browser::Edge),
             own_profile: true,
+            token,
             name: input("my-server", cx),
             what: input("npx some-mcp-server, or https://…", cx),
             scope: Scope::Local,
