@@ -11,6 +11,7 @@ pub mod commands;
 pub mod dates;
 pub mod env_path;
 pub mod extensions;
+pub mod find;
 pub mod fmt;
 #[doc(hidden)]
 pub mod fuzz;

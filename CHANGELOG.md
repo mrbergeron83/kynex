@@ -20,6 +20,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   project's sessions, the tabs, and actions (settings pages, themes, panels, zoom…) with
   their shortcuts, and jump or run with Enter. With nothing typed it shows recent sessions
   and the actions you used last.
+- Find in the conversation (Ctrl+F / Cmd+F, rebindable as `find`): matches are highlighted
+  in messages, replies, thinking and tool output, "3 of 12" with Enter / Shift+Enter to
+  move between them; a match inside a folded tool run opens it.
 
 ### Changed
 

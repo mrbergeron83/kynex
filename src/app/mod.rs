@@ -19,6 +19,7 @@
 //! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
 //! | `transcript.rs`     | the conversation list and how each item draws        |
+//! | `find.rs`           | find in the transcript (Ctrl+F)                      |
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, from the header    |
@@ -58,6 +59,7 @@ mod composer;
 mod drafts;
 mod extensions;
 mod extensions_add;
+mod find;
 mod footer;
 mod git_modal;
 mod handoff;
@@ -105,6 +107,7 @@ use kynex_core::paths::chat_dir;
 use kynex_core::session::{self, Attachment, Kind, Session};
 
 use drafts::Draft;
+use find::FindBar;
 use keys::{CopySelection, copy_selection};
 pub use keys::{SHELL_KEYS, ToggleTerminal, bind_keys};
 use mentions::Mentions;
@@ -175,6 +178,7 @@ pub struct KynexApp {
     slash: Slash,
     mentions: Mentions,
     palette: Option<PaletteView>,
+    find: Option<FindBar>,
     /// Actions last run from the palette, newest first.
     palette_recent: Vec<String>,
     sessions: Option<SessionList>,
@@ -409,6 +413,7 @@ impl KynexApp {
             slash: Slash::default(),
             mentions: Mentions::default(),
             palette: None,
+            find: None,
             palette_recent: Vec::new(),
             sessions: None,
             sessions_reading: None,
@@ -669,6 +674,7 @@ impl Render for KynexApp {
                                                 .flex_1()
                                                 .min_h_0()
                                                 .child(self.render_thread(window, cx))
+                                                .children(self.render_find(cx))
                                                 .child(self.toast_room_probe()),
                                         )
                                         .child(self.render_composer(window, cx)),
@@ -705,6 +711,7 @@ impl Render for KynexApp {
             .text_color(t.text)
             .text_sm()
             .on_action(cx.listener(Self::toggle_palette))
+            .on_action(cx.listener(Self::open_find))
             .on_action(cx.listener(Self::open_project))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(|_, _: &keys::Quit, _, cx| cx.quit()))

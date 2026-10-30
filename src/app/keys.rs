@@ -49,15 +49,17 @@ actions!(
         ZoomIn,
         ZoomOut,
         ZoomReset,
-        CommandPalette
+        CommandPalette,
+        FindInTranscript
     ]
 );
 
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 30] = [
+const SHORTCUTS: [(&str, &str); 31] = [
     ("command_palette", "secondary-k"),
+    ("find", "secondary-f"),
     ("open_project", "secondary-o"),
     ("open_settings", "secondary-,"),
     ("new_session", "secondary-n"),
@@ -113,8 +115,9 @@ pub(super) fn esc_esc_rewinds() -> bool {
 }
 
 /// The keys above a terminal sends to its shell instead (see `terminal::view`).
-pub const SHELL_KEYS: [&str; 15] = [
+pub const SHELL_KEYS: [&str; 16] = [
     "ctrl-k",
+    "ctrl-f",
     "ctrl-r",
     "ctrl-s",
     "ctrl-g",
@@ -172,6 +175,7 @@ pub fn bind_keys(cx: &mut App) {
         };
         bindings.push(match name {
             "command_palette" => KeyBinding::new(keys, CommandPalette, c),
+            "find" => KeyBinding::new(keys, FindInTranscript, c),
             "open_project" => KeyBinding::new(keys, OpenProject, c),
             "open_settings" => KeyBinding::new(keys, OpenSettings, c),
             "new_session" => KeyBinding::new(keys, NewSession, c),

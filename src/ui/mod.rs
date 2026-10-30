@@ -4,6 +4,7 @@
 pub mod code;
 pub mod completions;
 pub mod ease_height;
+pub mod find_marks;
 pub mod image_viewer;
 pub mod input;
 pub mod mark;

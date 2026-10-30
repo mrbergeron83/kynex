@@ -180,7 +180,14 @@ pub fn mentions(text: &str) {
             assert!(text.is_char_boundary(whole.end));
         }
     }
+    // Find in the transcript: the first line looked for in the rest.
     let (query, paths) = text.split_once('\n').unwrap_or((text, ""));
+    let mut last = 0;
+    for r in crate::find::occurrences(paths, query) {
+        assert!(last <= r.start && r.start < r.end && r.end <= paths.len(), "{r:?}");
+        assert!(paths.is_char_boundary(r.start) && paths.is_char_boundary(r.end), "{r:?}");
+        last = r.end;
+    }
     let files = Files::new(paths.lines().map(str::to_string).collect());
     for m in files.matching(query, 50) {
         let entry = &files.entries[m.index];
