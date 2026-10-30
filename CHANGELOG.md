@@ -42,6 +42,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   when you send the next message; the count stays until you open the files.
 - The Git view's diff scrolls sideways to the end of long lines instead of cutting them off,
   and the line numbers stay in place while it does.
+- A session using your own browser (the Playwright extension) keeps its pairing and tabs when
+  its `claude` process restarts, instead of pairing again with a new connect tab. Kynex runs
+  that browser server itself for each session and hands it to every process.
 
 ## [0.0.10] - 2026-10-30
 

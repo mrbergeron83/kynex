@@ -322,7 +322,7 @@ pub fn npx_found() -> bool {
     on_path(if cfg!(windows) { "npx.cmd" } else { "npx" }).is_some()
 }
 
-fn on_path(exe: &str) -> Option<PathBuf> {
+pub(crate) fn on_path(exe: &str) -> Option<PathBuf> {
     let paths = std::env::var_os("PATH")?;
     std::env::split_paths(&paths).map(|dir| dir.join(exe)).find(|p| p.is_file())
 }

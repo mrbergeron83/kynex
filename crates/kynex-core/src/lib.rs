@@ -5,6 +5,7 @@
 pub mod attach;
 pub mod attention;
 pub mod awake;
+pub mod browser_server;
 pub mod cli;
 pub mod column;
 pub mod commands;

@@ -157,6 +157,12 @@ pub fn mcp_config(text: &str) {
     let _ = mcp_config::parse_list(text);
 }
 
+/// An HTTP reply from a browser server Kynex runs: status, session, chunked
+/// or event-stream body.
+pub fn browser_reply(bytes: &[u8]) {
+    crate::browser_server::fuzz_reply(bytes);
+}
+
 /// File paths in Claude's text, for clickable links.
 pub fn file_links(text: &str) {
     let mut last = 0;
@@ -257,6 +263,7 @@ mod tests {
             versions(t.as_bytes());
             claude_config(t);
             mcp_config(t);
+            browser_reply(t.as_bytes());
             file_links(t);
             highlight(t);
         }

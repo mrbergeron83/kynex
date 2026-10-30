@@ -127,3 +127,10 @@ path = "fuzz_targets/mentions.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "browser_reply"
+path = "fuzz_targets/browser_reply.rs"
+test = false
+doc = false
+bench = false

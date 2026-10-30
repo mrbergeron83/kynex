@@ -45,6 +45,46 @@ pub fn dies_with_parent(cmd: &mut Command) -> &mut Command {
     cmd
 }
 
+/// Starts `cmd`'s process as the head of a group [`kill_tree`] can end whole:
+/// for launchers like `npx`, whose real work runs in a process of its own.
+pub fn own_group(cmd: &mut Command) -> &mut Command {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd
+}
+
+/// Ends `child` and every process it started, then reaps it. Started with
+/// [`own_group`] on Unix; on Windows `taskkill /T` follows the parent links.
+pub fn kill_tree(child: &mut Child) {
+    // Gone already: its id may belong to someone else by now.
+    if !matches!(child.try_wait(), Ok(None)) {
+        return;
+    }
+    let pid = child.id().to_string();
+    #[cfg(windows)]
+    let mut cmd = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut c = Command::new("taskkill");
+        c.args(["/PID", &pid, "/T", "/F"]).creation_flags(CREATE_NO_WINDOW);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut cmd = {
+        let mut c = Command::new("kill");
+        c.args(["-KILL", "--", &format!("-{pid}")]);
+        c
+    };
+    let quiet = cmd.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+    if !quiet.is_ok_and(|s| s.success()) {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
 /// Starts `cmd` as an app of its own that outlives Kynex (an editor, a file
 /// manager): out of Kynex's job on Windows, plain `spawn` elsewhere.
 pub fn detach(cmd: &mut Command) -> std::io::Result<Child> {
@@ -118,5 +158,20 @@ mod tests {
         assert!(status.success());
         let mut opened = detach(Command::new(program).args(args)).unwrap();
         assert!(opened.wait().unwrap().success());
+    }
+
+    #[test]
+    fn a_tree_dies_with_its_head() {
+        // A shell that starts a long sleep of its own, as `npx` starts `node`.
+        let (program, args): (&str, &[&str]) = if cfg!(windows) {
+            ("cmd", &["/c", "ping -n 30 127.0.0.1 >nul"])
+        } else {
+            ("sh", &["-c", "sleep 30; true"])
+        };
+        let mut child = own_group(Command::new(program).args(args)).spawn().unwrap();
+        let start = std::time::Instant::now();
+        kill_tree(&mut child);
+        assert!(child.try_wait().unwrap().is_some());
+        assert!(start.elapsed().as_secs() < 10);
     }
 }
