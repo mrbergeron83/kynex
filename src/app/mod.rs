@@ -219,8 +219,6 @@ pub struct KynexApp {
     app_settings: Option<app_settings::AppSettingsView>,
     /// The Extensions modal: MCP servers and plugins in the active folder.
     extensions: Option<extensions::ExtensionsView>,
-    /// Projects whose rules changed mid-reply; their process restarts once it's idle.
-    restart_when_idle: HashSet<PathBuf>,
     prompt: Option<ActivePrompt>,
     menu: Option<OpenMenu>,
     /// What's animating out after it closed: menus, modals, panels.
@@ -448,7 +446,6 @@ impl KynexApp {
             settings: None,
             app_settings: None,
             extensions: None,
-            restart_when_idle: HashSet::new(),
             prompt: None,
             menu: None,
             exits: Default::default(),
@@ -572,16 +569,13 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Restart the projects whose settings changed, once they're idle.
-    fn restart_idle(&mut self) {
-        self.restart_when_idle.retain(|path| {
-            let Some(live) = self.code.get_mut(path) else { return false };
-            // A restart would also stop background tasks; wait for those too.
-            for s in live.sessions.iter_mut().filter(|s| !s.busy && !s.has_tasks()) {
-                s.kill();
-            }
-            live.busy() || live.sessions.iter().any(Session::has_tasks)
-        });
+    /// Restarts the sessions running on settings they couldn't take live, once
+    /// they're idle: they start again with the next message.
+    pub(super) fn restart_idle(&mut self) {
+        // A restart would also stop background tasks; wait for those too.
+        for s in self.all_sessions_mut().filter(|s| s.stale && !s.busy && !s.has_tasks()) {
+            s.kill();
+        }
     }
 }
 

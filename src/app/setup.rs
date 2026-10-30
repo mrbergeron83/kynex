@@ -105,8 +105,10 @@ impl KynexApp {
                 this.cli_update = match result {
                     Ok(version) => {
                         this.claude_version = Some(version.clone());
-                        let busy = this.code.iter().filter(|(_, l)| l.busy()).map(|(p, _)| p.clone());
-                        this.restart_when_idle.extend(busy.collect::<Vec<_>>());
+                        // Busy ones finish on the old version, then start again on the new.
+                        for s in this.all_sessions_mut().filter(|s| s.is_running()) {
+                            s.stale = true;
+                        }
                         UpdateState::Updated { version }
                     }
                     Err(e) => UpdateState::Failed(e),

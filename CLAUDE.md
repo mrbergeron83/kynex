@@ -78,7 +78,8 @@ A cargo workspace with two crates:
     update checks against npm dist-tags with `claude update`
   - `project.rs` — per-project settings folders (`<data dir>/projects/<name>-<hash>/`, one
     JSON file per section); rules go to each session via `claude --settings`, mode / effort /
-    extra dirs via `--permission-mode`, `--effort`, `--add-dir`; the mode switches live
+    extra dirs via `--permission-mode`, `--effort`, `--add-dir`; the mode switches live, and
+    effort and added rules / dirs reach a running process via `apply_flag_settings` (`Launched`)
   - `commands.rs` — slash commands: listing a folder's (the CLI's free `initialize`
     handshake), matching as you type, and the built-ins Kynex runs itself (`/clear`, `/model`…)
   - `history.rs` — sent messages per project for the composer's ↑ / ↓, Ctrl+R and stash;

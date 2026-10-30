@@ -1,6 +1,6 @@
 //! The Claude settings modal for a project: default mode, allow / deny rules,
-//! extra directories and effort. Edits save at once; the mode applies live,
-//! the rest from the project's next process start.
+//! extra directories and effort. Edits save at once and reach running sessions
+//! live, except a rule or folder taken away, which waits for a restart.
 
 use std::path::{Path, PathBuf};
 
@@ -41,8 +41,8 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Applies an edit in the settings modal. Edits save immediately: the mode
-    /// applies to the live session, everything else from the next process start.
+    /// Applies an edit in the settings modal. Edits save immediately and reach
+    /// the project's running sessions ([`Self::apply_project_settings`]).
     fn edit_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut SettingsView)) {
         let Some(view) = &mut self.settings else { return };
         let (perms_before, claude_before) = (view.perms.clone(), view.claude.clone());
@@ -65,14 +65,12 @@ impl KynexApp {
                 }
             }
         }
-        let restart = view.perms != perms_before
+        if view.perms != perms_before
             || view.claude.effort != claude_before.effort
-            || view.claude.add_dirs != claude_before.add_dirs;
-        if restart {
-            // The CLI reads these at startup: restart the project's process so it picks them up.
-            // `--resume` keeps the conversation going; rules allowed "this session" are dropped.
-            self.restart_when_idle.insert(path);
-            self.restart_idle();
+            || view.claude.add_dirs != claude_before.add_dirs
+        {
+            let (perms, claude) = (view.perms.clone(), view.claude.clone());
+            self.apply_project_settings(&path, &perms, &claude);
         }
         if let Some(e) = errors.pop() {
             self.toast(Toast::error(e));
@@ -139,11 +137,19 @@ impl KynexApp {
             if let Err(e) = claude.save(&path) {
                 self.toast(Toast::error(e));
             }
-            self.claude_settings.insert(path.clone(), claude);
-            // The CLI reads it at startup: restart once idle; `--resume` keeps the conversation.
-            self.restart_when_idle.insert(path);
-            self.restart_idle();
+            self.claude_settings.insert(path.clone(), claude.clone());
+            self.apply_project_settings(&path, &Permissions::load(&path), &claude);
         }
+    }
+
+    /// Brings a project's running sessions up to its changed rules, extra folders
+    /// or effort: live where the CLI takes them, else each starts again once
+    /// idle (`--resume` keeps the conversation; "this session" rules are dropped).
+    fn apply_project_settings(&mut self, path: &Path, perms: &Permissions, claude: &ClaudeSettings) {
+        for s in self.code.get_mut(path).into_iter().flat_map(|l| l.sessions.iter_mut()) {
+            s.apply_settings(perms, claude);
+        }
+        self.restart_idle();
     }
 
     pub(super) fn add_rule(&mut self, deny: bool, cx: &mut Context<Self>) {

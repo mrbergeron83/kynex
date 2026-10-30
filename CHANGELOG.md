@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Changing a project's effort, or adding rules or extra folders, reaches its running sessions
+  at once instead of restarting them; they keep their browser tab and "this session" rules.
+  Only taking a rule or folder away (or effort back to the default) still restarts a session,
+  once it's idle, and only the sessions it affects.
+
 ## [0.0.10] - 2026-10-30
 
 ### Added
