@@ -450,6 +450,12 @@ impl KynexApp {
             cx.stop_propagation();
             return;
         }
+        // Picking sessions in the panel stops.
+        if k.key == "escape" && self.stop_picking() {
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
         // Ctrl+1 is Chat, Ctrl+2 the first project, and so on.
         if k.modifiers.secondary(cx)
             && !k.modifiers.shift

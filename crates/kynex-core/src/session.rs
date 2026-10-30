@@ -1612,9 +1612,12 @@ pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
             if path.extension()? != "jsonl" {
                 return None;
             }
-            let modified = e.metadata().ok().and_then(|m| m.modified().ok()).unwrap_or(SystemTime::UNIX_EPOCH);
             let id = path.file_stem()?.to_string_lossy().into_owned();
             let names = read_names(&path)?;
+            // The last message, not the file's time: resuming a session appends to its log.
+            let modified = names
+                .last
+                .unwrap_or_else(|| e.metadata().ok().and_then(|m| m.modified().ok()).unwrap_or(SystemTime::UNIX_EPOCH));
             let name = names.title.or_else(|| crate::titles::stored(&id));
             Some(SessionInfo {
                 title: name.clone().unwrap_or_else(|| names.first.clone()),
@@ -1633,6 +1636,8 @@ struct Names {
     /// The latest `custom-title`, else the latest `ai-title`.
     title: Option<String>,
     first: String,
+    /// When its last message was said, if the log's tail has one.
+    last: Option<SystemTime>,
 }
 
 /// How far into a log to look for its first message, and back from its end for its title.
@@ -1663,14 +1668,38 @@ fn read_names(path: &Path) -> Option<Names> {
         let v: Value = serde_json::from_str(line).ok()?;
         v[key].as_str().filter(|t| !t.trim().is_empty()).map(str::to_string)
     };
+    let mut last = None;
     let _ = crate::session_log::lines_back(&mut file, len, TAIL_CHUNK, TAIL_CAP, |_, line| {
-        custom = title(line, r#""type":"custom-title""#, "customTitle");
+        if custom.is_none() {
+            custom = title(line, r#""type":"custom-title""#, "customTitle");
+        }
         if ai.is_none() {
             ai = title(line, r#""type":"ai-title""#, "aiTitle");
         }
-        custom.is_none()
+        if last.is_none() {
+            last = std::str::from_utf8(line).ok().and_then(said_at);
+        }
+        custom.is_none() || last.is_none()
     });
-    Some(Names { title: custom.or(ai), first })
+    Some(Names { title: custom.or(ai), first, last })
+}
+
+/// When a log line was said, if it's a message of the conversation: not the
+/// bookkeeping the CLI appends when a session is only resumed (`tools-used`,
+/// `last-prompt`, meta lines…), which would make an old session look new.
+fn said_at(line: &str) -> Option<SystemTime> {
+    if !line.contains(r#""type":"user""#) && !line.contains(r#""type":"assistant""#) {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line).ok()?;
+    if !matches!(v["type"].as_str(), Some("user" | "assistant")) || v["isMeta"] == true {
+        return None;
+    }
+    // Resuming tells Claude about background tasks the last run left behind.
+    if v["message"]["content"].as_str().is_some_and(|c| c.starts_with("<task-notification>")) {
+        return None;
+    }
+    crate::rewind::parse_time(v["timestamp"].as_str()?)
 }
 
 /// The folder the session logged at `path` ran in: the `cwd` its first
@@ -2417,6 +2446,24 @@ mod tests {
         lines.insert(1, r#"{"type":"custom-title","customTitle":"Worktrees","sessionId":"x"}"#);
         std::fs::write(&path, lines.join("\n")).unwrap();
         assert_eq!(read_names(&path).unwrap().title.as_deref(), Some("Worktrees"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_session_is_as_new_as_its_last_message() {
+        let path = std::env::temp_dir().join(format!("kynex-last-{}.jsonl", std::process::id()));
+        let lines = [
+            r#"{"type":"user","message":{"role":"user","content":"hi"},"timestamp":"2026-10-29T02:28:11.945Z"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","content":[]},"timestamp":"2026-10-29T02:28:17.143Z"}"#,
+            // What resuming it appends later doesn't count.
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"x"},"timestamp":"2026-10-30T16:26:54.438Z"}"#,
+            r#"{"type":"tools-used","tools":[]}"#,
+            r#"{"type":"user","message":{"role":"user","content":"<task-notification>\n<status>stopped</status>"},"timestamp":"2026-10-30T16:26:54.438Z"}"#,
+            r#"{"type":"queue-operation","timestamp":"2026-10-30T16:26:54.363Z"}"#,
+        ];
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        let last = read_names(&path).unwrap().last;
+        assert_eq!(last, crate::rewind::parse_time("2026-10-29T02:28:17Z"));
         let _ = std::fs::remove_file(path);
     }
 

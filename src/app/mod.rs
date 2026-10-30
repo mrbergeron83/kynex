@@ -13,6 +13,7 @@
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_groups.rs` | session groups and the archive, their menus          |
+//! | `session_select.rs` | picking sessions to archive or delete together       |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `terminal_dock.rs`  | the project's terminal panel under the conversation  |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
@@ -79,6 +80,7 @@ mod rewind;
 mod scratch_modal;
 mod session_groups;
 mod session_header;
+mod session_select;
 mod sessions_panel;
 mod settings;
 mod setup;
