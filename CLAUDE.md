@@ -191,7 +191,8 @@ to open it without taking focus.
 
 ## Releasing
 
-Versions are `0.0.N`; each release is an issue, a PR, then a tag that the **user** pushes.
+Versions are `0.0.N`; each release is an issue and a PR. **Merging the PR releases**: nobody
+pushes a tag by hand.
 
 1. Issue `Release X.Y.Z` (`enhancement`): one line on what's new since the last tag.
 2. Branch `release-X.Y.Z` from `main`:
@@ -201,11 +202,10 @@ Versions are `0.0.N`; each release is an issue, a PR, then a tag that the **user
      entries move into it), `[Unreleased]` compares from `vX.Y.Z`, and a new `[X.Y.Z]`
      compare link from the previous tag.
    - `./scripts/check.ps1`, then a PR `Release X.Y.Z: <highlights>` with `Fixes #N`.
-3. The user merges it once every check has passed.
-4. **Stop and hand over the tag.** Tag creation is restricted, so only the user's bypass
-   lets it through; Claude never creates or pushes it. Give the user:
-   ```powershell
-   git switch main; git pull; git tag -s vX.Y.Z -m "Kynex X.Y.Z"; git push origin vX.Y.Z
-   ```
-5. The tag runs `.github/workflows/release.yml`, which builds every platform and publishes
-   the GitHub release; check it with `gh run list --workflow release.yml`.
+3. The user merges it once every check has passed. Claude never merges it, and never creates
+   or pushes a tag.
+4. The merge to `main` runs `.github/workflows/release.yml`: it sees a version with no tag
+   yet, re-runs CI and cargo-deny, builds every platform, then publishes the release and
+   creates `vX.Y.Z` on that commit. Check it with `gh run list --workflow release.yml`.
+   A failed run publishes nothing and creates no tag; fix it in a PR, and the next push that
+   touches `Cargo.toml` (or a re-run) tries again.

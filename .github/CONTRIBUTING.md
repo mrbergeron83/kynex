@@ -106,21 +106,20 @@ prerelease). Only the maintainer releases:
 
 1. In a pull request, bump `version` in `Cargo.toml` and turn `[Unreleased]` in CHANGELOG.md into
    the new version's section, with today's date. Merge it once every check passes.
-2. Tag the merge commit on `main` with a signed tag and push it:
+2. Merging releases. A push to `main` that brings a `Cargo.toml` version with no tag yet runs the
+   Release workflow: it re-runs CI and cargo-deny on that commit, builds every OS, signs the
+   Windows binary when that's set up, and publishes the archives with `SHA256SUMS` and a signed
+   build provenance attestation, creating the `vX.Y.Z` tag on the commit as it publishes. A run
+   that fails publishes nothing and leaves no tag. The workflow creates the tag with its own
+   token, so GitHub Actions is on the "Protect release tags" ruleset's bypass list.
+3. Pushing a tag yourself still works, e.g. to retry by hand: it must match `Cargo.toml` and be on
+   `main`, and a signed one shows as Verified ([Signing tags](#signing-tags)):
 
    ```sh
    git switch main && git pull
    git tag -s vX.Y.Z -m "Kynex X.Y.Z"
    git push origin vX.Y.Z
    ```
-
-   Signing uses your SSH key, added to GitHub as a signing key, so the tag shows as Verified;
-   [Signing tags](#signing-tags) sets up a machine for it. Only admins can create release tags
-   (the "Protect release tags" ruleset).
-3. The Release workflow checks the tag matches `Cargo.toml` and is on `main` (and warns if it
-   isn't signed), re-runs CI and cargo-deny on the tagged commit, builds every OS, signs the
-   Windows binary when that's set up, and publishes the archives with `SHA256SUMS` and a signed
-   build provenance attestation. A tag that fails any of that publishes nothing.
 4. Running installs pick the release up through the self-updater; check one updates.
 
 ### Signing tags
