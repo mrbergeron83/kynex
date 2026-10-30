@@ -4,7 +4,8 @@
 
 use std::path::PathBuf;
 
-use gpui::{Context, FontWeight, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{Context, FontWeight, div, prelude::*};
 use kynex_core::open::{Opener, open_project};
 
 use kynex_core::toasts::Toast;

@@ -4,7 +4,8 @@
 
 use std::path::PathBuf;
 
-use gpui::{AnyElement, Context, FontWeight, MouseButton, SharedString, Window, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, FontWeight, MouseButton, SharedString, Window, div, prelude::*};
 use kynex_core::cli::{self, UpdateState};
 use kynex_core::fmt::ago;
 use kynex_core::open::Opener;
@@ -56,21 +57,24 @@ impl KynexApp {
             if cfg!(debug_assertions) { ", development build" } else { "" }
         );
 
-        let header = div().flex().items_center().gap_4().child(mark("about-mark", px(56.), Lamp::Idle, cx)).child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(section_label("Kynex", cx).text_size(px(20.)).text_color(t.text).font_weight(FontWeight::BLACK))
-                .child(div().text_sm().text_color(t.text_muted).child("A native workspace for Claude Code"))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(t.text_placeholder)
-                        .font_family(mono())
-                        .child(format!("v{VERSION} · {COMMIT}")),
-                ),
-        );
+        let header =
+            div().flex().items_center().gap_4().child(mark("about-mark", gpui::px(56.), Lamp::Idle, cx)).child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        section_label("Kynex", cx).text_size(px(20.)).text_color(t.text).font_weight(FontWeight::BLACK),
+                    )
+                    .child(div().text_sm().text_color(t.text_muted).child("A native workspace for Claude Code"))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(t.text_placeholder)
+                            .font_family(mono())
+                            .child(format!("v{VERSION} · {COMMIT}")),
+                    ),
+            );
 
         let rows = div()
             .flex()
@@ -120,8 +124,8 @@ impl KynexApp {
             .flex()
             .flex_col()
             .gap_5()
-            .w(px(520.).min(vp.width - px(80.)))
-            .max_h(vp.height - px(100.))
+            .w(gpui::px(520.).min(vp.width - gpui::px(80.)))
+            .max_h(vp.height - gpui::px(100.))
             .p_6()
             .rounded_lg()
             .border_1()
@@ -179,7 +183,7 @@ impl KynexApp {
                         cx.notify();
                     }),
                 )
-                .child(pop("about-in", card, px(8.), leaving)),
+                .child(pop("about-in", card, gpui::px(8.), leaving)),
             motion::QUICK,
             leaving,
         ))

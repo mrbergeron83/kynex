@@ -45,14 +45,17 @@ actions!(
         LineUp,
         LineDown,
         OpenSettings,
-        Quit
+        Quit,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset
     ]
 );
 
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 26] = [
+const SHORTCUTS: [(&str, &str); 29] = [
     ("open_project", "secondary-o"),
     ("open_settings", "secondary-,"),
     ("new_session", "secondary-n"),
@@ -88,6 +91,10 @@ const SHORTCUTS: [(&str, &str); 26] = [
     ("scroll_bottom", "secondary-end"),
     // Closing the window may only hide Kynex; this always quits.
     ("quit", "secondary-q"),
+    // The whole UI bigger or smaller, as in a browser.
+    ("zoom_in", "secondary-="),
+    ("zoom_out", "secondary--"),
+    ("zoom_reset", "secondary-0"),
 ];
 
 /// Keys that scroll the transcript when nothing focused (the message box, a
@@ -186,6 +193,9 @@ pub fn bind_keys(cx: &mut App) {
             "scroll_top" => KeyBinding::new(keys, ScrollTop, c),
             "scroll_bottom" => KeyBinding::new(keys, ScrollBottom, c),
             "quit" => KeyBinding::new(keys, Quit, c),
+            "zoom_in" => KeyBinding::new(keys, ZoomIn, c),
+            "zoom_out" => KeyBinding::new(keys, ZoomOut, c),
+            "zoom_reset" => KeyBinding::new(keys, ZoomReset, c),
             _ => KeyBinding::new(keys, Interrupt, c),
         });
     }

@@ -5,7 +5,7 @@
 use std::borrow::Cow;
 use std::sync::{OnceLock, RwLock};
 
-use gpui::{App, FontStyle, Global, HighlightStyle, Hsla, SharedString, rgb};
+use gpui::{App, FontStyle, Global, HighlightStyle, Hsla, SharedString, WindowAppearance, rgb};
 use kynex_core::highlight::Token;
 use serde::{Deserialize, Serialize};
 
@@ -19,9 +19,12 @@ pub enum Theme {
     /// old name so saved state still loads.
     Hyprland,
     VsCode,
+    /// Kynex Light or Kynex Dark, following the OS's light / dark setting live.
+    System,
 }
 
-pub const THEMES: [(Theme, &str); 5] = [
+pub const THEMES: [(Theme, &str); 6] = [
+    (Theme::System, "System (Kynex Light / Dark)"),
     (Theme::KynexDark, "Kynex Dark"),
     (Theme::KynexLight, "Kynex Light"),
     (Theme::OneDark, "One Dark"),
@@ -91,8 +94,18 @@ fn ca(hex: u32, alpha: f32) -> Hsla {
 }
 
 impl Theme {
+    /// The theme to draw with: `System` picks Kynex Light or Dark by the OS's appearance.
+    pub fn resolve(self, appearance: WindowAppearance) -> Theme {
+        match (self, appearance) {
+            (Theme::System, WindowAppearance::Dark | WindowAppearance::VibrantDark) => Theme::KynexDark,
+            (Theme::System, _) => Theme::KynexLight,
+            (th, _) => th,
+        }
+    }
+
     pub fn palette(self) -> Palette {
         match self {
+            Theme::System => Theme::KynexDark.palette(),
             // Instrument · Petrol: near-colourless housing, petrol for your controls,
             // IEC 60073 lamp colours for state.
             Theme::KynexDark => Palette {
@@ -325,7 +338,9 @@ pub struct ActiveTheme(pub Palette);
 
 impl Global for ActiveTheme {}
 
+/// Draws with `theme`; `System` as the OS's appearance is now (call again when it changes).
 pub fn set(theme: Theme, cx: &mut App) {
+    let theme = theme.resolve(cx.window_appearance());
     cx.set_global(ActiveTheme(theme.palette()));
 }
 

@@ -344,6 +344,14 @@ impl KynexApp {
         Self::watch_notification_clicks(window, cx);
         Self::watch_close(window, cx);
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.sync_tray(cx))).detach();
+        // The System theme follows the OS's light / dark setting as it changes.
+        cx.observe_window_appearance(window, |this, _, cx| {
+            if this.saved.theme == crate::theme::Theme::System {
+                crate::theme::set(this.saved.theme, cx);
+                cx.refresh_windows();
+            }
+        })
+        .detach();
         cx.observe_window_activation(window, |this, window, cx| {
             this.window_active = window.is_window_active();
             if window.is_window_active() {
@@ -546,6 +554,8 @@ impl Focusable for KynexApp {
 
 impl Render for KynexApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The UI zoom: everything sized in rems scales with it.
+        window.set_rem_size(gpui::px(16.) * self.saved.zoom);
         let t = theme(cx).clone();
         if let Active::Project(i) = self.saved.active
             && let Some(p) = self.saved.projects.get_mut(i).filter(|p| p.view == View::Settings)
@@ -683,6 +693,9 @@ impl Render for KynexApp {
             .on_action(cx.listener(Self::open_project))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(|_, _: &keys::Quit, _, cx| cx.quit()))
+            .on_action(cx.listener(|this, _: &keys::ZoomIn, _, cx| this.zoom_by(1, cx)))
+            .on_action(cx.listener(|this, _: &keys::ZoomOut, _, cx| this.zoom_by(-1, cx)))
+            .on_action(cx.listener(|this, _: &keys::ZoomReset, _, cx| this.zoom_by(0, cx)))
             .on_action(cx.listener(Self::new_session_action))
             .on_action(cx.listener(Self::next_session))
             .on_action(cx.listener(Self::prev_session))
@@ -716,7 +729,7 @@ impl Render for KynexApp {
             .when(self.resizing_sessions, |d| {
                 d.cursor_col_resize()
                     .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
-                        this.saved.sessions_width = f32::from(ev.position.x).clamp(180., 480.);
+                        this.saved.sessions_width = (f32::from(ev.position.x) / this.saved.zoom).clamp(180., 480.);
                         cx.notify();
                     }))
                     .on_mouse_up(
@@ -746,7 +759,7 @@ impl Render for KynexApp {
             .child(self.wheel.listener())
             .child(self.render_title_bar(window, cx))
             .child(main)
-            .child(self.render_footer(cx))
+            .when(self.saved.footer, |d| d.child(self.render_footer(cx)))
             .children(toasts)
             .children(git_modal)
             .children(settings)

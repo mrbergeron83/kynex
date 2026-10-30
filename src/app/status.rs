@@ -4,7 +4,8 @@
 
 use std::time::Duration;
 
-use gpui::{AnyElement, Context, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, div, prelude::*};
 use kynex_core::cli::UpdateState;
 use kynex_core::usage::{self, Level, Limits, Window};
 

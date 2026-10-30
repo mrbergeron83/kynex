@@ -1,6 +1,7 @@
 //! The History tab: commits newest first, with branch and tag labels.
 
-use gpui::{Context, FontWeight, Hsla, div, prelude::*, px, uniform_list};
+use crate::ui::px;
+use gpui::{Context, FontWeight, Hsla, div, prelude::*, uniform_list};
 use kynex_core::fmt::ago_unix;
 use kynex_core::git::{Commit, Ref, RefKind};
 

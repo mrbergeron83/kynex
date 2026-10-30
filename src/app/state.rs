@@ -95,6 +95,10 @@ pub struct Saved {
     pub column: ColumnWidth,
     /// The window corner toasts gather in.
     pub toast_corner: Corner,
+    /// The UI zoom, 1.0 for normal size (`kynex_core::scale`).
+    pub zoom: f32,
+    /// The status footer along the bottom of the window is showing.
+    pub footer: bool,
     /// When to keep the computer from sleeping.
     pub keep_awake: KeepAwake,
     /// What closing the window does: hide Kynex (tray / Dock) or quit.
@@ -127,6 +131,8 @@ impl Default for Saved {
             shortcuts_stamped: false,
             column: ColumnWidth::default(),
             toast_corner: Corner::default(),
+            zoom: kynex_core::scale::NORMAL,
+            footer: true,
             keep_awake: KeepAwake::default(),
             on_close: OnClose::default(),
         }
@@ -144,6 +150,7 @@ impl Saved {
         }
         saved.sessions_width = saved.sessions_width.clamp(180., 480.);
         saved.terminal_height = saved.terminal_height.max(120.);
+        saved.zoom = kynex_core::scale::clamp(saved.zoom);
         saved
     }
 

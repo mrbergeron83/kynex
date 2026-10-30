@@ -6,16 +6,17 @@
 //! - macOS: the native traffic lights stay; the bar leaves room for them.
 //! - Linux: we draw the buttons and drive the window ourselves.
 
-use gpui::{App, MouseButton, Pixels, Stateful, Window, WindowControlArea, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{App, MouseButton, Pixels, Stateful, Window, WindowControlArea, div, prelude::*};
 
 use crate::theme::theme;
 use crate::ui::{Icon, icon};
 
-pub const TITLE_BAR_HEIGHT: Pixels = px(36.);
+pub const TITLE_BAR_HEIGHT: gpui::Rems = gpui::Rems(36. / 16.);
 
 /// Room for the macOS traffic lights at the bar's left end.
 pub fn leading_inset() -> Pixels {
-    if cfg!(target_os = "macos") { px(76.) } else { px(0.) }
+    if cfg!(target_os = "macos") { gpui::px(76.) } else { gpui::px(0.) }
 }
 
 /// Makes an element part of the draggable title bar: drag to move,

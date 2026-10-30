@@ -2,7 +2,8 @@
 //! where it runs (branch, and whether that's a separate worktree), how many
 //! turns it has taken, what it has cost and how full its context is.
 
-use gpui::{AnyElement, ClickEvent, Context, FontWeight, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, ClickEvent, Context, FontWeight, div, prelude::*};
 use kynex_core::git::Worktree;
 use kynex_core::session::{Item, Kind};
 use kynex_core::{fmt, mcp};
@@ -129,7 +130,7 @@ impl KynexApp {
                             .h(px(4.))
                             .rounded_full()
                             .bg(t.border_variant)
-                            .child(div().h_full().rounded_full().bg(color).w(px((36. * f) as f32).max(px(2.)))),
+                            .child(div().h_full().rounded_full().bg(color).w(px(((36. * f) as f32).max(2.)))),
                     )
                 })
                 .child(label)

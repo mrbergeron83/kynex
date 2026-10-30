@@ -143,7 +143,7 @@ impl ImageViewer {
                         cx.listener(|this, _, _, cx| this.update_zoom(cx, |z| z.zoom_at(1. / STEP, (0., 0.)))),
                     ),
                 )
-                .child(div().w(px(44.)).text_center().text_xs().text_color(t.text_muted).child(percent))
+                .child(div().w(super::px(44.)).text_center().text_xs().text_color(t.text_muted).child(percent))
                 .child(
                     icon_button("viewer-in", Icon::Plus, cx)
                         .tooltip(Tooltip::with_meta("Zoom in", "+"))
@@ -163,7 +163,7 @@ impl ImageViewer {
                         .tooltip(Tooltip::with_meta("Actual size", "1"))
                         .on_click(cx.listener(|this, _, _, cx| this.update_zoom(cx, Zoom::actual))),
                 )
-                .child(div().w_px().h(px(16.)).mx_1().bg(t.border_variant))
+                .child(div().w_px().h(super::px(16.)).mx_1().bg(t.border_variant))
             })
             .child(
                 icon_button("viewer-close", Icon::Close, cx)

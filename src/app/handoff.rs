@@ -3,7 +3,8 @@
 //! composer says so, with the latest screenshot and a Continue button. The
 //! rule for when it shows is `kynex_core::mcp::handoff`; sending anything ends it.
 
-use gpui::{AnyElement, Context, FontWeight, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, FontWeight, div, prelude::*};
 use kynex_core::mcp;
 use kynex_core::session::Item;
 

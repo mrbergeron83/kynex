@@ -4,13 +4,15 @@
 
 use std::path::PathBuf;
 
-use gpui::{Anchor, ClickEvent, Context, PathPromptOptions, Window, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{Anchor, ClickEvent, Context, PathPromptOptions, Window, div, prelude::*};
 use kynex_core::awake::KeepAwake;
 use kynex_core::cli;
 use kynex_core::column::ColumnWidth;
 use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
 use kynex_core::paths::data_dir;
+use kynex_core::scale;
 use kynex_core::terminal::ShellKind;
 use kynex_core::tray::OnClose;
 
@@ -20,7 +22,7 @@ use super::KynexApp;
 use super::menus::{FontRole, Menu};
 use super::settings::{heading, radio, settings_modal, settings_nav};
 use crate::theme::{self, Palette, THEMES, Theme, mono, theme};
-use crate::ui::{Icon, icon, outline_button};
+use crate::ui::{Icon, Tooltip, icon, outline_button};
 
 #[derive(Clone)]
 pub struct AppSettingsView {
@@ -411,7 +413,72 @@ impl KynexApp {
                 )
             }));
 
-        div().flex().flex_col().gap_6().child(themes).child(fonts).child(column).child(corner).child(motion)
+        use super::keys::{ZoomIn, ZoomOut, ZoomReset};
+        let zoom = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(heading("Zoom", "Text, icons and spacing in the whole window, as in a browser.", t))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        outline_button("app-zoom-out", "−", cx)
+                            .tooltip(Tooltip::for_action("Smaller", ZoomOut, ""))
+                            .on_click(cx.listener(|this, _, _, cx| this.zoom_by(-1, cx))),
+                    )
+                    .child(div().w(px(48.)).flex().justify_center().text_sm().child(scale::label(self.saved.zoom)))
+                    .child(
+                        outline_button("app-zoom-in", "+", cx)
+                            .tooltip(Tooltip::for_action("Bigger", ZoomIn, ""))
+                            .on_click(cx.listener(|this, _, _, cx| this.zoom_by(1, cx))),
+                    )
+                    .child(
+                        outline_button("app-zoom-reset", "Reset", cx)
+                            .tooltip(Tooltip::for_action("Normal size", ZoomReset, ""))
+                            .on_click(cx.listener(|this, _, _, cx| this.zoom_by(0, cx))),
+                    ),
+            );
+
+        let footer = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(heading("Status footer", "Kynex's CPU and memory, usage limits and updates, along the bottom.", t))
+            .children([(true, "Show"), (false, "Hide")].into_iter().map(|(on, label)| {
+                choice(("app-footer", usize::from(on)), self.saved.footer == on, label.to_string(), t).on_click(
+                    cx.listener(move |this, _, _, cx| {
+                        this.saved.footer = on;
+                        this.save();
+                        cx.notify();
+                    }),
+                )
+            }));
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_6()
+            .child(themes)
+            .child(zoom)
+            .child(fonts)
+            .child(column)
+            .child(corner)
+            .child(footer)
+            .child(motion)
+    }
+
+    /// Zooms the whole UI a step in (`dir` > 0), out (< 0), or back to normal (0).
+    pub(super) fn zoom_by(&mut self, dir: i32, cx: &mut Context<Self>) {
+        self.saved.zoom = if dir == 0 { scale::NORMAL } else { scale::step(self.saved.zoom, dir) };
+        self.save();
+        // Every row's height changes with it.
+        for th in self.threads.values() {
+            th.list.remeasure();
+        }
+        cx.refresh_windows();
     }
 
     fn set_column(&mut self, w: ColumnWidth, cx: &mut Context<Self>) {

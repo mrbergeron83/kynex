@@ -1,7 +1,8 @@
 //! The Changes tab: the commit box, then staged and unstaged files with
 //! hover actions (stage, unstage, discard).
 
-use gpui::{AnyElement, Context, FontWeight, Hsla, SharedString, Window, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, FontWeight, Hsla, SharedString, Window, div, prelude::*};
 use kynex_core::git::{self, Change, FileStatus};
 
 use super::diff_view::split_path;

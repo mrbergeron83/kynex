@@ -5,8 +5,9 @@
 use std::ops::Range;
 use std::rc::Rc;
 
+use crate::ui::px;
 use gpui::{
-    AnyElement, Context, FontWeight, Hsla, ListHorizontalSizingBehavior, SharedString, StyledText, div, prelude::*, px,
+    AnyElement, Context, FontWeight, Hsla, ListHorizontalSizingBehavior, SharedString, StyledText, div, prelude::*,
     uniform_list,
 };
 use kynex_core::fmt::ago_unix;

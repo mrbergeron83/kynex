@@ -4,7 +4,8 @@
 //! small stack above the composer shows them. The rules live in
 //! `kynex_core::queue`; this file only asks and draws.
 
-use gpui::{AnyElement, Context, Image, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, Image, div, prelude::*};
 
 use super::KynexApp;
 use crate::theme::theme;

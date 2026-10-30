@@ -4,7 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{AnyElement, Context, FontWeight, MouseButton, Window, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, FontWeight, MouseButton, Window, div, prelude::*};
 use kynex_core::git::Worktree;
 
 use super::KynexApp;
@@ -103,8 +104,8 @@ impl KynexApp {
             .occlude()
             .flex()
             .flex_col()
-            .w(px(1280.).min(vp.width - px(80.)))
-            .h(vp.height - px(100.))
+            .w(gpui::px(1280.).min(vp.width - gpui::px(80.)))
+            .h(vp.height - gpui::px(100.))
             .rounded_lg()
             .overflow_hidden()
             .border_1()
@@ -127,7 +128,7 @@ impl KynexApp {
                 .bg(gpui::black().opacity(0.45))
                 .occlude()
                 .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_git_modal(cx)))
-                .child(pop("git-modal-in", card, px(8.), leaving)),
+                .child(pop("git-modal-in", card, gpui::px(8.), leaving)),
             motion::QUICK,
             leaving,
         ))

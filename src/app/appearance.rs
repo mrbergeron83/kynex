@@ -4,7 +4,8 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{AnyElement, Context, Div, Hsla, Pixels, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, Div, Hsla, Pixels, div, prelude::*};
 use kynex_core::project::{self, Appearance, COLOURS, ClaudeSettings, Colour};
 
 use kynex_core::toasts::Toast;
@@ -82,7 +83,7 @@ impl KynexApp {
             .gap_2()
             .child(option("colour-auto", "Automatic", Some(auto), Colour::Auto, cx))
             .child(option("colour-off", "None", None, Colour::Off, cx));
-        let swatches = self.colour_swatches("project-colour", path, px(28.), t, cx);
+        let swatches = self.colour_swatches("project-colour", path, gpui::px(28.), t, cx);
         div()
             .flex()
             .flex_col()
@@ -128,7 +129,11 @@ impl KynexApp {
         let current = self.appearances.get(path).map(|a| a.colour.clone()).unwrap_or_default();
         let mut items = vec![
             div().px_2().pt_1().text_xs().text_color(t.text_muted).child("Colour").into_any_element(),
-            div().px_1().py_1().child(self.colour_swatches("tab-colour", path, px(22.), &t, cx)).into_any_element(),
+            div()
+                .px_1()
+                .py_1()
+                .child(self.colour_swatches("tab-colour", path, gpui::px(22.), &t, cx))
+                .into_any_element(),
         ];
         for (n, (label, choice)) in [("Automatic", Colour::Auto), ("No colour", Colour::Off)].into_iter().enumerate() {
             let path = path.to_path_buf();

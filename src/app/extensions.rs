@@ -7,7 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{AnyElement, Context, Entity, FontWeight, Window, div, prelude::*, px};
+use crate::ui::px;
+use gpui::{AnyElement, Context, Entity, FontWeight, Window, div, prelude::*};
 use kynex_core::extensions::{self, Approval, Config, Plugin, Row, Source};
 use kynex_core::mcp::{self, Status};
 use kynex_core::mcp_config::{self, Browser, Scope};
