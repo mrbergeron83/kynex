@@ -97,10 +97,11 @@ impl KynexApp {
     }
 
     /// How many of the shown session's scratch files changed since its files
-    /// were last opened, for the composer's badge. Counted off the UI thread
-    /// when its conversation grows, so not every frame.
+    /// were last opened, for the composer's badge; it stays, through later
+    /// turns too, until they're opened. Counted off the UI thread when its
+    /// conversation grows, so not every frame.
     pub(super) fn scratch_badge(&mut self, cx: &mut Context<Self>) -> Option<usize> {
-        let s = self.active_session().filter(|s| s.kind == Kind::Code && !s.busy)?;
+        let s = self.active_session().filter(|s| s.kind == Kind::Code)?;
         let (id, cwd) = (s.session_id.clone()?, s.cwd.clone());
         let stamp = (id.clone(), s.items.len());
         if self.scratch_counted.as_ref() != Some(&stamp) {

@@ -583,7 +583,6 @@ impl KynexApp {
                 })
                 .into_any_element(),
             Item::Assistant(text) => {
-                let to_copy = text.clone();
                 // Commands Claude suggests (```bash / ```powershell) run in the project's terminal.
                 let run = (session_kind == Kind::Code).then(|| {
                     let this = cx.entity().downgrade();
@@ -592,25 +591,8 @@ impl KynexApp {
                     }) as markdown::RunCommand
                 });
                 div()
-                    .group("assistant")
-                    .relative()
                     .text_sm()
                     .child(markdown::render(("md", ix), text, key, ix, run, Some(&session.cwd), cx))
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .right(px(-30.))
-                            .invisible()
-                            .group_hover("assistant", |s| s.visible())
-                            .child(
-                                crate::ui::icon_button(("copy-msg", ix), Icon::Copy, cx)
-                                    .tooltip(Tooltip::text("Copy message"))
-                                    .on_click(move |_, _, cx| {
-                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(to_copy.clone()))
-                                    }),
-                            ),
-                    )
                     .into_any_element()
             }
             // "Thinking… 4s" while it streams; after, "Thought for 6s", which

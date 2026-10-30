@@ -298,6 +298,9 @@ pub struct Session {
     /// Its running process has driven a browser, so its browser server holds a
     /// pairing (and tabs) that stopping the process would lose.
     pub browser: bool,
+    /// Its process runs on project settings it couldn't take live; it starts
+    /// again once idle ([`Self::apply_settings`]).
+    pub stale: bool,
     /// Set by the UI so it hears about new events; a no-op until then.
     pub wake: Wake,
     child: Option<Child>,
@@ -322,6 +325,10 @@ pub struct Session {
     next_request: u64,
     /// `stop_task` requests awaiting an answer: request id → task id.
     stopping: HashMap<String, String>,
+    /// The project settings the running process got, and the `apply_flag_settings`
+    /// requests awaiting an answer.
+    launched: Option<project::Launched>,
+    applying: Vec<String>,
     /// The model that wrote the last reply, whose window `context` is measured against.
     reply_model: String,
     /// What the process reported when it started, until the app takes it.
@@ -440,6 +447,7 @@ impl Session {
             tasks: Tasks::default(),
             mcp: Vec::new(),
             browser: false,
+            stale: false,
             wake: Arc::new(|| {}),
             child: None,
             stdin: None,
@@ -455,6 +463,8 @@ impl Session {
             revision: 0,
             next_request: 0,
             stopping: HashMap::new(),
+            launched: None,
+            applying: Vec::new(),
             reply_model: String::new(),
             init: None,
             limits: None,
@@ -630,17 +640,20 @@ impl Session {
             "--permission-prompt-tool",
             "stdio",
         ]);
+        let mut launched = None;
         match self.kind {
             Kind::Chat => {
                 cmd.args(["--tools", ""]);
             }
             // Read fresh on every start, so edits in Claude settings apply to the next process.
             Kind::Code => {
-                if let Some(settings) = project::Permissions::load(&self.cwd).as_cli_settings() {
+                let (perms, claude) = (project::Permissions::load(&self.cwd), project::ClaudeSettings::load(&self.cwd));
+                if let Some(settings) = perms.as_cli_settings() {
                     cmd.args(["--settings", &settings]);
                 }
                 cmd.args(["--permission-mode", self.mode.cli()]);
-                cmd.args(project::ClaudeSettings::load(&self.cwd).cli_args());
+                cmd.args(claude.cli_args());
+                launched = Some(project::Launched::new(&perms, &claude));
             }
         }
         if !self.model.is_empty() {
@@ -667,6 +680,7 @@ impl Session {
         self.child = Some(child);
         self.stdin = Some(Arc::new(Mutex::new(stdin)));
         self.rx = Some(rx);
+        self.launched = launched;
         self.spawned = Some(Instant::now());
         self.ready = false;
         self.talked = false;
@@ -798,6 +812,22 @@ impl Session {
         self.mode = mode;
         if self.child.is_some() {
             self.control(json!({ "subtype": "set_permission_mode", "mode": mode.cli() }));
+        }
+    }
+
+    /// Brings the running process up to its project's changed rules, extra
+    /// folders or effort without a restart, where the CLI can take them live
+    /// (see [`project::Launched::update`]); otherwise marks it [`Self::stale`].
+    /// A process that isn't running reads them when it starts.
+    pub fn apply_settings(&mut self, perms: &project::Permissions, claude: &project::ClaudeSettings) {
+        let Some(launched) = &mut self.launched else { return };
+        match launched.update(perms, claude) {
+            project::Update::Same => {}
+            project::Update::Live(settings) => {
+                let id = self.control(json!({ "subtype": "apply_flag_settings", "settings": settings }));
+                self.applying.push(id);
+            }
+            project::Update::Restart => self.stale = true,
         }
     }
 
@@ -950,6 +980,9 @@ impl Session {
         self.ready = false;
         self.in_block = false;
         self.browser = false;
+        self.stale = false;
+        self.launched = None;
+        self.applying.clear();
         self.settle_thoughts();
         self.tasks.clear();
         self.stopping.clear();
@@ -1031,6 +1064,15 @@ impl Session {
                     }
                     let why = v["response"]["error"].as_str().unwrap_or("the CLI refused");
                     self.items.push(Item::Error(format!("Couldn't stop the background task: {why}")));
+                }
+            }
+            // A CLI that can't take settings live (an older one) gets them on a restart.
+            "control_response"
+                if v["response"]["request_id"].as_str().is_some_and(|r| self.applying.iter().any(|a| a == r)) =>
+            {
+                self.applying.retain(|a| v["response"]["request_id"] != a.as_str());
+                if v["response"]["subtype"] == "error" {
+                    self.stale = true;
                 }
             }
             "rate_limit_event" => {
@@ -1965,6 +2007,29 @@ mod tests {
         s.answer_permission(1, Answer::Server);
         let Some(Item::Permission { state, .. }) = s.items.last() else { panic!("no prompt") };
         assert!(*state == PermState::Allowed("all Edge actions allowed this session".into()));
+    }
+
+    #[test]
+    fn settings_go_live_or_mark_the_process_stale() {
+        let mut s = Session::new(Kind::Code, std::env::temp_dir());
+        let perms = project::Permissions::default();
+        let claude = project::ClaudeSettings { effort: "high".into(), ..Default::default() };
+        // Not running: the next start reads them.
+        s.apply_settings(&perms, &claude);
+        assert!(!s.stale && s.applying.is_empty());
+        s.launched = Some(project::Launched::new(&perms, &project::ClaudeSettings::default()));
+        s.apply_settings(&perms, &claude);
+        assert_eq!(s.applying, ["kynex-1"]);
+        // A CLI that refuses the patch starts again on the next idle moment.
+        s.handle(json!({ "type": "control_response", "response": { "subtype": "error", "request_id": "kynex-1",
+            "error": "unknown subtype" } }));
+        assert!(s.stale && s.applying.is_empty());
+        s.kill();
+        assert!(!s.stale && s.launched.is_none());
+        // Effort back to the default can't go live.
+        s.launched = Some(project::Launched::new(&perms, &claude));
+        s.apply_settings(&perms, &project::ClaudeSettings::default());
+        assert!(s.stale);
     }
 
     #[test]

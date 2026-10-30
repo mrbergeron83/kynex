@@ -231,6 +231,73 @@ impl ClaudeSettings {
     }
 }
 
+/// How a running process takes a change to its project's rules, extra folders or effort.
+#[derive(Debug, PartialEq)]
+pub enum Update {
+    /// It already runs on them.
+    Same,
+    /// This `apply_flag_settings` patch brings it up to date.
+    Live(Value),
+    /// It has to start again: a rule or folder it started with went away, or
+    /// effort went back to the default. A patch only adds to what `--settings`,
+    /// `--add-dir` and `--effort` gave it, and can't unset a key.
+    Restart,
+}
+
+/// What a process got from its project's settings: the rules, extra folders and
+/// effort it started with, and the last patch it was sent since.
+#[derive(Clone, Default, PartialEq)]
+pub struct Launched {
+    perms: Permissions,
+    dirs: Vec<PathBuf>,
+    effort: String,
+    patched: Option<Value>,
+}
+
+impl Launched {
+    pub fn new(perms: &Permissions, claude: &ClaudeSettings) -> Self {
+        Self { perms: perms.clone(), dirs: claude.add_dirs.clone(), effort: claude.effort.clone(), patched: None }
+    }
+
+    /// How to bring the process to `perms` and `claude`. A [`Update::Live`]
+    /// patch is taken as sent. It replaces the last one, so it always carries
+    /// every rule and folder added since the start.
+    pub fn update(&mut self, perms: &Permissions, claude: &ClaudeSettings) -> Update {
+        let kept = |started: &[String], now: &[String]| started.iter().all(|r| now.contains(r));
+        let effort_set = !self.effort.is_empty() || self.patched.as_ref().is_some_and(|p| p["effortLevel"].is_string());
+        if !kept(&self.perms.allow, &perms.allow)
+            || !kept(&self.perms.deny, &perms.deny)
+            || !self.dirs.iter().all(|d| claude.add_dirs.contains(d))
+            || (claude.effort.is_empty() && effort_set)
+        {
+            return Update::Restart;
+        }
+        let added = |started: &[String], now: &[String]| -> Vec<String> {
+            now.iter().filter(|r| !started.contains(r)).cloned().collect()
+        };
+        let dirs: Vec<String> =
+            claude.add_dirs.iter().filter(|d| !self.dirs.contains(d)).map(|d| d.display().to_string()).collect();
+        let mut patch = json!({ "permissions": {
+            "allow": added(&self.perms.allow, &perms.allow),
+            "deny": added(&self.perms.deny, &perms.deny),
+            "additionalDirectories": dirs,
+        } });
+        let nothing_added = patch["permissions"].as_object().is_some_and(|p| p.values().all(|v| v == &json!([])));
+        if !claude.effort.is_empty() {
+            patch["effortLevel"] = json!(claude.effort);
+        }
+        let same = match &self.patched {
+            Some(last) => *last == patch,
+            None => nothing_added && claude.effort == self.effort,
+        };
+        if same {
+            return Update::Same;
+        }
+        self.patched = Some(patch.clone());
+        Update::Live(patch)
+    }
+}
+
 /// The colours a project can be marked with, by name; the app turns each into a
 /// shade that suits the theme. Ordered round the colour wheel.
 pub const COLOURS: [&str; 8] = ["red", "orange", "yellow", "green", "teal", "blue", "violet", "pink"];
@@ -383,6 +450,48 @@ mod tests {
         };
         // The model goes to each session, not through these flags.
         assert_eq!(s.cli_args(), ["--effort", "high", "--add-dir", "/srv/shared"]);
+    }
+
+    #[test]
+    fn changes_apply_live_unless_something_is_taken_away() {
+        let perms = Permissions { allow: vec!["Read".into()], deny: Vec::new() };
+        let claude = ClaudeSettings { effort: "medium".into(), ..Default::default() };
+        let mut l = Launched::new(&perms, &claude);
+        assert_eq!(l.update(&perms, &claude), Update::Same);
+
+        // Effort switches live; the patch carries no rules yet.
+        let mut claude = ClaudeSettings { effort: "low".into(), ..claude };
+        assert_eq!(
+            l.update(&perms, &claude),
+            Update::Live(json!({ "permissions": { "allow": [], "deny": [], "additionalDirectories": [] },
+                "effortLevel": "low" }))
+        );
+        assert_eq!(l.update(&perms, &claude), Update::Same);
+
+        // Added rules and folders go on top of the ones it started with, in one patch with the effort.
+        let mut perms = Permissions { allow: vec!["Read".into(), "Edit".into()], deny: vec!["WebFetch".into()] };
+        claude.add_dirs = vec![PathBuf::from("/srv")];
+        assert_eq!(
+            l.update(&perms, &claude),
+            Update::Live(json!({ "permissions": { "allow": ["Edit"], "deny": ["WebFetch"],
+                "additionalDirectories": ["/srv"] }, "effortLevel": "low" }))
+        );
+        // One added since goes again: the patch replaces the last.
+        perms.allow.retain(|r| r != "Edit");
+        assert_eq!(
+            l.update(&perms, &claude),
+            Update::Live(json!({ "permissions": { "allow": [], "deny": ["WebFetch"],
+                "additionalDirectories": ["/srv"] }, "effortLevel": "low" }))
+        );
+
+        // A rule it started with going, or effort back to the default, needs a new process.
+        assert_eq!(l.clone().update(&Permissions::default(), &claude), Update::Restart);
+        let default_effort = ClaudeSettings { effort: String::new(), ..claude.clone() };
+        assert_eq!(l.update(&perms, &default_effort), Update::Restart);
+        // Started on the default, effort set live can't go back either.
+        let mut l = Launched::new(&perms, &default_effort);
+        assert!(matches!(l.update(&perms, &claude), Update::Live(_)));
+        assert_eq!(l.update(&perms, &default_effort), Update::Restart);
     }
 
     #[test]

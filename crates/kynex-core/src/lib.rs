@@ -28,6 +28,7 @@ pub mod markdown;
 pub mod mcp;
 pub mod mcp_config;
 pub mod mentions;
+pub mod model_groups;
 pub mod motion;
 pub mod open;
 pub mod palette;

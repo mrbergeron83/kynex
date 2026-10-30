@@ -248,19 +248,18 @@ impl KynexApp {
         // A project with its own model marks the chip with a folder.
         let own_model = self.project_model().is_some();
         // Effort lives in the project's Claude settings (a tiny file); chat has
-        // none. It rides on the model chip, "Fable 5.1 · max", unless it's the default.
-        let effort_label = self.active_project().filter(|_| mode.is_some()).and_then(|p| {
+        // none. Its own chip beside the model's: "Effort" for the default, else the level.
+        let effort_label = self.active_project().filter(|_| mode.is_some()).map(|p| {
             let effort = self.claude_settings(&p.path).effort;
-            project::EFFORTS.iter().find(|e| e.0 == effort && !e.0.is_empty()).map(|(_, name)| name.to_lowercase())
+            project::EFFORTS
+                .iter()
+                .find(|e| e.0 == effort && !e.0.is_empty())
+                .map_or_else(|| "Effort".to_string(), |(_, name)| format!("{name} effort"))
         });
-        let has_effort = mode.is_some() && self.active_project().is_some();
-        let chip_tip = match (own_model, has_effort) {
-            (true, true) => "Model for this project, and how hard Claude thinks here; from the next session start",
-            (false, true) => {
-                "Model for every tab, and how hard Claude thinks in this project; from the next session start"
-            }
-            (true, false) => "Model for this project; applies from the next session start",
-            (false, false) => "Model, for every tab; applies from the next session start",
+        let chip_tip = if own_model {
+            "Model for this project; applies from the next session start"
+        } else {
+            "Model, for every tab; applies from the next session start"
         };
         let in_project = matches!(self.saved.active, Active::Project(_));
         let placeholder = if self.rewinding() {
@@ -502,15 +501,23 @@ impl KynexApp {
                             .gap_1()
                             .when(own_model, |b| b.child(icon(Icon::Folder, t.text_placeholder).size_3()))
                             .child(model_label)
-                            .children(
-                                effort_label.map(|e| div().text_color(t.text_placeholder).child(format!("· {e}"))),
-                            )
                             .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
                             .tooltip(Tooltip::text(chip_tip))
                             .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
                                 this.open_menu(Menu::Model, ev.position(), Anchor::BottomLeft, cx)
                             })),
                     )
+                    .children(effort_label.map(|effort| {
+                        ghost_button("effort", cx)
+                            .text_color(t.text_muted)
+                            .gap_1()
+                            .child(effort)
+                            .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
+                            .tooltip(Tooltip::text("How hard Claude thinks in this project"))
+                            .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                                this.open_menu(Menu::Effort, ev.position(), Anchor::BottomLeft, cx)
+                            }))
+                    }))
                     .when_some(mode, |d, mode| {
                         d.child(
                             ghost_button("mode", cx)
