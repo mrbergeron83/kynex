@@ -197,7 +197,7 @@ impl KynexApp {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(gpui::black().opacity(0.45))
+                .bg(crate::theme::theme(cx).scrim())
                 .occlude()
                 .on_mouse_down(
                     MouseButton::Left,

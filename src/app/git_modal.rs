@@ -143,7 +143,7 @@ impl KynexApp {
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(gpui::black().opacity(0.45))
+                .bg(crate::theme::theme(cx).scrim())
                 .occlude()
                 .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_git_modal(cx)))
                 .child(pop("git-modal-in", card, gpui::px(8.), leaving)),

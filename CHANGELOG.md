@@ -28,11 +28,20 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Closer to the design spec: date and Pinned headers in the sessions panel are section
-  labels; your messages have no border; a session's name isn't bold; tool runs drop the
-  terminal icon on every row and spin only on the step that's running; text is 820 px wide in
-  the Readable column; the command palette, find bar and toasts take their specified sizes
-  and spacing; terminal shell names are monospaced.
+- The UI follows its design spec throughout:
+  - Sessions panel: date, Pinned, group and Archived headers are section labels that fold
+    with a count.
+  - Transcript: your messages have no border, and a session's name isn't bold. Tool runs drop
+    the terminal icon on every row and spin only on the step that's running. Text is 820 px
+    wide in the Readable column, and code blocks and tables in replies widen into the tool
+    column when their lines are long.
+  - Code blocks show the language top right, with Copy and Run beside it on hover. Edit diffs
+    are numbered with the file's line numbers.
+  - The composer shows model and effort as one chip. The command palette groups results under
+    Sessions, Projects and Actions.
+  - The palette, find bar, toasts and terminal strip take their specified sizes, and terminal
+    shell names are monospaced.
+  - Every dialog dims the window the same way, and every colour comes from the theme.
 - Changing a project's effort, or adding rules or extra folders, reaches its running sessions
   at once instead of restarting them; they keep their browser tab and "this session" rules.
   Only taking a rule or folder away (or effort back to the default) still restarts a session,

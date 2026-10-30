@@ -19,7 +19,7 @@ use super::KynexApp;
 use super::menus::Menu;
 use crate::theme::{theme, ui_font};
 use crate::ui::input::TextInput;
-use crate::ui::{Icon, divider, icon, menu_item, popover};
+use crate::ui::{divider, menu_item, popover, section_label};
 
 /// What a session menu item does when clicked.
 type MenuAction = Box<dyn Fn(&mut KynexApp, &mut Window, &mut Context<KynexApp>)>;
@@ -318,45 +318,28 @@ impl KynexApp {
         let editing = matches!(&self.organize.editing, Some(Editing::Group(p, e)) if p == cwd && *e == i);
         let (count, hover) = (rows.len(), t.hover);
         let (toggle_cwd, drop_cwd) = (cwd.to_path_buf(), cwd.to_path_buf());
-        let header = div()
-            .id(("group", i))
-            .flex()
-            .items_center()
-            .gap_1()
-            .h(px(28.))
-            .px_1p5()
-            .rounded_md()
-            .text_xs()
-            .text_color(t.text_muted)
-            .cursor_pointer()
-            .hover(|s| s.bg(t.hover))
-            .child(
-                icon(if group.collapsed { Icon::ChevronRight } else { Icon::ChevronDown }, t.text_placeholder).size_3(),
-            )
-            .child(if editing {
-                self.rename_field(cx).flex_1().into_any_element()
-            } else {
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .child(group.name)
-                    .into_any_element()
-            })
-            .child(div().flex_none().text_color(t.text_placeholder).child(count.to_string()))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                if !editing {
-                    this.edit_groups(&toggle_cwd, |g| g.toggle_group(i));
-                    cx.notify();
-                }
-            }))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                    this.open_menu(Menu::Group(i), ev.position, gpui::Anchor::TopLeft, cx)
-                }),
-            );
+        // A section header like the date ones: its name, and its count while folded.
+        let label = if group.collapsed { format!("{} · {count}", group.name) } else { group.name.clone() };
+        let text = t.text;
+        let header = match editing {
+            true => div().pt_3().pb_1().px_1().child(self.rename_field(cx)),
+            false => section_label(&label, cx).pt_3().pb_1().px_2().truncate(),
+        }
+        .id(("group", i))
+        .cursor_pointer()
+        .hover(move |s| s.text_color(text))
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            if !editing {
+                this.edit_groups(&toggle_cwd, |g| g.toggle_group(i));
+                cx.notify();
+            }
+        }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                this.open_menu(Menu::Group(i), ev.position, gpui::Anchor::TopLeft, cx)
+            }),
+        );
         div()
             .id(("group-block", i))
             .flex()
@@ -369,7 +352,7 @@ impl KynexApp {
                 cx.notify();
             }))
             .child(header)
-            .when(!group.collapsed, |d| d.child(div().pl_3().children(rows)))
+            .when(!group.collapsed, |d| d.children(rows))
             .into_any_element()
     }
 
@@ -377,7 +360,7 @@ impl KynexApp {
     pub(super) fn render_archived(&mut self, cwd: &Path, rows: Vec<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let open = self.organize.show_archived;
-        let (count, hover) = (rows.len(), t.hover);
+        let (count, hover, text) = (rows.len(), t.hover, t.text);
         let drop_cwd = cwd.to_path_buf();
         div()
             .id("archived-block")
@@ -392,21 +375,13 @@ impl KynexApp {
                 cx.notify();
             }))
             .child(
-                div()
+                section_label(&if open { "Archived".to_string() } else { format!("Archived · {count}") }, cx)
                     .id("archived")
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .h(px(28.))
-                    .px_1p5()
-                    .rounded_md()
-                    .text_xs()
-                    .text_color(t.text_placeholder)
+                    .pt_3()
+                    .pb_1()
+                    .px_2()
                     .cursor_pointer()
-                    .hover(|s| s.bg(t.hover))
-                    .child(icon(if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_placeholder).size_3())
-                    .child(div().flex_1().child("Archived"))
-                    .child(count.to_string())
+                    .hover(move |s| s.text_color(text))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.organize.show_archived = !this.organize.show_archived;
                         cx.notify();

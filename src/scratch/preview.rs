@@ -164,7 +164,7 @@ impl ScratchView {
                 .absolute()
                 .inset_0()
                 .p_6()
-                .bg(gpui::black().opacity(0.35))
+                .bg(crate::theme::theme(cx).scrim())
                 .occlude()
                 .on_mouse_down(
                     MouseButton::Left,

@@ -26,7 +26,7 @@ use crate::theme::{THEMES, Theme, mono, theme};
 use crate::ui::input::{self, TextInput};
 use crate::ui::motion::{self, fade, pop};
 use crate::ui::wash::wash;
-use crate::ui::{Icon, icon};
+use crate::ui::{Icon, icon, section_label};
 
 /// Results listed at most; the list scrolls through them.
 const LISTED: usize = 60;
@@ -273,7 +273,18 @@ impl KynexApp {
         let query = view.input.read(cx).text().to_string();
         if view.stale || view.query != query {
             let recent: Vec<&str> = self.palette_recent.iter().map(String::as_str).collect();
-            view.found = Rc::new(view.palette.matching(&query, &recent, LISTED));
+            let mut found = view.palette.matching(&query, &recent, LISTED);
+            // Grouped by kind under their labels, the group with the best match
+            // first; the ranking holds within each group.
+            let mut kinds: Vec<Kind> = Vec::new();
+            for m in &found {
+                let k = view.palette.entries[m.index].kind;
+                if !kinds.contains(&k) {
+                    kinds.push(k);
+                }
+            }
+            found.sort_by_key(|m| kinds.iter().position(|k| *k == view.palette.entries[m.index].kind));
+            view.found = Rc::new(found);
             if view.query != query {
                 view.selected = 0;
             }
@@ -364,63 +375,24 @@ impl KynexApp {
         let found = self.palette_found(cx)?;
         let view = self.palette.clone()?;
         let t = theme(cx).clone();
-        let bold = HighlightStyle { font_weight: Some(FontWeight::BOLD), color: Some(t.text), ..Default::default() };
         let start = (view.selected + 1).saturating_sub(ROWS);
-        let rows = found.iter().enumerate().skip(start).take(ROWS).map(|(i, m)| {
-            let row = &view.rows[m.index];
-            let entry = &view.palette.entries[m.index];
-            let title = &entry.title;
-            let highlights: Vec<_> = m
-                .positions
-                .iter()
-                .filter(|&&p| title.is_char_boundary(p) && p < title.len())
-                .map(|&p| (p..p + title[p..].chars().next().map_or(1, char::len_utf8), bold))
-                .collect();
-            let glyph = match entry.kind {
-                Kind::Session => Icon::Message,
-                Kind::Project => Icon::Folder,
-                Kind::Action => Icon::ChevronRight,
-            };
-            let hint_colour = match row.hint.as_ref() {
-                "needs you" => t.warning,
-                "working" => t.accent,
-                _ => t.text_placeholder,
-            };
-            let mono_hint = matches!(row.target, Target::Command(_));
-            div()
-                .id(("palette-row", i))
-                .relative()
-                .flex()
-                .items_center()
-                .gap_2()
-                .h(px(28.))
-                .px_2()
-                .rounded_md()
-                .cursor_pointer()
-                .child(wash(t.hover, (i == view.selected).then_some(t.active)))
-                .child(icon(glyph, t.text_muted).size_3p5().flex_none())
-                .child(
-                    div()
-                        .flex_none()
-                        .max_w(px(360.))
-                        .truncate()
-                        .text_sm()
-                        .text_color(t.text)
-                        .child(StyledText::new(title.clone()).with_highlights(highlights)),
-                )
-                .child(div().flex_1().min_w_0().truncate().text_xs().text_color(t.text_muted).child(row.detail.clone()))
-                .when(!row.hint.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .flex_none()
-                            .text_size(px(11.))
-                            .text_color(hint_colour)
-                            .when(mono_hint, |d| d.font_family(mono()))
-                            .child(row.hint.clone()),
-                    )
-                })
-                .on_click(cx.listener(move |this, _, window, cx| this.take_palette(i, window, cx)))
-        });
+        let mut last_kind = None;
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (i, m) in found.iter().enumerate().skip(start).take(ROWS) {
+            let kind = view.palette.entries[m.index].kind;
+            if last_kind != Some(kind) {
+                let label = match kind {
+                    Kind::Session => "Sessions",
+                    Kind::Project => "Projects",
+                    Kind::Action => "Actions",
+                };
+                let first = last_kind.is_none();
+                let header = section_label(label, cx).px_2().pb_1();
+                rows.push(if first { header.pt_1p5() } else { header.pt_3() }.into_any_element());
+                last_kind = Some(kind);
+            }
+            rows.push(palette_row(&view, i, m, &t, cx));
+        }
         let more = found.len().saturating_sub(start + ROWS);
         let empty = found.is_empty();
 
@@ -497,7 +469,7 @@ impl KynexApp {
                 .items_center()
                 .px_10()
                 .pt(px(120.))
-                .bg(gpui::black().opacity(0.25))
+                .bg(crate::theme::theme(cx).scrim())
                 .occlude()
                 .on_mouse_down(
                     MouseButton::Left,
@@ -512,4 +484,70 @@ impl KynexApp {
             leaving,
         ))
     }
+}
+
+/// Result `i` of the palette, `m`: its icon, title with the matched letters
+/// bold, detail and hint.
+fn palette_row(
+    view: &PaletteView,
+    i: usize,
+    m: &Match,
+    t: &crate::theme::Palette,
+    cx: &mut Context<KynexApp>,
+) -> AnyElement {
+    let row = &view.rows[m.index];
+    let entry = &view.palette.entries[m.index];
+    let bold = HighlightStyle { font_weight: Some(FontWeight::BOLD), color: Some(t.text), ..Default::default() };
+    let title = &entry.title;
+    let highlights: Vec<_> = m
+        .positions
+        .iter()
+        .filter(|&&p| title.is_char_boundary(p) && p < title.len())
+        .map(|&p| (p..p + title[p..].chars().next().map_or(1, char::len_utf8), bold))
+        .collect();
+    let glyph = match entry.kind {
+        Kind::Session => Icon::Message,
+        Kind::Project => Icon::Folder,
+        Kind::Action => Icon::ChevronRight,
+    };
+    let hint_colour = match row.hint.as_ref() {
+        "needs you" => t.warning,
+        "working" => t.accent,
+        _ => t.text_placeholder,
+    };
+    let mono_hint = matches!(row.target, Target::Command(_));
+    div()
+        .id(("palette-row", i))
+        .relative()
+        .flex()
+        .items_center()
+        .gap_2()
+        .h(px(28.))
+        .px_2()
+        .rounded_md()
+        .cursor_pointer()
+        .child(wash(t.hover, (i == view.selected).then_some(t.active)))
+        .child(icon(glyph, t.text_muted).size_3p5().flex_none())
+        .child(
+            div()
+                .flex_none()
+                .max_w(px(360.))
+                .truncate()
+                .text_sm()
+                .text_color(t.text)
+                .child(StyledText::new(title.clone()).with_highlights(highlights)),
+        )
+        .child(div().flex_1().min_w_0().truncate().text_xs().text_color(t.text_muted).child(row.detail.clone()))
+        .when(!row.hint.is_empty(), |d| {
+            d.child(
+                div()
+                    .flex_none()
+                    .text_size(px(11.))
+                    .text_color(hint_colour)
+                    .when(mono_hint, |d| d.font_family(mono()))
+                    .child(row.hint.clone()),
+            )
+        })
+        .on_click(cx.listener(move |this, _, window, cx| this.take_palette(i, window, cx)))
+        .into_any_element()
 }

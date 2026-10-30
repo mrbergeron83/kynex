@@ -206,7 +206,7 @@ impl Render for ImageViewer {
             .absolute()
             .inset_0()
             .occlude()
-            .bg(gpui::black().opacity(0.8))
+            .bg(crate::theme::theme(cx).scrim_media())
             .on_key_down(cx.listener(Self::key_down))
             .on_scroll(cx.listener(Self::wheel))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
