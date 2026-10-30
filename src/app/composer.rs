@@ -149,6 +149,7 @@ impl KynexApp {
         let queued = self.render_queue(cx);
         let running = self.render_running_tasks(cx);
         let handoff = self.render_handoff(cx);
+        let files_badge = self.scratch_badge(cx);
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
         self.slash.shown = None;
         let popup = match () {
@@ -463,6 +464,38 @@ impl KynexApp {
                             .tooltip(Tooltip::with_meta("Attach images or files", "or paste / drop them"))
                             .on_click(cx.listener(|this, _, _, cx| this.attach_files(cx))),
                     )
+                    .children(files_badge.map(|new| {
+                        // The session's files; a dot with how many scratch files changed since you looked.
+                        div()
+                            .relative()
+                            .child(
+                                icon_button("session-files", Icon::Files, cx)
+                                    .tooltip(Tooltip::with_meta(
+                                        "This session's files",
+                                        "scratch folder, edited files, images, task output",
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| this.open_session_scratch(window, cx))),
+                            )
+                            .when(new > 0, |d| {
+                                d.child(
+                                    div()
+                                        .absolute()
+                                        .top(px(-3.))
+                                        .right(px(-3.))
+                                        .min_w(px(14.))
+                                        .h(px(14.))
+                                        .px(px(3.))
+                                        .rounded_full()
+                                        .bg(t.accent)
+                                        .text_color(t.on_accent)
+                                        .text_size(px(9.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(if new > 99 { "99+".to_string() } else { new.to_string() }),
+                                )
+                            })
+                    }))
                     .child(
                         ghost_button("model", cx)
                             .text_color(t.text_muted)

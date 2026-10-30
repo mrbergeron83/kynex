@@ -23,7 +23,7 @@
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, from the header    |
-//! | `scratch_modal.rs`  | the scratch explorer in a modal: session or project  |
+//! | `scratch_modal.rs`  | the file explorer in a modal: session or project     |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
@@ -188,6 +188,11 @@ pub struct KynexApp {
     palette: Option<PaletteView>,
     find: Option<FindBar>,
     scratch: Option<ScratchModal>,
+    /// When each session's files were last opened, for the composer's badge,
+    /// and how many scratch files changed since; what that count was taken at.
+    scratch_seen: HashMap<String, std::time::SystemTime>,
+    scratch_new: HashMap<String, usize>,
+    scratch_counted: Option<(String, usize)>,
     /// Settings → Storage's measurements, while that page has been opened.
     storage: Option<StorageView>,
     /// Actions last run from the palette, newest first.
@@ -426,6 +431,9 @@ impl KynexApp {
             palette: None,
             find: None,
             scratch: None,
+            scratch_seen: HashMap::new(),
+            scratch_new: HashMap::new(),
+            scratch_counted: None,
             storage: None,
             palette_recent: Vec::new(),
             sessions: None,

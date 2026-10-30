@@ -17,6 +17,8 @@ gpui = { package = "gpui-pre", version = "=0.3.10" }
 # crate, which owns `MacPlatform`.
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = ["font-kit"] }
 image = "0.25.10"
+# Watching a session's scratch folder for the file explorer (ReadDirectoryChangesW, inotify, FSEvents).
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 kynex-core = { path = "crates/kynex-core" }
 pulldown-cmark = { version = "0.13", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }

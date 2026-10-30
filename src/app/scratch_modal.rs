@@ -1,17 +1,23 @@
-//! The scratch explorer (`crate::scratch`) in a modal over the conversation:
-//! a session's scratch folder from the session header, or the project's (every
-//! session's) from the toolbar and Ctrl+K. Esc closes the preview first, then
-//! the modal; so does a click outside.
+//! The file explorer (`crate::scratch`) in a modal over the conversation: a
+//! session's files (its scratch folder, edited files, images, task output)
+//! from the session header or the composer's files button, whose badge counts
+//! scratch files changed since you last looked; or the project's scratch
+//! folders (every session's) from the toolbar. Esc closes the preview first,
+//! then the modal; so does a click outside.
 
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use crate::ui::px;
 use gpui::{AnyElement, Context, Entity, FontWeight, MouseButton, SharedString, Window, div, prelude::*};
-use kynex_core::session::Kind;
+use kynex_core::live::Key;
+use kynex_core::session::{Item, Kind};
+use kynex_core::session_files;
+use kynex_core::session_log::LoggedImage;
 use kynex_core::storage::{self, Roots};
 
 use super::KynexApp;
-use crate::scratch::ScratchView;
+use crate::scratch::{ScratchEvent, ScratchView, SessionExtras};
 use crate::theme::{mono, theme};
 use crate::ui::motion::{self, fade, pop};
 use crate::ui::{Icon, Tooltip, icon, icon_button};
@@ -23,34 +29,99 @@ pub(super) struct ScratchModal {
 }
 
 impl KynexApp {
-    fn open_scratch(&mut self, root: PathBuf, title: String, cx: &mut Context<Self>) {
+    /// Opens the explorer on `root`; with `session`, also that session's own
+    /// files (`extras`), whose images and changes it asks the app to show.
+    fn open_scratch(
+        &mut self,
+        root: PathBuf,
+        title: String,
+        session: Option<(Key, SessionExtras)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.menu = None;
-        let view = cx.new(|cx| ScratchView::new(root, cx));
+        let (key, extras) = session.map_or((None, None), |(k, e)| (Some(k), Some(e)));
+        let cwd = extras.as_ref().map(|e| e.cwd.clone());
+        let view = cx.new(|cx| ScratchView::new(root, extras, cx));
+        cx.subscribe_in(&view, window, move |this, _, ev: &ScratchEvent, window, cx| match ev {
+            ScratchEvent::OpenImage { item, index } => {
+                let preview =
+                    this.all_sessions().find(|s| Some(s.uid) == key).and_then(|s| match s.items.get(*item)? {
+                        Item::User { images, .. } | Item::ToolResult { images, .. } => images.get(*index).cloned(),
+                        _ => None,
+                    });
+                let Some(preview) = preview else { return };
+                if let Ok(image) = preview.clone().downcast::<gpui::Image>() {
+                    this.open_image(image, window, cx);
+                } else if let Some(logged) = preview.downcast_ref::<LoggedImage>() {
+                    this.open_logged(logged.clone(), window, cx);
+                }
+            }
+            ScratchEvent::ShowChanges(file) => {
+                let Some(cwd) = cwd.clone() else { return };
+                this.scratch = None;
+                this.open_git_file(cwd, file.clone(), cx);
+            }
+        })
+        .detach();
         self.scratch = Some(ScratchModal { view, title: title.into() });
         cx.notify();
     }
 
-    /// The shown session's scratch folder; nothing for a session not saved yet.
-    pub(super) fn open_session_scratch(&mut self, cx: &mut Context<Self>) {
+    /// The shown session's files: its scratch folder, what it edited, its
+    /// images and task output. Nothing for a session not saved yet.
+    pub(super) fn open_session_scratch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(s) = self.active_session().filter(|s| s.kind == Kind::Code) else { return };
-        let (cwd, id) = (s.cwd.clone(), s.session_id.clone());
-        let Some(root) = Roots::local().zip(id).and_then(|(r, id)| storage::session_scratch(&r, &cwd, &id)) else {
+        let (cwd, id, key) = (s.cwd.clone(), s.session_id.clone(), s.uid);
+        let Some(root) = Roots::local().zip(id.clone()).and_then(|(r, id)| storage::session_scratch(&r, &cwd, &id))
+        else {
             return;
         };
-        let title = self.active_session().and_then(|s| s.session_id.as_deref()).and_then(|id| self.session_name(id));
-        self.open_scratch(
-            root,
-            title.map_or_else(|| "This session's scratch".into(), |t| format!("Scratch · {t}")),
-            cx,
-        );
+        let files = session_files::gather(&s.items, &cwd);
+        if let Some(id) = &id {
+            self.scratch_seen.insert(id.clone(), SystemTime::now());
+            self.scratch_new.remove(id);
+        }
+        let title = id.as_deref().and_then(|id| self.session_name(id));
+        let title = title.map_or_else(|| "This session's files".into(), |t| format!("Files · {t}"));
+        self.open_scratch(root, title, Some((key, SessionExtras { cwd, files })), window, cx);
     }
 
     /// The scratch folders of every session in the active project.
-    pub(super) fn open_project_scratch(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn open_project_scratch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(path) = self.active_project().map(|p| p.path.clone()) else { return };
         let Some(roots) = Roots::local() else { return };
         let name = kynex_core::paths::project_name(&path);
-        self.open_scratch(storage::project_scratch(&roots, &path), format!("Scratch · {name}, every session"), cx);
+        let root = storage::project_scratch(&roots, &path);
+        self.open_scratch(root, format!("Scratch · {name}, every session"), None, window, cx);
+    }
+
+    /// How many of the shown session's scratch files changed since its files
+    /// were last opened, for the composer's badge. Counted off the UI thread
+    /// when its conversation grows, so not every frame.
+    pub(super) fn scratch_badge(&mut self, cx: &mut Context<Self>) -> Option<usize> {
+        let s = self.active_session().filter(|s| s.kind == Kind::Code && !s.busy)?;
+        let (id, cwd) = (s.session_id.clone()?, s.cwd.clone());
+        let stamp = (id.clone(), s.items.len());
+        if self.scratch_counted.as_ref() != Some(&stamp) {
+            self.scratch_counted = Some(stamp);
+            let since = self.scratch_seen.get(&id).copied().unwrap_or(SystemTime::UNIX_EPOCH);
+            let root = Roots::local().and_then(|r| storage::session_scratch(&r, &cwd, &id));
+            cx.spawn(async move |this, cx| {
+                let n = match root {
+                    Some(root) => cx.background_spawn(async move { session_files::count_newer(&root, since) }).await,
+                    None => 0,
+                };
+                this.update(cx, |this, cx| {
+                    this.scratch_new.insert(id, n);
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
+        let id = self.active_session()?.session_id.clone()?;
+        Some(self.scratch_new.get(&id).copied().unwrap_or(0))
     }
 
     /// Esc: the preview closes first, then the modal; false if neither was open.

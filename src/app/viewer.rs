@@ -46,7 +46,7 @@ impl KynexApp {
     }
 
     /// Opens an image that's still in its session log, once it's read.
-    fn open_logged(&mut self, image: LoggedImage, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_logged(&mut self, image: LoggedImage, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
             let media_type = image.media_type.clone();
             let bytes = gpui::AppContext::background_spawn(cx, async move { image.load() }).await;

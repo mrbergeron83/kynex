@@ -41,6 +41,7 @@ pub mod resources;
 pub mod rewind;
 pub mod scale;
 pub mod session;
+pub mod session_files;
 pub mod session_log;
 pub mod storage;
 pub mod tasks;
@@ -52,6 +53,7 @@ pub mod transcript;
 pub mod tray;
 pub mod update;
 pub mod usage;
+pub mod watch;
 #[cfg(windows)]
 pub mod win_shell;
 pub mod wsl;

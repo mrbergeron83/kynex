@@ -155,7 +155,7 @@ fn commands() -> Vec<(Cmd, String, &'static str)> {
         (Cmd::Settings(3), "Settings: Storage", "disk space size clean delete old sessions"),
         (Cmd::ProjectSettings, "Project settings", "rules permissions effort model directories"),
         (Cmd::Extensions, "Extensions", "mcp servers plugins"),
-        (Cmd::SessionScratch, "Scratch files of this session", "temporary files scratchpad explorer browse"),
+        (Cmd::SessionScratch, "Files of this session", "scratch scratchpad edited images screenshots output explorer"),
         (
             Cmd::ProjectScratch,
             "Scratch files of this project",
@@ -343,8 +343,8 @@ impl KynexApp {
                 }
             }
             Cmd::Extensions => self.open_extensions(0, cx),
-            Cmd::SessionScratch => self.open_session_scratch(cx),
-            Cmd::ProjectScratch => self.open_project_scratch(cx),
+            Cmd::SessionScratch => self.open_session_scratch(window, cx),
+            Cmd::ProjectScratch => self.open_project_scratch(window, cx),
             Cmd::About => self.open_about(cx),
             Cmd::CheckForUpdates => {
                 self.check_for_update(cx);

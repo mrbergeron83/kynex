@@ -109,7 +109,7 @@ impl KynexApp {
             .child(
                 icon_button("open-scratch", Icon::Files, cx)
                     .tooltip(Tooltip::with_meta("Scratch files", "Claude's temporary files, for every session here"))
-                    .on_click(cx.listener(|this, _, _, cx| this.open_project_scratch(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.open_project_scratch(window, cx))),
             )
             .child(open("open-code", Icon::Code, "Open in VS Code", Opener::Code, path.clone(), cx))
             .child(open("open-files", Icon::Folder, "Open in file manager", Opener::Explorer, path.clone(), cx))

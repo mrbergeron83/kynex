@@ -23,11 +23,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Find in the conversation (Ctrl+F / Cmd+F, rebindable as `find`): matches are highlighted
   in messages, replies, thinking and tool output, "3 of 12" with Enter / Shift+Enter to
   move between them; a match inside a folded tool run opens it.
-- Scratch files: "Scratch" in the session header opens an explorer of the session's scratch
-  folder (Claude's scripts, notes, task output), and the toolbar's files button opens the
-  project's, every session's together. Folders on the left, their files on the right; a
-  file opens in a preview (highlighted text, pictures) with Go to file, which shows it in
-  your file manager, and Open. Also in Ctrl+K.
+- Session files: "Files" in the session header, or the files button beside the composer,
+  opens an explorer of everything a session left: its scratch folder (Claude's scripts,
+  notes, downloads), the project files it edited (marked while git still has changes for
+  them, with Show changes), the images in the conversation and its background tasks'
+  output. A file opens in a preview (highlighted code, rendered markdown, pictures) with
+  Go to file, which shows it in your file manager, Open in editor and Open. The lists
+  follow changes as Claude works, and the composer's button counts new scratch files since
+  you last looked. The toolbar's files button opens the project's scratch folders, every
+  session's together. Also in Ctrl+K.
 - Settings → Storage: how much disk Claude Code's sessions take (logs, scratchpads, file
   checkpoints), by project and biggest session first. Clear a session's scratchpad or
   checkpoints, delete it, delete sessions not used in 30 / 90 / 365 days, or clear what's
