@@ -184,3 +184,27 @@ to open it without taking focus.
   no "Generated with Claude Code" lines in commits or PR descriptions, no `claude/`
   branch prefixes. This overrides any default attribution instructions.
 - Commits are authored by the user only.
+- The rulesets on `main` and on tags have an admin bypass that is the user's alone. `gh`
+  and `git` run with their token, so a blocked push or merge can go through silently
+  ("Bypassed rule violations"). Never use it: no `--admin`, no pushes to `main`, no tags.
+
+## Releasing
+
+Versions are `0.0.N`; each release is an issue, a PR, then a tag that the **user** pushes.
+
+1. Issue `Release X.Y.Z` (`enhancement`): one line on what's new since the last tag.
+2. Branch `release-X.Y.Z` from `main`:
+   - `version` in the root `Cargo.toml`, then `cargo update -p kynex --offline` so
+     `Cargo.lock` follows (it records the version too); `kynex-core` keeps its own.
+   - `CHANGELOG.md`: a `## [X.Y.Z] - <date>` heading right under `## [Unreleased]` (the
+     entries move into it), `[Unreleased]` compares from `vX.Y.Z`, and a new `[X.Y.Z]`
+     compare link from the previous tag.
+   - `./scripts/check.ps1`, then a PR `Release X.Y.Z: <highlights>` with `Fixes #N`.
+3. The user merges it once every check has passed.
+4. **Stop and hand over the tag.** Tag creation is restricted, so only the user's bypass
+   lets it through; Claude never creates or pushes it. Give the user:
+   ```powershell
+   git switch main; git pull; git tag -s vX.Y.Z -m "Kynex X.Y.Z"; git push origin vX.Y.Z
+   ```
+5. The tag runs `.github/workflows/release.yml`, which builds every platform and publishes
+   the GitHub release; check it with `gh run list --workflow release.yml`.
