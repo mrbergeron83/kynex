@@ -1,13 +1,15 @@
 # Build Kynex for every desktop OS and publish a GitHub Release.
 #
-# Push a tag matching the version in Cargo.toml to release:
-#   git tag v0.1.0 && git push origin v0.1.0
-# Running it by hand (workflow_dispatch) only builds, so the archives can be
-# checked from the run's artifacts without publishing anything.
+# Merging a release PR releases: when a push to main brings a Cargo.toml
+# version with no tag yet, this builds that commit and publishes vX.Y.Z,
+# creating the tag on it only once everything has passed. Pushing a tag by
+# hand still works (it must match Cargo.toml and be on main). Running it by
+# hand (workflow_dispatch) only builds, so the archives can be checked from the
+# run's artifacts without publishing anything.
 #
-# Nothing is built for release until the gates pass: the tag is on main and
-# matches Cargo.toml, CI (fmt, clippy, tests on every OS) passes on the tagged
-# commit, and cargo-deny finds no advisories as of now, not as of the merge.
+# Nothing is built for release until the gates pass: the version is new,
+# CI (fmt, clippy, tests on every OS) passes on the commit, and cargo-deny
+# finds no advisories as of now, not as of the merge.
 #
 # Once it's set up, kynex.exe is Authenticode-signed before the checksums are taken
 # (the sign-windows job; CONTRIBUTING.md has the setup).
@@ -21,11 +23,19 @@ name: Release
 
 on:
   push:
+    # A release PR changes the version in Cargo.toml (tag pushes ignore `paths`).
+    branches: [main]
+    paths: [Cargo.toml]
     tags: ["v*"]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# One release at a time per ref; a second push waits rather than racing it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -33,19 +43,38 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    outputs:
+      # The tag to publish, or empty when there's nothing to release.
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: Tag matches Cargo.toml
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Version to release
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           version=$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f2)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME doesn't match Cargo.toml version $version"
-            exit 1
-          fi
+          case "$GITHUB_REF" in
+            refs/tags/*)
+              if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+                echo "::error::tag $GITHUB_REF_NAME doesn't match Cargo.toml version $version"
+                exit 1
+              fi
+              echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+              ;;
+            refs/heads/main)
+              # Cargo.toml changed without a new version (a dependency, say): nothing to release.
+              if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$version" --silent 2>/dev/null; then
+                echo "v$version is already tagged; nothing to release"
+              else
+                echo "Releasing v$version from $GITHUB_SHA"
+                echo "tag=v$version" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
+          esac
       # Only reviewed, merged code is released: main takes changes through pull requests.
       - name: Tag is on main
         if: startsWith(github.ref, 'refs/tags/')
@@ -70,10 +99,16 @@ jobs:
           fi
 
   checks:
+    needs: verify
+    # Something to release, or a build-only run by hand.
+    if: needs.verify.outputs.tag != '' || github.event_name == 'workflow_dispatch'
     # `$/` is this repository at the commit being released, with no checkout involved.
     uses: $/.github/workflows/ci.yml
 
   cargo-deny:
+    needs: verify
+    # Something to release, or a build-only run by hand.
+    if: needs.verify.outputs.tag != '' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -85,6 +120,7 @@ jobs:
 
   build:
     needs: [verify, checks, cargo-deny]
+    if: needs.verify.outputs.tag != '' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -147,8 +183,8 @@ jobs:
   # the publisher. Off until the repository variable SIGN_WINDOWS is "true"; the
   # credentials live in the protected `release` environment (see CONTRIBUTING.md).
   sign-windows:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/') && vars.SIGN_WINDOWS == 'true'
+    needs: [verify, build]
+    if: needs.verify.outputs.tag != '' && vars.SIGN_WINDOWS == 'true'
     runs-on: windows-latest
     environment: release
     permissions:
@@ -194,9 +230,9 @@ jobs:
           overwrite: true
 
   release:
-    needs: [build, sign-windows]
+    needs: [verify, build, sign-windows]
     # Signing is skipped while it's off; a failed signing publishes nothing.
-    if: ${{ !failure() && !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ !failure() && !cancelled() && needs.verify.outputs.tag != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -220,12 +256,15 @@ jobs:
         env:
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: cp "$BUNDLE" dist/kynex.intoto.jsonl
+      # From main, this creates the tag on the commit just built; a pushed tag must exist.
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
         run: |
           # A tag with a suffix (v0.2.0-beta.1) is published as a prerelease.
-          flags=""
-          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes $flags
+          flags="--target $GITHUB_SHA"
+          case "$GITHUB_REF" in refs/tags/*) flags="--verify-tag" ;; esac
+          case "$TAG" in *-*) flags="$flags --prerelease" ;; esac
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" --generate-notes $flags
