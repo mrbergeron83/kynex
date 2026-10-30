@@ -26,6 +26,29 @@ impl KynexApp {
         let turns = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
         let (cost, kind, cwd, context, busy) = (s.total_cost, s.kind, s.cwd.clone(), s.context, s.busy);
         let id = s.session_id.clone();
+        // The session's scratch files, once it's saved and has a folder to keep them in.
+        let scratch = (kind == Kind::Code && id.is_some()).then(|| {
+            let hover = t.hover;
+            div()
+                .id("session-scratch")
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_1()
+                .px_1p5()
+                .h(px(20.))
+                .rounded_md()
+                .border_1()
+                .border_color(t.border_variant)
+                .text_xs()
+                .text_color(t.text_muted)
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover))
+                .child(icon(Icon::Files, t.text_muted).size_3())
+                .child("Scratch")
+                .tooltip(Tooltip::with_meta("This session's scratch files", "Claude's scripts, notes and task output"))
+                .on_click(cx.listener(|this, _, _, cx| this.open_session_scratch(cx)))
+        });
         let servers = mcp_status(&s.mcp, &t, cx);
         // Double-clicking the name renames the session in place.
         let field = id.as_deref().and_then(|id| self.session_name_field(id, true, cx));
@@ -198,6 +221,7 @@ impl KynexApp {
                 .children(place)
                 .children(working)
                 .children(servers)
+                .children(scratch)
                 .children(meter)
                 .when(!stats.is_empty(), |d| {
                     d.child(

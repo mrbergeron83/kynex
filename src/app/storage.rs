@@ -39,12 +39,26 @@ pub(super) struct StorageView {
     pub(super) open: HashSet<String>,
     /// How many of the list are shown.
     pub(super) shown: usize,
+    /// Measuring again; the last measurements stay up meanwhile.
+    measuring: bool,
+    /// Settings opened again since the last measuring: measure on the next look.
+    pub(super) stale: bool,
+    /// Single sessions' disk use for their menus, by id; `None` while measured.
+    sizes: HashMap<String, Option<u64>>,
 }
 
 #[derive(Clone, Default)]
 pub(super) struct LogInfo {
     pub(super) title: Option<String>,
     pub(super) cwd: Option<PathBuf>,
+    /// The log's length and modification time when read: unchanged, it isn't read again.
+    stamp: Option<(u64, SystemTime)>,
+}
+
+/// A log's length and modification time.
+fn stamp(path: &std::path::Path) -> Option<(u64, SystemTime)> {
+    let m = std::fs::metadata(path).ok()?;
+    Some((m.len(), m.modified().ok()?))
 }
 
 #[derive(Clone)]
@@ -60,26 +74,33 @@ pub(super) struct Pending {
 pub(super) const PAGE: usize = 25;
 
 impl KynexApp {
+    /// The page's state, made on first use.
+    pub(super) fn storage_view(&mut self, cx: &mut Context<Self>) -> &mut StorageView {
+        self.storage.get_or_insert_with(|| StorageView {
+            usage: None,
+            info: HashMap::new(),
+            pending: None,
+            deleting: false,
+            filter: cx.new(|cx| TextInput::new(cx).placeholder("Filter by title, project or id")),
+            sort: Sort::default(),
+            open: HashSet::new(),
+            shown: PAGE,
+            measuring: false,
+            stale: true,
+            sizes: HashMap::new(),
+        })
+    }
+
     /// Walks the session folders again, off the UI thread: sizes first, then
-    /// each log's title and folder.
+    /// the title and folder of each log that changed since it was last read.
+    /// What was measured last stays up until then.
     pub(super) fn scan_storage(&mut self, cx: &mut Context<Self>) {
-        if self.storage.is_none() {
-            let filter = cx.new(|cx| TextInput::new(cx).placeholder("Filter by title or project"));
-            self.storage = Some(StorageView {
-                usage: None,
-                info: HashMap::new(),
-                pending: None,
-                deleting: false,
-                filter,
-                sort: Sort::default(),
-                open: HashSet::new(),
-                shown: PAGE,
-            });
-        }
-        if let Some(v) = &mut self.storage {
-            v.usage = None;
-            v.pending = None;
-        }
+        let v = self.storage_view(cx);
+        v.measuring = true;
+        v.stale = false;
+        v.pending = None;
+        v.sizes.clear();
+        let known = v.info.clone();
         cx.spawn(async move |this, cx| {
             let usage =
                 cx.background_spawn(async { Roots::local().map(|r| storage::scan(&r)).unwrap_or_default() }).await;
@@ -93,14 +114,21 @@ impl KynexApp {
             this.update(cx, |this, cx| {
                 if let Some(v) = &mut this.storage {
                     v.usage = Some(usage);
+                    v.measuring = false;
                 }
                 cx.notify();
             })
             .ok();
             let info: HashMap<String, LogInfo> = cx
                 .background_spawn(async move {
-                    let read = |p: &PathBuf| LogInfo { title: session::title_of(p), cwd: session::cwd_of(p) };
-                    logs.into_iter().map(|(id, p)| (id, read(&p))).collect()
+                    let read = |id: &str, p: &PathBuf| {
+                        let stamp = stamp(p);
+                        match known.get(id) {
+                            Some(k) if k.stamp.is_some() && k.stamp == stamp => k.clone(),
+                            _ => LogInfo { title: session::title_of(p), cwd: session::cwd_of(p), stamp },
+                        }
+                    };
+                    logs.into_iter().map(|(id, p)| (id.clone(), read(&id, &p))).collect()
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -194,10 +222,52 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// Session `id`'s disk use, for its menu: measured off the UI thread the
+    /// first time it's asked for, `None` until then.
+    pub(super) fn disk_use(&mut self, cwd: PathBuf, id: &str, cx: &mut Context<Self>) -> Option<u64> {
+        let v = self.storage_view(cx);
+        if let Some(size) = v.sizes.get(id) {
+            return *size;
+        }
+        v.sizes.insert(id.to_string(), None);
+        let id = id.to_string();
+        cx.spawn(async move |this, cx| {
+            let key = id.clone();
+            let size = cx
+                .background_spawn(async move {
+                    Roots::local().map_or(0, |r| storage::session_sizes(&r, &cwd, &key).total())
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                if let Some(v) = &mut this.storage {
+                    v.sizes.insert(id, Some(size));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        None
+    }
+
+    /// Settings → Storage with the list narrowed to session `id`, its files shown.
+    pub(super) fn show_storage_of(&mut self, id: String, cx: &mut Context<Self>) {
+        self.app_settings = None;
+        self.open_app_settings(cx);
+        if let Some(s) = &mut self.app_settings {
+            s.section = 3;
+        }
+        let v = self.storage_view(cx);
+        v.open.insert(id.clone());
+        let filter = v.filter.clone();
+        filter.update(cx, |f, cx| f.set_text(id, cx));
+    }
+
     pub(super) fn render_storage(&mut self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
-        if self.storage.is_none() {
+        if self.storage.as_ref().is_none_or(|v| v.stale) {
             self.scan_storage(cx);
         }
+        let measuring = self.storage.as_ref().is_some_and(|v| v.measuring);
         let head = div().flex().flex_col().gap_2().child(heading(
             "Storage",
             "What Claude Code keeps for each session: its log, its scratchpad (temporary files) and file checkpoints, which rewind restores files from.",
@@ -213,10 +283,11 @@ impl KynexApp {
             .gap_3()
             .child(div().text_size(px(18.)).font_family(mono()).child(bytes(total.total())))
             .child(div().flex_1().text_xs().text_color(t.text_muted).child(format!(
-                "logs {} · scratchpads {} · checkpoints {}",
+                "logs {} · scratchpads {} · checkpoints {}{}",
                 bytes(total.log),
                 bytes(total.scratch),
-                bytes(total.checkpoints)
+                bytes(total.checkpoints),
+                if measuring { " · measuring again…" } else { "" }
             )))
             .child(
                 outline_button("storage-refresh", "Measure again", cx)

@@ -90,6 +90,8 @@ enum Cmd {
     Settings(usize),
     ProjectSettings,
     Extensions,
+    SessionScratch,
+    ProjectScratch,
     About,
     CheckForUpdates,
     Theme(Theme),
@@ -153,6 +155,12 @@ fn commands() -> Vec<(Cmd, String, &'static str)> {
         (Cmd::Settings(3), "Settings: Storage", "disk space size clean delete old sessions"),
         (Cmd::ProjectSettings, "Project settings", "rules permissions effort model directories"),
         (Cmd::Extensions, "Extensions", "mcp servers plugins"),
+        (Cmd::SessionScratch, "Scratch files of this session", "temporary files scratchpad explorer browse"),
+        (
+            Cmd::ProjectScratch,
+            "Scratch files of this project",
+            "temporary files scratchpad explorer browse every session",
+        ),
         (Cmd::About, "About Kynex", "version"),
         (Cmd::CheckForUpdates, "Check for updates", "kynex claude cli version"),
     ]
@@ -335,6 +343,8 @@ impl KynexApp {
                 }
             }
             Cmd::Extensions => self.open_extensions(0, cx),
+            Cmd::SessionScratch => self.open_session_scratch(cx),
+            Cmd::ProjectScratch => self.open_project_scratch(cx),
             Cmd::About => self.open_about(cx),
             Cmd::CheckForUpdates => {
                 self.check_for_update(cx);

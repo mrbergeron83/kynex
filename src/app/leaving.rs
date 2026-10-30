@@ -12,6 +12,7 @@ use super::app_settings::AppSettingsView;
 use super::extensions::ExtensionsView;
 use super::menus::OpenMenu;
 use super::palette::PaletteView;
+use super::scratch_modal::ScratchModal;
 use super::settings::SettingsView;
 use crate::prompt::PromptView;
 use crate::ui::completions::Completion;
@@ -27,6 +28,7 @@ pub(super) struct Exits {
     pub extensions: Leaving<ExtensionsView>,
     pub about: Leaving<()>,
     pub git_modal: Leaving<PathBuf>,
+    pub scratch: Leaving<ScratchModal>,
     pub viewer: Leaving<Entity<ImageViewer>>,
     pub sessions: Leaving<()>,
     pub terminal: Leaving<()>,
@@ -46,6 +48,7 @@ impl Default for Exits {
             extensions: Leaving::new(QUICK),
             about: Leaving::new(QUICK),
             git_modal: Leaving::new(QUICK),
+            scratch: Leaving::new(QUICK),
             viewer: Leaving::new(QUICK),
             sessions: Leaving::new(NORMAL),
             terminal: Leaving::new(QUICK),

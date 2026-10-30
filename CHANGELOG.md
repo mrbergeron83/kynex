@@ -23,11 +23,17 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Find in the conversation (Ctrl+F / Cmd+F, rebindable as `find`): matches are highlighted
   in messages, replies, thinking and tool output, "3 of 12" with Enter / Shift+Enter to
   move between them; a match inside a folded tool run opens it.
+- Scratch files: "Scratch" in the session header opens an explorer of the session's scratch
+  folder (Claude's scripts, notes, task output), and the toolbar's files button opens the
+  project's, every session's together. Folders on the left, their files on the right; a
+  file opens in a preview (highlighted text, pictures) with Go to file, which shows it in
+  your file manager, and Open. Also in Ctrl+K.
 - Settings → Storage: how much disk Claude Code's sessions take (logs, scratchpads, file
   checkpoints), by project and biggest session first. Clear a session's scratchpad or
   checkpoints, delete it, delete sessions not used in 30 / 90 / 365 days, or clear what's
   left from deleted sessions; each asks first and says what it frees, and pinned or open
-  sessions are kept.
+  sessions are kept. Filter and sort the sessions, go to one, or open the folder of its log,
+  scratchpad or checkpoints. A session's right-click menu shows its size on disk.
 
 ### Changed
 

@@ -23,6 +23,7 @@
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, from the header    |
+//! | `scratch_modal.rs`  | the scratch explorer in a modal: session or project  |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
@@ -75,6 +76,7 @@ mod palette;
 mod prompts;
 mod queue;
 mod rewind;
+mod scratch_modal;
 mod session_groups;
 mod session_header;
 mod sessions_panel;
@@ -118,6 +120,7 @@ use mentions::Mentions;
 use menus::OpenMenu;
 use palette::PaletteView;
 use prompts::ActivePrompt;
+use scratch_modal::ScratchModal;
 use session_groups::Organize;
 use sessions_panel::{ListRead, SessionList};
 use settings::SettingsView;
@@ -184,6 +187,7 @@ pub struct KynexApp {
     mentions: Mentions,
     palette: Option<PaletteView>,
     find: Option<FindBar>,
+    scratch: Option<ScratchModal>,
     /// Settings → Storage's measurements, while that page has been opened.
     storage: Option<StorageView>,
     /// Actions last run from the palette, newest first.
@@ -421,6 +425,7 @@ impl KynexApp {
             mentions: Mentions::default(),
             palette: None,
             find: None,
+            scratch: None,
             storage: None,
             palette_recent: Vec::new(),
             sessions: None,
@@ -704,6 +709,7 @@ impl Render for KynexApp {
         let palette = self.draw_leaving(|s| &mut s.palette, |e| &mut e.palette, window, cx, Self::render_palette);
         let git_modal =
             self.draw_leaving(|s| &mut s.git_modal, |e| &mut e.git_modal, window, cx, Self::render_git_modal);
+        let scratch = self.draw_leaving(|s| &mut s.scratch, |e| &mut e.scratch, window, cx, Self::render_scratch_modal);
         let viewer =
             self.draw_leaving(|s| &mut s.viewer, |e| &mut e.viewer, window, cx, |s, l, _, _| s.render_image_viewer(l));
         div()
@@ -792,6 +798,7 @@ impl Render for KynexApp {
             .when(self.saved.footer, |d| d.child(self.render_footer(cx)))
             .children(toasts)
             .children(git_modal)
+            .children(scratch)
             .children(settings)
             .children(app_settings)
             .children(extensions)

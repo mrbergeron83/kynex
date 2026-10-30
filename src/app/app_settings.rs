@@ -50,8 +50,10 @@ impl KynexApp {
         self.settings = None;
         self.extensions = None;
         self.app_settings = Some(AppSettingsView { section: 0, cli: None });
-        // Storage is measured afresh each time Settings opens.
-        self.storage = None;
+        // Storage is measured again each time Settings opens; the last stays up meanwhile.
+        if let Some(s) = &mut self.storage {
+            s.stale = true;
+        }
         self.read_cli_version(cx);
         cx.notify();
     }

@@ -106,6 +106,11 @@ impl KynexApp {
                     .tooltip(Tooltip::with_meta("Claude settings", "permissions, mode and effort for this project"))
                     .on_click(cx.listener(move |this, _, _, cx| this.open_settings(path.clone(), cx)))
             })
+            .child(
+                icon_button("open-scratch", Icon::Files, cx)
+                    .tooltip(Tooltip::with_meta("Scratch files", "Claude's temporary files, for every session here"))
+                    .on_click(cx.listener(|this, _, _, cx| this.open_project_scratch(cx))),
+            )
             .child(open("open-code", Icon::Code, "Open in VS Code", Opener::Code, path.clone(), cx))
             .child(open("open-files", Icon::Folder, "Open in file manager", Opener::Explorer, path.clone(), cx))
             .child(

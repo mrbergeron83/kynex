@@ -141,6 +141,31 @@ pub fn locations(roots: &Roots, u: &SessionUse) -> Vec<(Part, PathBuf)> {
     Part::ALL.iter().filter_map(|&p| Some((p, paths(roots, &u.slug, &u.id, p)?.into_iter().next()?))).collect()
 }
 
+/// `cwd`'s slug as the folder under `root` is actually spelled: its letter
+/// case follows whoever launched Claude (`C:` vs `c:`). Blocks on listing `root`.
+fn slug_in(root: &Path, cwd: &Path) -> String {
+    let slug = slug(cwd);
+    subdirs(root).into_iter().map(|(name, _)| name).find(|name| name.eq_ignore_ascii_case(&slug)).unwrap_or(slug)
+}
+
+/// Where the scratchpads of the sessions run in `cwd` are: one folder per
+/// session, named by its id. Blocks on listing the scratch root.
+pub fn project_scratch(roots: &Roots, cwd: &Path) -> PathBuf {
+    roots.scratch.join(slug_in(&roots.scratch, cwd))
+}
+
+/// Session `id`'s scratchpad folder, or `None` for something that isn't an id.
+pub fn session_scratch(roots: &Roots, cwd: &Path, id: &str) -> Option<PathBuf> {
+    is_id(id).then(|| project_scratch(roots, cwd).join(id))
+}
+
+/// One session's disk use, for session `id` run in folder `cwd`. Blocks: walks its folders.
+pub fn session_sizes(roots: &Roots, cwd: &Path, id: &str) -> Sizes {
+    let slug = slug_in(&roots.projects, cwd);
+    let size = |part| paths(roots, &slug, id, part).map_or(0, |ps| ps.iter().map(|p| size_of(p)).sum());
+    Sizes { log: size(Part::Log), scratch: size(Part::Scratch), checkpoints: size(Part::Checkpoints) }
+}
+
 /// The folder name Claude Code files `cwd`'s sessions under.
 pub fn slug(cwd: &Path) -> String {
     cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
@@ -337,6 +362,28 @@ mod tests {
         assert_eq!(usage.total().total(), 200 + 10 + 7);
         assert_eq!(usage.by_project(), [("C--work-app".to_string(), Sizes { log: 160, scratch: 37, checkpoints: 20 })]);
         assert_eq!(usage.leftovers().iter().map(|u| u.id.as_str()).collect::<Vec<_>>(), [C]);
+        cleanup(&r);
+    }
+
+    #[test]
+    fn sizes_one_session() {
+        let r = sample("one");
+        let s = session_sizes(&r, Path::new("C:/work/app"), A);
+        assert_eq!(s, Sizes { log: 150, scratch: 30, checkpoints: 20 });
+        // The folder's case doesn't matter.
+        assert_eq!(session_sizes(&r, Path::new("c:/work/app"), A).log, 150);
+        assert_eq!(session_sizes(&r, Path::new("C:/work/app"), "nope"), Sizes::default());
+        cleanup(&r);
+    }
+
+    #[test]
+    fn finds_scratch_folders() {
+        let r = sample("scratch-dirs");
+        assert_eq!(project_scratch(&r, Path::new("c:/work/app")), r.scratch.join("C--work-app"));
+        assert_eq!(session_scratch(&r, Path::new("C:/work/app"), A), Some(r.scratch.join("C--work-app").join(A)));
+        assert_eq!(session_scratch(&r, Path::new("C:/work/app"), ".."), None);
+        // A project never run yet: its folder as it will be named.
+        assert_eq!(project_scratch(&r, Path::new("D:/new")), r.scratch.join("D--new"));
         cleanup(&r);
     }
 

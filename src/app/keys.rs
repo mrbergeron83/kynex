@@ -350,6 +350,7 @@ impl KynexApp {
     pub(super) fn interrupt_action(&mut self, _: &Interrupt, _: &mut Window, cx: &mut Context<Self>) {
         if self.menu.take().is_some()
             || self.palette.take().is_some()
+            || self.close_scratch(cx)
             || self.settings.take().is_some()
             || self.app_settings.take().is_some()
             || self.extensions.take().is_some()
@@ -420,6 +421,11 @@ impl KynexApp {
         // An image over everything closes first (it has the focus, so usually closes itself).
         if k.key == "escape" && self.viewer.is_some() {
             self.close_image(window, cx);
+            cx.stop_propagation();
+            return;
+        }
+        // The scratch explorer: its preview, then the modal.
+        if k.key == "escape" && self.menu.is_none() && self.close_scratch(cx) {
             cx.stop_propagation();
             return;
         }

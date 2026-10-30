@@ -51,7 +51,6 @@ impl KynexApp {
             }
         };
         self.app_settings = None;
-        self.storage = None;
         self.saved.active = Active::Project(i);
         self.save();
         self.show_code_view();
@@ -68,7 +67,7 @@ impl KynexApp {
             &logged,
             |u| {
                 let (title, place) = self.stored_label(u);
-                format!("{title} {place}")
+                format!("{title} {place} {}", u.id)
             },
             &query,
             sort,

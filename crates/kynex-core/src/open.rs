@@ -43,6 +43,33 @@ pub fn open_project(opener: Opener, path: &Path) -> Result<(), String> {
     }
 }
 
+/// Shows `path` in the OS file manager, selected where it can be (Explorer,
+/// Finder); elsewhere its folder opens.
+pub fn reveal(path: &Path) -> Result<(), String> {
+    if cfg!(target_os = "windows") {
+        // `/select,` takes the path in the same argument, with backslashes.
+        let native = path.to_string_lossy().replace('/', "\\");
+        open_with("explorer", &[format!("/select,{native}").as_ref()])
+    } else if cfg!(target_os = "macos") {
+        open_with("open", &["-R".as_ref(), path.as_os_str()])
+    } else {
+        let dir = if path.is_dir() { path } else { path.parent().unwrap_or(path) };
+        open_with("xdg-open", &[dir.as_os_str()])
+    }
+}
+
+/// Opens a file in the app the OS gives its type (not an editor).
+pub fn open_default(path: &Path) -> Result<(), String> {
+    if cfg!(target_os = "windows") {
+        let native = path.to_string_lossy().replace('/', "\\");
+        open_with("explorer", &[native.as_ref()])
+    } else if cfg!(target_os = "macos") {
+        open_with("open", &[path.as_os_str()])
+    } else {
+        open_with("xdg-open", &[path.as_os_str()])
+    }
+}
+
 /// Ctrl+G: edits `text` in the user's editor and returns what they saved.
 /// `$VISUAL` / `$EDITOR` if set (it must wait for the file to close, e.g.
 /// `code --wait`), else Notepad on Windows and TextEdit on macOS. Blocks until
