@@ -9,6 +9,7 @@ use gpui::{Anchor, ClickEvent, Context, PathPromptOptions, Window, div, prelude:
 use kynex_core::awake::KeepAwake;
 use kynex_core::cli;
 use kynex_core::column::ColumnWidth;
+use kynex_core::live::SleepAfter;
 use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
 use kynex_core::paths::data_dir;
@@ -308,6 +309,22 @@ impl KynexApp {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_keep_awake(k, cx)))
             }));
 
+        let sleep_after = self.saved.sleep_after;
+        let sleep = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(heading(
+                "Sleep idle sessions",
+                "Stops an idle session's Claude process and its MCP servers to free memory. Its transcript stays; \
+                 it starts again when you open it or type. Sessions working, waiting on you or using the browser stay awake.",
+                t,
+            ))
+            .children(SleepAfter::ALL.into_iter().enumerate().map(|(n, s)| {
+                choice(("sleep-after", n), sleep_after == s, s.label().into(), t)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_sleep_after(s, cx)))
+            }));
+
         // Only where a hidden Kynex has a way back; elsewhere closing quits.
         let closing = kynex_core::tray::Haven::of_os().map(|haven| {
             let on = self.saved.on_close;
@@ -340,6 +357,7 @@ impl KynexApp {
             .child(notifications)
             .children(closing)
             .child(awake)
+            .child(sleep)
     }
 
     fn set_name_past_sessions(&mut self, on: bool, cx: &mut Context<Self>) {

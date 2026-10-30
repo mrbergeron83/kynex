@@ -1,6 +1,46 @@
-//! The open sessions in one folder.
+//! The open sessions in one folder, and how long an idle one keeps its process.
+
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
 
 use crate::session::Session;
+
+/// The "Sleep idle sessions" setting: how long a session that
+/// [can sleep](Session::can_sleep) keeps its `claude` process (and the MCP
+/// servers under it) once nothing happens in it. A sleeping session keeps its
+/// transcript and starts again when shown, typed in or sent a message.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SleepAfter {
+    Minutes15,
+    #[default]
+    Minutes30,
+    Hour1,
+    Never,
+}
+
+impl SleepAfter {
+    pub const ALL: [Self; 4] = [Self::Minutes15, Self::Minutes30, Self::Hour1, Self::Never];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Minutes15 => "After 15 minutes idle",
+            Self::Minutes30 => "After 30 minutes idle",
+            Self::Hour1 => "After an hour idle",
+            Self::Never => "Never",
+        }
+    }
+
+    pub fn duration(self) -> Option<Duration> {
+        const MIN: u64 = 60;
+        match self {
+            Self::Minutes15 => Some(Duration::from_secs(15 * MIN)),
+            Self::Minutes30 => Some(Duration::from_secs(30 * MIN)),
+            Self::Hour1 => Some(Duration::from_secs(60 * MIN)),
+            Self::Never => None,
+        }
+    }
+}
 
 /// A session's [`Session::uid`]: transcripts, expanded tools and prompts follow it.
 pub type Key = u64;
@@ -85,16 +125,7 @@ impl Live {
             self.shown.iter().rev().filter(|k| Some(**k) != active).take(KEEP_IDLE).copied().collect();
         let mut closed = Vec::new();
         self.sessions.retain(|s| {
-            // Closing the process would also stop its background tasks, and
-            // drop its browser pairing.
-            let keep = Some(s.uid) == active
-                || recent.contains(&s.uid)
-                || s.busy
-                || s.waiting()
-                || s.finished
-                || !s.queue.is_empty()
-                || s.has_tasks()
-                || s.browser;
+            let keep = Some(s.uid) == active || recent.contains(&s.uid) || s.finished || !s.can_sleep();
             if !keep {
                 closed.push(s.uid);
             }
@@ -181,6 +212,13 @@ mod tests {
             assert!(live.show(session()).is_empty());
         }
         assert_eq!(live.sessions[0].uid, a_uid);
+    }
+
+    #[test]
+    fn sleep_after_durations() {
+        assert_eq!(SleepAfter::default(), SleepAfter::Minutes30);
+        assert_eq!(SleepAfter::Minutes15.duration(), Some(Duration::from_secs(900)));
+        assert_eq!(SleepAfter::Never.duration(), None);
     }
 
     #[test]
