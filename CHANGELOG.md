@@ -30,6 +30,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Toasts stay in the conversation's corner instead of drawing over the timeline or sessions
+  panel.
 - Opening an old session no longer moves it to Today in the sessions panel: sessions are
   dated by their last message, not by when their log file was last touched.
 - The composer's session-files button and its count of new scratch files no longer vanish

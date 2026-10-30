@@ -275,9 +275,11 @@ impl Corner {
     /// Where the stack goes, in from the window's edges. `top` and `bottom` are
     /// how far in from each edge it must stay clear of: the title bar and the
     /// footer, or further where the shown view has controls there (the
-    /// toolbar, the composer).
-    pub fn place(self, top: f32, bottom: f32) -> Place {
-        let (vertical, horizontal) = (if self.is_top() { top } else { bottom } + MARGIN, MARGIN);
+    /// toolbar, the composer). `left` and `right` likewise keep it off side
+    /// panels (sessions, timeline), in the conversation's column.
+    pub fn place(self, top: f32, bottom: f32, left: f32, right: f32) -> Place {
+        let vertical = if self.is_top() { top } else { bottom } + MARGIN;
+        let horizontal = if self.is_left() { left } else { right } + MARGIN;
         Place {
             top: self.is_top().then_some(vertical),
             bottom: (!self.is_top()).then_some(vertical),
@@ -305,10 +307,15 @@ mod tests {
 
     #[test]
     fn corners_stay_clear_of_the_bars() {
-        let p = Corner::BottomRight.place(40., 120.);
+        let p = Corner::BottomRight.place(40., 120., 0., 0.);
         assert_eq!((p.top, p.bottom, p.left, p.right), (None, Some(132.), None, Some(12.)));
-        let p = Corner::TopLeft.place(40., 120.);
+        let p = Corner::TopLeft.place(40., 120., 0., 0.);
         assert_eq!((p.top, p.bottom, p.left, p.right), (Some(52.), None, Some(12.), None));
+        // Side panels push it into the conversation's column.
+        let p = Corner::BottomRight.place(40., 120., 240., 300.);
+        assert_eq!((p.left, p.right), (None, Some(312.)));
+        let p = Corner::TopLeft.place(40., 120., 240., 300.);
+        assert_eq!((p.left, p.right), (Some(252.), None));
         assert_eq!(serde_json::to_string(&Corner::TopRight).unwrap(), "\"top_right\"");
         assert!(Corner::ALL.iter().all(|c| !c.label().is_empty()));
     }
