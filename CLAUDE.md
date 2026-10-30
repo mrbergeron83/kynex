@@ -204,8 +204,9 @@ pushes a tag by hand.
    - `./scripts/check.ps1`, then a PR `Release X.Y.Z: <highlights>` with `Fixes #N`.
 3. The user merges it once every check has passed. Claude never merges it, and never creates
    or pushes a tag.
-4. The merge to `main` runs `.github/workflows/release.yml`: it sees a version with no tag
-   yet, re-runs CI and cargo-deny, builds every platform, then publishes the release and
-   creates `vX.Y.Z` on that commit. Check it with `gh run list --workflow release.yml`.
-   A failed run publishes nothing and creates no tag; fix it in a PR; merging a change to
-   `Cargo.toml` or `release.yml` tries again (a re-run uses the old workflow file).
+4. The merge to `main` runs `.github/workflows/release.yml`: it sees a version that isn't released
+   yet, re-runs CI and cargo-deny, builds every platform, then pushes `vX.Y.Z` on that commit
+   (a deploy key in the `release` environment; CONTRIBUTING.md) and publishes. Check it with
+   `gh run list --workflow release.yml`. A failed run publishes nothing; fix it in a PR, and
+   merging a change to `Cargo.toml` or `release.yml` tries again, finishing a version that was
+   tagged but not published (a re-run uses the old workflow file).

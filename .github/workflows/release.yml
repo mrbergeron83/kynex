@@ -1,11 +1,12 @@
 # Build Kynex for every desktop OS and publish a GitHub Release.
 #
 # Merging a release PR releases: when a push to main brings a Cargo.toml
-# version with no tag yet, this builds that commit and publishes vX.Y.Z,
-# creating the tag on it only once everything has passed. Pushing a tag by
-# hand still works (it must match Cargo.toml and be on main). Running it by
-# hand (workflow_dispatch) only builds, so the archives can be checked from the
-# run's artifacts without publishing anything.
+# version that isn't released yet, this builds that commit and publishes
+# vX.Y.Z, pushing the tag on it (with a deploy key, the release environment's
+# RELEASE_TAG_KEY) only once everything has passed. Pushing a tag by hand still
+# works (it must match Cargo.toml and be on main). Running it by hand
+# (workflow_dispatch) only builds, so the archives can be checked from the run's
+# artifacts without publishing anything.
 #
 # Nothing is built for release until the gates pass: the version is new,
 # CI (fmt, clippy, tests on every OS) passes on the commit, and cargo-deny
@@ -41,6 +42,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # In the message of tags this workflow pushes, so the run their push starts stands aside.
+  TAG_MARK: Tagged by the Release workflow
 
 jobs:
   verify:
@@ -48,6 +51,8 @@ jobs:
     outputs:
       # The tag to publish, or empty when there's nothing to release.
       tag: ${{ steps.version.outputs.tag }}
+      # Whether the release job creates and pushes the tag (a release from main).
+      push_tag: ${{ steps.version.outputs.push_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,21 +64,45 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version=$(grep -m1 '^version = ' Cargo.toml | cut -d '"' -f2)
+          released() { gh api "repos/$GITHUB_REPOSITORY/releases/tags/$1" --silent 2>/dev/null; }
           case "$GITHUB_REF" in
             refs/tags/*)
               if [ "v$version" != "$GITHUB_REF_NAME" ]; then
                 echo "::error::tag $GITHUB_REF_NAME doesn't match Cargo.toml version $version"
                 exit 1
               fi
-              echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+              # The tag this workflow pushes from main starts a run too; that release is
+              # already under way there.
+              object=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq 'select(.object.type == "tag") | .object.sha')
+              message=""
+              if [ -n "$object" ]; then
+                message=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$object" --jq .message)
+              fi
+              if printf '%s' "$message" | grep -qF "$TAG_MARK"; then
+                echo "$GITHUB_REF_NAME was tagged by a release from main; nothing to do here"
+              elif released "$GITHUB_REF_NAME"; then
+                echo "$GITHUB_REF_NAME is already released"
+              else
+                echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+              fi
               ;;
             refs/heads/main)
-              # Cargo.toml changed without a new version (a dependency, say): nothing to release.
-              if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$version" --silent 2>/dev/null; then
-                echo "v$version is already tagged; nothing to release"
+              tag="v$version"
+              tagged=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha 2>/dev/null || true)
+              if [ -z "$tagged" ]; then
+                echo "Releasing $tag from $GITHUB_SHA"
+                echo "tag=$tag" >> "$GITHUB_OUTPUT"
+                echo "push_tag=true" >> "$GITHUB_OUTPUT"
+              elif released "$tag"; then
+                # Cargo.toml changed without a new version (a dependency, say).
+                echo "$tag is already released; nothing to do"
+              elif [ "$tagged" = "$GITHUB_SHA" ]; then
+                # Tagged by an earlier run that failed before publishing: finish it.
+                echo "Publishing $tag, already tagged on $GITHUB_SHA"
+                echo "tag=$tag" >> "$GITHUB_OUTPUT"
               else
-                echo "Releasing v$version from $GITHUB_SHA"
-                echo "tag=v$version" >> "$GITHUB_OUTPUT"
+                echo "::error::$tag is tagged on $tagged, not $GITHUB_SHA, and isn't released; delete the tag or bump the version"
+                exit 1
               fi
               ;;
           esac
@@ -87,7 +116,7 @@ jobs:
           fi
       # Release tags should be signed (shown as Verified on GitHub); a warning for now.
       - name: Tag is signed
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && steps.version.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -236,11 +265,42 @@ jobs:
     # Signing is skipped while it's off; a failed signing publishes nothing.
     if: ${{ !failure() && !cancelled() && needs.verify.outputs.tag != '' }}
     runs-on: ubuntu-latest
+    # Holds RELEASE_TAG_KEY: the private half of a deploy key with write access. Deploy keys
+    # are on the "Protect release tags" ruleset's bypass list, which the job's own token
+    # can't be; the environment only lets main and v* tags in (CONTRIBUTING.md has the setup).
+    environment: release
     permissions:
       contents: write
       id-token: write # attestations
       attestations: write
     steps:
+      # Tags the commit just built, only now that everything has passed. A tag that's pushed
+      # but never published is picked up by the next run from main.
+      - name: Tag
+        if: needs.verify.outputs.push_tag == 'true'
+        env:
+          TAG: ${{ needs.verify.outputs.tag }}
+          KEY: ${{ secrets.RELEASE_TAG_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::the release environment has no RELEASE_TAG_KEY secret; see Releasing in CONTRIBUTING.md"
+            exit 1
+          fi
+          key="$RUNNER_TEMP/tag_key"
+          printf '%s\n' "$KEY" > "$key"
+          chmod 600 "$key"
+          git init -q tagger && cd tagger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "git@github.com:$GITHUB_REPOSITORY.git"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          mkdir -p ~/.ssh
+          # GitHub's published host keys (https://api.github.com/meta).
+          curl -fsSL https://api.github.com/meta | jq -r '.ssh_keys[] | "github.com " + .' >> ~/.ssh/known_hosts
+          git fetch -q --depth 1 origin "$GITHUB_SHA"
+          git tag -a "$TAG" -m "Kynex ${TAG#v}" -m "$TAG_MARK from $GITHUB_SHA." "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
+          rm -f "$key"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
@@ -258,15 +318,14 @@ jobs:
         env:
           BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: cp "$BUNDLE" dist/kynex.intoto.jsonl
-      # From main, this creates the tag on the commit just built; a pushed tag must exist.
+      # The tag exists by now (pushed by hand, or just above), so publishing creates no ref.
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.verify.outputs.tag }}
         run: |
           # A tag with a suffix (v0.2.0-beta.1) is published as a prerelease.
-          flags="--target $GITHUB_SHA"
-          case "$GITHUB_REF" in refs/tags/*) flags="--verify-tag" ;; esac
-          case "$TAG" in *-*) flags="$flags --prerelease" ;; esac
+          flags=""
+          case "$TAG" in *-*) flags="--prerelease" ;; esac
           gh release create "$TAG" dist/* \
-            --repo "$GITHUB_REPOSITORY" --generate-notes $flags
+            --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes $flags

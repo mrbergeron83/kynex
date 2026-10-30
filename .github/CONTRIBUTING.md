@@ -106,13 +106,12 @@ prerelease). Only the maintainer releases:
 
 1. In a pull request, bump `version` in `Cargo.toml` and turn `[Unreleased]` in CHANGELOG.md into
    the new version's section, with today's date. Merge it once every check passes.
-2. Merging releases. A push to `main` that brings a `Cargo.toml` version with no tag yet runs the
-   Release workflow: it re-runs CI and cargo-deny on that commit, builds every OS, signs the
-   Windows binary when that's set up, and publishes the archives with `SHA256SUMS` and a signed
-   build provenance attestation, creating the `vX.Y.Z` tag on the commit as it publishes. A run
-   that fails publishes nothing and leaves no tag. The workflow creates the tag with its own
-   token, so GitHub Actions is on the "Protect release tags" ruleset's bypass list.
-3. Pushing a tag yourself still works, e.g. to retry by hand: it must match `Cargo.toml` and be on
+2. Merging releases. A push to `main` that brings a `Cargo.toml` version that isn't released yet
+   runs the Release workflow: it re-runs CI and cargo-deny on that commit, builds every OS, signs
+   the Windows binary when that's set up, pushes the `vX.Y.Z` tag on the commit, and publishes the
+   archives with `SHA256SUMS` and a signed build provenance attestation. A run that fails before
+   the end publishes nothing and pushes no tag; merging a fix to `release.yml` (or `Cargo.toml`)
+   tries again, and finishes a version that was tagged but not published.3. Pushing a tag yourself still works, e.g. to retry by hand: it must match `Cargo.toml` and be on
    `main`, and a signed one shows as Verified ([Signing tags](#signing-tags)):
 
    ```sh
@@ -121,6 +120,22 @@ prerelease). Only the maintainer releases:
    git push origin vX.Y.Z
    ```
 4. Running installs pick the release up through the self-updater; check one updates.
+
+### Release tags from the workflow
+
+The "Protect release tags" ruleset lets only admins create `v*` tags, and a workflow's own token
+can't be added to its bypass list, so the Release workflow pushes tags with a deploy key. Once:
+
+1. Make a key pair with no passphrase, outside the repository:
+   `ssh-keygen -t ed25519 -N "" -C "kynex release tags" -f kynex-release-tags`
+2. Settings → Deploy keys → Add deploy key: the `.pub` file, with **Allow write access**.
+3. Settings → Rules → Protect release tags → Bypass list: add **Deploy keys**.
+4. Settings → Environments → `release` (create it if needed): deployment branches and tags
+   limited to `main` and `v*`. Add the secret `RELEASE_TAG_KEY` with the private key file's whole
+   contents, then delete both key files.
+
+Tags it pushes say "Tagged by the Release workflow" in their message and aren't signed; they
+start a Release run of their own, which sees that and stands aside.
 
 ### Signing tags
 
@@ -185,8 +200,8 @@ Windows binaries are signed with
 1. Create an Artifact Signing account and a public-trust certificate profile, and an Entra app
    registration with a federated credential for this repository's `release` environment and the
    "Artifact Signing Certificate Profile Signer" role on the account.
-2. Create the `release` environment: deployments from `v*` tags only, the maintainer as required
-   reviewer. Add the secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`.
+2. In the `release` environment ([Release tags from the workflow](#release-tags-from-the-workflow)),
+   optionally with the maintainer as required reviewer, Add the secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`.
 3. Add the repository variables `AZURE_SIGNING_ENDPOINT` (e.g.
    `https://eus.codesigning.azure.net`), `AZURE_SIGNING_ACCOUNT` and `AZURE_SIGNING_PROFILE`, then
    `SIGN_WINDOWS` = `true` to turn the job on.
