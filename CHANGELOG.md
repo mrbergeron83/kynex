@@ -5,6 +5,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Idle sessions go to sleep: after 30 minutes with nothing happening (Settings → Sleep idle
+  sessions: 15 minutes, an hour or never), a session's `claude` process and its MCP servers
+  stop to free memory. Its transcript stays, and it starts again when you open it or type.
+  Sessions that are working, waiting on you, have queued messages or background tasks, or
+  use the browser stay awake.
+
 ### Changed
 
 - Changing a project's effort, or adding rules or extra folders, reaches its running sessions

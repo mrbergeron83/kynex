@@ -318,6 +318,8 @@ pub struct Session {
     answered: bool,
     /// When the transcript last stopped showing live progress, for [`Self::pulse`].
     quiet_since: Instant,
+    /// When it last did or was asked anything, for [`Self::sleep_if_idle`].
+    active_at: Instant,
     /// The input of the tool call streaming in, until its summary can be read from it.
     tool_input: String,
     /// Goes up when an item changes in a way that changes the transcript's layout.
@@ -459,6 +461,7 @@ impl Session {
             in_block: false,
             answered: false,
             quiet_since: Instant::now(),
+            active_at: Instant::now(),
             tool_input: String::new(),
             revision: 0,
             next_request: 0,
@@ -741,6 +744,7 @@ impl Session {
         self.talked = true;
         self.answered = false;
         self.quiet_since = Instant::now();
+        self.active_at = Instant::now();
         self.write(json!({ "type": "user", "message": { "role": "user", "content": content } }));
     }
 
@@ -748,10 +752,29 @@ impl Session {
     /// for it (about half a second to well over one). Call when a message is
     /// likely: the composer focused, typing, the session shown. Does nothing if
     /// it's running; a failure to start is left for [`Self::send`] to report.
+    /// Either way it counts as activity, so it doesn't fall asleep under you.
     pub fn warm(&mut self) {
+        self.active_at = Instant::now();
         if self.child.is_none() {
             let _ = self.spawn();
         }
+    }
+
+    /// Whether stopping its process now loses nothing: it isn't working,
+    /// waiting on you, holding queued messages, running background tasks or
+    /// paired with a browser. Its transcript stays, and it resumes on the next message.
+    pub fn can_sleep(&self) -> bool {
+        !self.busy && !self.waiting() && self.queue.is_empty() && !self.has_tasks() && !self.browser
+    }
+
+    /// Stops its process if it has been idle for `after` as of `now` and
+    /// [`Self::can_sleep`]. Returns whether it did.
+    pub fn sleep_if_idle(&mut self, after: Duration, now: Instant) -> bool {
+        let due = self.is_running() && self.can_sleep() && now.saturating_duration_since(self.active_at) >= after;
+        if due {
+            self.kill();
+        }
+        due
     }
 
     /// Sets the model it starts on. A process warmed up but not talked to yet
@@ -1011,6 +1034,9 @@ impl Session {
     pub fn poll(&mut self) {
         let Some(rx) = &self.rx else { return };
         let events: Vec<Event> = rx.try_iter().collect();
+        if !events.is_empty() {
+            self.active_at = Instant::now();
+        }
         let mut exited = false;
         for ev in events {
             match ev {
@@ -1784,6 +1810,44 @@ mod tests {
         assert_eq!(s.pulse().map(|p| p.activity), Some(Activity::Waiting));
         s.handle(json!({ "type": "assistant", "message": { "content": [{ "type": "text", "text": "hello" }] } }));
         assert_eq!(s.pulse().map(|p| p.activity), Some(Activity::Working));
+    }
+
+    #[test]
+    fn idle_sessions_fall_asleep_and_working_ones_dont() {
+        let after = Duration::from_secs(60);
+        let later = Instant::now() + after * 2;
+        // A stand-in process: this test binary, listing its tests.
+        let running = || {
+            let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+            let exe = std::env::current_exe().expect("test binary");
+            s.child = Some(Command::new(exe).arg("--list").stdout(Stdio::null()).spawn().expect("spawn"));
+            s
+        };
+
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        assert!(!s.sleep_if_idle(after, later), "no process to stop");
+
+        let mut s = running();
+        assert!(!s.sleep_if_idle(after, Instant::now()), "not idle long enough");
+        s.finished = true;
+        assert!(s.sleep_if_idle(after, later));
+        assert!(!s.is_running());
+        assert!(s.finished, "a reply you haven't seen stays unseen");
+
+        let mut s = running();
+        s.warm();
+        assert!(!s.sleep_if_idle(after, Instant::now() + after / 2), "warming counts as activity");
+
+        for keep in [
+            |s: &mut Session| s.busy = true,
+            |s: &mut Session| s.browser = true,
+            |s: &mut Session| s.queue.push("later".into(), Vec::new()),
+        ] {
+            let mut s = running();
+            keep(&mut s);
+            assert!(!s.sleep_if_idle(after, later));
+            s.kill();
+        }
     }
 
     #[test]

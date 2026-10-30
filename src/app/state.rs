@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use kynex_core::awake::KeepAwake;
 use kynex_core::column::ColumnWidth;
+use kynex_core::live::SleepAfter;
 use kynex_core::motion::Motion;
 use kynex_core::paths::data_dir;
 use kynex_core::terminal::ShellKind;
@@ -103,6 +104,8 @@ pub struct Saved {
     pub keep_awake: KeepAwake,
     /// What closing the window does: hide Kynex (tray / Dock) or quit.
     pub on_close: OnClose,
+    /// How long an idle session keeps its `claude` process.
+    pub sleep_after: SleepAfter,
 }
 
 impl Default for Saved {
@@ -135,6 +138,7 @@ impl Default for Saved {
             footer: true,
             keep_awake: KeepAwake::default(),
             on_close: OnClose::default(),
+            sleep_after: SleepAfter::default(),
         }
     }
 }

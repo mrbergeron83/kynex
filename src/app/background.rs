@@ -2,10 +2,14 @@
 //! Kynex instead of quitting (`kynex_core::tray`: the notification area on
 //! Windows, the Dock on macOS), the computer kept awake while sessions work
 //! (`kynex_core::awake`), and the shown session's `claude` started before you
-//! send, so sending doesn't wait on it.
+//! send, so sending doesn't wait on it; idle sessions' processes stop after a
+//! while (`kynex_core::live::SleepAfter`).
+
+use std::time::{Duration, Instant};
 
 use gpui::{App, Context, Window};
 use kynex_core::awake::{Awake, KeepAwake};
+use kynex_core::live::SleepAfter;
 use kynex_core::toasts::Toast;
 use kynex_core::tray::{self, Haven, OnClose, Tray, TrayEvent};
 
@@ -129,6 +133,38 @@ impl KynexApp {
         self.save();
         self.awake_failed = false;
         self.sync_awake();
+        cx.notify();
+    }
+
+    /// Puts idle sessions to sleep once a minute, per the Sleep idle sessions setting.
+    pub(super) fn watch_sleep(cx: &mut Context<Self>) {
+        const CHECK_EVERY: Duration = Duration::from_secs(60);
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(CHECK_EVERY).await;
+                if this.update(cx, |this, cx| this.sleep_idle(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn sleep_idle(&mut self, cx: &mut Context<Self>) {
+        let Some(after) = self.saved.sleep_after.duration() else { return };
+        let now = Instant::now();
+        let mut slept = false;
+        for s in self.all_sessions_mut() {
+            slept |= s.sleep_if_idle(after, now);
+        }
+        if slept {
+            cx.notify();
+        }
+    }
+
+    pub(super) fn set_sleep_after(&mut self, s: SleepAfter, cx: &mut Context<Self>) {
+        self.saved.sleep_after = s;
+        self.save();
         cx.notify();
     }
 

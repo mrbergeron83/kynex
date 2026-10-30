@@ -29,7 +29,7 @@
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
 //! | `handoff.rs`        | "waiting for you in the browser" banner, Continue    |
 //! | `attention.rs`      | OS notifications and the icon's "needs you" dot     |
-//! | `background.rs`     | close to tray / Dock, keep awake, `claude` started early |
+//! | `background.rs`     | close to tray / Dock, keep awake, `claude` started early, idle sessions sleep |
 //! | `history.rs`        | ↑ / ↓ history, Ctrl+R search, stash, Esc Esc, editor |
 //! | `rewind.rs`         | rewind to an earlier message: conversation and files |
 //! | `timeline.rs`       | the session's turns and steps beside the transcript  |
@@ -300,6 +300,7 @@ impl KynexApp {
         Self::watch_app_updates(cx);
         Self::watch_usage(cx);
         Self::watch_resources(cx);
+        Self::watch_sleep(cx);
 
         let mut chat = match saved.chat_session_id.clone() {
             Some(id) => Session::resume(Kind::Chat, chat_dir(), id, wake.clone()),
