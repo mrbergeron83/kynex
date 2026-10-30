@@ -162,6 +162,15 @@ pub fn mcp_config(text: &str) {
         let _ = server.add_args();
     }
     let _ = mcp_config::parse_list(text);
+    let _ = crate::mcp_logs::last_error_in(text);
+    let _ = crate::catalog::front_matter(text);
+    if let Ok(v) = serde_json::from_str::<Value>(text) {
+        let _ = crate::catalog::parse_hooks(&v, &crate::catalog::Origin::User);
+        let _ = crate::plugins::parse_available(&v);
+        let _ = crate::plugins::parse_marketplaces(&v);
+        let _ = crate::plugins::parse_result(&v);
+        let _ = mcp_config::test_verdict(&v);
+    }
 }
 
 /// An HTTP reply from a browser server Kynex runs: status, session, chunked

@@ -37,6 +37,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
   request, or delete it (and its remote branch). "Clean up merged…" deletes every finished
   branch at once after one confirmation, and Undo brings them back. Worktrees can be added,
   opened as a project and removed there too.
+- The Extensions page does more:
+  - MCP servers show their tools and, when they fail, what they last logged.
+  - Servers can be restarted in the open session, and signed in to (OAuth) without a terminal.
+  - Browser servers have a Test that has Claude open a page with them.
+  - Plugins say what they add (skills, commands, agents, hooks, MCP servers) and can be turned
+    on or off, updated and uninstalled.
+  - Browse the added marketplaces, install from them, and add another marketplace. An install
+    that runs a marketplace's command shows that command and asks first.
+  - New read-only tabs for Skills & commands, Agents and Hooks, each grouped by where it's
+    defined.
 
 ### Changed
 

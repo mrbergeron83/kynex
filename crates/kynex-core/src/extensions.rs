@@ -379,6 +379,9 @@ fn plugin_manifest_servers(install: &Path) -> (Vec<(String, Transport)>, Option<
 pub struct Row {
     /// As sessions name it (`plugin_figma_figma`, `claude_ai_Claude_Docs`).
     pub name: String,
+    /// As `claude mcp` names it (`plugin:figma:figma`), for `claude mcp login`;
+    /// `None` for servers only a session reported.
+    pub cli_name: Option<String>,
     pub source: Source,
     pub transport: Option<Transport>,
     pub approval: Approval,
@@ -403,6 +406,10 @@ pub fn rows(configured: &[Server], live: &[mcp::Server]) -> Vec<Row> {
             let name = s.live_name();
             Row {
                 status: status(&name),
+                cli_name: Some(match &s.source {
+                    Source::Plugin(id) => format!("plugin:{}:{}", id.split('@').next().unwrap_or(id), s.name),
+                    _ => s.name.clone(),
+                }),
                 name,
                 source: s.source.clone(),
                 transport: Some(s.transport.clone()),
@@ -415,6 +422,7 @@ pub fn rows(configured: &[Server], live: &[mcp::Server]) -> Vec<Row> {
             let source = if l.name.starts_with("claude_ai_") { Source::ClaudeAi } else { Source::Other };
             out.push(Row {
                 name: l.name.clone(),
+                cli_name: None,
                 source,
                 transport: None,
                 approval: Approval::Approved,

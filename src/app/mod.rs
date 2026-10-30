@@ -48,8 +48,11 @@
 //! | `about.rs`          | the About Kynex modal: version, paths, updates       |
 //! | `storage.rs`        | Settings → Storage: sessions' disk use, cleanup      |
 //! | `storage_list.rs`   | its sessions: filter, sort, go to, files             |
-//! | `extensions.rs`     | the Extensions modal: MCP servers, plugins           |
+//! | `extensions.rs`     | the Extensions modal: its state, loading, sections   |
+//! | `extensions_servers.rs` | MCP servers: status, tools, errors, restart, sign-in, test |
 //! | `extensions_add.rs` | its Add server panel: browser preset, your own       |
+//! | `extensions_plugins.rs` | plugins: what they add, actions, marketplaces    |
+//! | `extensions_catalog.rs` | skills & commands, agents, hooks (read-only)     |
 //! | `appearance.rs`     | each project's colour: title bar, tab, composer      |
 //! | `models.rs`         | the model list, and the picker's families / versions |
 //! | `viewer.rs`         | images opened over the window, thumbnails            |
@@ -64,6 +67,9 @@ mod composer;
 mod drafts;
 mod extensions;
 mod extensions_add;
+mod extensions_catalog;
+mod extensions_plugins;
+mod extensions_servers;
 mod find;
 mod footer;
 mod git_modal;

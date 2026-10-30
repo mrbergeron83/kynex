@@ -295,6 +295,8 @@ pub struct Session {
     pub tasks: Tasks,
     /// The MCP servers its process reported when it started, and how they're doing.
     pub mcp: Vec<crate::mcp::Server>,
+    /// The tools each of those servers offers, by server name.
+    pub mcp_tools: std::collections::BTreeMap<String, Vec<String>>,
     /// Its running process has driven a browser, so its browser server holds a
     /// pairing (and tabs) that stopping the process would lose.
     pub browser: bool,
@@ -325,6 +327,8 @@ pub struct Session {
     /// Goes up when an item changes in a way that changes the transcript's layout.
     revision: u64,
     next_request: u64,
+    /// `mcp_reconnect` and `mcp_status` requests awaiting an answer.
+    mcp_requests: Vec<String>,
     /// `stop_task` requests awaiting an answer: request id → task id.
     stopping: HashMap<String, String>,
     /// The project settings the running process got, and the `apply_flag_settings`
@@ -453,6 +457,7 @@ impl Session {
             queue: Queue::default(),
             tasks: Tasks::default(),
             mcp: Vec::new(),
+            mcp_tools: Default::default(),
             browser: false,
             stale: false,
             wake: Arc::new(|| {}),
@@ -471,6 +476,7 @@ impl Session {
             revision: 0,
             next_request: 0,
             stopping: HashMap::new(),
+            mcp_requests: Vec::new(),
             launched: None,
             applying: Vec::new(),
             reply_model: String::new(),
@@ -878,6 +884,18 @@ impl Session {
         self.stopping.insert(request, id.to_string());
     }
 
+    /// Restarts MCP server `name` in the running process, then asks how every
+    /// server is doing, which updates [`Self::mcp`]. A refusal (no such server,
+    /// no process) shows in the transcript.
+    pub fn reconnect_mcp(&mut self, name: &str) {
+        if self.child.is_none() {
+            return;
+        }
+        let reconnect = self.control(json!({ "subtype": "mcp_reconnect", "serverName": name }));
+        let status = self.control(json!({ "subtype": "mcp_status" }));
+        self.mcp_requests.extend([reconnect, status]);
+    }
+
     /// Sends a control request; returns its id.
     fn control(&mut self, request: Value) -> String {
         self.next_request += 1;
@@ -1120,6 +1138,19 @@ impl Session {
                     self.items.push(Item::Error(format!("Couldn't stop the background task: {why}")));
                 }
             }
+            // A server restarted, or how they all are now.
+            "control_response"
+                if v["response"]["request_id"].as_str().is_some_and(|r| self.mcp_requests.iter().any(|m| m == r)) =>
+            {
+                self.mcp_requests.retain(|m| v["response"]["request_id"] != m.as_str());
+                let r = &v["response"];
+                if r["subtype"] == "error" {
+                    let why = r["error"].as_str().unwrap_or("the CLI refused");
+                    self.items.push(Item::Error(format!("Couldn't restart the MCP server: {why}")));
+                } else if let Some(list) = r["response"]["mcpServers"].as_array() {
+                    self.mcp = crate::mcp::servers(&json!({ "mcp_servers": list }));
+                }
+            }
             // A CLI that can't take settings live (an older one) gets them on a restart.
             "control_response"
                 if v["response"]["request_id"].as_str().is_some_and(|r| self.applying.iter().any(|a| a == r)) =>
@@ -1140,7 +1171,10 @@ impl Session {
                 self.context.tokens = v["compact_metadata"]["post_tokens"].as_u64().unwrap_or(0);
             }
             // Each process start reports its MCP servers and whether they connected.
-            "system" if v["subtype"] == "init" => self.mcp = crate::mcp::servers(&v),
+            "system" if v["subtype"] == "init" => {
+                self.mcp = crate::mcp::servers(&v);
+                self.mcp_tools = crate::mcp::tools(&v);
+            }
             // A task that ended shows in the transcript, and the session wants
             // you even if Claude's turn about it says nothing.
             "system" => {
@@ -1879,6 +1913,19 @@ mod tests {
         let Some(Item::Result { tools, files, .. }) = s.items.last() else { panic!("no result") };
         assert_eq!(*tools, 4);
         assert_eq!(files, &["C:/x/a.rs", "/y/b.md"]);
+    }
+
+    #[test]
+    fn restarting_an_mcp_server_reports_back() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        s.mcp_requests = vec!["r1".into(), "r2".into()];
+        s.handle(json!({ "type": "control_response",
+            "response": { "request_id": "r1", "subtype": "error", "error": "Server not found: x" } }));
+        assert!(matches!(s.items.last(), Some(Item::Error(e)) if e.ends_with("Server not found: x")));
+        s.handle(json!({ "type": "control_response", "response": { "request_id": "r2", "subtype": "success",
+            "response": { "mcpServers": [{ "name": "pw", "status": "connected" }] } } }));
+        assert_eq!(s.mcp.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["pw"]);
+        assert!(s.mcp_requests.is_empty());
     }
 
     #[test]
