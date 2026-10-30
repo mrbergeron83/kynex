@@ -30,6 +30,7 @@ impl KynexApp {
         let busy = self.session_mut().is_some_and(|s| s.busy);
         let text = self.composer.read(cx).text().trim().to_string();
         self.slash.dismissed = None;
+        self.mentions.dismissed = None;
         self.last_esc = None;
         self.remember_sent(&text, cx);
         // Built-ins Kynex runs itself (`/clear`, `/model`…) work even mid-reply.
@@ -154,9 +155,9 @@ impl KynexApp {
             _ if self.prompt.is_some() => None,
             _ if self.rewinding() => self.render_rewind(cx),
             _ if self.history_searching() => self.render_history_search(cx),
-            _ => self.render_slash(cx),
+            _ => self.render_slash(cx).or_else(|| self.render_mentions(cx)),
         };
-        // The slash-command list plays out when it closes; the others just go.
+        // The slash-command and mention lists play out when they close; the others just go.
         let slash = self.slash.shown.clone();
         let slash_leaving = self.exits.slash.track(slash.as_ref(), window, cx);
         let (popup, popup_leaving) = match (popup, slash_leaving) {
@@ -203,7 +204,7 @@ impl KynexApp {
                                 .size_full(),
                             )
                             .when_some(popup, |d, popup| {
-                                // Slash commands, history search, rewind: rise into place above the box.
+                                // Slash commands, mentions, history search, rewind: rise into place above the box.
                                 d.child(deferred(pop(
                                     "composer-popup-in",
                                     div().absolute().bottom_full().left_0().w_full().pb_1().occlude().child(popup),
@@ -373,13 +374,17 @@ impl KynexApp {
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
         };
 
-        // While the history search or the slash-command popup is open it takes the keys first.
+        // While the history search or a completion popup is open it takes the keys first.
         let body = div()
             .flex()
             .flex_col()
             .gap_2()
             .capture_action(cx.listener(|this, _: &input::Up, _, cx| {
-                if this.rewind_move(false, cx) || this.history_search_move(false, cx) || this.slash_move(false, cx) {
+                if this.rewind_move(false, cx)
+                    || this.history_search_move(false, cx)
+                    || this.slash_move(false, cx)
+                    || this.mention_move(false, cx)
+                {
                     cx.stop_propagation();
                 }
             }))
@@ -391,7 +396,11 @@ impl KynexApp {
                 }
             }))
             .capture_action(cx.listener(|this, _: &input::Down, _, cx| {
-                if this.rewind_move(true, cx) || this.history_search_move(true, cx) || this.slash_move(true, cx) {
+                if this.rewind_move(true, cx)
+                    || this.history_search_move(true, cx)
+                    || this.slash_move(true, cx)
+                    || this.mention_move(true, cx)
+                {
                     cx.stop_propagation();
                 }
             }))
@@ -406,7 +415,7 @@ impl KynexApp {
                 } else if this.history_searching() {
                     this.take_history_match(cx);
                     cx.stop_propagation();
-                } else if this.slash_accept(true, window, cx) {
+                } else if this.slash_accept(true, window, cx) || this.mention_accept(window, cx) {
                     cx.stop_propagation();
                 }
             }))
@@ -414,6 +423,7 @@ impl KynexApp {
                 if this.rewind_back(cx)
                     || this.cancel_history_search(cx)
                     || this.slash_dismiss(cx)
+                    || this.mention_dismiss(cx)
                     || this.double_esc(cx)
                 {
                     cx.stop_propagation();
@@ -428,7 +438,10 @@ impl KynexApp {
                     this.take_history_match(cx);
                     return cx.stop_propagation();
                 }
-                if k.key == "tab" && !k.modifiers.modified() && this.slash_accept(false, window, cx) {
+                if k.key == "tab"
+                    && !k.modifiers.modified()
+                    && (this.slash_accept(false, window, cx) || this.mention_accept(window, cx))
+                {
                     cx.stop_propagation();
                 }
                 // Ctrl+Enter, Claude Code's "send now": the queue and the draft go right away.

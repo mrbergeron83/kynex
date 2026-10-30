@@ -24,6 +24,7 @@ pub mod lru;
 pub mod markdown;
 pub mod mcp;
 pub mod mcp_config;
+pub mod mentions;
 pub mod motion;
 pub mod open;
 pub mod paths;

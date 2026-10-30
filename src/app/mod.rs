@@ -32,6 +32,7 @@
 //! | `rewind.rs`         | rewind to an earlier message: conversation and files |
 //! | `timeline.rs`       | the session's turns and steps beside the transcript  |
 //! | `slash.rs`          | the slash-command popup, and built-ins Kynex runs   |
+//! | `mentions.rs`       | the `@file` mention popup                            |
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
 //! | `leaving.rs`        | menus, modals and panels animating out as they close |
@@ -62,6 +63,7 @@ mod handoff;
 mod history;
 mod keys;
 mod leaving;
+mod mentions;
 mod menus;
 mod models;
 mod prompts;
@@ -103,6 +105,7 @@ use kynex_core::session::{self, Attachment, Kind, Session};
 use drafts::Draft;
 use keys::{CopySelection, copy_selection};
 pub use keys::{SHELL_KEYS, ToggleTerminal, bind_keys};
+use mentions::Mentions;
 use menus::OpenMenu;
 use prompts::ActivePrompt;
 use session_groups::Organize;
@@ -167,6 +170,7 @@ pub struct KynexApp {
     drafts: HashMap<String, Draft>,
     draft_for: Option<(Key, String)>,
     slash: Slash,
+    mentions: Mentions,
     sessions: Option<SessionList>,
     /// The sessions list being read in the background, for this.
     sessions_reading: Option<ListRead>,
@@ -397,6 +401,7 @@ impl KynexApp {
             drafts: HashMap::new(),
             draft_for: None,
             slash: Slash::default(),
+            mentions: Mentions::default(),
             sessions: None,
             sessions_reading: None,
             session_filter,

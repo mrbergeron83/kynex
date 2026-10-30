@@ -168,6 +168,31 @@ pub fn file_links(text: &str) {
     }
 }
 
+/// `@file` mentions: the token at every cursor position, and a list of paths
+/// (the lines after the first) matched against the first line. Matched
+/// positions are in order, in bounds and on char boundaries.
+pub fn mentions(text: &str) {
+    use crate::mentions::{Files, at_cursor, insert_text, replace_range};
+    for (cursor, _) in text.char_indices() {
+        if let Some((range, query)) = at_cursor(text, cursor) {
+            assert!(range.end == cursor && text[range.clone()].ends_with(query), "{range:?}");
+            let whole = replace_range(text, range);
+            assert!(text.is_char_boundary(whole.end));
+        }
+    }
+    let (query, paths) = text.split_once('\n').unwrap_or((text, ""));
+    let files = Files::new(paths.lines().map(str::to_string).collect());
+    for m in files.matching(query, 50) {
+        let entry = &files.entries[m.index];
+        let _ = insert_text(entry);
+        let mut last = None;
+        for &p in &m.positions {
+            assert!(p < entry.len() && entry.is_char_boundary(p) && last.is_none_or(|l| l < p), "{m:?} in {entry:?}");
+            last = Some(p);
+        }
+    }
+}
+
 /// Code in every language the highlighter knows, whole and line by line:
 /// ranges sorted, not overlapping, in bounds and on char boundaries.
 pub fn highlight(text: &str) {

@@ -13,6 +13,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A "System" theme that follows the OS's light / dark setting as it changes (Kynex Light or
   Kynex Dark).
 - Settings → Appearance → Status footer: hide the footer if you don't want it.
+- `@file` mentions: typing `@` in a project session lists the project's files and folders,
+  fuzzy-matched as you type (matched letters in bold). Tab or Enter puts `@path` in the
+  message; picking a folder lists what's inside it.
 
 ### Changed
 

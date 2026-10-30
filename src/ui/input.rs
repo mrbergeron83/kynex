@@ -209,6 +209,24 @@ impl TextInput {
         cx.notify();
     }
 
+    /// Where the cursor is, as a byte offset into [`text`](Self::text); `None`
+    /// while text is selected or an IME composition is under way.
+    pub fn cursor(&self) -> Option<usize> {
+        (self.selected_range.is_empty() && self.marked_range.is_none()).then_some(self.selected_range.end)
+    }
+
+    /// Replaces the bytes in `range` with `text` and puts the cursor after it.
+    pub fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
+        self.content.replace_range(range.clone(), text);
+        let end = range.start + text.len();
+        self.selected_range = end..end;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.goal_x = None;
+        cx.emit(InputEvent::Changed);
+        cx.notify();
+    }
+
     pub fn is_focused(&self, window: &Window) -> bool {
         self.focus_handle.is_focused(window)
     }
