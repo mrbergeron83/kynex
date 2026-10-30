@@ -14,6 +14,13 @@ use crate::mcp::{self, Status};
 pub const BROWSER_EXTENSION_URL: &str =
     "https://chromewebstore.google.com/detail/playwright-mcp-bridge/mmlmfjhmonkocbjadbfplnigmagldckm";
 
+/// The extension's status page, which shows its token.
+const BROWSER_EXTENSION_STATUS: &str = "chrome-extension://mmlmfjhmonkocbjadbfplnigmagldckm/status.html";
+
+/// With the extension's token here, `@playwright/mcp --extension` connects
+/// without the extension asking each time.
+pub const BROWSER_TOKEN_ENV: &str = "PLAYWRIGHT_MCP_EXTENSION_TOKEN";
+
 /// Where `claude mcp add` writes a server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
@@ -61,6 +68,8 @@ pub struct NewServer {
     pub name: String,
     pub scope: Scope,
     pub transport: Transport,
+    /// Environment variables the server runs with.
+    pub env: Vec<(String, String)>,
 }
 
 impl NewServer {
@@ -77,12 +86,15 @@ impl NewServer {
             let command = words.next().ok_or("Say what to run, or the server's URL.")?;
             Transport::Stdio { command, args: words.collect() }
         };
-        Ok(Self { name: name.into(), scope, transport })
+        Ok(Self { name: name.into(), scope, transport, env: Vec::new() })
     }
 
     /// The `claude` arguments that add it.
     pub fn add_args(&self) -> Result<Vec<String>, String> {
         let mut args: Vec<String> = ["mcp", "add", "--scope", self.scope.arg()].map(Into::into).into();
+        for (k, v) in &self.env {
+            args.extend(["-e".into(), format!("{k}={v}")]);
+        }
         match &self.transport {
             Transport::Stdio { command, args: rest } => {
                 args.extend([self.name.clone(), "--".into(), command.clone()]);
@@ -226,17 +238,44 @@ impl Browser {
 
     /// The preset: `@playwright/mcp` on this browser, for every folder. With
     /// `own_profile` it attaches to your running browser through its extension
-    /// (your logins stay); without, it opens a fresh browser with none.
-    pub fn preset(self, own_profile: bool) -> NewServer {
+    /// (your logins stay), and with the extension's `token` without it asking
+    /// each time; without, it opens a fresh browser with none.
+    pub fn preset(self, own_profile: bool, token: &str) -> NewServer {
         let mut args: Vec<String> = ["@playwright/mcp@latest", "--browser", self.channel()].map(Into::into).into();
+        let mut env = Vec::new();
         if own_profile {
             args.push("--extension".into());
+            let token = token.trim();
+            if !token.is_empty() {
+                env.push((BROWSER_TOKEN_ENV.into(), token.into()));
+            }
         }
         NewServer {
             name: format!("playwright-{}", self.label().to_ascii_lowercase()),
             scope: Scope::User,
             transport: Transport::Stdio { command: "npx".into(), args },
+            env,
         }
+    }
+
+    /// Opens the Playwright extension's status page, which shows its token, in
+    /// this browser (an extension page only opens in its own browser).
+    pub fn open_token_page(self) -> Result<(), String> {
+        let place = self.places().into_iter().find(|p| p.exists());
+        let place = place.ok_or_else(|| format!("{} isn't installed.", self.label()))?;
+        #[cfg(target_os = "macos")]
+        let mut cmd = {
+            let mut c = std::process::Command::new("open");
+            c.arg("-a").arg(&place).arg(BROWSER_EXTENSION_STATUS);
+            c
+        };
+        #[cfg(not(target_os = "macos"))]
+        let mut cmd = {
+            let mut c = std::process::Command::new(&place);
+            c.arg(BROWSER_EXTENSION_STATUS);
+            c
+        };
+        crate::process::detach(&mut cmd).map(|_| ()).map_err(|e| format!("couldn't open {}: {e}", self.label()))
     }
 
     /// Whether it's installed, by where its installers put it.
@@ -326,11 +365,33 @@ mod tests {
 
     #[test]
     fn browser_presets() {
-        let edge = Browser::Edge.preset(true);
+        let edge = Browser::Edge.preset(true, "");
         assert_eq!(edge.name, "playwright-edge");
         assert_eq!(edge.scope, Scope::User);
         assert_eq!(edge.transport.detail(), "npx @playwright/mcp@latest --browser msedge --extension");
-        assert_eq!(Browser::Chrome.preset(false).transport.detail(), "npx @playwright/mcp@latest --browser chrome");
+        assert!(edge.env.is_empty());
+        assert_eq!(Browser::Chrome.preset(false, "").transport.detail(), "npx @playwright/mcp@latest --browser chrome");
+        // The token goes in the server's environment, and only with your own browser.
+        let edge = Browser::Edge.preset(true, " tok-1 ");
+        assert_eq!(
+            edge.add_args().unwrap(),
+            [
+                "mcp",
+                "add",
+                "--scope",
+                "user",
+                "-e",
+                "PLAYWRIGHT_MCP_EXTENSION_TOKEN=tok-1",
+                "playwright-edge",
+                "--",
+                "npx",
+                "@playwright/mcp@latest",
+                "--browser",
+                "msedge",
+                "--extension"
+            ]
+        );
+        assert!(Browser::Chrome.preset(false, "tok-1").env.is_empty());
     }
 
     #[test]

@@ -49,6 +49,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - The last two sessions you left stay open, with their Claude still running, so switching
   back is instant. Changing the model before the first message restarts the early-started
   Claude on it.
+- A session that has used the browser stays open when you switch away, so it keeps its
+  browser tab and doesn't ask Edge or Chrome to connect again.
+- Setting up the browser on your own Edge or Chrome takes the Playwright extension's token
+  (Extensions → Add a server; "Open token page" shows it), so the extension connects without
+  asking you each time.
 - "Thinking… 4s" keeps counting even when nothing else changes, and no longer repaints the
   window every frame to do it.
 - A status footer along the bottom of the window shows what Kynex and the processes it
