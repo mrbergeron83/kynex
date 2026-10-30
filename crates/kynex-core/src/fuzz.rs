@@ -105,6 +105,13 @@ pub fn git_log(text: &str) {
 /// `git branch` in Kynex's format.
 pub fn git_branch(text: &str) {
     let _ = git::branch::parse(text);
+    let _ = git::branch::parse_cherry(text);
+    let _ = git::branch::parse_overrides(text);
+}
+
+/// What `gh` says about pull requests, protected branches and rules.
+pub fn github(text: &str) {
+    git::github::fuzz_json(text);
 }
 
 /// `git worktree list --porcelain` and `rev-list --left-right --count`.
@@ -264,6 +271,7 @@ mod tests {
             claude_config(t);
             mcp_config(t);
             browser_reply(t.as_bytes());
+            github(t);
             file_links(t);
             highlight(t);
         }

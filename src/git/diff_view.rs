@@ -114,12 +114,14 @@ impl GitView {
             let hint = match self.tab {
                 super::Tab::Changes => "Select a file to see its changes",
                 super::Tab::History => "Select a commit to see what it changed",
+                super::Tab::Branches => "Select a branch to see what it changes",
             };
             return centered(hint, &t).into_any_element();
         };
         let header = match &selection {
             Selection::File { path, staged } => self.file_header(path, *staged, cx).into_any_element(),
             Selection::Commit(_) => self.commit_header(cx),
+            Selection::Compare(branch) => self.compare_header(branch, cx),
         };
         let body = if let Some(e) = &self.diff.error {
             centered(e.clone(), &t).text_color(t.error).into_any_element()
@@ -197,6 +199,37 @@ impl GitView {
             .child(div().flex_1())
             .child(counts(added, removed, &t))
             .child(toggle)
+    }
+
+    /// `main ← feature`: what the branch changed since it left the default branch.
+    fn compare_header(&mut self, branch: &str, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme(cx).clone();
+        let base = self.branch_tab.overview.as_ref().and_then(|o| o.default.clone()).unwrap_or_default();
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_2()
+            .h(px(36.))
+            .px_3()
+            .border_b_1()
+            .border_color(t.border_variant)
+            .child(icon(Icon::GitBranch, t.text_muted).size_3p5())
+            .child(div().font_family(mono()).text_sm().text_color(t.text_muted).child(base))
+            .child(div().text_sm().text_color(t.text_placeholder).child("←"))
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .font_family(mono())
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(branch.to_string()),
+            )
+            .child(div().flex_1())
+            .child(files_label(&self.diff))
+            .child(counts(self.diff.added, self.diff.removed, &t))
+            .into_any_element()
     }
 
     fn commit_header(&mut self, cx: &mut Context<Self>) -> AnyElement {

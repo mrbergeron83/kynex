@@ -6,7 +6,9 @@
 //! `--format`s with separator bytes), never from human-readable text.
 
 pub(crate) mod branch;
+pub mod cleanup;
 pub(crate) mod diff;
+pub mod github;
 pub(crate) mod log;
 mod ops;
 pub(crate) mod status;
@@ -16,12 +18,17 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-pub use branch::{Branch, branches, create_branch, switch_branch};
-pub use diff::{DiffLine, FileDiff, Hunk, LineKind, commit_diff, diff_stat, file_diff};
+pub use branch::{
+    Branch, branches, create_branch, create_branch_at, delete_branch, delete_remote_branch, publish_branch,
+    rename_branch, switch_branch,
+};
+pub use diff::{DiffLine, FileDiff, Hunk, LineKind, commit_diff, compare_diff, diff_stat, file_diff};
 pub use log::{Commit, CommitDetail, Ref, RefKind, commit_detail, log};
 pub use ops::{Sync, commit, discard, last_message, stage, stage_all, sync, unstage, unstage_all};
 pub use status::{Change, FileStatus, Head, Status, status};
-pub use worktree::{Worktree, list_worktrees, worktree_in};
+pub use worktree::{
+    Worktree, add_worktree, default_worktree_path, list_worktrees, prune_worktrees, remove_worktree, worktree_in,
+};
 
 use crate::wsl;
 

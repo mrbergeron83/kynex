@@ -71,6 +71,10 @@ impl GitView {
                 .child(label)
                 .tooltip(Tooltip::text(tip))
                 .on_click(cx.listener(move |this, _, _, cx| {
+                    // After a fetch, pull requests and gone remotes may have changed.
+                    if op == Sync::Fetch {
+                        this.branch_tab.forget_github();
+                    }
                     this.run(op.label(), cx, move |root| git::sync(root, op), |_, _| {});
                 }))
         };
@@ -142,7 +146,10 @@ impl GitView {
             .child(
                 icon_button("git-refresh", Icon::Refresh, cx)
                     .tooltip(Tooltip::text("Re-read the repository"))
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.branch_tab.forget_github();
+                        this.refresh(cx)
+                    })),
             )
     }
 

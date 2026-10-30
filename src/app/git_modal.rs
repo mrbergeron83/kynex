@@ -9,7 +9,7 @@ use gpui::{AnyElement, Context, FontWeight, MouseButton, Window, div, prelude::*
 use kynex_core::git::Worktree;
 
 use super::KynexApp;
-use crate::git::GitView;
+use crate::git::{GitEvent, GitView};
 use crate::theme::{mono, theme};
 use crate::ui::motion::{self, fade, pop};
 use crate::ui::{Icon, Tooltip, icon, icon_button, outline_button};
@@ -24,10 +24,28 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// The Git view for the folder `path`, made the first time it's needed.
+    pub(super) fn git_view(&mut self, path: &std::path::Path, cx: &mut Context<Self>) -> gpui::Entity<GitView> {
+        if let Some(g) = self.git.get(path) {
+            return g.clone();
+        }
+        let g = cx.new(|cx| GitView::new(path.to_path_buf(), cx));
+        cx.subscribe(&g, |this, _, ev: &GitEvent, cx| match ev {
+            GitEvent::OpenFolder(folder) => {
+                this.git_modal = None;
+                this.add_project(folder.clone());
+                cx.notify();
+            }
+        })
+        .detach();
+        self.git.insert(path.to_path_buf(), g.clone());
+        g
+    }
+
     /// Opens the Git modal for the folder `cwd`, on the changes to `file`.
     pub(super) fn open_git_file(&mut self, cwd: PathBuf, file: PathBuf, cx: &mut Context<Self>) {
         self.open_git_modal(cwd.clone(), cx);
-        let git = self.git.entry(cwd.clone()).or_insert_with(|| cx.new(|cx| GitView::new(cwd, cx))).clone();
+        let git = self.git_view(&cwd, cx);
         git.update(cx, |g, cx| g.show_file(&file, cx));
     }
 
@@ -55,7 +73,7 @@ impl KynexApp {
         let path = self.git_modal.clone()?;
         let t = theme(cx).clone();
         let vp = window.viewport_size();
-        let git = self.git.entry(path.clone()).or_insert_with(|| cx.new(|cx| GitView::new(path.clone(), cx))).clone();
+        let git = self.git_view(&path, cx);
         let worktree = self.known_worktree(&path, cx);
         let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         let branch = worktree.as_ref().map(|w| w.label().to_string());

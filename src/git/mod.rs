@@ -1,17 +1,22 @@
 //! The Git view for one project: a top bar with the branch picker and
 //! fetch / pull / push, a left column with the Changes tab (commit box, staged
-//! and unstaged files) and the History tab, and a diff on the right.
+//! and unstaged files), the History tab and the Branches tab, and a diff on
+//! the right.
 //!
-//! | file           | what                                                   |
-//! |----------------|--------------------------------------------------------|
-//! | `mod.rs`       | state, refreshing, running operations, the layout      |
-//! | `top_bar.rs`   | branch picker, upstream, fetch / pull / push           |
-//! | `changes.rs`   | commit box and the staged / unstaged file lists        |
-//! | `history.rs`   | the commit list                                        |
-//! | `diff_view.rs` | a diff (one file, or a whole commit) as numbered rows  |
+//! | file            | what                                                       |
+//! |-----------------|------------------------------------------------------------|
+//! | `mod.rs`        | state, refreshing, running operations, the layout          |
+//! | `top_bar.rs`    | branch picker, upstream, fetch / pull / push               |
+//! | `changes.rs`    | commit box and the staged / unstaged file lists            |
+//! | `history.rs`    | the commit list                                            |
+//! | `branches.rs`   | the Branches tab: branch rows, their menu, picking         |
+//! | `branch_ops.rs` | its name field, delete confirmation and undo, worktrees    |
+//! | `diff_view.rs`  | a diff (a file, a commit, a branch) as numbered rows       |
 //!
 //! Git itself is `kynex_core::git`; every call runs on the background executor.
 
+mod branch_ops;
+mod branches;
 mod changes;
 mod diff_view;
 mod history;
@@ -38,14 +43,28 @@ const HISTORY_LIMIT: usize = 500;
 enum Tab {
     Changes,
     History,
+    Branches,
 }
 
 /// What the right-hand side shows.
 #[derive(Clone, PartialEq)]
 enum Selection {
-    File { path: String, staged: bool },
+    File {
+        path: String,
+        staged: bool,
+    },
     Commit(String),
+    /// A branch against the default branch, as its pull request shows it.
+    Compare(String),
 }
+
+/// What the Git view asks of the app.
+pub enum GitEvent {
+    /// Open this folder (a worktree) as a project tab.
+    OpenFolder(PathBuf),
+}
+
+impl gpui::EventEmitter<GitEvent> for GitView {}
 
 pub struct GitView {
     root: PathBuf,
@@ -73,6 +92,9 @@ pub struct GitView {
     diff_scroll: UniformListScrollHandle,
     /// A file to show once the status has been read (`show_file`).
     show_pending: Option<PathBuf>,
+    branch_tab: branches::BranchTab,
+    /// The Branches tab's name field: rename, new branch, new worktree.
+    name_input: Entity<TextInput>,
 }
 
 impl GitView {
@@ -90,6 +112,13 @@ impl GitView {
         cx.subscribe(&new_branch, |this, _, ev, cx| {
             if let InputEvent::Submit = ev {
                 this.create_branch(cx);
+            }
+        })
+        .detach();
+        let name_input = cx.new(|cx| TextInput::new(cx).placeholder("Name"));
+        cx.subscribe(&name_input, |this, _, ev, cx| {
+            if let InputEvent::Submit = ev {
+                this.submit_naming(cx);
             }
         })
         .detach();
@@ -122,6 +151,8 @@ impl GitView {
             history_scroll: UniformListScrollHandle::new(),
             diff_scroll: UniformListScrollHandle::new(),
             show_pending: None,
+            branch_tab: branches::BranchTab::default(),
+            name_input,
         };
         view.refresh(cx);
         view
@@ -129,6 +160,9 @@ impl GitView {
 
     /// Re-reads everything: status, history and branches.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.tab == Tab::Branches {
+            self.load_branches(false, cx);
+        }
         let root = self.root.clone();
         cx.spawn(async move |this, cx| {
             let (status, commits, branches) = cx
@@ -247,8 +281,9 @@ impl GitView {
                 .as_ref()
                 .and_then(|s| s.files.iter().find(|f| &f.path == path))
                 .is_some_and(|f| f.unstaged == Some(Change::Untracked)),
-            Selection::Commit(_) => false,
+            Selection::Commit(_) | Selection::Compare(_) => false,
         };
+        let base = self.branch_tab.overview.as_ref().and_then(|o| o.default.clone());
         cx.spawn(async move |this, cx| {
             let sel = selection.clone();
             let loaded = cx
@@ -261,6 +296,10 @@ impl GitView {
                             let files = std::mem::take(&mut d.files);
                             (files, Some(d))
                         }),
+                        Selection::Compare(branch) => match &base {
+                            Some(base) => git::compare_diff(&root, base, branch).map(|files| (files, None)),
+                            None => Err("There's no default branch to compare with".into()),
+                        },
                     }
                 })
                 .await;
@@ -269,7 +308,7 @@ impl GitView {
                 if this.selected.as_ref() != Some(&selection) {
                     return;
                 }
-                let multi = matches!(selection, Selection::Commit(_));
+                let multi = matches!(selection, Selection::Commit(_) | Selection::Compare(_));
                 match loaded {
                     Ok((files, detail)) => {
                         this.diff = DiffState::new(&files, multi);
@@ -406,6 +445,9 @@ impl Render for GitView {
                 .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.tab = tab;
+                    if tab == Tab::Branches {
+                        this.load_branches(false, cx);
+                    }
                     cx.notify();
                 }))
         };
@@ -423,11 +465,15 @@ impl Render for GitView {
                 Tab::Changes,
                 cx,
             ))
-            .child(tab_button("git-tab-history", "History".into(), Tab::History, cx));
+            .child(tab_button("git-tab-history", "History".into(), Tab::History, cx))
+            .child(tab_button("git-tab-branches", "Branches".into(), Tab::Branches, cx));
         let left = match self.tab {
             Tab::Changes => self.render_changes(window, cx).into_any_element(),
             Tab::History => self.render_history(cx).into_any_element(),
+            Tab::Branches => self.render_branches(window, cx),
         };
+        let undo = self.render_undo(cx);
+        let confirm = self.render_confirm(cx);
 
         let error = self.error.clone().map(|e| {
             div()
@@ -459,24 +505,34 @@ impl Render for GitView {
                 .child("Conflicts: resolve the files marked ! in your editor, then stage them to continue.")
         });
 
-        div().flex().flex_col().size_full().child(top).children(error).children(conflicts).child(
-            div()
-                .flex()
-                .flex_1()
-                .min_h_0()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .w(px(340.))
-                        .flex_none()
-                        .bg(t.panel)
-                        .border_r_1()
-                        .border_color(t.border)
-                        .child(tabs)
-                        .child(div().flex().flex_col().flex_1().min_h_0().child(left)),
-                )
-                .child(div().flex().flex_col().flex_1().min_w_0().bg(t.editor).child(self.render_diff(cx))),
-        )
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(top)
+            .children(error)
+            .children(undo)
+            .children(conflicts)
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .w(px(340.))
+                            .flex_none()
+                            .bg(t.panel)
+                            .border_r_1()
+                            .border_color(t.border)
+                            .child(tabs)
+                            .child(div().flex().flex_col().flex_1().min_h_0().child(left)),
+                    )
+                    .child(div().flex().flex_col().flex_1().min_w_0().bg(t.editor).child(self.render_diff(cx))),
+            )
+            .children(confirm)
     }
 }

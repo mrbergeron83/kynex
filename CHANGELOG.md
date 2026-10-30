@@ -19,6 +19,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
   still working are kept.
 - Drag project tabs along the title bar to reorder them; the order is kept across restarts.
   Ctrl+Shift+PageUp / PageDown move the shown tab one place without the mouse.
+- A Branches tab in the Git view: every branch with its upstream, pull request and checks
+  (through `gh`), whether it's merged or squash merged, and a shield on protected ones.
+  Switch, branch from, rename, publish, compare with the default branch, open its pull
+  request, or delete it (and its remote branch). "Clean up merged…" deletes every finished
+  branch at once after one confirmation, and Undo brings them back. Worktrees can be added,
+  opened as a project and removed there too.
 
 ### Changed
 
