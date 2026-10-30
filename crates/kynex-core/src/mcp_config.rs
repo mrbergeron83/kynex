@@ -322,14 +322,64 @@ pub fn npx_found() -> bool {
     on_path(if cfg!(windows) { "npx.cmd" } else { "npx" }).is_some()
 }
 
-fn on_path(exe: &str) -> Option<PathBuf> {
+pub(crate) fn on_path(exe: &str) -> Option<PathBuf> {
     let paths = std::env::var_os("PATH")?;
     std::env::split_paths(&paths).map(|dir| dir.join(exe)).find(|p| p.is_file())
+}
+
+/// The page a browser test opens, and what its title must say.
+const TEST_PAGE: (&str, &str) = ("https://example.com", "Example Domain");
+
+/// Tries browser server `server` (as sessions name it) for real: a one-off
+/// `claude -p` on the smallest model that may only open a page with it, and
+/// must report the page's title. `Ok` with what it read, or why it failed.
+/// Blocks for the whole run (tens of seconds; a little quota).
+pub fn test_browser(cwd: &Path, server: &str) -> Result<String, String> {
+    let tool = format!("mcp__{}__browser_navigate", mcp::tool_spelling(server));
+    let prompt = format!(
+        "Open {} with the {tool} tool, then reply with only the page's title. \
+         If the tool fails or isn't available, reply with ERROR: and what it said.",
+        TEST_PAGE.0
+    );
+    let out = cli::command(cli::program())
+        .args(["-p", &prompt, "--model", "haiku", "--output-format", "json", "--max-turns", "4"])
+        // A test, not a conversation: nothing for the sessions list.
+        .arg("--no-session-persistence")
+        .args(["--allowedTools", &tool, "--disallowedTools", "Bash,Read,Write,Edit,WebFetch,WebSearch"])
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("Couldn't start `claude`: {e}"))?;
+    let line = String::from_utf8_lossy(&out.stdout);
+    let line = line.lines().rev().find(|l| l.trim_start().starts_with('{')).unwrap_or("");
+    match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(v) => test_verdict(&v),
+        Err(_) => Err(failure("claude -p", &out)),
+    }
+}
+
+/// A browser test's `result` event: did the page's title come back?
+pub(crate) fn test_verdict(v: &serde_json::Value) -> Result<String, String> {
+    let said = v["result"].as_str().unwrap_or("").trim();
+    if v["is_error"] != true && said.contains(TEST_PAGE.1) {
+        return Ok(format!("Opened {} and read its title.", TEST_PAGE.0));
+    }
+    let said = said.strip_prefix("ERROR:").unwrap_or(said).trim();
+    Err(if said.is_empty() { "The test run ended without an answer.".into() } else { said.chars().take(400).collect() })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn judges_browser_tests() {
+        use serde_json::json;
+        assert!(test_verdict(&json!({ "result": "Example Domain", "is_error": false })).is_ok());
+        assert_eq!(test_verdict(&json!({ "result": "ERROR: no browser" })), Err("no browser".into()));
+        assert!(test_verdict(&json!({ "result": "Example Domain", "is_error": true })).is_err());
+        assert!(test_verdict(&json!({})).is_err());
+    }
 
     #[test]
     fn splits_command_lines() {

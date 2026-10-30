@@ -44,7 +44,7 @@ fn folder_name(project: &Path) -> String {
 
 /// One spelling per folder: no trailing separator, and on Windows (where paths
 /// are case-insensitive) one case and one kind of slash.
-fn normalize(p: &Path) -> String {
+pub(crate) fn normalize(p: &Path) -> String {
     let s = p.to_string_lossy();
     let s = s.trim_end_matches(['/', '\\']);
     if cfg!(windows) { s.replace('/', "\\").to_lowercase() } else { s.to_string() }

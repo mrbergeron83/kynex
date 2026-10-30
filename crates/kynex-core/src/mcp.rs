@@ -195,6 +195,26 @@ pub fn servers(init: &Value) -> Vec<Server> {
         .collect()
 }
 
+/// The tools each MCP server offers, from a `system` `init` message: its
+/// `tools` are named `mcp__<server>__<tool>`, with the server's name spelled
+/// as tool names allow; the keys here are the names [`servers`] reports.
+pub fn tools(init: &Value) -> std::collections::BTreeMap<String, Vec<String>> {
+    let names: Vec<String> = servers(init).into_iter().map(|s| s.name).collect();
+    let mut out: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    for t in init["tools"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        let Some((server, tool)) = split(t) else { continue };
+        let name = names.iter().find(|n| tool_spelling(n) == server).cloned().unwrap_or_else(|| server.to_string());
+        out.entry(name).or_default().push(tool.to_string());
+    }
+    out
+}
+
+/// A server's name as tool names spell it: anything but letters, digits, `-`
+/// and `_` becomes `_` (`claude.ai Figma` → `claude_ai_Figma`).
+pub(crate) fn tool_spelling(name: &str) -> String {
+    name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect()
+}
+
 /// All servers together, worst first: one failed makes it `Failed`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Health {
@@ -354,6 +374,21 @@ mod tests {
         assert_eq!(split("Bash"), None);
         assert_eq!(split("mcp__x"), None);
         assert_eq!(split("mcp____y"), None);
+    }
+
+    #[test]
+    fn groups_tools_by_server() {
+        let init = json!({
+            "mcp_servers": [{ "name": "playwright-edge", "status": "connected" }, { "name": "claude.ai Figma", "status": "connected" }],
+            "tools": ["Bash", "mcp__playwright-edge__browser_click", "mcp__playwright-edge__browser_navigate",
+                      "mcp__claude_ai_Figma__get_screenshot", "mcp__gone__x"],
+        });
+        let tools = tools(&init);
+        assert_eq!(tools["playwright-edge"], ["browser_click", "browser_navigate"]);
+        assert_eq!(tools["claude.ai Figma"], ["get_screenshot"]);
+        // A server not in the list keeps the name its tools use.
+        assert_eq!(tools["gone"], ["x"]);
+        assert_eq!(tools.len(), 3);
     }
 
     #[test]

@@ -54,13 +54,11 @@ impl KynexApp {
             this.remeasure_row(key, row);
             cx.notify();
         });
+        // The live step spins in its own row, shown under the summary; folded
+        // and not live, the summary spins for the run.
         let head = disclosure_row(("run", first), open, &t)
-            .child(if pending {
-                spinner(("run-spin", first), t.accent, px(12.)).into_any_element()
-            } else {
-                icon(Icon::Terminal, t.text_muted).size_3().into_any_element()
-            })
-            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(t.text).child(run.summary.clone()))
+            .when(pending && !open && !live, |d| d.child(spinner(("run-spin", first), t.accent, px(12.))))
+            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(t.text_muted).child(run.summary.clone()))
             .when(failed > 0, |d| {
                 d.child(div().flex_none().text_xs().text_color(t.error).child(format!("{failed} failed")))
             })
@@ -193,7 +191,7 @@ impl KynexApp {
         });
         let summary_el = div().flex_1().min_w_0().truncate().child(summary.clone());
         let summary_el = if described {
-            summary_el.text_sm().text_color(t.text)
+            summary_el.text_sm().text_color(t.text_muted)
         } else {
             summary_el.font_family(mono()).text_xs().text_color(t.text_muted)
         };
@@ -223,11 +221,7 @@ impl KynexApp {
             });
         let head = disclosure_row(("tool", ix), expanded, &t)
             .group("tool-head")
-            .child(if running {
-                spinner(("tool-spin", ix), t.accent, px(12.)).into_any_element()
-            } else {
-                icon(Icon::Terminal, t.text_muted).size_3().into_any_element()
-            })
+            .when(running, |d| d.child(spinner(("tool-spin", ix), t.accent, px(12.))))
             .child(div().flex_none().text_xs().font_weight(FontWeight::MEDIUM).text_color(t.text_muted).child(label))
             .child(summary_el)
             .children(permission.map(|(note, color)| div().flex_none().text_xs().text_color(color).child(note)))

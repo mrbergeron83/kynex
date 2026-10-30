@@ -295,6 +295,8 @@ pub struct Session {
     pub tasks: Tasks,
     /// The MCP servers its process reported when it started, and how they're doing.
     pub mcp: Vec<crate::mcp::Server>,
+    /// The tools each of those servers offers, by server name.
+    pub mcp_tools: std::collections::BTreeMap<String, Vec<String>>,
     /// Its running process has driven a browser, so its browser server holds a
     /// pairing (and tabs) that stopping the process would lose.
     pub browser: bool,
@@ -325,6 +327,8 @@ pub struct Session {
     /// Goes up when an item changes in a way that changes the transcript's layout.
     revision: u64,
     next_request: u64,
+    /// `mcp_reconnect` and `mcp_status` requests awaiting an answer.
+    mcp_requests: Vec<String>,
     /// `stop_task` requests awaiting an answer: request id → task id.
     stopping: HashMap<String, String>,
     /// The project settings the running process got, and the `apply_flag_settings`
@@ -343,6 +347,11 @@ pub struct Session {
     loader: Option<Loader>,
     /// While replaying: the log and line the entry came from, so its images stay there.
     origin: Option<(Arc<PathBuf>, Span)>,
+    /// Its `--extension` browser servers, run by Kynex so the pairing outlives
+    /// the process ([`crate::browser_server`]), and the ones the running
+    /// process was given (the others were still starting).
+    browser_servers: Vec<crate::browser_server::BrowserServer>,
+    browser_given: Vec<String>,
 }
 
 /// A session log being read back on a thread: its newest turns, then the rest.
@@ -448,6 +457,7 @@ impl Session {
             queue: Queue::default(),
             tasks: Tasks::default(),
             mcp: Vec::new(),
+            mcp_tools: Default::default(),
             browser: false,
             stale: false,
             wake: Arc::new(|| {}),
@@ -466,6 +476,7 @@ impl Session {
             revision: 0,
             next_request: 0,
             stopping: HashMap::new(),
+            mcp_requests: Vec::new(),
             launched: None,
             applying: Vec::new(),
             reply_model: String::new(),
@@ -474,6 +485,8 @@ impl Session {
             resume_at: None,
             loader: None,
             origin: None,
+            browser_servers: Vec::new(),
+            browser_given: Vec::new(),
         }
     }
 
@@ -657,6 +670,14 @@ impl Session {
                 cmd.args(["--permission-mode", self.mode.cli()]);
                 cmd.args(claude.cli_args());
                 launched = Some(project::Launched::new(&perms, &claude));
+                // Kynex's own browser servers, under the configured names; one
+                // still starting leaves this process the configured one.
+                crate::browser_server::reconcile(&mut self.browser_servers, &crate::browser_server::entries(&self.cwd));
+                let ready: Vec<_> = self.browser_servers.iter().filter(|s| s.ready()).collect();
+                self.browser_given = ready.iter().map(|s| s.name.clone()).collect();
+                if !ready.is_empty() {
+                    cmd.args(["--mcp-config", &crate::browser_server::mcp_config(ready)]);
+                }
             }
         }
         if !self.model.is_empty() {
@@ -863,6 +884,18 @@ impl Session {
         self.stopping.insert(request, id.to_string());
     }
 
+    /// Restarts MCP server `name` in the running process, then asks how every
+    /// server is doing, which updates [`Self::mcp`]. A refusal (no such server,
+    /// no process) shows in the transcript.
+    pub fn reconnect_mcp(&mut self, name: &str) {
+        if self.child.is_none() {
+            return;
+        }
+        let reconnect = self.control(json!({ "subtype": "mcp_reconnect", "serverName": name }));
+        let status = self.control(json!({ "subtype": "mcp_status" }));
+        self.mcp_requests.extend([reconnect, status]);
+    }
+
     /// Sends a control request; returns its id.
     fn control(&mut self, request: Value) -> String {
         self.next_request += 1;
@@ -1002,7 +1035,9 @@ impl Session {
         self.spawned = None;
         self.ready = false;
         self.in_block = false;
-        self.browser = false;
+        // A browser Kynex holds stays paired for the next process.
+        self.browser = self.browser_servers.iter().any(|s| s.held());
+        self.browser_given.clear();
         self.stale = false;
         self.launched = None;
         self.applying.clear();
@@ -1011,6 +1046,17 @@ impl Session {
         self.stopping.clear();
         // Nobody is left to answer them.
         self.cancel_permissions(|_| true);
+    }
+
+    /// The process drove the browser of MCP server `server`: if that's one of
+    /// Kynex's, Kynex joins it so the pairing outlives the process.
+    fn hold_browser(&mut self, server: &str) {
+        if !self.browser_given.iter().any(|n| n == server) {
+            return;
+        }
+        for s in self.browser_servers.iter_mut().filter(|s| s.name == server) {
+            s.hold();
+        }
     }
 
     /// Marks the pending permission prompts `which` picks as cancelled.
@@ -1092,6 +1138,19 @@ impl Session {
                     self.items.push(Item::Error(format!("Couldn't stop the background task: {why}")));
                 }
             }
+            // A server restarted, or how they all are now.
+            "control_response"
+                if v["response"]["request_id"].as_str().is_some_and(|r| self.mcp_requests.iter().any(|m| m == r)) =>
+            {
+                self.mcp_requests.retain(|m| v["response"]["request_id"] != m.as_str());
+                let r = &v["response"];
+                if r["subtype"] == "error" {
+                    let why = r["error"].as_str().unwrap_or("the CLI refused");
+                    self.items.push(Item::Error(format!("Couldn't restart the MCP server: {why}")));
+                } else if let Some(list) = r["response"]["mcpServers"].as_array() {
+                    self.mcp = crate::mcp::servers(&json!({ "mcp_servers": list }));
+                }
+            }
             // A CLI that can't take settings live (an older one) gets them on a restart.
             "control_response"
                 if v["response"]["request_id"].as_str().is_some_and(|r| self.applying.iter().any(|a| a == r)) =>
@@ -1112,7 +1171,10 @@ impl Session {
                 self.context.tokens = v["compact_metadata"]["post_tokens"].as_u64().unwrap_or(0);
             }
             // Each process start reports its MCP servers and whether they connected.
-            "system" if v["subtype"] == "init" => self.mcp = crate::mcp::servers(&v),
+            "system" if v["subtype"] == "init" => {
+                self.mcp = crate::mcp::servers(&v);
+                self.mcp_tools = crate::mcp::tools(&v);
+            }
             // A task that ended shows in the transcript, and the session wants
             // you even if Claude's turn about it says nothing.
             "system" => {
@@ -1155,9 +1217,11 @@ impl Session {
                             let input = serde_json::to_string_pretty(&block["input"]).unwrap_or_default();
                             let id = block["id"].as_str().unwrap_or("").to_string();
                             if self.child.is_some()
-                                && crate::mcp::split(&name).is_some_and(|(_, t)| crate::mcp::is_browser(t))
+                                && let Some((server, tool)) = crate::mcp::split(&name)
+                                && crate::mcp::is_browser(tool)
                             {
                                 self.browser = true;
+                                self.hold_browser(server);
                             }
                             // Streamed in already: it gets its whole input.
                             if let Some(Item::ToolUse { name: n, summary: s, input: i, .. }) = self.streamed_call(&id) {
@@ -1435,8 +1499,22 @@ pub struct SessionInfo {
     /// `title` is a real name, not just the first message.
     pub named: bool,
     pub modified: SystemTime,
+    /// The branch it started on and the folder it ran in, as its log says.
+    pub branch: Option<String>,
+    pub ran_in: Option<PathBuf>,
 }
 
+impl SessionInfo {
+    /// The branch to show beside it in project `project`'s list: the one it
+    /// started on, when that was another worktree's folder or a branch other
+    /// than `default`. Sessions of the main worktree on the default branch
+    /// show nothing.
+    pub fn ran_elsewhere(&self, project: &Path, default: Option<&str>) -> Option<&str> {
+        let branch = self.branch.as_deref().filter(|b| *b != "HEAD")?;
+        let other_folder = self.ran_in.as_deref().is_some_and(|d| project::normalize(d) != project::normalize(project));
+        (other_folder || default.is_some_and(|d| d != branch)).then_some(branch)
+    }
+}
 /// `~/.claude/projects`, under the WSL user's home for projects that live in WSL.
 fn projects_dir(cwd: &Path) -> Option<PathBuf> {
     let home = match wsl::parse(cwd) {
@@ -1625,6 +1703,8 @@ pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
                 first: names.first,
                 id,
                 modified,
+                branch: names.branch,
+                ran_in: names.ran_in,
             })
         })
         .collect();
@@ -1638,6 +1718,9 @@ struct Names {
     first: String,
     /// When its last message was said, if the log's tail has one.
     last: Option<SystemTime>,
+    /// Where its first message was said: the git branch and the folder.
+    branch: Option<String>,
+    ran_in: Option<PathBuf>,
 }
 
 /// How far into a log to look for its first message, and back from its end for its title.
@@ -1660,7 +1743,7 @@ fn read_names(path: &Path) -> Option<Names> {
     let mut file = std::fs::File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
     // A first message too big for the head (a pasted screenshot) is looked for further.
-    let first =
+    let (first, branch, ran_in) =
         first_in(&mut file, HEAD_CAP).or_else(|| (len > HEAD_CAP).then(|| first_in(&mut file, u64::MAX)).flatten())?;
     let (mut custom, mut ai) = (None, None);
     let title = |line: &[u8], kind: &str, key: &str| {
@@ -1681,7 +1764,7 @@ fn read_names(path: &Path) -> Option<Names> {
         }
         custom.is_none() || last.is_none()
     });
-    Some(Names { title: custom.or(ai), first, last })
+    Some(Names { title: custom.or(ai), first, last, branch, ran_in })
 }
 
 /// When a log line was said, if it's a message of the conversation: not the
@@ -1721,7 +1804,9 @@ fn cwd_in(line: &str) -> Option<PathBuf> {
 }
 
 /// The first real user message in the first `cap` bytes of a log.
-fn first_in(file: &mut std::fs::File, cap: u64) -> Option<String> {
+/// The first user message in a log's first `cap` bytes, with the git branch
+/// and folder that line was logged in.
+fn first_in(file: &mut std::fs::File, cap: u64) -> Option<(String, Option<String>, Option<PathBuf>)> {
     use std::io::{Read, Seek};
     file.seek(std::io::SeekFrom::Start(0)).ok()?;
     let mut reader = BufReader::new((&mut *file).take(cap));
@@ -1735,7 +1820,9 @@ fn first_in(file: &mut std::fs::File, cap: u64) -> Option<String> {
             && l.contains(r#""type":"user""#)
             && let Some(first) = first_message(l.trim_end())
         {
-            return Some(first);
+            let v: Value = serde_json::from_str(l.trim_end()).unwrap_or_default();
+            let text = |k: &str| v[k].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+            return Some((first, text("gitBranch"), text("cwd").map(PathBuf::from)));
         }
     }
 }
@@ -1826,6 +1913,19 @@ mod tests {
         let Some(Item::Result { tools, files, .. }) = s.items.last() else { panic!("no result") };
         assert_eq!(*tools, 4);
         assert_eq!(files, &["C:/x/a.rs", "/y/b.md"]);
+    }
+
+    #[test]
+    fn restarting_an_mcp_server_reports_back() {
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+        s.mcp_requests = vec!["r1".into(), "r2".into()];
+        s.handle(json!({ "type": "control_response",
+            "response": { "request_id": "r1", "subtype": "error", "error": "Server not found: x" } }));
+        assert!(matches!(s.items.last(), Some(Item::Error(e)) if e.ends_with("Server not found: x")));
+        s.handle(json!({ "type": "control_response", "response": { "request_id": "r2", "subtype": "success",
+            "response": { "mcpServers": [{ "name": "pw", "status": "connected" }] } } }));
+        assert_eq!(s.mcp.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["pw"]);
+        assert!(s.mcp_requests.is_empty());
     }
 
     #[test]
@@ -2450,6 +2550,33 @@ mod tests {
     }
 
     #[test]
+    fn sessions_say_where_they_ran_off_the_main_line() {
+        let path = std::env::temp_dir().join(format!("kynex-ranin-{}.jsonl", std::process::id()));
+        let line = r#"{"type":"user","message":{"role":"user","content":"hi"},"gitBranch":"feat/x","cwd":"C:\\repos\\app-feat","timestamp":"2026-10-30T10:00:00.000Z"}"#;
+        std::fs::write(&path, format!("{line}\n")).unwrap();
+        let names = read_names(&path).unwrap();
+        assert_eq!(names.branch.as_deref(), Some("feat/x"));
+        let info = |branch: &str, ran_in: &str| SessionInfo {
+            id: "s".into(),
+            title: String::new(),
+            first: String::new(),
+            named: false,
+            modified: SystemTime::UNIX_EPOCH,
+            branch: Some(branch.into()),
+            ran_in: Some(PathBuf::from(ran_in)),
+        };
+        let main = Path::new("/repos/app");
+        // Main worktree, default branch: nothing to say.
+        assert_eq!(info("main", "/repos/app").ran_elsewhere(main, Some("main")), None);
+        // Another branch, or another worktree's folder: its branch.
+        assert_eq!(info("fix", "/repos/app").ran_elsewhere(main, Some("main")), Some("fix"));
+        assert_eq!(info("main", "/repos/app-wt").ran_elsewhere(main, Some("main")), Some("main"));
+        // A detached HEAD has no branch to show.
+        assert_eq!(info("HEAD", "/repos/app-wt").ran_elsewhere(main, Some("main")), None);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn a_session_is_as_new_as_its_last_message() {
         let path = std::env::temp_dir().join(format!("kynex-last-{}.jsonl", std::process::id()));
         let lines = [
@@ -2550,6 +2677,62 @@ mod tests {
         assert!(reply.contains("APPLE") && !reply.contains("BANANA"), "got: {reply:?}");
         assert_eq!(s.session_id.as_deref(), Some(id.as_str()));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The browser pairing outlives the process (#181): a session opens a page
+    /// through Kynex's server for an `--extension` Playwright entry in your
+    /// config, its process is stopped as a restart would, and the next process
+    /// still finds the page. Uses your browser, its extension and a little
+    /// quota. Run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore = "needs the claude CLI, npx, and a browser with the Playwright extension; opens example.com in it"]
+    fn browser_pairing_outlives_the_process() {
+        let root = std::env::temp_dir().join(format!("kynex-browser-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut s = Session::new(Kind::Code, root.clone());
+        s.model = "haiku".into();
+        let entries = crate::browser_server::entries(&root);
+        let name = entries.first().expect("an --extension Playwright server in your config").name.clone();
+        crate::browser_server::reconcile(&mut s.browser_servers, &entries);
+        let start = Instant::now();
+        while !s.browser_servers.iter().all(|b| b.ready()) && start.elapsed() < Duration::from_secs(60) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let turn = |s: &mut Session, text: &str| {
+            s.send(text.into(), Vec::new());
+            let start = Instant::now();
+            while s.busy && start.elapsed() < Duration::from_secs(180) {
+                s.poll();
+                // Allow whatever it asks for: only browser tools are in play.
+                if let Some(i) =
+                    s.items.iter().position(|i| matches!(i, Item::Permission { state: PermState::Pending, .. }))
+                {
+                    s.answer_permission(i, Answer::Server);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            s.items
+                .iter()
+                .rev()
+                .find_map(|i| if let Item::Assistant(t) = i { Some(t.clone()) } else { None })
+                .unwrap_or_default()
+        };
+        turn(&mut s, &format!("With the {name} browser tools, open https://example.com. Reply only DONE."));
+        assert!(s.browser, "the session didn't use the browser");
+        let start = Instant::now();
+        while !s.browser_servers.iter().any(|b| b.held()) && start.elapsed() < Duration::from_secs(60) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        s.kill();
+        assert!(s.browser, "the pairing went with the process");
+        let reply = turn(
+            &mut s,
+            &format!("With the {name} browser_tabs tool, list the open tabs. Reply with their URLs only."),
+        );
+        drop(s);
+        crate::browser_server::stop_spares();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(reply.contains("example.com"), "got: {reply:?}");
     }
 
     /// A project session starts in Auto (no prompt for a harmless mkdir), then a

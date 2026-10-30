@@ -51,7 +51,7 @@ impl Default for Exits {
             scratch: Leaving::new(QUICK),
             viewer: Leaving::new(QUICK),
             sessions: Leaving::new(NORMAL),
-            terminal: Leaving::new(QUICK),
+            terminal: Leaving::new(NORMAL),
             prompt: Leaving::new(QUICK),
             slash: Leaving::new(QUICK),
         }

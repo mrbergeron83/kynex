@@ -309,6 +309,42 @@ impl Palette {
         self.editor.l > 0.5
     }
 
+    /// The window dimmed behind a modal, menu-like overlay or the palette.
+    pub fn scrim(&self) -> Hsla {
+        ca(0x000000, 0.25)
+    }
+
+    /// The window darkened behind a picture shown full size.
+    pub fn scrim_media(&self) -> Hsla {
+        ca(0x000000, 0.8)
+    }
+
+    /// The window's close button on hover, and its glyph: Windows' own red.
+    pub fn close_hover(&self) -> (Hsla, Hsla) {
+        (c(0xc42b1c), c(0xffffff))
+    }
+
+    /// The terminal's 16 ANSI colours (normal, then bright), tuned for this
+    /// palette's background: One Dark's on dark themes, One Light's on light ones.
+    pub fn ansi(&self) -> [u32; 16] {
+        if self.is_light() {
+            [
+                0x383a42, 0xca1243, 0x50a14f, 0xc18401, 0x4078f2, 0xa626a4, 0x0184bc, 0xa0a1a7, 0x696c77, 0xe45649,
+                0x4bbf48, 0xd29b00, 0x5a8cff, 0xc04fbe, 0x22a1d6, 0x202227,
+            ]
+        } else {
+            [
+                0x3b4048, 0xe06c75, 0x98c379, 0xe5c07b, 0x61afef, 0xc678dd, 0x56b6c2, 0xabb2bf, 0x5c6370, 0xff7b86,
+                0xb5e890, 0xffd68a, 0x82c4ff, 0xde9bf0, 0x7fd8e3, 0xffffff,
+            ]
+        }
+    }
+
+    /// The terminal's background: the editor's, a step darker on dark themes.
+    pub fn terminal_background(&self) -> Hsla {
+        if self.is_light() { self.editor } else { mix(self.editor, c(0x000000), 0.25) }
+    }
+
     /// A project colour (`kynex_core::project::COLOURS`) as a shade that reads on
     /// this palette: lighter on dark themes, deeper on light ones.
     pub fn project_colour(&self, name: &str) -> Hsla {
@@ -328,6 +364,12 @@ impl Palette {
 }
 
 /// `over` laid on `base` at `amount` (0 to 1), as one opaque colour.
+/// The app mark's colours (`mark-dark.svg`), the same in every theme: housing,
+/// rim, knob and pointer.
+pub fn mark_colours() -> [Hsla; 4] {
+    [0x0f0e0c, 0x33312e, 0x77becf, 0x22201e].map(c)
+}
+
 pub fn mix(base: Hsla, over: Hsla, amount: f32) -> Hsla {
     let (a, b) = (base.to_rgb(), over.to_rgb());
     let lerp = |x: f32, y: f32| x + (y - x) * amount;

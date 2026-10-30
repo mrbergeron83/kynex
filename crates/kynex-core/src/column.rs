@@ -41,7 +41,7 @@ impl ColumnWidth {
 
     pub fn help(self) -> &'static str {
         match self {
-            ColumnWidth::Readable => "Text 780 px; tool output up to 1040 px",
+            ColumnWidth::Readable => "Text 820 px; tool output up to 1040 px",
             ColumnWidth::Wide => "Text 1040 px; tool output up to 1400 px",
             ColumnWidth::Full => "Text and tool output fill the window",
         }
@@ -54,7 +54,7 @@ impl ColumnWidth {
 
     fn targets(self) -> Option<(f32, f32)> {
         match self {
-            ColumnWidth::Readable => Some((780., 1040.)),
+            ColumnWidth::Readable => Some((820., 1040.)),
             ColumnWidth::Wide => Some((1040., 1400.)),
             ColumnWidth::Full => None,
         }
@@ -85,10 +85,10 @@ mod tests {
 
     #[test]
     fn tools_grow_into_the_right_margin_only() {
-        // 1000 px: prose 780, 110 px margin each side.
-        assert_eq!(ColumnWidth::Readable.columns(1000.), Columns { prose: 780., tools: 890. });
+        // 1000 px: prose 820, 90 px margin each side.
+        assert_eq!(ColumnWidth::Readable.columns(1000.), Columns { prose: 820., tools: 910. });
         // Plenty of room: capped.
-        assert_eq!(ColumnWidth::Readable.columns(2400.), Columns { prose: 780., tools: 1040. });
+        assert_eq!(ColumnWidth::Readable.columns(2400.), Columns { prose: 820., tools: 1040. });
         assert_eq!(ColumnWidth::Wide.columns(3600.), Columns { prose: 1040., tools: 1400. });
     }
 

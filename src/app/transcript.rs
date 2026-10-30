@@ -464,6 +464,13 @@ impl KynexApp {
         }
     }
 
+    /// The column's widths in the list's width, less the row's padding. Until
+    /// the list has been laid out once its width isn't known: `None`.
+    fn row_columns(&self, key: Key) -> Option<kynex_core::column::Columns> {
+        let available = self.threads.get(&key).map_or(0., |th| th.width.get()) / self.saved.zoom;
+        (available > 0.).then(|| self.saved.column.columns(available - ROW_PADDING * 2.))
+    }
+
     fn render_item(&mut self, row: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(key) = self.active_key() else { return div().into_any_element() };
         let Some(thread) = self.threads.get(&key) else { return div().into_any_element() };
@@ -491,13 +498,8 @@ impl KynexApp {
             true => ease_height(("row-ease", row), body).into_any_element(),
             false => body,
         };
-        // The column's widths in the list's width, less the row's padding. Until
-        // the list has been laid out once its width isn't known: plain prose width.
         let setting = self.saved.column;
-        let available = self.threads.get(&key).map_or(0., |th| th.width.get());
-        let available = available / self.saved.zoom;
-        let column = (available > 0.).then(|| setting.columns(available - ROW_PADDING * 2.));
-        let inner = match column {
+        let inner = match self.row_columns(key) {
             // Tool rows start where prose does and grow to the right (#122).
             Some(c) => div().flex_none().w(px(c.prose)).map(|d| match wide {
                 true => d.child(div().flex_none().w(px(c.tools)).child(body)),
@@ -543,8 +545,6 @@ impl KynexApp {
                 .px_3()
                 .py_2()
                 .rounded_lg()
-                .border_1()
-                .border_color(t.border_variant)
                 .bg(t.element)
                 .when(!images.is_empty(), |d| d.child(self.thumbnails(("user-images", ix).into(), images, 120., cx)))
                 .when(!text.is_empty(), |d| match commands::parse(text) {
@@ -590,21 +590,25 @@ impl KynexApp {
                         this.update(cx, |this, cx| this.run_in_terminal(shell, command, window, cx)).ok();
                     }) as markdown::RunCommand
                 });
+                // Code and tables may widen into the tool column (#138).
+                let wide = self.row_columns(key).map(|c| c.tools).filter(|_| self.saved.column.max_prose().is_some());
                 div()
                     .text_sm()
-                    .child(markdown::render(("md", ix), text, key, ix, run, Some(&session.cwd), cx))
+                    .child(markdown::render_wide(("md", ix), text, key, ix, run, Some(&session.cwd), wide, cx))
                     .into_any_element()
             }
             // "Thinking… 4s" while it streams; after, "Thought for 6s", which
             // opens to the text when the CLI shared it.
             Item::Thinking(thought) => {
                 let label = div().text_xs().text_color(t.text_placeholder).child(thought.label());
+                // Nothing to open: the same 22 px line, without the chevron.
+                let plain = |label: gpui::Div| div().flex().items_center().h(px(22.)).px_1().child(label);
                 // Its seconds count up on `tick_clocks`.
                 if thought.is_live() {
-                    return label.italic().px_1().into_any_element();
+                    return plain(label.italic()).into_any_element();
                 }
                 if thought.text.trim().is_empty() {
-                    return label.px_1().into_any_element();
+                    return plain(label).into_any_element();
                 }
                 let head = disclosure_row(("thought", ix), expanded, &t).child(label).on_click(toggle);
                 div()

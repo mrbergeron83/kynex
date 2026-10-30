@@ -215,20 +215,9 @@ fn rgb(c: Hsla) -> Rgb {
 /// The terminal's colours, from the app theme: its surfaces and accent, with
 /// ANSI colours tuned for a dark or light background.
 pub fn palette(t: &Theme) -> Palette {
-    let background = rgb(t.editor).mix(Rgb::hex(0x000000), if is_dark(t) { 0.25 } else { 0.0 });
-    let ansi = if is_dark(t) {
-        [
-            0x3b4048, 0xe06c75, 0x98c379, 0xe5c07b, 0x61afef, 0xc678dd, 0x56b6c2, 0xabb2bf, 0x5c6370, 0xff7b86,
-            0xb5e890, 0xffd68a, 0x82c4ff, 0xde9bf0, 0x7fd8e3, 0xffffff,
-        ]
-    } else {
-        [
-            0x383a42, 0xca1243, 0x50a14f, 0xc18401, 0x4078f2, 0xa626a4, 0x0184bc, 0xa0a1a7, 0x696c77, 0xe45649,
-            0x4bbf48, 0xd29b00, 0x5a8cff, 0xc04fbe, 0x22a1d6, 0x202227,
-        ]
-    };
+    let background = rgb(t.terminal_background());
     Palette {
-        ansi: ansi.map(Rgb::hex),
+        ansi: t.ansi().map(Rgb::hex),
         foreground: rgb(t.text),
         background,
         cursor: rgb(t.accent),
@@ -238,9 +227,5 @@ pub fn palette(t: &Theme) -> Palette {
 }
 
 pub fn background(t: &Theme) -> Hsla {
-    hsla(palette(t).background)
-}
-
-fn is_dark(t: &Theme) -> bool {
-    t.editor.l < 0.5
+    t.terminal_background()
 }

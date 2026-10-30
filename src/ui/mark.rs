@@ -8,16 +8,10 @@ use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt, AnyElement, App, BoxShadow, ElementId, Hsla, Pixels, Transformation, div,
-    linear_color_stop, linear_gradient, point, prelude::*, px, radians, rgb,
+    linear_color_stop, linear_gradient, point, prelude::*, px, radians,
 };
 
 use super::{Icon, Lamp, icon, pulse};
-
-/// The dark mark's colours (`mark-dark.svg`): housing, rim, knob and pointer.
-const HOUSING: u32 = 0x0f0e0c;
-const RIM: u32 = 0x33312e;
-const KNOB: u32 = 0x77becf;
-const POINTER: u32 = 0x22201e;
 
 /// A soft halo of `color` around an element, `blur` wide.
 fn glow(color: Hsla, blur: Pixels) -> Vec<BoxShadow> {
@@ -26,7 +20,7 @@ fn glow(color: Hsla, blur: Pixels) -> Vec<BoxShadow> {
 
 pub fn mark(id: impl Into<ElementId>, size: Pixels, lamp: Lamp, cx: &App) -> AnyElement {
     let id = id.into();
-    let [housing_c, rim, accent, pointer_c]: [Hsla; 4] = [HOUSING, RIM, KNOB, POINTER].map(|c| rgb(c).into());
+    let [housing_c, rim, accent, pointer_c] = crate::theme::mark_colours();
     let u = move |v: f32| size * (v / 100.);
     let knob = u(62.);
     let working = lamp == Lamp::Working;

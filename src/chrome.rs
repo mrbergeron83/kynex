@@ -41,7 +41,9 @@ pub fn window_controls(window: &Window, cx: &App) -> impl IntoElement {
     let t = theme(cx);
     let maximized = window.is_maximized();
     let button = |id: &'static str, which: Icon, area: WindowControlArea, close: bool| {
-        let hover = if close { gpui::rgb(0xc42b1c).into() } else { t.hover };
+        let (close_bg, close_fg) = t.close_hover();
+        let hover = if close { close_bg } else { t.hover };
+        let hover_fg = if close { close_fg } else { t.text };
         let fg = t.text_muted;
         div()
             .id(id)
@@ -51,7 +53,7 @@ pub fn window_controls(window: &Window, cx: &App) -> impl IntoElement {
             .w(px(46.))
             .h_full()
             .text_color(fg)
-            .hover(move |s| s.bg(hover).text_color(gpui::white()))
+            .hover(move |s| s.bg(hover).text_color(hover_fg))
             .child(icon(which, fg).size(px(14.)))
             .when(cfg!(target_os = "windows"), |d| d.window_control_area(area))
             .when(!cfg!(target_os = "windows"), |d| {

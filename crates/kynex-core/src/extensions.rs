@@ -217,7 +217,7 @@ pub fn load_from(paths: &Paths, cwd: &Path) -> Config {
 }
 
 /// A JSON file, `Null` when it doesn't exist.
-fn read_json(path: &Path) -> Result<Value, String> {
+pub(crate) fn read_json(path: &Path) -> Result<Value, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
@@ -245,6 +245,34 @@ pub fn servers(global: &Value, mcp_json: &Value, settings: &[Value], cwd: &Path)
     add(parse_mcp_json(mcp_json), Source::Project, &ask);
     add(parse_servers(&global["mcpServers"]), Source::User, &approved);
     out
+}
+
+/// `server`'s environment variables as configured. They can hold secrets (a
+/// token), which is why [`Server`] leaves them out.
+pub fn server_env(global: &Value, mcp_json: &Value, cwd: &Path, server: &Server) -> Vec<(String, String)> {
+    let name = server.name.as_str();
+    let config = match server.source {
+        Source::Local => {
+            global["projects"].as_object().and_then(|p| project_entry(p, cwd)).map(|e| &e["mcpServers"][name])
+        }
+        Source::Project if mcp_json.get("mcpServers").is_some() => Some(&mcp_json["mcpServers"][name]),
+        Source::Project => Some(&mcp_json[name]),
+        Source::User => Some(&global["mcpServers"][name]),
+        Source::Plugin(_) | Source::ClaudeAi | Source::Other => None,
+    };
+    config
+        .and_then(|c| c["env"].as_object())
+        .into_iter()
+        .flatten()
+        .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+        .collect()
+}
+
+/// The servers turned off for `cwd` (`/mcp` → Disable), by name.
+pub fn disabled_servers(global: &Value, cwd: &Path) -> Vec<String> {
+    let entry = global["projects"].as_object().and_then(|p| project_entry(p, cwd));
+    let list = entry.and_then(|e| e["disabledMcpServers"].as_array());
+    list.into_iter().flatten().filter_map(|n| n.as_str().map(Into::into)).collect()
 }
 
 /// A `.mcp.json`: `{ "mcpServers": { … } }`, or (in some plugins) the map bare.
@@ -351,6 +379,9 @@ fn plugin_manifest_servers(install: &Path) -> (Vec<(String, Transport)>, Option<
 pub struct Row {
     /// As sessions name it (`plugin_figma_figma`, `claude_ai_Claude_Docs`).
     pub name: String,
+    /// As `claude mcp` names it (`plugin:figma:figma`), for `claude mcp login`;
+    /// `None` for servers only a session reported.
+    pub cli_name: Option<String>,
     pub source: Source,
     pub transport: Option<Transport>,
     pub approval: Approval,
@@ -375,6 +406,10 @@ pub fn rows(configured: &[Server], live: &[mcp::Server]) -> Vec<Row> {
             let name = s.live_name();
             Row {
                 status: status(&name),
+                cli_name: Some(match &s.source {
+                    Source::Plugin(id) => format!("plugin:{}:{}", id.split('@').next().unwrap_or(id), s.name),
+                    _ => s.name.clone(),
+                }),
                 name,
                 source: s.source.clone(),
                 transport: Some(s.transport.clone()),
@@ -387,6 +422,7 @@ pub fn rows(configured: &[Server], live: &[mcp::Server]) -> Vec<Row> {
             let source = if l.name.starts_with("claude_ai_") { Source::ClaudeAi } else { Source::Other };
             out.push(Row {
                 name: l.name.clone(),
+                cli_name: None,
                 source,
                 transport: None,
                 approval: Approval::Approved,
@@ -447,6 +483,27 @@ mod tests {
         assert_eq!(names, [("edge", Source::Local), ("db", Source::Project), ("gh", Source::User)]);
         assert_eq!(list[0].transport, stdio("local-edge", &[]));
         assert_eq!(list[1].approval, Approval::Pending);
+    }
+
+    #[test]
+    fn env_comes_from_the_entry_that_won_and_disabled_ones_are_listed() {
+        let cwd = Path::new("/work/app");
+        let global = json!({
+            "mcpServers": { "edge": { "command": "npx", "env": { "TOKEN": "user" } } },
+            "projects": { "/work/app": {
+                "mcpServers": { "gh": { "command": "gh", "env": { "TOKEN": "local", "N": 3 } } },
+                "disabledMcpServers": ["edge"],
+            } },
+        });
+        let mcp_json = json!({ "db": { "command": "db", "env": { "URL": "x" } } });
+        let list = servers(&global, &mcp_json, &[], cwd);
+        let env = |name: &str| server_env(&global, &mcp_json, cwd, list.iter().find(|s| s.name == name).unwrap());
+        assert_eq!(env("edge"), [("TOKEN".to_string(), "user".to_string())]);
+        // Only string values are kept.
+        assert_eq!(env("gh"), [("TOKEN".to_string(), "local".to_string())]);
+        assert_eq!(env("db"), [("URL".to_string(), "x".to_string())]);
+        assert_eq!(disabled_servers(&global, cwd), ["edge"]);
+        assert!(disabled_servers(&global, Path::new("/elsewhere")).is_empty());
     }
 
     #[test]

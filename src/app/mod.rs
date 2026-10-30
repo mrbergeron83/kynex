@@ -14,6 +14,7 @@
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_groups.rs` | session groups and the archive, their menus          |
 //! | `session_select.rs` | picking sessions to archive or delete together       |
+//! | `session_tidy.rs`   | many sessions at once: menu, tidying, list keys      |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `terminal_dock.rs`  | the project's terminal panel under the conversation  |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
@@ -47,8 +48,11 @@
 //! | `about.rs`          | the About Kynex modal: version, paths, updates       |
 //! | `storage.rs`        | Settings → Storage: sessions' disk use, cleanup      |
 //! | `storage_list.rs`   | its sessions: filter, sort, go to, files             |
-//! | `extensions.rs`     | the Extensions modal: MCP servers, plugins           |
+//! | `extensions.rs`     | the Extensions modal: its state, loading, sections   |
+//! | `extensions_servers.rs` | MCP servers: status, tools, errors, restart, sign-in, test |
 //! | `extensions_add.rs` | its Add server panel: browser preset, your own       |
+//! | `extensions_plugins.rs` | plugins: what they add, actions, marketplaces    |
+//! | `extensions_catalog.rs` | skills & commands, agents, hooks (read-only)     |
 //! | `appearance.rs`     | each project's colour: title bar, tab, composer      |
 //! | `models.rs`         | the model list, and the picker's families / versions |
 //! | `viewer.rs`         | images opened over the window, thumbnails            |
@@ -63,6 +67,9 @@ mod composer;
 mod drafts;
 mod extensions;
 mod extensions_add;
+mod extensions_catalog;
+mod extensions_plugins;
+mod extensions_servers;
 mod find;
 mod footer;
 mod git_modal;
@@ -81,6 +88,7 @@ mod scratch_modal;
 mod session_groups;
 mod session_header;
 mod session_select;
+mod session_tidy;
 mod sessions_panel;
 mod settings;
 mod setup;
@@ -207,11 +215,17 @@ pub struct KynexApp {
     filtering_sessions: bool,
     /// Groups and the archive in the sessions panel.
     organize: Organize,
+    /// The sessions list, for its own keys (↑ / ↓, Enter, F2, Delete).
+    sessions_focus: FocusHandle,
     /// Session id whose delete button was clicked once and is awaiting confirmation.
     confirm_delete: Option<String>,
     /// Project tab Ctrl+W was pressed on while Claude worked in it, and when:
     /// a second press soon after closes it.
     confirm_close: Option<(usize, std::time::Instant)>,
+    /// A project tab being dragged along the title bar, and where it's shown.
+    tab_drag: Option<title_bar::TabDrag>,
+    /// Each project tab's (left, right) as last drawn, in the order shown.
+    tab_spans: std::rc::Rc<std::cell::RefCell<Vec<(f32, f32)>>>,
     /// The session being named right now, and every one tried this run.
     naming: Option<String>,
     naming_tried: HashSet<String>,
@@ -442,8 +456,11 @@ impl KynexApp {
             session_filter,
             filtering_sessions: false,
             organize: Organize::new(group_name),
+            sessions_focus: cx.focus_handle(),
             confirm_delete: None,
             confirm_close: None,
+            tab_drag: None,
+            tab_spans: Default::default(),
             naming: None,
             naming_tried: HashSet::new(),
             settings: None,
@@ -632,7 +649,7 @@ impl Render for KynexApp {
             setup
         } else if view == Some(View::Git) {
             let path = self.active_project().map(|p| p.path.clone()).unwrap();
-            let git = self.git.entry(path.clone()).or_insert_with(|| cx.new(|cx| GitView::new(path, cx))).clone();
+            let git = self.git_view(&path, cx);
             // The sessions panel stays, so the toolbar (and its Code / Git switch)
             // doesn't move when the view changes.
             div()
@@ -743,6 +760,8 @@ impl Render for KynexApp {
             .on_action(cx.listener(Self::close_tab))
             .on_action(cx.listener(Self::next_tab))
             .on_action(cx.listener(Self::prev_tab))
+            .on_action(cx.listener(Self::move_tab_left))
+            .on_action(cx.listener(Self::move_tab_right))
             .on_action(cx.listener(Self::toggle_sessions))
             .on_action(cx.listener(Self::cycle_mode))
             .on_action(cx.listener(Self::interrupt_action))
@@ -767,6 +786,10 @@ impl Render for KynexApp {
             .on_action(cx.listener(|_, _: &crate::ui::input::Copy, _, cx| copy_selection(cx)))
             .on_key_down(cx.listener(Self::key_down))
             .on_drop(cx.listener(Self::on_drop))
+            // A dragged project tab follows the pointer anywhere in the window,
+            // and lands where it's shown wherever it's let go.
+            .on_drag_move(cx.listener(Self::drag_tab))
+            .on_drop(cx.listener(Self::drop_tab))
             .when(self.resizing_sessions, |d| {
                 d.cursor_col_resize()
                     .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {

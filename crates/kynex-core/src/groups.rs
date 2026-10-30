@@ -40,12 +40,25 @@ pub struct Group {
 /// the order it was given (newest first).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Arranged {
-    /// Above everything, whatever group they're in.
+    /// Working, waiting for you, or finished and unseen: above everything,
+    /// instead of where they'd be otherwise.
+    pub active: Vec<String>,
+    /// Above the rest, whatever group they're in, in the order they were pinned
+    /// (or dragged into).
     pub pinned: Vec<String>,
     pub top: Vec<String>,
     /// One list per group, in [`SessionGroups::groups`] order.
     pub groups: Vec<Vec<String>>,
     pub archived: Vec<String>,
+}
+
+impl Arranged {
+    /// How many sections have rows: Active, Pinned, each group, the top level
+    /// and Archived. With one, the panel draws no headers.
+    pub fn sections(&self) -> usize {
+        [&self.active, &self.pinned, &self.top, &self.archived].iter().filter(|l| !l.is_empty()).count()
+            + self.groups.iter().filter(|g| !g.is_empty()).count()
+    }
 }
 
 /// Sessions picked in the panel to archive or delete together: Ctrl+click
@@ -247,6 +260,48 @@ impl SessionGroups {
         }
     }
 
+    /// Deletes a group and archives its sessions.
+    pub fn delete_group_archiving(&mut self, i: usize) {
+        let Some(g) = self.groups.get(i) else { return };
+        for id in g.sessions.clone() {
+            self.archive(&id);
+        }
+        self.delete_group(i);
+    }
+
+    /// Moves group `from` to place `to` among the groups.
+    pub fn move_group(&mut self, from: usize, to: usize) {
+        crate::tab_order::move_item(&mut self.groups, from, to);
+    }
+
+    /// Moves pinned session `id` to just before pinned session `before`, or to
+    /// the end with `None`. Pins it if it isn't.
+    pub fn move_pin(&mut self, id: &str, before: Option<&str>) {
+        if !self.is_pinned(id) {
+            self.unarchive(id);
+        }
+        self.pinned.retain(|s| s != id);
+        let at = before.and_then(|b| self.pinned.iter().position(|s| s == b)).unwrap_or(self.pinned.len());
+        self.pinned.insert(at, id.to_string());
+    }
+
+    /// Archives the sessions of `sessions` (id, last used, seconds since the
+    /// epoch) not used since `cutoff`, except pinned and grouped ones and those
+    /// already archived. Returns how many it archived.
+    pub fn archive_older_than(&mut self, sessions: &[(String, i64)], cutoff: i64) -> usize {
+        let old: Vec<String> = sessions
+            .iter()
+            .filter(|(id, used)| {
+                *used < cutoff && !self.is_pinned(id) && self.group_of(id).is_none() && !self.is_archived(id)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &old {
+            self.archive(id);
+        }
+        old.len()
+    }
+
     pub fn toggle_group(&mut self, i: usize) {
         if let Some(g) = self.groups.get_mut(i) {
             g.collapsed = !g.collapsed;
@@ -264,9 +319,17 @@ impl SessionGroups {
     /// Sorts session ids (newest first) into the pinned ones, the top level,
     /// groups and archive. Ids saved here that aren't in `ids` are left out.
     pub fn arrange<'a>(&self, ids: impl IntoIterator<Item = &'a str>) -> Arranged {
+        self.arrange_with(ids, &[])
+    }
+
+    /// [`Self::arrange`], with the `active` sessions (working, waiting, or
+    /// finished and unseen) taken out of their places into [`Arranged::active`].
+    pub fn arrange_with<'a>(&self, ids: impl IntoIterator<Item = &'a str>, active: &[String]) -> Arranged {
         let mut out = Arranged { groups: vec![Vec::new(); self.groups.len()], ..Arranged::default() };
         for id in ids {
-            let list = if self.is_archived(id) {
+            let list = if active.iter().any(|a| a == id) {
+                &mut out.active
+            } else if self.is_archived(id) {
                 &mut out.archived
             } else if self.is_pinned(id) {
                 &mut out.pinned
@@ -277,6 +340,8 @@ impl SessionGroups {
             };
             list.push(id.to_string());
         }
+        // Pinned ones keep the order they were pinned (or dragged) in.
+        out.pinned.sort_by_key(|id| self.pinned.iter().position(|p| p == id));
         out
     }
 }
@@ -284,6 +349,61 @@ impl SessionGroups {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn active_sessions_leave_their_places_and_pins_keep_their_order() {
+        let mut g = SessionGroups::default();
+        let i = g.add_group("Release");
+        g.move_to("grouped", Some(i));
+        g.toggle_pin("p2");
+        g.toggle_pin("p1");
+        g.archive("old");
+        // Newest first: p1 is newer, but p2 was pinned first.
+        let all = ["busy", "p1", "p2", "grouped", "loose", "old"];
+        let a = g.arrange_with(all, &ids(&["busy", "grouped"]));
+        assert_eq!(a.active, ["busy", "grouped"]);
+        assert_eq!(a.pinned, ["p2", "p1"]);
+        assert_eq!(a.groups, [Vec::<String>::new()]);
+        assert_eq!((a.top.clone(), a.archived.clone()), (ids(&["loose"]), ids(&["old"])));
+        assert_eq!(a.sections(), 4);
+        // Dragging a pin before another reorders them.
+        g.move_pin("p1", Some("p2"));
+        assert_eq!(g.arrange(all).pinned, ["p1", "p2"]);
+        assert_eq!(g.arrange(["loose"]).sections(), 1);
+    }
+
+    #[test]
+    fn groups_reorder_and_delete_either_way() {
+        let mut g = SessionGroups::default();
+        let (a, b) = (g.add_group("A"), g.add_group("B"));
+        g.move_to("s1", Some(a));
+        g.move_to("s2", Some(b));
+        g.move_group(1, 0);
+        assert_eq!(g.groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["B", "A"]);
+        g.delete_group_archiving(0);
+        assert!(g.is_archived("s2") && g.groups.len() == 1);
+        g.delete_group(0);
+        assert!(!g.is_archived("s1") && g.group_of("s1").is_none());
+    }
+
+    #[test]
+    fn tidying_archives_old_loose_sessions_only() {
+        let mut g = SessionGroups::default();
+        let i = g.add_group("Keep");
+        g.move_to("old-grouped", Some(i));
+        g.toggle_pin("old-pinned");
+        let sessions: Vec<(String, i64)> =
+            [("new", 900), ("old", 10), ("old-grouped", 10), ("old-pinned", 10)].map(|(s, t)| (s.into(), t)).into();
+        assert_eq!(g.archive_older_than(&sessions, 500), 1);
+        assert!(g.is_archived("old") && !g.is_archived("new"));
+        assert!(!g.is_archived("old-grouped") && !g.is_archived("old-pinned"));
+        // Already archived: nothing more to do.
+        assert_eq!(g.archive_older_than(&sessions, 500), 0);
+    }
 
     #[test]
     fn date_headers_fold_and_remember() {

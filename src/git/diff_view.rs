@@ -19,6 +19,8 @@ use crate::theme::{Palette, mono, theme};
 use crate::ui::{Icon, Tooltip, code, icon, outline_button, scrollbar, spinner};
 
 const ROW_HEIGHT: f32 = 20.;
+/// Two line-number columns and the +/- sign.
+const GUTTER: f32 = 104.;
 
 #[derive(Clone)]
 enum Row {
@@ -112,12 +114,14 @@ impl GitView {
             let hint = match self.tab {
                 super::Tab::Changes => "Select a file to see its changes",
                 super::Tab::History => "Select a commit to see what it changed",
+                super::Tab::Branches => "Select a branch to see what it changes",
             };
             return centered(hint, &t).into_any_element();
         };
         let header = match &selection {
             Selection::File { path, staged } => self.file_header(path, *staged, cx).into_any_element(),
             Selection::Commit(_) => self.commit_header(cx),
+            Selection::Compare(branch) => self.compare_header(branch, cx),
         };
         let body = if let Some(e) = &self.diff.error {
             centered(e.clone(), &t).text_color(t.error).into_any_element()
@@ -134,15 +138,17 @@ impl GitView {
         } else {
             let rows = self.diff.rows.clone();
             let t2 = t.clone();
+            let scroll = self.diff_scroll.clone();
             let list = uniform_list("git-diff", rows.len(), move |range, _, _| {
-                range.map(|i| render_row(&rows[i], &t2)).collect()
+                // Rows are drawn after this frame's scroll is settled, so the
+                // gutter can stay put by moving back as far as the list moved.
+                let scrolled = -f32::from(scroll.0.borrow().base_handle.offset().x);
+                range.map(|i| render_row(&rows[i], scrolled, &t2)).collect()
             })
             .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
             .with_width_from_item(Some(self.diff.widest))
             .track_scroll(&self.diff_scroll)
-            .flex_1()
-            .font_family(mono())
-            .text_size(px(12.5));
+            .flex_1();
             div()
                 .relative()
                 .flex()
@@ -193,6 +199,37 @@ impl GitView {
             .child(div().flex_1())
             .child(counts(added, removed, &t))
             .child(toggle)
+    }
+
+    /// `main ← feature`: what the branch changed since it left the default branch.
+    fn compare_header(&mut self, branch: &str, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme(cx).clone();
+        let base = self.branch_tab.overview.as_ref().and_then(|o| o.default.clone()).unwrap_or_default();
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_2()
+            .h(px(36.))
+            .px_3()
+            .border_b_1()
+            .border_color(t.border_variant)
+            .child(icon(Icon::GitBranch, t.text_muted).size_3p5())
+            .child(div().font_family(mono()).text_sm().text_color(t.text_muted).child(base))
+            .child(div().text_sm().text_color(t.text_placeholder).child("←"))
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .font_family(mono())
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(branch.to_string()),
+            )
+            .child(div().flex_1())
+            .child(files_label(&self.diff))
+            .child(counts(self.diff.added, self.diff.removed, &t))
+            .into_any_element()
     }
 
     fn commit_header(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -269,8 +306,18 @@ fn files_label(diff: &DiffState) -> String {
     format!("{n} file{}", if n == 1 { "" } else { "s" })
 }
 
-fn render_row(row: &Row, t: &Palette) -> AnyElement {
-    let base = div().flex().items_center().h(px(ROW_HEIGHT)).min_w_full().whitespace_nowrap();
+/// `scrolled`: how far the list is scrolled sideways.
+fn render_row(row: &Row, scrolled: f32, t: &Palette) -> AnyElement {
+    // The font is set here, not on the list: the list measures its widest row
+    // outside its own text style, and that width is how far it scrolls.
+    let base = div()
+        .flex()
+        .items_center()
+        .h(px(ROW_HEIGHT))
+        .min_w_full()
+        .whitespace_nowrap()
+        .font_family(mono())
+        .text_size(px(12.5));
     match row {
         Row::File { path, old_path, added, removed } => base
             .mt_px()
@@ -289,13 +336,13 @@ fn render_row(row: &Row, t: &Palette) -> AnyElement {
             .child(counts(*added, *removed, t))
             .into_any_element(),
         Row::Hunk(header) => base
-            .pl(px(104.))
+            .pl(px(GUTTER))
             .bg(t.info.opacity(0.07))
             .text_color(t.info.opacity(0.85))
             .child(header.clone())
             .into_any_element(),
         Row::Note(text) => {
-            base.pl(px(104.)).text_color(t.text_placeholder).italic().child(text.clone()).into_any_element()
+            base.pl(px(GUTTER)).text_color(t.text_placeholder).italic().child(text.clone()).into_any_element()
         }
         Row::Line { kind, old, new, text, tokens } => {
             let (bg, gutter, sign, fg): (Option<Hsla>, Option<Hsla>, &str, Hsla) = match kind {
@@ -317,22 +364,33 @@ fn render_row(row: &Row, t: &Palette) -> AnyElement {
                     .when_some(gutter, |d, g| d.bg(g))
                     .child(n.map(|n| n.to_string()).unwrap_or_default())
             };
-            base.when_some(bg, |d, bg| d.bg(bg))
-                .child(number(*old))
-                .child(number(*new))
-                .child(
-                    div()
-                        .w(px(16.))
-                        .flex_none()
-                        .flex()
-                        .justify_center()
-                        .text_color(match kind {
-                            LineKind::Added => t.success,
-                            LineKind::Removed => t.error,
-                            _ => t.text_placeholder,
-                        })
-                        .child(sign),
-                )
+            // Numbers and sign stay at the left edge while the code scrolls under
+            // them, so they need an opaque background: the editor's, then the row's.
+            let gutter = div().absolute().top_0().left(px(scrolled)).h_full().bg(t.editor).child(
+                div()
+                    .flex()
+                    .items_center()
+                    .h_full()
+                    .when_some(bg, |d, bg| d.bg(bg))
+                    .child(number(*old))
+                    .child(number(*new))
+                    .child(
+                        div()
+                            .w(px(16.))
+                            .flex_none()
+                            .flex()
+                            .justify_center()
+                            .text_color(match kind {
+                                LineKind::Added => t.success,
+                                LineKind::Removed => t.error,
+                                _ => t.text_placeholder,
+                            })
+                            .child(sign),
+                    ),
+            );
+            base.relative()
+                .pl(px(GUTTER))
+                .when_some(bg, |d, bg| d.bg(bg))
                 .child(
                     div()
                         .pr_4()
@@ -340,6 +398,7 @@ fn render_row(row: &Row, t: &Palette) -> AnyElement {
                         .when(*kind == LineKind::NoNewline, |d| d.italic())
                         .child(StyledText::new(text.clone()).with_highlights(code::styles(tokens, &t.syntax))),
                 )
+                .child(gutter)
                 .into_any_element()
         }
     }

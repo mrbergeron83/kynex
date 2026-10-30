@@ -290,7 +290,7 @@ impl Corner {
 }
 
 /// Room between the stack and what it stays clear of.
-const MARGIN: f32 = 12.;
+const MARGIN: f32 = 16.;
 
 /// A toast stack's offsets from the window's edges; one of each pair is set.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -308,14 +308,14 @@ mod tests {
     #[test]
     fn corners_stay_clear_of_the_bars() {
         let p = Corner::BottomRight.place(40., 120., 0., 0.);
-        assert_eq!((p.top, p.bottom, p.left, p.right), (None, Some(132.), None, Some(12.)));
+        assert_eq!((p.top, p.bottom, p.left, p.right), (None, Some(136.), None, Some(16.)));
         let p = Corner::TopLeft.place(40., 120., 0., 0.);
-        assert_eq!((p.top, p.bottom, p.left, p.right), (Some(52.), None, Some(12.), None));
+        assert_eq!((p.top, p.bottom, p.left, p.right), (Some(56.), None, Some(16.), None));
         // Side panels push it into the conversation's column.
         let p = Corner::BottomRight.place(40., 120., 240., 300.);
-        assert_eq!((p.left, p.right), (None, Some(312.)));
+        assert_eq!((p.left, p.right), (None, Some(316.)));
         let p = Corner::TopLeft.place(40., 120., 240., 300.);
-        assert_eq!((p.left, p.right), (Some(252.), None));
+        assert_eq!((p.left, p.right), (Some(256.), None));
         assert_eq!(serde_json::to_string(&Corner::TopRight).unwrap(), "\"top_right\"");
         assert!(Corner::ALL.iter().all(|c| !c.label().is_empty()));
     }

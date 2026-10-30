@@ -66,6 +66,12 @@ pub fn commit_diff(root: &Path, sha: &str) -> Result<Vec<FileDiff>, String> {
     git(root, &["show", "--format=", "--no-ext-diff", "-M", "--diff-merges=first-parent", sha]).map(|s| parse(&s))
 }
 
+/// What `branch` changed since it left `base` (`git diff base...branch`), the
+/// way its pull request shows it.
+pub fn compare_diff(root: &Path, base: &str, branch: &str) -> Result<Vec<FileDiff>, String> {
+    git(root, &["diff", "--no-ext-diff", "-M", &format!("{base}...{branch}"), "--"]).map(|s| parse(&s))
+}
+
 /// Lines `(added, removed)` in the working tree against HEAD, staged or not,
 /// counting each of `untracked` (repo-relative paths) as all added. Runs
 /// `git diff --numstat` and reads the untracked files (the first 200); binary

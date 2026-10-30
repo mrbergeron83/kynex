@@ -26,6 +26,10 @@ pub enum Menu {
     Session(String),
     /// A session group's right-click menu.
     Group(usize),
+    /// The right-click menu for several picked sessions.
+    Sessions(Vec<String>),
+    /// The sessions panel header's menu: tidying old sessions.
+    SessionsPanel,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -359,6 +363,8 @@ impl KynexApp {
             }
             Menu::Session(id) => items = self.session_menu_items(id, cx),
             Menu::Group(i) => items = self.group_menu_items(*i, cx),
+            Menu::Sessions(ids) => items = self.sessions_menu_items(ids, cx),
+            Menu::SessionsPanel => items = self.sessions_panel_menu_items(cx),
         }
         Some(
             deferred(

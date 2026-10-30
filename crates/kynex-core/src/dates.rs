@@ -112,9 +112,30 @@ pub fn sections<T: Clone>(items: &[(T, NaiveDate)], today: NaiveDate) -> Option<
     (out.len() > 1).then_some(out)
 }
 
+/// [`sections`] for a list that falls on a single day's bucket: that one
+/// section, for when other sections sit beside it and it needs its header too.
+/// `None` when the items span several buckets (use [`sections`]) or none.
+pub fn lone_section<T: Clone>(items: &[(T, NaiveDate)], today: NaiveDate) -> Option<Vec<(Bucket, Vec<T>)>> {
+    let bucket = Bucket::of(items.first()?.1, today);
+    items
+        .iter()
+        .all(|(_, day)| Bucket::of(*day, today) == bucket)
+        .then(|| vec![(bucket, items.iter().map(|(item, _)| item.clone()).collect())])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_single_bucket_can_still_have_its_header() {
+        let today = d(2026, 10, 30);
+        let items = [("a", today), ("b", today)];
+        assert!(sections(&items, today).is_none());
+        assert_eq!(lone_section(&items, today), Some(vec![(Bucket::Today, vec!["a", "b"])]));
+        assert!(lone_section(&[("a", today), ("b", d(2026, 1, 1))], today).is_none());
+        assert!(lone_section::<&str>(&[], today).is_none());
+    }
 
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, day).unwrap()

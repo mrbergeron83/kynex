@@ -17,9 +17,53 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Select several sessions in the sessions panel (the Select button, Ctrl+click or Shift+click)
   and archive or delete them together, with one confirmation that says how many. Sessions
   still working are kept.
+- The sessions panel is organised in sections: Active (working, waiting for you, or finished
+  and unseen) at the top, then Pinned in your order, the date headers, groups, and Archived.
+  Headers only show when there's more than one section. Sessions from another worktree or
+  branch show it after their title.
+  - Right-click picked sessions to archive, group or delete them all; drag them together.
+  - Delete archives the picked sessions, and Shift+Delete deletes them after asking. In the
+    list, ↑ / ↓, Enter and F2 move, open and rename.
+  - "Archive sessions older than 30 days / 90 days / a year" in the panel's menu and in
+    Ctrl+K. Pinned and grouped sessions stay.
+  - Drag pinned sessions and group headers to reorder them. Deleting a group asks whether to
+    keep its sessions or archive them.
+  - Ctrl+Shift+] / [ move between sessions too.
+- Drag project tabs along the title bar to reorder them; the order is kept across restarts.
+  Ctrl+Shift+PageUp / PageDown move the shown tab one place without the mouse.
+- A Branches tab in the Git view: every branch with its upstream, pull request and checks
+  (through `gh`), whether it's merged or squash merged, and a shield on protected ones.
+  Switch, branch from, rename, publish, compare with the default branch, open its pull
+  request, or delete it (and its remote branch). "Clean up merged…" deletes every finished
+  branch at once after one confirmation, and Undo brings them back. Worktrees can be added,
+  opened as a project and removed there too.
+- The Extensions page does more:
+  - MCP servers show their tools and, when they fail, what they last logged.
+  - Servers can be restarted in the open session, and signed in to (OAuth) without a terminal.
+  - Browser servers have a Test that has Claude open a page with them.
+  - Plugins say what they add (skills, commands, agents, hooks, MCP servers) and can be turned
+    on or off, updated and uninstalled.
+  - Browse the added marketplaces, install from them, and add another marketplace. An install
+    that runs a marketplace's command shows that command and asks first.
+  - New read-only tabs for Skills & commands, Agents and Hooks, each grouped by where it's
+    defined.
 
 ### Changed
 
+- The UI follows its design spec throughout:
+  - Sessions panel: date, Pinned, group and Archived headers are section labels that fold
+    with a count.
+  - Transcript: your messages have no border, and a session's name isn't bold. Tool runs drop
+    the terminal icon on every row and spin only on the step that's running. Text is 820 px
+    wide in the Readable column, and code blocks and tables in replies widen into the tool
+    column when their lines are long.
+  - Code blocks show the language top right, with Copy and Run beside it on hover. Edit diffs
+    are numbered with the file's line numbers.
+  - The composer shows model and effort as one chip. The command palette groups results under
+    Sessions, Projects and Actions.
+  - The palette, find bar, toasts and terminal strip take their specified sizes, and terminal
+    shell names are monospaced.
+  - Every dialog dims the window the same way, and every colour comes from the theme.
 - Changing a project's effort, or adding rules or extra folders, reaches its running sessions
   at once instead of restarting them; they keep their browser tab and "this session" rules.
   Only taking a rule or folder away (or effort back to the default) still restarts a session,
@@ -38,6 +82,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   dated by their last message, not by when their log file was last touched.
 - The composer's session-files button and its count of new scratch files no longer vanish
   when you send the next message; the count stays until you open the files.
+- The Git view's diff scrolls sideways to the end of long lines instead of cutting them off,
+  and the line numbers stay in place while it does.
+- A session using your own browser (the Playwright extension) keeps its pairing and tabs when
+  its `claude` process restarts, instead of pairing again with a new connect tab. Kynex runs
+  that browser server itself for each session and hands it to every process.
 
 ## [0.0.10] - 2026-10-30
 

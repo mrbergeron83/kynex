@@ -105,6 +105,13 @@ pub fn git_log(text: &str) {
 /// `git branch` in Kynex's format.
 pub fn git_branch(text: &str) {
     let _ = git::branch::parse(text);
+    let _ = git::branch::parse_cherry(text);
+    let _ = git::branch::parse_overrides(text);
+}
+
+/// What `gh` says about pull requests, protected branches and rules.
+pub fn github(text: &str) {
+    git::github::fuzz_json(text);
 }
 
 /// `git worktree list --porcelain` and `rev-list --left-right --count`.
@@ -155,6 +162,21 @@ pub fn mcp_config(text: &str) {
         let _ = server.add_args();
     }
     let _ = mcp_config::parse_list(text);
+    let _ = crate::mcp_logs::last_error_in(text);
+    let _ = crate::catalog::front_matter(text);
+    if let Ok(v) = serde_json::from_str::<Value>(text) {
+        let _ = crate::catalog::parse_hooks(&v, &crate::catalog::Origin::User);
+        let _ = crate::plugins::parse_available(&v);
+        let _ = crate::plugins::parse_marketplaces(&v);
+        let _ = crate::plugins::parse_result(&v);
+        let _ = mcp_config::test_verdict(&v);
+    }
+}
+
+/// An HTTP reply from a browser server Kynex runs: status, session, chunked
+/// or event-stream body.
+pub fn browser_reply(bytes: &[u8]) {
+    crate::browser_server::fuzz_reply(bytes);
 }
 
 /// File paths in Claude's text, for clickable links.
@@ -257,6 +279,8 @@ mod tests {
             versions(t.as_bytes());
             claude_config(t);
             mcp_config(t);
+            browser_reply(t.as_bytes());
+            github(t);
             file_links(t);
             highlight(t);
         }

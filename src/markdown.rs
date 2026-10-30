@@ -26,6 +26,15 @@ use crate::ui::{Icon, Tooltip, code, icon, icon_button, scrollbar};
 /// Runs a suggested shell command (a ```bash or ```powershell block) somewhere.
 pub type RunCommand = Rc<dyn Fn(ShellKind, String, &mut Window, &mut App)>;
 
+/// A code block or table that may grow past the text's width to `wide` px:
+/// at least as wide as the text, as wide as its content, at most `wide`.
+fn widen(d: gpui::Div, wide: Option<f32>) -> gpui::Div {
+    match wide {
+        Some(w) => d.self_start().min_w_full().max_w(px(w)),
+        None => d,
+    }
+}
+
 /// Renders `src` as a column of blocks. `id` keeps element ids (copy buttons)
 /// unique across messages; the text is selectable as item `item` of selection
 /// group `group`. With `run`, shell code blocks get a play button that calls it;
@@ -39,6 +48,21 @@ pub fn render(
     cwd: Option<&Path>,
     cx: &App,
 ) -> AnyElement {
+    render_wide(id, src, group, item, run, cwd, None, cx)
+}
+
+/// [`render`], with code blocks and tables free to grow past the text's width
+/// to `wide` px (the transcript's tool column) when their lines are long.
+pub fn render_wide(
+    id: impl Into<ElementId>,
+    src: &str,
+    group: u64,
+    item: usize,
+    run: Option<RunCommand>,
+    cwd: Option<&Path>,
+    wide: Option<f32>,
+    cx: &App,
+) -> AnyElement {
     let doc = parsed(group, item, src);
     let mut b = Builder {
         id: id.into(),
@@ -49,6 +73,7 @@ pub fn render(
         blocks: 0,
         run,
         cwd: cwd.map(Path::to_path_buf),
+        wide,
     };
     let blocks = b.blocks(&doc);
     div().flex().flex_col().gap_2().children(blocks).into_any_element()
@@ -136,6 +161,8 @@ struct Builder<'a> {
     run: Option<RunCommand>,
     /// The session's folder, for linking file paths; none links nothing.
     cwd: Option<PathBuf>,
+    /// How wide code blocks and tables may grow, past the text's width.
+    wide: Option<f32>,
 }
 
 impl Builder<'_> {
@@ -249,16 +276,16 @@ impl Builder<'_> {
             .into_any_element()
     }
 
-    /// A code block: a header row with the language, Run and Copy above the code,
-    /// so they never cover it; lines stay unwrapped and the code scrolls sideways
-    /// (a scrollbar, Shift+wheel, or dragging a selection past its edge).
+    /// A code block: the language top right, Copy and Run beside it on hover;
+    /// lines stay unwrapped and the code scrolls sideways (a scrollbar,
+    /// Shift+wheel, or dragging a selection past its edge).
     fn code_block(&mut self, lang: &str, code: &str) -> AnyElement {
         let copy_id = self.next_id("copy");
         let scroll_id = self.next_id("code");
         let bar_id = self.next_id("code-bar");
         let scroll = code_scroll(self.select, self.counter);
         let to_copy = code.to_string();
-        // Suggested shell commands get a play button; it stays visible so it's found.
+        // Suggested shell commands get a play button, beside Copy.
         let play = ShellKind::for_lang(lang).zip(self.run.clone()).map(|(shell, run)| {
             let command = code.to_string();
             let success = self.p.success;
@@ -279,35 +306,45 @@ impl Builder<'_> {
         let styles = code::highlighted(Lang::from_fence(lang), code, &self.p.syntax);
         let text = selectable(group, spot, code.to_string(), self.p.text_selection).highlights(styles);
         let p = &self.p;
-        let header = div()
-            .flex()
-            .items_center()
-            .justify_end()
-            .gap_1()
-            .h(px(28.))
-            .pl_3()
-            .pr_1()
-            .when(!lang.is_empty(), |d| {
-                d.child(div().flex_1().text_size(px(11.)).text_color(p.text_placeholder).child(lang.to_string()))
-            })
-            .child(
-                div().invisible().group_hover("code", |s| s.visible()).child(
-                    icon_button(copy_id, Icon::Copy, self.cx)
-                        .tooltip(Tooltip::text("Copy"))
-                        .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(to_copy.clone()))),
-                ),
-            )
-            .children(play);
+        // Over the code's top right, on the block's own fill so a long first line
+        // slips under it cleanly.
+        let corner =
+            div()
+                .absolute()
+                .top_1()
+                .right_1()
+                .flex()
+                .items_center()
+                .gap_0p5()
+                .pl_1()
+                .rounded_md()
+                .bg(p.element)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_0p5()
+                        .invisible()
+                        .group_hover("code", |s| s.visible())
+                        .children(play)
+                        .child(icon_button(copy_id, Icon::Copy, self.cx).tooltip(Tooltip::text("Copy")).on_click(
+                            move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(to_copy.clone())),
+                        )),
+                )
+                .when(!lang.is_empty(), |d| {
+                    d.child(div().px_1().text_size(px(11.)).text_color(p.text_placeholder).child(lang.to_string()))
+                });
         let follow = scroll.clone();
+        let wide = self.wide;
         div()
             .group("code")
             .flex()
             .flex_col()
+            .map(|d| widen(d, wide))
             .rounded_md()
             .border_1()
             .border_color(p.border_variant)
             .bg(p.element)
-            .child(header)
             .child(
                 div()
                     .relative()
@@ -319,7 +356,7 @@ impl Builder<'_> {
                             .restrict_scroll_to_axis()
                             .track_scroll(&scroll)
                             .px_3()
-                            .pb_3()
+                            .py_2()
                             .font_family(mono())
                             .text_size(px(13.))
                             // As wide as its longest line, so there is something to scroll.
@@ -334,7 +371,8 @@ impl Builder<'_> {
                         .absolute()
                         .inset_0(),
                     )
-                    .child(scrollbar::scrollbar(bar_id, scroll, Axis::Horizontal)),
+                    .child(scrollbar::scrollbar(bar_id, scroll, Axis::Horizontal))
+                    .child(corner),
             )
             .into_any_element()
     }
@@ -347,6 +385,7 @@ impl Builder<'_> {
             .collect();
         let p = &self.p;
         div()
+            .map(|d| widen(d, self.wide))
             .id(id)
             .overflow_x_scroll()
             .restrict_scroll_to_axis()

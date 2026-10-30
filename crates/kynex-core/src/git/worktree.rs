@@ -64,6 +64,44 @@ pub fn list_worktrees(root: &Path) -> Result<Vec<Worktree>, String> {
     Ok(list)
 }
 
+/// Where a new worktree for `branch` goes by default: beside the repository,
+/// as `<repo>-<branch>` (`/` in the branch name becomes `-`).
+pub fn default_worktree_path(root: &Path, branch: &str) -> PathBuf {
+    let repo = root.file_name().map_or_else(|| "repo".into(), |n| n.to_string_lossy().into_owned());
+    let name = format!("{repo}-{}", branch.replace(['/', '\\'], "-"));
+    root.parent().map_or_else(|| PathBuf::from(&name), |p| p.join(&name))
+}
+
+/// Adds a worktree at `path` on `branch`: the existing local branch, or a new
+/// one from HEAD when there's none by that name.
+pub fn add_worktree(root: &Path, path: &Path, branch: &str) -> Result<(), String> {
+    let branch = branch.trim();
+    let path = path.to_string_lossy();
+    if git(root, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok() {
+        git(root, &["worktree", "add", &path, branch]).map(drop)
+    } else {
+        git(root, &["check-ref-format", "--branch", branch])
+            .map_err(|_| format!("\"{branch}\" isn't a valid branch name"))?;
+        git(root, &["worktree", "add", "-b", branch, &path]).map(drop)
+    }
+}
+
+/// Removes the worktree at `path`. Git refuses when it has changes, unless `force`.
+pub fn remove_worktree(root: &Path, path: &Path, force: bool) -> Result<(), String> {
+    let path = path.to_string_lossy();
+    let mut args = vec!["worktree", "remove"];
+    if force {
+        args.push("--force");
+    }
+    args.push(&path);
+    git(root, &args).map(drop)
+}
+
+/// Forgets worktrees whose folders are gone.
+pub fn prune_worktrees(root: &Path) -> Result<(), String> {
+    git(root, &["worktree", "prune"]).map(drop)
+}
+
 /// The linked worktree (never the main one) that `text` points into, by its
 /// full path (`C:\repos\kynex-terminal\src\a.rs`) or by its folder name after a
 /// separator (`cd ../kynex-terminal`). For telling which worktree a session is
@@ -180,6 +218,12 @@ mod tests {
         assert_eq!(found(r#"{"file_path":"C:\\repos\\kynex\\src\\main.rs"}"#), None);
         assert_eq!(found("cd ../kynex-terminally"), None);
         assert_eq!(found("ls"), None);
+    }
+
+    #[test]
+    fn new_worktrees_go_beside_the_repo() {
+        let root = Path::new("/repos/kynex");
+        assert_eq!(default_worktree_path(root, "feat/tabs"), Path::new("/repos/kynex-feat-tabs"));
     }
 
     #[test]

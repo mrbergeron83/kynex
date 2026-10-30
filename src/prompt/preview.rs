@@ -147,23 +147,61 @@ pub fn preview(tool: &str, input: &Value, t: &Palette) -> impl IntoElement + use
 /// Which lines of a line diff to show: the shared lines at either end as (up
 /// to 3 lines of) context, the rest as removed and added.
 pub fn diff(old: &str, new: &str) -> Vec<(char, String)> {
+    diff_at(old, new).1
+}
+
+/// [`diff`], with how many of the texts' lines come before its first line.
+fn diff_at(old: &str, new: &str) -> (usize, Vec<(char, String)>) {
     const CONTEXT: usize = 3;
     let a: Vec<&str> = old.lines().collect();
     let b: Vec<&str> = new.lines().collect();
     let head = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
     let tail = a[head..].iter().rev().zip(b[head..].iter().rev()).take_while(|(x, y)| x == y).count();
+    let skipped = head.saturating_sub(CONTEXT);
     let mut lines = Vec::new();
     lines.extend(a[head.saturating_sub(CONTEXT)..head].iter().map(|l| (' ', l.to_string())));
     lines.extend(a[head..a.len() - tail].iter().map(|l| ('-', l.to_string())));
     lines.extend(b[head..b.len() - tail].iter().map(|l| ('+', l.to_string())));
     lines.extend(a[a.len() - tail..(a.len() - tail + CONTEXT).min(a.len())].iter().map(|l| (' ', l.to_string())));
-    lines
+    (skipped, lines)
+}
+
+/// The line `path`'s edit from `old` to `new` starts on, read from the file
+/// once per edit and kept: the Edit tool doesn't say. `None` if the file
+/// can't be read or the text isn't found exactly once.
+fn start_line(path: &str, old: &str, new: &str) -> Option<u32> {
+    use std::collections::HashMap;
+    use std::hash::{Hash, Hasher};
+    thread_local! {
+        static FOUND: std::cell::RefCell<HashMap<u64, Option<u32>>> = Default::default();
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (path, old, new).hash(&mut h);
+    let key = h.finish();
+    if let Some(found) = FOUND.with_borrow(|f| f.get(&key).copied()) {
+        return found;
+    }
+    let found = std::fs::metadata(path)
+        .ok()
+        .filter(|m| m.len() <= 4 << 20)
+        .and_then(|_| std::fs::read_to_string(path).ok())
+        .and_then(|file| kynex_core::edit_lines::start_line(&file, old, new));
+    FOUND.with_borrow_mut(|f| {
+        if f.len() > 2048 {
+            f.clear();
+        }
+        f.insert(key, found);
+    });
+    found
 }
 
 /// The edit as diff lines, highlighted for `path`'s language, on the add / remove colours.
 fn diff_lines(path: Option<&str>, old: &str, new: &str, t: &Palette) -> impl IntoElement + use<> {
     const MAX_LINES: usize = 400;
-    let mut lines = diff(old, new);
+    let (skipped, mut lines) = diff_at(old, new);
+    let numbers = path
+        .and_then(|p| start_line(p, old, new))
+        .map(|start| kynex_core::edit_lines::number(start + skipped as u32, lines.iter().map(|(s, _)| *s)));
     let more = lines.len().saturating_sub(MAX_LINES);
     lines.truncate(MAX_LINES);
     let tokens = path.and_then(Lang::from_path).map(|lang| {
@@ -191,6 +229,16 @@ fn diff_lines(path: Option<&str>, old: &str, new: &str, t: &Palette) -> impl Int
                 .whitespace_nowrap()
                 .text_color(t.text)
                 .when_some(bg, |d, bg| d.bg(bg))
+                .child(
+                    div()
+                        .w(px(34.))
+                        .flex_none()
+                        .flex()
+                        .justify_end()
+                        .pr_1()
+                        .text_color(t.text_placeholder)
+                        .children(numbers.as_ref().and_then(|n| n.get(i)).map(|n| n.to_string())),
+                )
                 .child(div().w(px(14.)).flex_none().flex().justify_center().text_color(mark).child(sign.to_string()))
                 .child(div().pr_2().child(text))
         }))

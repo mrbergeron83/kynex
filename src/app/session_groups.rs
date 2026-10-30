@@ -17,9 +17,9 @@ use kynex_core::toasts::Toast;
 
 use super::KynexApp;
 use super::menus::Menu;
-use crate::theme::theme;
+use crate::theme::{theme, ui_font};
 use crate::ui::input::TextInput;
-use crate::ui::{Icon, divider, icon, menu_item, popover};
+use crate::ui::{divider, menu_item, popover, section_label};
 
 /// What a session menu item does when clicked.
 type MenuAction = Box<dyn Fn(&mut KynexApp, &mut Window, &mut Context<KynexApp>)>;
@@ -48,6 +48,8 @@ pub(super) struct Organize {
     pub(super) shown: Vec<String>,
     /// "Delete" was clicked on the picked sessions and waits for Yes.
     pub(super) confirm_bulk_delete: bool,
+    /// The row the list's ↑ / ↓ keys are on.
+    pub(super) cursor: Option<String>,
 }
 
 impl Organize {
@@ -61,6 +63,7 @@ impl Organize {
             selection_cwd: None,
             shown: Vec::new(),
             confirm_bulk_delete: false,
+            cursor: None,
         }
     }
 
@@ -70,23 +73,38 @@ impl Organize {
     }
 }
 
-/// A session being dragged onto a group.
+/// Sessions being dragged onto a group, the archive or a pinned row: the one
+/// grabbed, and with it every other picked one.
 #[derive(Clone)]
 pub(super) struct DraggedSession {
-    pub id: String,
+    pub ids: Vec<String>,
     pub title: SharedString,
+}
+
+/// A group header being dragged to another place among the groups.
+#[derive(Clone)]
+pub(super) struct DraggedGroup {
+    pub index: usize,
+    pub name: SharedString,
+}
+
+impl Render for DraggedGroup {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme(cx);
+        popover(cx).font_family(ui_font()).px_2().py_1().text_sm().text_color(t.text_muted).child(self.name.clone())
+    }
 }
 
 impl Render for DraggedSession {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
-        popover(cx)
-            .px_2()
-            .py_1()
-            .max_w(px(240.))
-            .text_sm()
-            .text_color(t.text)
-            .child(div().truncate().child(self.title.clone()))
+        // Drawn outside the window's root, so it doesn't inherit the font.
+        popover(cx).font_family(ui_font()).px_2().py_1().max_w(px(240.)).text_sm().text_color(t.text).child(
+            div().truncate().child(match self.ids.len() {
+                1 => self.title.clone(),
+                n => format!("{n} sessions").into(),
+            }),
+        )
     }
 }
 
@@ -110,7 +128,7 @@ impl KynexApp {
     }
 
     /// Shows the name field in place of group `i`'s header.
-    fn start_rename(&mut self, cwd: PathBuf, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn start_group_rename(&mut self, cwd: PathBuf, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         // One open at a time: the field moves, so keep what the last one had.
         self.commit_rename(cx);
         let name = self.groups_for(&cwd).groups.get(i).map(|g| g.name.clone()).unwrap_or_default();
@@ -162,7 +180,7 @@ impl KynexApp {
     pub(super) fn new_group(&mut self, cwd: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let mut at = 0;
         self.edit_groups(&cwd, |g| at = g.add_group(""));
-        self.start_rename(cwd, at, window, cx);
+        self.start_group_rename(cwd, at, window, cx);
     }
 
     /// Enter in the name field: keeps the new name. A session's blank name
@@ -238,7 +256,7 @@ impl KynexApp {
                     at = g.add_group("");
                     g.move_to(&new_id, Some(at));
                 });
-                this.start_rename(new_cwd.clone(), at, window, cx);
+                this.start_group_rename(new_cwd.clone(), at, window, cx);
             }),
         ));
         if let Some(i) = current {
@@ -283,19 +301,28 @@ impl KynexApp {
     pub(super) fn group_menu_items(&mut self, i: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let Some(cwd) = self.active_session().map(|s| s.cwd.clone()) else { return Vec::new() };
         let t = theme(cx).clone();
-        let rename_cwd = cwd.clone();
+        let (rename_cwd, archive_cwd) = (cwd.clone(), cwd.clone());
         vec![
             menu_item("group-rename", "Rename", false, cx)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.menu = None;
-                    this.start_rename(rename_cwd.clone(), i, window, cx);
+                    this.start_group_rename(rename_cwd.clone(), i, window, cx);
                 }))
                 .into_any_element(),
-            menu_item("group-delete", "Delete group", false, cx)
+            div().my_1().child(divider(cx)).into_any_element(),
+            menu_item("group-delete", "Delete group, keep its sessions", false, cx)
                 .text_color(t.error)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.menu = None;
                     this.edit_groups(&cwd, |g| g.delete_group(i));
+                    cx.notify();
+                }))
+                .into_any_element(),
+            menu_item("group-delete-archive", "Delete group and archive its sessions", false, cx)
+                .text_color(t.error)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.menu = None;
+                    this.edit_groups(&archive_cwd, |g| g.delete_group_archiving(i));
                     cx.notify();
                 }))
                 .into_any_element(),
@@ -316,45 +343,31 @@ impl KynexApp {
         let editing = matches!(&self.organize.editing, Some(Editing::Group(p, e)) if p == cwd && *e == i);
         let (count, hover) = (rows.len(), t.hover);
         let (toggle_cwd, drop_cwd) = (cwd.to_path_buf(), cwd.to_path_buf());
-        let header = div()
-            .id(("group", i))
-            .flex()
-            .items_center()
-            .gap_1()
-            .h(px(28.))
-            .px_1p5()
-            .rounded_md()
-            .text_xs()
-            .text_color(t.text_muted)
-            .cursor_pointer()
-            .hover(|s| s.bg(t.hover))
-            .child(
-                icon(if group.collapsed { Icon::ChevronRight } else { Icon::ChevronDown }, t.text_placeholder).size_3(),
-            )
-            .child(if editing {
-                self.rename_field(cx).flex_1().into_any_element()
-            } else {
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .child(group.name)
-                    .into_any_element()
-            })
-            .child(div().flex_none().text_color(t.text_placeholder).child(count.to_string()))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                if !editing {
-                    this.edit_groups(&toggle_cwd, |g| g.toggle_group(i));
-                    cx.notify();
-                }
-            }))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                    this.open_menu(Menu::Group(i), ev.position, gpui::Anchor::TopLeft, cx)
-                }),
-            );
+        // A section header like the date ones: its name, and its count while folded.
+        let label = if group.collapsed { format!("{} · {count}", group.name) } else { group.name.clone() };
+        let text = t.text;
+        let header = match editing {
+            true => div().pt_3().pb_1().px_1().child(self.rename_field(cx)),
+            false => section_label(&label, cx).pt_3().pb_1().px_2().truncate(),
+        }
+        .id(("group", i))
+        .cursor_pointer()
+        .hover(move |s| s.text_color(text))
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            if !editing {
+                this.edit_groups(&toggle_cwd, |g| g.toggle_group(i));
+                cx.notify();
+            }
+        }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                this.open_menu(Menu::Group(i), ev.position, gpui::Anchor::TopLeft, cx)
+            }),
+        )
+        // Dragged onto another group, it takes that group's place.
+        .on_drag(DraggedGroup { index: i, name: group.name.clone().into() }, |d, _, _, cx| cx.new(|_| d.clone()));
+        let reorder_cwd = cwd.to_path_buf();
         div()
             .id(("group-block", i))
             .flex()
@@ -363,11 +376,18 @@ impl KynexApp {
             .drag_over::<DraggedSession>(move |s, _, _, _| s.bg(hover))
             .on_drop(cx.listener(move |this, d: &DraggedSession, _, cx| {
                 cx.stop_propagation();
-                this.edit_groups(&drop_cwd, |g| g.move_to(&d.id, Some(i)));
+                this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.move_to(id, Some(i))));
+                this.organize.selection.clear();
+                cx.notify();
+            }))
+            .drag_over::<DraggedGroup>(move |s, _, _, _| s.bg(hover))
+            .on_drop(cx.listener(move |this, d: &DraggedGroup, _, cx| {
+                cx.stop_propagation();
+                this.edit_groups(&reorder_cwd, |g| g.move_group(d.index, i));
                 cx.notify();
             }))
             .child(header)
-            .when(!group.collapsed, |d| d.child(div().pl_3().children(rows)))
+            .when(!group.collapsed, |d| d.children(rows))
             .into_any_element()
     }
 
@@ -375,7 +395,7 @@ impl KynexApp {
     pub(super) fn render_archived(&mut self, cwd: &Path, rows: Vec<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let open = self.organize.show_archived;
-        let (count, hover) = (rows.len(), t.hover);
+        let (count, hover, text) = (rows.len(), t.hover, t.text);
         let drop_cwd = cwd.to_path_buf();
         div()
             .id("archived-block")
@@ -386,25 +406,18 @@ impl KynexApp {
             .drag_over::<DraggedSession>(move |s, _, _, _| s.bg(hover))
             .on_drop(cx.listener(move |this, d: &DraggedSession, _, cx| {
                 cx.stop_propagation();
-                this.edit_groups(&drop_cwd, |g| g.archive(&d.id));
+                this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.archive(id)));
+                this.organize.selection.clear();
                 cx.notify();
             }))
             .child(
-                div()
+                section_label(&if open { "Archived".to_string() } else { format!("Archived · {count}") }, cx)
                     .id("archived")
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .h(px(28.))
-                    .px_1p5()
-                    .rounded_md()
-                    .text_xs()
-                    .text_color(t.text_placeholder)
+                    .pt_3()
+                    .pb_1()
+                    .px_2()
                     .cursor_pointer()
-                    .hover(|s| s.bg(t.hover))
-                    .child(icon(if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_placeholder).size_3())
-                    .child(div().flex_1().child("Archived"))
-                    .child(count.to_string())
+                    .hover(move |s| s.text_color(text))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.organize.show_archived = !this.organize.show_archived;
                         cx.notify();

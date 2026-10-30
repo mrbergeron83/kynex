@@ -24,7 +24,7 @@ use kynex_core::terminal::{self as core, ShellKind};
 
 pub use self::view::bind_keys;
 use self::view::{TerminalEvent, TerminalView};
-use crate::theme::theme;
+use crate::theme::{mono, theme};
 use crate::ui::{Icon, Tooltip, icon, icon_button, menu_item, popover};
 
 pub enum PanelEvent {
@@ -219,7 +219,7 @@ impl TerminalPanel {
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
             .child(icon(Icon::Terminal, if focused { t.accent } else { t.text_muted }).size_3())
-            .child(div().text_color(t.text).child(label))
+            .child(div().font_family(mono()).text_color(t.text).child(label))
             .child(div().text_color(t.text_placeholder).child("exited · Enter to restart"))
             .child(div().flex_1())
             .child(
@@ -311,7 +311,7 @@ impl Render for TerminalPanel {
                     .flex()
                     .items_center()
                     .gap_1p5()
-                    .h(px(26.))
+                    .h(px(22.))
                     .pl_2()
                     .pr_1()
                     .rounded_md()
@@ -321,7 +321,7 @@ impl Render for TerminalPanel {
                     .when(active, |d| d.bg(t.active))
                     .when(!active, |d| d.hover(move |s| s.bg(hover)))
                     .child(icon(Icon::Terminal, if focused { t.accent } else { t.text_muted }).size_3())
-                    .child(div().max_w(px(160.)).truncate().child(v.label()))
+                    .child(div().max_w(px(160.)).truncate().font_family(mono()).child(v.label()))
                     .when(exited, |d| d.child(div().text_color(t.text_placeholder).child("exited")))
                     .child(
                         icon_button(("close-terminal", i), Icon::Close, cx)
@@ -369,10 +369,10 @@ impl Render for TerminalPanel {
             .flex_none()
             .items_center()
             .gap_1()
-            .h(px(34.))
+            .h(px(STRIP_HEIGHT))
             .px_2()
-            .border_b_1()
-            .border_color(t.border_variant)
+            .text_xs()
+            .text_color(t.text_muted)
             .child(div().flex().items_center().gap_0p5().min_w_0().overflow_hidden().children(tabs))
             .child(
                 div()
