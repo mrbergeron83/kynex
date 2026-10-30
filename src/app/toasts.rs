@@ -88,7 +88,7 @@ impl KynexApp {
         .inset_0()
     }
 
-    /// The stack in its corner of the window, newest nearest the edge; `None`
+    /// The stack in its corner of the conversation, newest nearest the edge; `None`
     /// with nothing to show. Only the toasts take the mouse, not the space
     /// around them.
     pub(super) fn render_toasts(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -99,16 +99,20 @@ impl KynexApp {
         let exit = if cx.reduce_motion() { Duration::ZERO } else { motion::QUICK };
         let corner = self.saved.toast_corner;
         // Clear of the title bar and footer, and in the conversation of its
-        // header above and the composer below.
-        let height = f32::from(window.viewport_size().height);
+        // header above and the composer below, and of the side panels.
+        let size = window.viewport_size();
+        let (height, width) = (f32::from(size.height), f32::from(size.width));
         let rem = window.rem_size();
         let footer = if self.saved.footer { f32::from(FOOTER_HEIGHT.to_pixels(rem)) } else { 0. };
         let (mut top, mut bottom) = (f32::from(TITLE_BAR_HEIGHT.to_pixels(rem)), footer);
+        let (mut left, mut right) = (0., 0.);
         if let Some(room) = self.toast_room.get() {
             top = top.max(f32::from(room.top()));
             bottom = bottom.max(height - f32::from(room.bottom()));
+            left = f32::from(room.left()).max(0.);
+            right = (width - f32::from(room.right())).max(0.);
         }
-        let place = corner.place(top, bottom);
+        let place = corner.place(top, bottom, left, right);
         let (shown, more) = self.toasts.visible();
         let mut rows: Vec<AnyElement> = shown.iter().map(|toast| toast_row(toast, exit, &t, cx)).collect();
         if corner.is_top() {

@@ -1,8 +1,9 @@
 //! The prompt Claude shows when it needs you: a tool to allow, a plan to approve
 //! or questions to answer. Like Claude Code's own prompt it takes the composer's
 //! place until it's answered: a cursor over numbered choices (↑↓ and Enter, or
-//! 1–9), "No, and tell Claude what to do differently" as the last one with its
-//! field opening in place, and Esc to say no and stop the turn.
+//! 1–9), a plain "No" that says no and stops the turn (as Esc does), and "No,
+//! and tell Claude what to do differently" as the last one with its field
+//! opening in place.
 //!
 //! | file           | what                                                    |
 //! |----------------|---------------------------------------------------------|
@@ -156,6 +157,8 @@ impl PromptView {
                         Answer::Project,
                     ));
                 }
+                // No without a reason, as Esc: the turn stops.
+                choices.push(("No (esc)".to_string(), Answer::Deny(String::new())));
                 choices
             }
         };
@@ -259,9 +262,15 @@ impl PromptView {
 
     /// Tab moves between questions; as in Claude Code, on a yes it opens a
     /// comment for Claude to go with it (the "No" row's field is open already).
+    /// On a plain no it moves to that field: a no with words is that row.
     fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_questions() || self.selected >= self.choices.len() {
             return self.next_tab(&NextTab, window, cx);
+        }
+        if matches!(self.choices[self.selected].1, Answer::Deny(_)) {
+            self.selected = self.choices.len();
+            self.sync_focus(window, cx);
+            return cx.notify();
         }
         self.commenting = Some(self.selected);
         self.sync_focus(window, cx);
@@ -398,7 +407,7 @@ impl PromptView {
         });
         let no_label = match self.req.tool.as_str() {
             "ExitPlanMode" => "No, keep planning (esc)",
-            _ => "No, and tell Claude what to do differently (esc)",
+            _ => "No, and tell Claude what to do differently",
         };
         let typed = self.feedback.read(cx).text().to_string();
         let no_body = if self.selected == no {

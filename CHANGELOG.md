@@ -12,6 +12,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   stop to free memory. Its transcript stays, and it starts again when you open it or type.
   Sessions that are working, waiting on you, have queued messages or background tasks, or
   use the browser stay awake.
+- Permission prompts have a plain "No" choice that refuses without a reason, as Esc does,
+  above "Tell Claude what to do differently".
+- Select several sessions in the sessions panel (the Select button, Ctrl+click or Shift+click)
+  and archive or delete them together, with one confirmation that says how many. Sessions
+  still working are kept.
 
 ### Changed
 
@@ -27,6 +32,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Toasts stay in the conversation's corner instead of drawing over the timeline or sessions
+  panel.
+- Opening an old session no longer moves it to Today in the sessions panel: sessions are
+  dated by their last message, not by when their log file was last touched.
 - The composer's session-files button and its count of new scratch files no longer vanish
   when you send the next message; the count stays until you open the files.
 

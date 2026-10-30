@@ -12,7 +12,7 @@ use gpui::{
 use kynex_core::dates::{self, Bucket};
 use kynex_core::fmt::ago;
 use kynex_core::live::Key;
-use kynex_core::session::{self, Item, Session, SessionInfo};
+use kynex_core::session::{self, Item, SessionInfo};
 
 use kynex_core::toasts::Toast;
 
@@ -181,6 +181,9 @@ impl KynexApp {
         let matches = |title: &str| query.is_empty() || title.to_lowercase().contains(&query);
         let shown: Vec<SessionInfo> = all.iter().filter(|i| matches(&i.title)).cloned().collect();
         let items = &shown;
+        self.sync_picks(&cwd, &items.iter().map(|i| i.id.clone()).collect::<Vec<_>>());
+        let picking = self.organize.selection.on;
+        let busy: Vec<String> = open.iter().filter(|o| o.busy).filter_map(|o| o.id.clone()).collect();
         let open_state = |id: &str| {
             open.iter()
                 .find(|o| o.id.as_deref() == Some(id))
@@ -202,6 +205,17 @@ impl KynexApp {
                     .tooltip(Tooltip::text("Filter by title"))
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_session_filter(window, cx))),
             )
+            .child({
+                let cwd = cwd.clone();
+                icon_button("select-sessions", Icon::Check, cx)
+                    .when(picking, |b| b.bg(t.active))
+                    .tooltip(Tooltip::text(if cfg!(target_os = "macos") {
+                        "Select sessions (or Cmd+click, Shift+click)"
+                    } else {
+                        "Select sessions (or Ctrl+click, Shift+click)"
+                    }))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_picking(cwd.clone(), cx)))
+            })
             .child({
                 let cwd = cwd.clone();
                 icon_button("new-group", Icon::FolderPlus, cx)
@@ -264,6 +278,7 @@ impl KynexApp {
             let id = info.id.clone();
             let (open_id, del_id) = (id.clone(), id.clone());
             let (kind2, cwd2, cwd3) = (kind, cwd.clone(), cwd.clone());
+            let picked = self.organize.selection.contains(&id);
             let (busy, waiting, finished) = open_state(&id);
             let delete = if confirming {
                 div()
@@ -286,9 +301,21 @@ impl KynexApp {
             // or the field renaming it.
             let title = match self.session_name_field(&id, false, cx) {
                 Some(field) => field.flex_1().into_any_element(),
-                None => title_text(info.title.clone().into(), is_current, &t),
+                None => title_text(info.title.clone().into(), is_current || picked, &t),
             };
-            let row = session_row_with(("session", n), title, is_current, &t)
+            let title = match picking {
+                true => div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .gap_1p5()
+                    .child(self.pick_box(picked, cx))
+                    .child(title)
+                    .into_any_element(),
+                false => title,
+            };
+            let row = session_row_with(("session", n), title, is_current || picked, &t)
                 .group("session-row")
                 .tooltip(Tooltip::with_meta(info.title.clone(), ago(info.modified)))
                 .children(news_lamp(("session-status", n), busy, waiting, finished, cx))
@@ -299,8 +326,11 @@ impl KynexApp {
                         this.open_menu(Menu::Session(menu_id.clone()), ev.position, Anchor::TopLeft, cx)
                     }),
                 )
-                .on_click(cx.listener(move |this, _, window, cx| {
+                .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, window, cx| {
                     this.confirm_delete = None;
+                    if this.pick_click(&cwd2, &open_id, &ev.modifiers(), cx) {
+                        return;
+                    }
                     this.show_code_view();
                     if !is_current {
                         this.switch_session(kind2, cwd2.clone(), open_id.clone());
@@ -308,54 +338,42 @@ impl KynexApp {
                     this.focus_input(window, cx);
                     cx.notify();
                 }))
-                .child(
-                    delete
-                        .when(busy, |d| d.opacity(0.4))
-                        .tooltip(Tooltip::text(if busy {
-                            "Stop it first to delete it"
-                        } else {
-                            "Delete this session's transcript"
-                        }))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            if busy {
-                                return;
-                            }
-                            if this.confirm_delete.as_deref() != Some(del_id.as_str()) {
-                                this.confirm_delete = Some(del_id.clone());
-                                return cx.notify();
-                            }
-                            this.confirm_delete = None;
-                            if is_current {
-                                this.open_session(Session::new(kind2, cwd3.clone()));
-                            }
-                            let open = this.live_mut().and_then(|l| {
-                                l.sessions
-                                    .iter()
-                                    .find(|s| s.session_id.as_deref() == Some(del_id.as_str()))
-                                    .map(|s| s.uid)
-                            });
-                            if let Some(uid) = open {
-                                this.close_open(uid);
-                            }
-                            if let Err(e) = session::delete_session(&cwd3, &del_id) {
-                                this.toast(Toast::error(e));
-                            }
-                            this.drafts.remove(&del_id);
-                            if this.saved.drafts.remove(&del_id).is_some() {
-                                this.save();
-                            }
-                            this.edit_groups(&cwd3, |g| g.forget(&del_id));
-                            this.sessions = None;
-                            cx.notify();
-                        })),
-                );
+                .when(!picking, |row| {
+                    row.child(
+                        delete
+                            .when(busy, |d| d.opacity(0.4))
+                            .tooltip(Tooltip::text(if busy {
+                                "Stop it first to delete it"
+                            } else {
+                                "Delete this session's transcript"
+                            }))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                if busy {
+                                    return;
+                                }
+                                if this.confirm_delete.as_deref() != Some(del_id.as_str()) {
+                                    this.confirm_delete = Some(del_id.clone());
+                                    return cx.notify();
+                                }
+                                this.confirm_delete = None;
+                                this.forget_past_session(kind2, &cwd3, &del_id);
+                                if let Err(e) = session::delete_session(&cwd3, &del_id) {
+                                    this.toast(Toast::error(e));
+                                }
+                                this.sessions = None;
+                                cx.notify();
+                            })),
+                    )
+                });
             past.insert(id, row.into_any_element());
         }
 
         // Ungrouped first, then each group, then the archive.
         let arranged = self.groups_for(&cwd).arrange(items.iter().map(|i| i.id.as_str()));
         let mut take = |ids: Vec<String>| ids.iter().filter_map(|id| past.remove(id)).collect::<Vec<_>>();
+        // The rows in the order drawn, for Shift+click runs and "All".
+        let mut order: Vec<String> = arranged.pinned.clone();
         // Pinned sessions first, above the dates.
         let pinned = take(arranged.pinned);
         if !pinned.is_empty() {
@@ -385,14 +403,29 @@ impl KynexApp {
                 for (bucket, ids) in sections {
                     let open = self.groups_for(&cwd).date_open(bucket);
                     rows.push(self.date_header(&cwd, bucket, ids.len(), open, today, cx));
+                    if open {
+                        order.extend(ids.iter().cloned());
+                    }
                     let shown = take(ids);
                     if open {
                         rows.extend(shown);
                     }
                 }
             }
-            None => rows.extend(take(arranged.top)),
+            None => {
+                order.extend(arranged.top.iter().cloned());
+                rows.extend(take(arranged.top));
+            }
         }
+        for (i, ids) in arranged.groups.iter().enumerate() {
+            if !self.groups_for(&cwd).groups.get(i).is_some_and(|g| g.collapsed) {
+                order.extend(ids.iter().cloned());
+            }
+        }
+        if self.organize.show_archived {
+            order.extend(arranged.archived.iter().cloned());
+        }
+        self.organize.shown = order.clone();
         let groups: Vec<Vec<AnyElement>> = arranged.groups.into_iter().map(&mut take).collect();
         let archived = take(arranged.archived);
         for (i, group) in groups.into_iter().enumerate() {
@@ -444,12 +477,15 @@ impl KynexApp {
                 cx.notify();
             }))
             .children(rows);
-        div().flex().flex_col().size_full().child(header).children(filter).child(scrollbar::vertical_over(
-            "session-list-bar",
-            scroll,
-            list,
-            |d| d.flex_1().min_h_0(),
-        ))
+        let picks = self.render_pick_bar(kind, cwd, order, busy, cx);
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .child(header)
+            .children(filter)
+            .child(scrollbar::vertical_over("session-list-bar", scroll, list, |d| d.flex_1().min_h_0()))
+            .children(picks)
     }
 
     /// A date header: one line of small muted text that folds its sessions

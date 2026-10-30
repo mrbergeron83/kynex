@@ -48,6 +48,78 @@ pub struct Arranged {
     pub archived: Vec<String>,
 }
 
+/// Sessions picked in the panel to archive or delete together: Ctrl+click
+/// picks one, Shift+click a run of rows. Not saved.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Selection {
+    /// Picking: a plain click picks or drops a row instead of opening it.
+    pub on: bool,
+    /// In the order they were picked.
+    pub ids: Vec<String>,
+    /// The last row picked by itself, where Shift+click runs start.
+    anchor: Option<String>,
+}
+
+impl Selection {
+    pub fn contains(&self, id: &str) -> bool {
+        self.ids.iter().any(|s| s == id)
+    }
+
+    /// Picks `id`, or drops it if it's picked.
+    pub fn toggle(&mut self, id: &str) {
+        self.on = true;
+        match self.ids.iter().position(|s| s == id) {
+            Some(i) => {
+                self.ids.remove(i);
+            }
+            None => self.ids.push(id.to_string()),
+        }
+        self.anchor = Some(id.to_string());
+    }
+
+    /// Picks every row of `shown` (the rows in panel order) from the last one
+    /// picked to `id`; with none picked yet, just `id`.
+    pub fn extend(&mut self, shown: &[String], id: &str) {
+        self.on = true;
+        let at = |id: &str| shown.iter().position(|s| s == id);
+        let (Some(from), Some(to)) = (self.anchor.as_deref().and_then(at), at(id)) else {
+            if !self.contains(id) {
+                self.toggle(id);
+            }
+            return;
+        };
+        for s in &shown[from.min(to)..=from.max(to)] {
+            if !self.contains(s) {
+                self.ids.push(s.clone());
+            }
+        }
+    }
+
+    /// Picks every row of `shown`, or none if they all are.
+    pub fn toggle_all(&mut self, shown: &[String]) {
+        self.on = true;
+        if shown.iter().all(|s| self.contains(s)) {
+            self.ids.clear();
+        } else {
+            self.ids = shown.to_vec();
+        }
+        self.anchor = None;
+    }
+
+    /// Drops picks that are no longer listed (deleted, or filtered out).
+    pub fn keep_only(&mut self, listed: &[String]) {
+        self.ids.retain(|s| listed.contains(s));
+        if self.anchor.as_ref().is_some_and(|a| !listed.contains(a)) {
+            self.anchor = None;
+        }
+    }
+
+    /// Stops picking and drops every pick.
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
 impl SessionGroups {
     const FILE: &str = "sessions.json";
 
@@ -364,5 +436,32 @@ mod tests {
         // Older or partial files still load.
         let partial: SessionGroups = serde_json::from_str(r#"{"groups":[{"name":"G"}]}"#).unwrap();
         assert_eq!(partial.groups[0].name, "G");
+    }
+
+    #[test]
+    fn selection_picks_rows_runs_and_all() {
+        let shown: Vec<String> = ["a", "b", "c", "d", "e"].map(String::from).to_vec();
+        let mut s = Selection::default();
+        // Shift+click with nothing picked picks just that row.
+        s.extend(&shown, "b");
+        assert!(s.on);
+        assert_eq!(s.ids, ["b"]);
+        // A run from it, either way, without doubling what's picked.
+        s.extend(&shown, "d");
+        assert_eq!(s.ids, ["b", "c", "d"]);
+        s.toggle("e");
+        s.extend(&shown, "c");
+        assert_eq!(s.ids, ["b", "c", "d", "e"]);
+        s.toggle("c");
+        assert!(!s.contains("c"));
+        // Gone from the list, gone from the picks.
+        s.keep_only(&["b".into(), "d".into()]);
+        assert_eq!(s.ids, ["b", "d"]);
+        s.toggle_all(&shown);
+        assert_eq!(s.ids.len(), 5);
+        s.toggle_all(&shown);
+        assert!(s.ids.is_empty() && s.on);
+        s.clear();
+        assert_eq!(s, Selection::default());
     }
 }

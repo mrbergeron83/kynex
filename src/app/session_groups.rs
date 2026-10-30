@@ -11,7 +11,7 @@ use gpui::{
     AnyElement, ClickEvent, Context, Entity, Focusable, MouseButton, MouseDownEvent, SharedString, Window, div,
     prelude::*,
 };
-use kynex_core::groups::SessionGroups;
+use kynex_core::groups::{Selection, SessionGroups};
 
 use kynex_core::toasts::Toast;
 
@@ -41,11 +41,27 @@ pub(super) struct Organize {
     name: Entity<TextInput>,
     /// The archived section is open (this run only; it starts closed).
     pub(super) show_archived: bool,
+    /// Sessions picked to archive or delete together, and the folder they're in.
+    pub(super) selection: Selection,
+    pub(super) selection_cwd: Option<PathBuf>,
+    /// The past sessions' rows in the order drawn, for Shift+click runs.
+    pub(super) shown: Vec<String>,
+    /// "Delete" was clicked on the picked sessions and waits for Yes.
+    pub(super) confirm_bulk_delete: bool,
 }
 
 impl Organize {
     pub(super) fn new(name: Entity<TextInput>) -> Self {
-        Self { by_folder: HashMap::new(), editing: None, name, show_archived: false }
+        Self {
+            by_folder: HashMap::new(),
+            editing: None,
+            name,
+            show_archived: false,
+            selection: Selection::default(),
+            selection_cwd: None,
+            shown: Vec::new(),
+            confirm_bulk_delete: false,
+        }
     }
 
     /// A session's name given by hand, if its folder's groups are loaded.
