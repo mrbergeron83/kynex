@@ -87,6 +87,22 @@ pub fn tokens(n: u64) -> String {
     }
 }
 
+/// A size on disk, short: "512 B", "95 MB", "2.3 GB" (1 KB = 1024 bytes).
+pub fn bytes(n: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if n < 1024 {
+        return format!("{n} B");
+    }
+    let mut v = n as f64 / 1024.;
+    let mut unit = 0;
+    while v >= 1024. && unit + 1 < UNITS.len() {
+        v /= 1024.;
+        unit += 1;
+    }
+    let s = if v < 10. { format!("{v:.1}") } else { format!("{v:.0}") };
+    format!("{} {}", s.trim_end_matches(".0"), UNITS[unit])
+}
+
 /// The first `n` words of a message, on one line, with "…" when there's more:
 /// a stand-in title until a session has its own name.
 pub fn first_words(text: &str, n: usize) -> String {
@@ -183,6 +199,16 @@ mod tests {
         assert_eq!(limit(600_000), "10m");
         assert_eq!(limit(3_600_000), "1h");
         assert_eq!(limit(5_400_000), "1h 30m");
+    }
+
+    #[test]
+    fn byte_sizes() {
+        assert_eq!(bytes(0), "0 B");
+        assert_eq!(bytes(1023), "1023 B");
+        assert_eq!(bytes(1024), "1 KB");
+        assert_eq!(bytes(95 * 1024 * 1024), "95 MB");
+        assert_eq!(bytes(2_469_606_195), "2.3 GB");
+        assert_eq!(bytes(u64::MAX), "16777216 TB");
     }
 
     #[test]

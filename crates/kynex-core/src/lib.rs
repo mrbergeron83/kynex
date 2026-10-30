@@ -41,6 +41,7 @@ pub mod rewind;
 pub mod scale;
 pub mod session;
 pub mod session_log;
+pub mod storage;
 pub mod tasks;
 pub mod terminal;
 pub mod timeline;

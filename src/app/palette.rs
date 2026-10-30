@@ -150,6 +150,7 @@ fn commands() -> Vec<(Cmd, String, &'static str)> {
         (Cmd::Settings(0), "Settings", "preferences general cli shell"),
         (Cmd::Settings(1), "Settings: Appearance", "theme font motion toasts footer"),
         (Cmd::Settings(2), "Settings: Keyboard", "shortcuts keymap bindings"),
+        (Cmd::Settings(3), "Settings: Storage", "disk space size clean delete old sessions"),
         (Cmd::ProjectSettings, "Project settings", "rules permissions effort model directories"),
         (Cmd::Extensions, "Extensions", "mcp servers plugins"),
         (Cmd::About, "About Kynex", "version"),

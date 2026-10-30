@@ -40,7 +40,7 @@ struct CliInfo {
     version: Result<String, String>,
 }
 
-const SECTIONS: [&str; 3] = ["General", "Appearance", "Keyboard"];
+const SECTIONS: [&str; 4] = ["General", "Appearance", "Keyboard", "Storage"];
 
 impl KynexApp {
     pub(super) fn open_app_settings(&mut self, cx: &mut Context<Self>) {
@@ -50,6 +50,8 @@ impl KynexApp {
         self.settings = None;
         self.extensions = None;
         self.app_settings = Some(AppSettingsView { section: 0, cli: None });
+        // Storage is measured afresh each time Settings opens.
+        self.storage = None;
         self.read_cli_version(cx);
         cx.notify();
     }
@@ -163,7 +165,8 @@ impl KynexApp {
         let content = match section {
             0 => self.render_general(&t, cx),
             1 => self.render_appearance(&t, cx),
-            _ => self.render_keyboard(&t, cx),
+            2 => self.render_keyboard(&t, cx),
+            _ => self.render_storage(&t, cx),
         };
         let footer = format!("Stored in {}", data_dir().join("state.json").display());
         let close = |this: &mut Self| this.app_settings = None;

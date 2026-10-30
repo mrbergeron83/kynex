@@ -23,6 +23,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Find in the conversation (Ctrl+F / Cmd+F, rebindable as `find`): matches are highlighted
   in messages, replies, thinking and tool output, "3 of 12" with Enter / Shift+Enter to
   move between them; a match inside a folded tool run opens it.
+- Settings → Storage: how much disk Claude Code's sessions take (logs, scratchpads, file
+  checkpoints), by project and biggest session first. Clear a session's scratchpad or
+  checkpoints, delete it, delete sessions not used in 30 / 90 / 365 days, or clear what's
+  left from deleted sessions; each asks first and says what it frees, and pinned or open
+  sessions are kept.
 
 ### Changed
 

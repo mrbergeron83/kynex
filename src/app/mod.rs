@@ -43,6 +43,8 @@
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
 //! | `app_update.rs`     | Kynex updating itself: checks, the update toast      |
 //! | `about.rs`          | the About Kynex modal: version, paths, updates       |
+//! | `storage.rs`        | Settings → Storage: sessions' disk use, cleanup      |
+//! | `storage_list.rs`   | its sessions: filter, sort, go to, files             |
 //! | `extensions.rs`     | the Extensions modal: MCP servers, plugins           |
 //! | `extensions_add.rs` | its Add server panel: browser preset, your own       |
 //! | `appearance.rs`     | each project's colour: title bar, tab, composer      |
@@ -81,6 +83,8 @@ mod setup;
 mod slash;
 mod state;
 mod status;
+mod storage;
+mod storage_list;
 mod tasks;
 mod terminal_dock;
 mod timeline;
@@ -121,6 +125,7 @@ use setup::{CliCheck, Setup};
 use slash::Slash;
 pub use state::Saved;
 use state::{Active, View, WindowState};
+use storage::StorageView;
 use transcript::{Scroll, Thread};
 use worktrees::Worktrees;
 
@@ -179,6 +184,8 @@ pub struct KynexApp {
     mentions: Mentions,
     palette: Option<PaletteView>,
     find: Option<FindBar>,
+    /// Settings → Storage's measurements, while that page has been opened.
+    storage: Option<StorageView>,
     /// Actions last run from the palette, newest first.
     palette_recent: Vec<String>,
     sessions: Option<SessionList>,
@@ -414,6 +421,7 @@ impl KynexApp {
             mentions: Mentions::default(),
             palette: None,
             find: None,
+            storage: None,
             palette_recent: Vec::new(),
             sessions: None,
             sessions_reading: None,
