@@ -1562,6 +1562,14 @@ const HEAD_CAP: u64 = 256 * 1024;
 const TAIL_CAP: u64 = 2 * 1024 * 1024;
 const TAIL_CHUNK: u64 = 64 * 1024;
 
+/// The title of the session logged at `path`, as [`list_sessions`] names it;
+/// `None` for a log with no conversation. Blocks on reading its ends.
+pub fn title_of(path: &Path) -> Option<String> {
+    let names = read_names(path)?;
+    let id = path.file_stem()?.to_string_lossy();
+    Some(names.title.or_else(|| crate::titles::stored(&id)).unwrap_or(names.first))
+}
+
 /// A transcript's names, or `None` for one with no conversation in it. Only
 /// its ends are read: the first message is near the top, and the CLI writes
 /// the title again every turn, so the newest is near the end. Blocks on the file.
@@ -1585,6 +1593,24 @@ fn read_names(path: &Path) -> Option<Names> {
         custom.is_none()
     });
     Some(Names { title: custom.or(ai), first })
+}
+
+/// The folder the session logged at `path` ran in: the `cwd` its first
+/// entries carry. Blocks on reading the log's head.
+pub fn cwd_of(path: &Path) -> Option<PathBuf> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).ok()?;
+    let reader = BufReader::new(file.take(HEAD_CAP));
+    reader.split(b'\n').map_while(Result::ok).find_map(|line| cwd_in(std::str::from_utf8(&line).ok()?))
+}
+
+/// The `cwd` of one log line, if it has one.
+fn cwd_in(line: &str) -> Option<PathBuf> {
+    if !line.contains(r#""cwd""#) {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line).ok()?;
+    v["cwd"].as_str().filter(|c| !c.is_empty()).map(PathBuf::from)
 }
 
 /// The first real user message in the first `cap` bytes of a log.
@@ -2201,6 +2227,21 @@ mod tests {
         drop(tx);
         assert_eq!(s.take_history(), Some(1));
         assert!(matches!(s.items[0], Item::Error(_)) && !s.loading());
+    }
+
+    #[test]
+    fn reads_the_folder_a_log_ran_in() {
+        let path = std::env::temp_dir().join(format!("kynex-cwd-{}.jsonl", std::process::id()));
+        let log = [
+            r#"{"type":"summary","summary":"x"}"#,
+            r#"{"type":"user","cwd":"C:\\work\\app","message":{"content":"hi"}}"#,
+            r#"{"type":"user","cwd":"C:\\elsewhere"}"#,
+        ];
+        std::fs::write(&path, log.join("\n")).unwrap();
+        assert_eq!(cwd_of(&path), Some(PathBuf::from(r"C:\work\app")));
+        std::fs::write(&path, "not json\n{\"cwd\":\"\"}\n").unwrap();
+        assert_eq!(cwd_of(&path), None);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

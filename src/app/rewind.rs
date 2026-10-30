@@ -226,6 +226,7 @@ impl KynexApp {
                                 0 => "".into(),
                                 n => format!("{} changed since", files(n)).into(),
                             },
+                            ..Default::default()
                         }
                     })
                     .collect(),
@@ -241,7 +242,7 @@ impl KynexApp {
                 };
                 let items = choices(p)
                     .into_iter()
-                    .map(|c| Completion { label: c.label().into(), hint: "".into(), detail: detail(c).into() })
+                    .map(|c| Completion { label: c.label().into(), detail: detail(c).into(), ..Default::default() })
                     .collect();
                 (items, "")
             }

@@ -19,9 +19,11 @@
 //! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
 //! | `transcript.rs`     | the conversation list and how each item draws        |
+//! | `find.rs`           | find in the transcript (Ctrl+F)                      |
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, from the header    |
+//! | `scratch_modal.rs`  | the file explorer in a modal: session or project     |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
@@ -32,14 +34,18 @@
 //! | `rewind.rs`         | rewind to an earlier message: conversation and files |
 //! | `timeline.rs`       | the session's turns and steps beside the transcript  |
 //! | `slash.rs`          | the slash-command popup, and built-ins Kynex runs   |
+//! | `mentions.rs`       | the `@file` mention popup                            |
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
+//! | `palette.rs`        | the command palette (Ctrl+K)                         |
 //! | `leaving.rs`        | menus, modals and panels animating out as they close |
 //! | `settings.rs`       | the project's Claude settings modal                  |
 //! | `app_settings.rs`   | the app's Settings modal: CLI, shell, appearance     |
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
 //! | `app_update.rs`     | Kynex updating itself: checks, the update toast      |
 //! | `about.rs`          | the About Kynex modal: version, paths, updates       |
+//! | `storage.rs`        | Settings → Storage: sessions' disk use, cleanup      |
+//! | `storage_list.rs`   | its sessions: filter, sort, go to, files             |
 //! | `extensions.rs`     | the Extensions modal: MCP servers, plugins           |
 //! | `extensions_add.rs` | its Add server panel: browser preset, your own       |
 //! | `appearance.rs`     | each project's colour: title bar, tab, composer      |
@@ -56,17 +62,21 @@ mod composer;
 mod drafts;
 mod extensions;
 mod extensions_add;
+mod find;
 mod footer;
 mod git_modal;
 mod handoff;
 mod history;
 mod keys;
 mod leaving;
+mod mentions;
 mod menus;
 mod models;
+mod palette;
 mod prompts;
 mod queue;
 mod rewind;
+mod scratch_modal;
 mod session_groups;
 mod session_header;
 mod sessions_panel;
@@ -75,6 +85,8 @@ mod setup;
 mod slash;
 mod state;
 mod status;
+mod storage;
+mod storage_list;
 mod tasks;
 mod terminal_dock;
 mod timeline;
@@ -101,10 +113,14 @@ use kynex_core::paths::chat_dir;
 use kynex_core::session::{self, Attachment, Kind, Session};
 
 use drafts::Draft;
+use find::FindBar;
 use keys::{CopySelection, copy_selection};
 pub use keys::{SHELL_KEYS, ToggleTerminal, bind_keys};
+use mentions::Mentions;
 use menus::OpenMenu;
+use palette::PaletteView;
 use prompts::ActivePrompt;
+use scratch_modal::ScratchModal;
 use session_groups::Organize;
 use sessions_panel::{ListRead, SessionList};
 use settings::SettingsView;
@@ -112,6 +128,7 @@ use setup::{CliCheck, Setup};
 use slash::Slash;
 pub use state::Saved;
 use state::{Active, View, WindowState};
+use storage::StorageView;
 use transcript::{Scroll, Thread};
 use worktrees::Worktrees;
 
@@ -167,6 +184,19 @@ pub struct KynexApp {
     drafts: HashMap<String, Draft>,
     draft_for: Option<(Key, String)>,
     slash: Slash,
+    mentions: Mentions,
+    palette: Option<PaletteView>,
+    find: Option<FindBar>,
+    scratch: Option<ScratchModal>,
+    /// When each session's files were last opened, for the composer's badge,
+    /// and how many scratch files changed since; what that count was taken at.
+    scratch_seen: HashMap<String, std::time::SystemTime>,
+    scratch_new: HashMap<String, usize>,
+    scratch_counted: Option<(String, usize)>,
+    /// Settings → Storage's measurements, while that page has been opened.
+    storage: Option<StorageView>,
+    /// Actions last run from the palette, newest first.
+    palette_recent: Vec<String>,
     sessions: Option<SessionList>,
     /// The sessions list being read in the background, for this.
     sessions_reading: Option<ListRead>,
@@ -397,6 +427,15 @@ impl KynexApp {
             drafts: HashMap::new(),
             draft_for: None,
             slash: Slash::default(),
+            mentions: Mentions::default(),
+            palette: None,
+            find: None,
+            scratch: None,
+            scratch_seen: HashMap::new(),
+            scratch_new: HashMap::new(),
+            scratch_counted: None,
+            storage: None,
+            palette_recent: Vec::new(),
             sessions: None,
             sessions_reading: None,
             session_filter,
@@ -656,6 +695,7 @@ impl Render for KynexApp {
                                                 .flex_1()
                                                 .min_h_0()
                                                 .child(self.render_thread(window, cx))
+                                                .children(self.render_find(cx))
                                                 .child(self.toast_room_probe()),
                                         )
                                         .child(self.render_composer(window, cx)),
@@ -674,8 +714,10 @@ impl Render for KynexApp {
         let extensions =
             self.draw_leaving(|s| &mut s.extensions, |e| &mut e.extensions, window, cx, Self::render_extensions);
         let about = self.render_about(window, cx);
+        let palette = self.draw_leaving(|s| &mut s.palette, |e| &mut e.palette, window, cx, Self::render_palette);
         let git_modal =
             self.draw_leaving(|s| &mut s.git_modal, |e| &mut e.git_modal, window, cx, Self::render_git_modal);
+        let scratch = self.draw_leaving(|s| &mut s.scratch, |e| &mut e.scratch, window, cx, Self::render_scratch_modal);
         let viewer =
             self.draw_leaving(|s| &mut s.viewer, |e| &mut e.viewer, window, cx, |s, l, _, _| s.render_image_viewer(l));
         div()
@@ -690,6 +732,8 @@ impl Render for KynexApp {
             .font_family(ui_font())
             .text_color(t.text)
             .text_sm()
+            .on_action(cx.listener(Self::toggle_palette))
+            .on_action(cx.listener(Self::open_find))
             .on_action(cx.listener(Self::open_project))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(|_, _: &keys::Quit, _, cx| cx.quit()))
@@ -762,10 +806,12 @@ impl Render for KynexApp {
             .when(self.saved.footer, |d| d.child(self.render_footer(cx)))
             .children(toasts)
             .children(git_modal)
+            .children(scratch)
             .children(settings)
             .children(app_settings)
             .children(extensions)
             .children(about)
+            .children(palette)
             .children(menu)
             .children(viewer)
     }

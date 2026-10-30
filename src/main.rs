@@ -9,6 +9,7 @@ mod file_links;
 mod git;
 mod markdown;
 mod prompt;
+mod scratch;
 mod terminal;
 mod theme;
 mod ui;

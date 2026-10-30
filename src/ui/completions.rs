@@ -1,21 +1,23 @@
-//! A list of completions for what's being typed, e.g. slash commands in the
-//! composer. The owner keeps the items and the selection and handles the keys;
+//! A list of completions for what's being typed, e.g. slash commands or
+//! `@file` mentions in the composer. The owner keeps the items and the selection and handles the keys;
 //! this only draws them and reports clicks.
 
 use std::rc::Rc;
 
 use crate::ui::px;
-use gpui::{App, SharedString, Window, div, prelude::*};
+use gpui::{App, FontWeight, HighlightStyle, SharedString, StyledText, Window, div, prelude::*};
 
 use super::popover;
 use crate::theme::{mono, theme};
 
 /// One row: what's inserted, what it takes after it, and what it does.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Completion {
     pub label: SharedString,
     pub hint: SharedString,
     pub detail: SharedString,
+    /// Byte offsets in `label` of the characters the query matched, drawn bold.
+    pub matched: Vec<usize>,
 }
 
 /// Rows shown at once; the window scrolls to keep the selection in view.
@@ -47,7 +49,7 @@ pub fn completions(
             .cursor_pointer()
             .relative()
             .child(super::wash::wash(hover, (i == selected).then_some(t.active)))
-            .child(div().flex_none().font_family(mono()).text_color(t.text).child(c.label.clone()))
+            .child(div().flex_none().font_family(mono()).text_color(t.text).child(label(c)))
             .when(!c.hint.is_empty(), |d| {
                 d.child(
                     div()
@@ -70,4 +72,15 @@ pub fn completions(
         .when(more > 0, |d| {
             d.child(div().px_2().pt_1().text_xs().text_color(t.text_placeholder).child(format!("{more} more")))
         })
+}
+
+/// The label, its matched characters bold.
+fn label(c: &Completion) -> StyledText {
+    let bold = HighlightStyle { font_weight: Some(FontWeight::BOLD), ..Default::default() };
+    let text = &c.label;
+    let ranges = c.matched.iter().filter(|&&p| text.is_char_boundary(p) && p < text.len()).map(|&p| {
+        let end = p + text[p..].chars().next().map_or(1, char::len_utf8);
+        (p..end, bold)
+    });
+    StyledText::new(text.clone()).with_highlights(ranges.collect::<Vec<_>>())
 }

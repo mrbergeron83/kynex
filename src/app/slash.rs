@@ -37,7 +37,8 @@ pub(super) struct Slash {
     pub(super) dismissed: Option<String>,
     /// The composer's bounds as last drawn, for menus a command opens.
     pub(super) composer: Option<Bounds<Pixels>>,
-    /// The list as drawn this frame, kept to play it out when it closes.
+    /// The list as drawn this frame (slash commands or `@file` mentions), kept
+    /// to play it out when it closes.
     pub(super) shown: Option<(Rc<Vec<Completion>>, usize)>,
 }
 
@@ -175,6 +176,7 @@ impl KynexApp {
                 label: format!("/{}", c.name).into(),
                 hint: c.argument_hint.clone().into(),
                 detail: c.description.lines().next().unwrap_or("").to_string().into(),
+                ..Default::default()
             })
             .collect::<Vec<_>>()
             .into();

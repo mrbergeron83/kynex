@@ -48,14 +48,18 @@ actions!(
         Quit,
         ZoomIn,
         ZoomOut,
-        ZoomReset
+        ZoomReset,
+        CommandPalette,
+        FindInTranscript
     ]
 );
 
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 29] = [
+const SHORTCUTS: [(&str, &str); 31] = [
+    ("command_palette", "secondary-k"),
+    ("find", "secondary-f"),
     ("open_project", "secondary-o"),
     ("open_settings", "secondary-,"),
     ("new_session", "secondary-n"),
@@ -111,7 +115,9 @@ pub(super) fn esc_esc_rewinds() -> bool {
 }
 
 /// The keys above a terminal sends to its shell instead (see `terminal::view`).
-pub const SHELL_KEYS: [&str; 14] = [
+pub const SHELL_KEYS: [&str; 16] = [
+    "ctrl-k",
+    "ctrl-f",
     "ctrl-r",
     "ctrl-s",
     "ctrl-g",
@@ -168,6 +174,8 @@ pub fn bind_keys(cx: &mut App) {
             crate::ui::keys(default)
         };
         bindings.push(match name {
+            "command_palette" => KeyBinding::new(keys, CommandPalette, c),
+            "find" => KeyBinding::new(keys, FindInTranscript, c),
             "open_project" => KeyBinding::new(keys, OpenProject, c),
             "open_settings" => KeyBinding::new(keys, OpenSettings, c),
             "new_session" => KeyBinding::new(keys, NewSession, c),
@@ -341,6 +349,8 @@ impl KynexApp {
     /// stops a running reply. Otherwise the key goes on to whoever else wants it.
     pub(super) fn interrupt_action(&mut self, _: &Interrupt, _: &mut Window, cx: &mut Context<Self>) {
         if self.menu.take().is_some()
+            || self.palette.take().is_some()
+            || self.close_scratch(cx)
             || self.settings.take().is_some()
             || self.app_settings.take().is_some()
             || self.extensions.take().is_some()
@@ -411,6 +421,11 @@ impl KynexApp {
         // An image over everything closes first (it has the focus, so usually closes itself).
         if k.key == "escape" && self.viewer.is_some() {
             self.close_image(window, cx);
+            cx.stop_propagation();
+            return;
+        }
+        // The scratch explorer: its preview, then the modal.
+        if k.key == "escape" && self.menu.is_none() && self.close_scratch(cx) {
             cx.stop_propagation();
             return;
         }

@@ -214,6 +214,7 @@ impl KynexApp {
                     label: first.into(),
                     hint: "".into(),
                     detail: if more > 0 { format!("+{more} lines").into() } else { "".into() },
+                    ..Default::default()
                 }
             })
             .collect();

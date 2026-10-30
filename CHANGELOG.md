@@ -13,6 +13,31 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A "System" theme that follows the OS's light / dark setting as it changes (Kynex Light or
   Kynex Dark).
 - Settings → Appearance → Status footer: hide the footer if you don't want it.
+- `@file` mentions: typing `@` in a project session lists the project's files and folders,
+  fuzzy-matched as you type (matched letters in bold). Tab or Enter puts `@path` in the
+  message; picking a folder lists what's inside it.
+- Command palette (Ctrl+K / Cmd+K, rebindable as `command_palette`): search every open
+  project's sessions, the tabs, and actions (settings pages, themes, panels, zoom…) with
+  their shortcuts, and jump or run with Enter. With nothing typed it shows recent sessions
+  and the actions you used last.
+- Find in the conversation (Ctrl+F / Cmd+F, rebindable as `find`): matches are highlighted
+  in messages, replies, thinking and tool output, "3 of 12" with Enter / Shift+Enter to
+  move between them; a match inside a folded tool run opens it.
+- Session files: "Files" in the session header, or the files button beside the composer,
+  opens an explorer of everything a session left: its scratch folder (Claude's scripts,
+  notes, downloads), the project files it edited (marked while git still has changes for
+  them, with Show changes), the images in the conversation and its background tasks'
+  output. A file opens in a preview (highlighted code, rendered markdown, pictures) with
+  Go to file, which shows it in your file manager, Open in editor and Open. The lists
+  follow changes as Claude works, and the composer's button counts new scratch files since
+  you last looked. The toolbar's files button opens the project's scratch folders, every
+  session's together. Also in Ctrl+K.
+- Settings → Storage: how much disk Claude Code's sessions take (logs, scratchpads, file
+  checkpoints), by project and biggest session first. Clear a session's scratchpad or
+  checkpoints, delete it, delete sessions not used in 30 / 90 / 365 days, or clear what's
+  left from deleted sessions; each asks first and says what it frees, and pinned or open
+  sessions are kept. Filter and sort the sessions, go to one, or open the folder of its log,
+  scratchpad or checkpoints. A session's right-click menu shows its size on disk.
 
 ### Changed
 

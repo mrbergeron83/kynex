@@ -58,6 +58,13 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// The repository's files under `root`, relative to it with `/` separators:
+/// tracked ones plus untracked ones `.gitignore` doesn't exclude. Blocks.
+pub fn files(root: &Path) -> Result<Vec<String>, String> {
+    let out = git(root, &["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--deduplicate"])?;
+    Ok(out.split('\0').filter(|p| !p.is_empty()).map(str::to_string).collect())
+}
+
 /// Runs git with `input` on stdin.
 fn git_stdin(root: &Path, args: &[&str], input: &str) -> Result<String, String> {
     let mut child = command(root)

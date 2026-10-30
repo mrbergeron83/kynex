@@ -236,20 +236,29 @@ impl KynexApp {
         }
         items.push(div().my_1().child(divider(cx)).into_any_element());
         let archived = groups.is_archived(id);
-        let id = id.to_string();
+        let (archive_id, archive_cwd) = (id.to_string(), cwd.clone());
         items.push(item(
             if archived { "Unarchive".into() } else { "Archive".into() },
             1002,
             cx,
             Box::new(move |this, _, _| {
-                this.edit_groups(&cwd, |g| {
+                this.edit_groups(&archive_cwd, |g| {
                     if archived {
-                        g.unarchive(&id);
+                        g.unarchive(&archive_id);
                     } else {
-                        g.archive(&id);
+                        g.archive(&archive_id);
                     }
                 })
             }),
+        ));
+        // Its disk use, which opens Settings → Storage on it.
+        let size = self.disk_use(cwd, id, cx).map_or_else(|| "measuring…".into(), kynex_core::fmt::bytes);
+        let id = id.to_string();
+        items.push(item(
+            format!("On disk: {size}…"),
+            1003,
+            cx,
+            Box::new(move |this, _, cx| this.show_storage_of(id.clone(), cx)),
         ));
         items
     }

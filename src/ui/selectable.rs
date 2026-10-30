@@ -136,6 +136,8 @@ pub struct Selectable {
     color: Hsla,
     /// The colour of the underline under a hovered file link.
     underline: Hsla,
+    /// Find-in-transcript matches to wash, found at prepaint.
+    marks: Vec<(Range<usize>, Hsla)>,
 }
 
 pub fn selectable(group: u64, spot: Spot, content: impl Into<SharedString>, color: Hsla) -> Selectable {
@@ -150,6 +152,7 @@ pub fn selectable(group: u64, spot: Spot, content: impl Into<SharedString>, colo
         links: Vec::new(),
         color,
         underline: color,
+        marks: Vec::new(),
     }
 }
 
@@ -228,6 +231,7 @@ impl Element for Selectable {
         if sel.group == self.group {
             sel.texts.insert(self.spot, self.content.clone());
         }
+        self.marks = super::find_marks::in_block(self.group, self.spot, &self.content, cx);
         window.insert_hitbox(bounds, HitboxBehavior::Normal)
     }
 
@@ -244,23 +248,13 @@ impl Element for Selectable {
         let layout = self.text.layout().clone();
         let (group, spot, color) = (self.group, self.spot, self.color);
 
-        // The highlight goes under the glyphs.
+        // Find matches, then the selection, go under the glyphs.
+        for (range, wash) in &self.marks {
+            paint_band(&layout, bounds, range.clone(), *wash, window);
+        }
         let range = cx.try_global::<Selection>().and_then(|s| s.range_in(group, spot, self.content.len()));
         if let Some(range) = range {
-            let line = layout.line_height();
-            let start = layout.position_for_index(range.start).unwrap_or(bounds.origin);
-            let end = layout.position_for_index(range.end).unwrap_or(point(bounds.right(), bounds.bottom() - line));
-            let mut y = start.y;
-            while y <= end.y + px_eps() {
-                let first = (y - start.y).abs() < px_eps();
-                let last = (y - end.y).abs() < px_eps();
-                let left = if first { start.x } else { bounds.left() };
-                let right = if last { end.x } else { bounds.right() };
-                if right > left {
-                    window.paint_quad(fill(Bounds::from_corners(point(left, y), point(right, y + line)), color));
-                }
-                y += line;
-            }
+            paint_band(&layout, bounds, range, color, window);
         }
         self.text.paint(None, inspector_id, bounds, state, &mut (), window, cx);
 
@@ -400,6 +394,30 @@ fn recolor_selected(
         }
     }
     out
+}
+
+/// Fills behind the text in `range`, line by line where it wraps.
+fn paint_band(
+    layout: &gpui::TextLayout,
+    bounds: Bounds<Pixels>,
+    range: Range<usize>,
+    color: Hsla,
+    window: &mut Window,
+) {
+    let line = layout.line_height();
+    let start = layout.position_for_index(range.start).unwrap_or(bounds.origin);
+    let end = layout.position_for_index(range.end).unwrap_or(point(bounds.right(), bounds.bottom() - line));
+    let mut y = start.y;
+    while y <= end.y + px_eps() {
+        let first = (y - start.y).abs() < px_eps();
+        let last = (y - end.y).abs() < px_eps();
+        let left = if first { start.x } else { bounds.left() };
+        let right = if last { end.x } else { bounds.right() };
+        if right > left {
+            window.paint_quad(fill(Bounds::from_corners(point(left, y), point(right, y + line)), color));
+        }
+        y += line;
+    }
 }
 
 fn px_eps() -> Pixels {

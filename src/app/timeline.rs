@@ -100,7 +100,7 @@ impl KynexApp {
 
     /// Scrolls the transcript to the row drawing `item`, puts it at the top
     /// and flashes it. Glides there when it can, as the wheel does.
-    fn jump_to_item(&mut self, item: usize, cx: &mut Context<Self>) {
+    pub(super) fn jump_to_item(&mut self, item: usize, cx: &mut Context<Self>) {
         let reduce = cx.reduce_motion();
         let Some(key) = self.active_key() else { return };
         let Some(th) = self.threads.get_mut(&key) else { return };
