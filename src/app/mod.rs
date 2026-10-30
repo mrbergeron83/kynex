@@ -212,6 +212,10 @@ pub struct KynexApp {
     /// Project tab Ctrl+W was pressed on while Claude worked in it, and when:
     /// a second press soon after closes it.
     confirm_close: Option<(usize, std::time::Instant)>,
+    /// A project tab being dragged along the title bar, and where it's shown.
+    tab_drag: Option<title_bar::TabDrag>,
+    /// Each project tab's (left, right) as last drawn, in the order shown.
+    tab_spans: std::rc::Rc<std::cell::RefCell<Vec<(f32, f32)>>>,
     /// The session being named right now, and every one tried this run.
     naming: Option<String>,
     naming_tried: HashSet<String>,
@@ -444,6 +448,8 @@ impl KynexApp {
             organize: Organize::new(group_name),
             confirm_delete: None,
             confirm_close: None,
+            tab_drag: None,
+            tab_spans: Default::default(),
             naming: None,
             naming_tried: HashSet::new(),
             settings: None,
@@ -743,6 +749,8 @@ impl Render for KynexApp {
             .on_action(cx.listener(Self::close_tab))
             .on_action(cx.listener(Self::next_tab))
             .on_action(cx.listener(Self::prev_tab))
+            .on_action(cx.listener(Self::move_tab_left))
+            .on_action(cx.listener(Self::move_tab_right))
             .on_action(cx.listener(Self::toggle_sessions))
             .on_action(cx.listener(Self::cycle_mode))
             .on_action(cx.listener(Self::interrupt_action))
@@ -767,6 +775,10 @@ impl Render for KynexApp {
             .on_action(cx.listener(|_, _: &crate::ui::input::Copy, _, cx| copy_selection(cx)))
             .on_key_down(cx.listener(Self::key_down))
             .on_drop(cx.listener(Self::on_drop))
+            // A dragged project tab follows the pointer anywhere in the window,
+            // and lands where it's shown wherever it's let go.
+            .on_drag_move(cx.listener(Self::drag_tab))
+            .on_drop(cx.listener(Self::drop_tab))
             .when(self.resizing_sessions, |d| {
                 d.cursor_col_resize()
                     .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {

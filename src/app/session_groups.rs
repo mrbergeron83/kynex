@@ -17,7 +17,7 @@ use kynex_core::toasts::Toast;
 
 use super::KynexApp;
 use super::menus::Menu;
-use crate::theme::theme;
+use crate::theme::{theme, ui_font};
 use crate::ui::input::TextInput;
 use crate::ui::{Icon, divider, icon, menu_item, popover};
 
@@ -80,7 +80,9 @@ pub(super) struct DraggedSession {
 impl Render for DraggedSession {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
+        // Drawn outside the window's root, so it doesn't inherit the font.
         popover(cx)
+            .font_family(ui_font())
             .px_2()
             .py_1()
             .max_w(px(240.))

@@ -24,6 +24,8 @@ actions!(
         CloseTab,
         NextTab,
         PrevTab,
+        MoveTabLeft,
+        MoveTabRight,
         ToggleSessions,
         CycleMode,
         Interrupt,
@@ -57,7 +59,7 @@ actions!(
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 31] = [
+const SHORTCUTS: [(&str, &str); 33] = [
     ("command_palette", "secondary-k"),
     ("find", "secondary-f"),
     ("open_project", "secondary-o"),
@@ -70,6 +72,9 @@ const SHORTCUTS: [(&str, &str); 31] = [
     ("close_tab", "secondary-w"),
     ("next_tab", "ctrl-tab"),
     ("prev_tab", "ctrl-shift-tab"),
+    // The shown project tab one place left or right, as in browsers.
+    ("move_tab_left", "ctrl-shift-pageup"),
+    ("move_tab_right", "ctrl-shift-pagedown"),
     ("toggle_sessions", "secondary-b"),
     ("toggle_terminal", "ctrl-`"),
     ("cycle_mode", "shift-tab"),
@@ -184,6 +189,8 @@ pub fn bind_keys(cx: &mut App) {
             "close_tab" => KeyBinding::new(keys, CloseTab, c),
             "next_tab" => KeyBinding::new(keys, NextTab, c),
             "prev_tab" => KeyBinding::new(keys, PrevTab, c),
+            "move_tab_left" => KeyBinding::new(keys, MoveTabLeft, c),
+            "move_tab_right" => KeyBinding::new(keys, MoveTabRight, c),
             "toggle_sessions" => KeyBinding::new(keys, ToggleSessions, c),
             "toggle_terminal" => KeyBinding::new(keys, ToggleTerminal, c),
             "cycle_mode" => KeyBinding::new(keys, CycleMode, c),

@@ -45,6 +45,7 @@ pub mod session;
 pub mod session_files;
 pub mod session_log;
 pub mod storage;
+pub mod tab_order;
 pub mod tasks;
 pub mod terminal;
 pub mod timeline;

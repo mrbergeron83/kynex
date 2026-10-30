@@ -17,6 +17,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Select several sessions in the sessions panel (the Select button, Ctrl+click or Shift+click)
   and archive or delete them together, with one confirmation that says how many. Sessions
   still working are kept.
+- Drag project tabs along the title bar to reorder them; the order is kept across restarts.
+  Ctrl+Shift+PageUp / PageDown move the shown tab one place without the mouse.
 
 ### Changed
 
@@ -38,6 +40,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   dated by their last message, not by when their log file was last touched.
 - The composer's session-files button and its count of new scratch files no longer vanish
   when you send the next message; the count stays until you open the files.
+- The Git view's diff scrolls sideways to the end of long lines instead of cutting them off,
+  and the line numbers stay in place while it does.
 
 ## [0.0.10] - 2026-10-30
 
