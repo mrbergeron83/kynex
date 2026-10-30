@@ -1,4 +1,4 @@
-//! Popup menus: model (with effort under it), appearance (theme and fonts), permission mode, effort, and the
+//! Popup menus: model (`models.rs` draws its list), appearance (theme and fonts), permission mode, effort, and the
 //! right-click menus of project tabs, sessions and session groups. One is open at a time, anchored where it was clicked.
 
 use crate::ui::px;
@@ -6,7 +6,6 @@ use gpui::{Anchor, AnyElement, Context, Pixels, Point, SharedString, anchored, d
 use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
 use kynex_core::project::{self, Mode};
-use kynex_core::session::Kind;
 use kynex_core::update;
 
 use super::{KynexApp, models};
@@ -218,56 +217,7 @@ impl KynexApp {
                             .into_any_element(),
                     );
                 }
-                let current = self.active_model();
-                for (n, m) in models::models().into_iter().enumerate() {
-                    let id = if m.value == "default" { String::new() } else { m.value.clone() };
-                    let selected = current == id;
-                    let hover = t.hover;
-                    items.push(
-                        div()
-                            .id(("model", n))
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(hover))
-                            .when(selected, |d| d.bg(t.active))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .flex()
-                                    .flex_col()
-                                    .child(div().text_sm().text_color(t.text).child(m.name.clone()))
-                                    .when(!m.description.is_empty(), |d| {
-                                        d.child(div().text_xs().text_color(t.text_muted).child(m.description.clone()))
-                                    }),
-                            )
-                            .when(selected, |d| d.child(icon(Icon::Check, t.text_muted)))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.menu = None;
-                                this.set_model(id.clone(), cx);
-                            }))
-                            .into_any_element(),
-                    );
-                }
-                // A Claude Code session's effort, per project, under the models (#123).
-                let code = self.active_session().is_some_and(|s| s.kind == Kind::Code);
-                if code && self.active_project().is_some() {
-                    items.push(div().my_1().child(divider(cx)).into_any_element());
-                    items.push(
-                        div()
-                            .px_2()
-                            .py_0p5()
-                            .text_xs()
-                            .text_color(t.text_placeholder)
-                            .child("Effort")
-                            .into_any_element(),
-                    );
-                    items.extend(self.effort_items(cx));
-                }
+                items.extend(self.model_items(cx));
             }
             Menu::Theme => {
                 for (n, (th, name)) in THEMES.iter().enumerate() {
@@ -415,7 +365,10 @@ impl KynexApp {
                 anchored().position(at).anchor(anchor).snap_to_window_with_margin(gpui::px(8.)).child(pop(
                     SharedString::from(format!("menu-in-{which:?}")),
                     popover(cx)
-                        .min_w(px(if which == Menu::Theme { 300. } else { 200. }))
+                        .min_w(px(match which {
+                            Menu::Theme | Menu::Model => 300.,
+                            _ => 200.,
+                        }))
                         // Clicks stop here: the row under "Rename" mustn't take them
                         // (and the focus) too.
                         .occlude()

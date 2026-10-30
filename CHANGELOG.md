@@ -11,6 +11,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
   at once instead of restarting them; they keep their browser tab and "this session" rules.
   Only taking a rule or folder away (or effort back to the default) still restarts a session,
   once it's idle, and only the sessions it affects.
+- Effort has its own picker beside the model's instead of sitting under the model list. The
+  model picker lists the newest of each family first, most capable first (Fable, Opus,
+  Sonnet, Haiku), then older versions as a compact line per family.
+- Replies no longer show a "Copy message" button on hover, which looked like a stray copy
+  button beside code blocks; select the text to copy it.
+
+### Fixed
+
+- The composer's session-files button and its count of new scratch files no longer vanish
+  when you send the next message; the count stays until you open the files.
 
 ## [0.0.10] - 2026-10-30
 
