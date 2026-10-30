@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-10-30
+
 ### Added
 
 - Zoom: Ctrl+= / Ctrl+- / Ctrl+0 (Cmd on macOS; rebindable in `keymap.json`) make the whole
@@ -446,7 +448,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.9...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.10...HEAD
+[0.0.10]: https://github.com/mrbergeron83/kynex/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/mrbergeron83/kynex/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/mrbergeron83/kynex/compare/v0.0.7...v0.0.8
 [0.0.7]: https://github.com/mrbergeron83/kynex/compare/v0.0.6...v0.0.7
