@@ -207,5 +207,5 @@ pushes a tag by hand.
 4. The merge to `main` runs `.github/workflows/release.yml`: it sees a version with no tag
    yet, re-runs CI and cargo-deny, builds every platform, then publishes the release and
    creates `vX.Y.Z` on that commit. Check it with `gh run list --workflow release.yml`.
-   A failed run publishes nothing and creates no tag; fix it in a PR, and the next push that
-   touches `Cargo.toml` (or a re-run) tries again.
+   A failed run publishes nothing and creates no tag; fix it in a PR; merging a change to
+   `Cargo.toml` or `release.yml` tries again (a re-run uses the old workflow file).

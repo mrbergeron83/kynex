@@ -23,18 +23,20 @@ name: Release
 
 on:
   push:
-    # A release PR changes the version in Cargo.toml (tag pushes ignore `paths`).
+    # A release PR changes the version in Cargo.toml; a fix to this workflow retries an
+    # unreleased version (tag pushes ignore `paths`).
     branches: [main]
-    paths: [Cargo.toml]
+    paths: [Cargo.toml, .github/workflows/release.yml]
     tags: ["v*"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# One release at a time per ref; a second push waits rather than racing it.
+# One release at a time per ref; a second push waits rather than racing it. Not named after
+# the workflow: CI, which this calls, uses that name for its group, and a shared group deadlocks.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
