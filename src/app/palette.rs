@@ -358,13 +358,12 @@ impl KynexApp {
     pub(super) fn render_palette(
         &mut self,
         leaving: Option<f32>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let found = self.palette_found(cx)?;
         let view = self.palette.clone()?;
         let t = theme(cx).clone();
-        let vp = window.viewport_size();
         let bold = HighlightStyle { font_weight: Some(FontWeight::BOLD), color: Some(t.text), ..Default::default() };
         let start = (view.selected + 1).saturating_sub(ROWS);
         let rows = found.iter().enumerate().skip(start).take(ROWS).map(|(i, m)| {
@@ -394,7 +393,7 @@ impl KynexApp {
                 .flex()
                 .items_center()
                 .gap_2()
-                .h(px(30.))
+                .h(px(28.))
                 .px_2()
                 .rounded_md()
                 .cursor_pointer()
@@ -414,7 +413,7 @@ impl KynexApp {
                     d.child(
                         div()
                             .flex_none()
-                            .text_xs()
+                            .text_size(px(11.))
                             .text_color(hint_colour)
                             .when(mono_hint, |d| d.font_family(mono()))
                             .child(row.hint.clone()),
@@ -431,7 +430,7 @@ impl KynexApp {
             .flex()
             .flex_col()
             .w_full()
-            .max_w(px(640.))
+            .max_w(px(560.))
             .rounded_lg()
             .overflow_hidden()
             .border_1()
@@ -464,7 +463,7 @@ impl KynexApp {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .h(px(44.))
+                    .h(px(34.))
                     .px_3()
                     .border_b_1()
                     .border_color(t.border_variant)
@@ -497,8 +496,8 @@ impl KynexApp {
                 .flex_col()
                 .items_center()
                 .px_10()
-                .pt(vp.height * 0.12)
-                .bg(gpui::black().opacity(0.2))
+                .pt(px(120.))
+                .bg(gpui::black().opacity(0.25))
                 .occlude()
                 .on_mouse_down(
                     MouseButton::Left,

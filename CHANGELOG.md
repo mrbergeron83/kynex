@@ -28,6 +28,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Closer to the design spec: date and Pinned headers in the sessions panel are section
+  labels; your messages have no border; a session's name isn't bold; tool runs drop the
+  terminal icon on every row and spin only on the step that's running; text is 820 px wide in
+  the Readable column; the command palette, find bar and toasts take their specified sizes
+  and spacing; terminal shell names are monospaced.
 - Changing a project's effort, or adding rules or extra folders, reaches its running sessions
   at once instead of restarting them; they keep their browser tab and "this session" rules.
   Only taking a rule or folder away (or effort back to the default) still restarts a session,

@@ -543,8 +543,6 @@ impl KynexApp {
                 .px_3()
                 .py_2()
                 .rounded_lg()
-                .border_1()
-                .border_color(t.border_variant)
                 .bg(t.element)
                 .when(!images.is_empty(), |d| d.child(self.thumbnails(("user-images", ix).into(), images, 120., cx)))
                 .when(!text.is_empty(), |d| match commands::parse(text) {
@@ -599,12 +597,14 @@ impl KynexApp {
             // opens to the text when the CLI shared it.
             Item::Thinking(thought) => {
                 let label = div().text_xs().text_color(t.text_placeholder).child(thought.label());
+                // Nothing to open: the same 22 px line, without the chevron.
+                let plain = |label: gpui::Div| div().flex().items_center().h(px(22.)).px_1().child(label);
                 // Its seconds count up on `tick_clocks`.
                 if thought.is_live() {
-                    return label.italic().px_1().into_any_element();
+                    return plain(label.italic()).into_any_element();
                 }
                 if thought.text.trim().is_empty() {
-                    return label.px_1().into_any_element();
+                    return plain(label).into_any_element();
                 }
                 let head = disclosure_row(("thought", ix), expanded, &t).child(label).on_click(toggle);
                 div()

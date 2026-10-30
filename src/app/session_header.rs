@@ -3,7 +3,7 @@
 //! turns it has taken, what it has cost and how full its context is.
 
 use crate::ui::px;
-use gpui::{AnyElement, ClickEvent, Context, FontWeight, div, prelude::*};
+use gpui::{AnyElement, ClickEvent, Context, div, prelude::*};
 use kynex_core::git::Worktree;
 use kynex_core::session::{Item, Kind};
 use kynex_core::{fmt, mcp};
@@ -203,7 +203,7 @@ impl KynexApp {
                     None => {
                         let title = div().id("session-title").flex_1().min_w_0().truncate().text_sm();
                         let title = match (name, stand_in) {
-                            (Some(name), _) => title.font_weight(FontWeight::MEDIUM).text_color(t.text).child(name),
+                            (Some(name), _) => title.text_color(t.text).child(name),
                             (None, Some(words)) => title.text_color(t.text_muted).child(words),
                             (None, None) => title.text_color(t.text_placeholder).child("New session"),
                         };

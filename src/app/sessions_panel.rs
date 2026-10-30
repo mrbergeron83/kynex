@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::ui::px;
 use gpui::{
-    Anchor, AnyElement, Context, Focusable, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*,
+    Anchor, AnyElement, App, Context, Focusable, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*,
 };
 use kynex_core::dates::{self, Bucket};
 use kynex_core::fmt::ago;
@@ -377,18 +377,7 @@ impl KynexApp {
         // Pinned sessions first, above the dates.
         let pinned = take(arranged.pinned);
         if !pinned.is_empty() {
-            rows.push(
-                div()
-                    .flex()
-                    .items_end()
-                    .h(px(26.))
-                    .px_2()
-                    .pb_1()
-                    .text_xs()
-                    .text_color(t.text_placeholder)
-                    .child("Pinned")
-                    .into_any_element(),
-            );
+            rows.push(list_header("Pinned", true, cx).into_any_element());
             rows.extend(pinned);
         }
         // The ungrouped sessions under date headers, unless filtering or they
@@ -402,7 +391,8 @@ impl KynexApp {
             Some(sections) => {
                 for (bucket, ids) in sections {
                     let open = self.groups_for(&cwd).date_open(bucket);
-                    rows.push(self.date_header(&cwd, bucket, ids.len(), open, today, cx));
+                    let first = rows.is_empty();
+                    rows.push(self.date_header(&cwd, bucket, ids.len(), open, today, first, cx));
                     if open {
                         order.extend(ids.iter().cloned());
                     }
@@ -488,8 +478,8 @@ impl KynexApp {
             .children(picks)
     }
 
-    /// A date header: one line of small muted text that folds its sessions
-    /// away (with their count) or opens them.
+    /// A date header: a section label that folds its sessions away (with
+    /// their count) or opens them. `first` is the list's first row.
     fn date_header(
         &self,
         cwd: &std::path::Path,
@@ -497,24 +487,17 @@ impl KynexApp {
         count: usize,
         open: bool,
         today: dates::Day,
+        first: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = theme(cx).clone();
         let label = bucket.label(today);
         let cwd = cwd.to_path_buf();
-        let muted = t.text_muted;
-        div()
+        let text = t.text;
+        list_header(&if open { label } else { format!("{label} · {count}") }, first, cx)
             .id(SharedString::from(format!("date-{}", bucket.key())))
-            .flex()
-            .items_end()
-            .h(px(26.))
-            .px_2()
-            .pb_1()
-            .text_xs()
-            .text_color(t.text_placeholder)
             .cursor_pointer()
-            .hover(move |s| s.text_color(muted))
-            .child(if open { label } else { format!("{label} · {count}") })
+            .hover(move |s| s.text_color(text))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.edit_groups(&cwd, |g| g.toggle_date(bucket));
                 cx.notify();
@@ -569,6 +552,13 @@ fn session_row_with(
 }
 
 /// A row's name as text, brighter on the shown session.
+/// A section header in the list (Pinned, a date): the section label, with
+/// less room above the list's first one.
+fn list_header(text: &str, first: bool, cx: &App) -> gpui::Div {
+    let label = section_label(text, cx).px_2().pb_1();
+    if first { label.pt_1p5() } else { label.pt_3() }
+}
+
 fn title_text(title: SharedString, current: bool, t: &Palette) -> AnyElement {
     div()
         .flex_1()
