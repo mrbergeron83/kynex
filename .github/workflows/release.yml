@@ -88,7 +88,8 @@ jobs:
               ;;
             refs/heads/main)
               tag="v$version"
-              tagged=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha 2>/dev/null || true)
+              # On failure gh prints the error body, so only a success counts as tagged.
+              tagged=$(gh api "repos/$GITHUB_REPOSITORY/commits/$tag" --jq .sha 2>/dev/null) || tagged=""
               if [ -z "$tagged" ]; then
                 echo "Releasing $tag from $GITHUB_SHA"
                 echo "tag=$tag" >> "$GITHUB_OUTPUT"
