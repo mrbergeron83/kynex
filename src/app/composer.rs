@@ -529,41 +529,29 @@ impl KynexApp {
                                 }),
                         )
                     })
-                    // One chip, "Opus 5.5 · High": each half opens its own picker.
-                    .child({
-                        let has_effort = effort_label.is_some();
-                        div()
-                            .flex()
-                            .items_center()
-                            .child(
-                                ghost_button("model", cx)
-                                    .text_color(t.text_muted)
-                                    .gap_1()
-                                    .when(has_effort, |b| b.pr_0p5())
-                                    .when(own_model, |b| b.child(icon(Icon::Message, t.text_placeholder).size_3()))
-                                    .child(model_label)
-                                    .when(!has_effort, |b| {
-                                        b.child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
-                                    })
-                                    .tooltip(Tooltip::text(chip_tip))
-                                    .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
-                                        this.open_menu(Menu::Model, ev.position(), Anchor::BottomLeft, cx)
-                                    })),
-                            )
-                            .children(effort_label.map(|effort| {
-                                ghost_button("effort", cx)
-                                    .text_color(t.text_muted)
-                                    .gap_1()
-                                    .pl_0p5()
-                                    .child(div().text_color(t.text_placeholder).child("·"))
-                                    .child(effort)
-                                    .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
-                                    .tooltip(Tooltip::text("How hard Claude thinks in this project"))
-                                    .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
-                                        this.open_menu(Menu::Effort, ev.position(), Anchor::BottomLeft, cx)
-                                    }))
+                    .child(
+                        ghost_button("model", cx)
+                            .text_color(t.text_muted)
+                            .gap_1()
+                            .when(own_model, |b| b.child(icon(Icon::Message, t.text_placeholder).size_3()))
+                            .child(model_label)
+                            .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
+                            .tooltip(Tooltip::text(chip_tip))
+                            .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                                this.open_menu(Menu::Model, ev.position(), Anchor::BottomLeft, cx)
+                            })),
+                    )
+                    .children(effort_label.map(|effort| {
+                        ghost_button("effort", cx)
+                            .text_color(t.text_muted)
+                            .gap_1()
+                            .child(effort)
+                            .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
+                            .tooltip(Tooltip::text("How hard Claude thinks in this project"))
+                            .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                                this.open_menu(Menu::Effort, ev.position(), Anchor::BottomLeft, cx)
                             }))
-                    })
+                    }))
                     .when_some(mode, |d, mode| {
                         d.child(
                             ghost_button("mode", cx)
