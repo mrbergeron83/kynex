@@ -54,7 +54,7 @@ impl KynexApp {
                 Some(id) => Session::resume(Kind::Chat, chief_dir(), id, self.wake.clone()),
                 None => Session::new(Kind::Chat, chief_dir()),
             };
-            s.model = self.dir_model(&chief_dir());
+            self.start_session(&mut s);
             s.wake = self.wake.clone();
             self.chief.live.sessions.push(s);
             self.chief.live.active = 0;
@@ -169,11 +169,11 @@ impl KynexApp {
 
     /// The project's worker: the open one, else its saved session resumed, else a new one.
     fn worker_mut(&mut self, path: &Path) -> &mut Session {
-        let model = self.claude_settings(path).model;
         let resume = self.saved.chief_workers.get(path).cloned();
         let spent = self.saved.chief_spent.get(path).copied().unwrap_or_default();
         let key = self.chief.workers.get(path).copied();
         let wake = self.wake.clone();
+        let (launch, models) = self.start_parts(path, resume.as_deref());
         let live = self.code.entry(path.to_path_buf()).or_default();
         let open = live
             .sessions
@@ -184,7 +184,7 @@ impl KynexApp {
                 Some(id) => Session::resume(Kind::Code, path.to_path_buf(), id, wake.clone()),
                 None => Session::new(Kind::Code, path.to_path_buf()),
             };
-            s.model = model;
+            super::provider_setup::apply_start(&mut s, launch, &models);
             s.wake = wake;
             // What it used in earlier runs counts too.
             s.spent = spent;
@@ -363,7 +363,7 @@ impl KynexApp {
     /// Keeps the chief's and its workers' session ids for the next run.
     pub(super) fn sync_chief_ids(&mut self) -> bool {
         let mut changed = false;
-        let id = self.chief.live.current().and_then(|s| s.session_id.clone());
+        let id = self.chief.live.current().filter(|s| !s.is_new()).and_then(|s| s.session_id.clone());
         if id.is_some() && self.saved.chief_session_id != id {
             self.saved.chief_session_id = id;
             changed = true;
@@ -373,6 +373,7 @@ impl KynexApp {
                 .code
                 .get(path)
                 .and_then(|l| l.sessions.iter().find(|s| s.uid == *key))
+                .filter(|s| !s.is_new())
                 .and_then(|s| s.session_id.clone());
             if let Some(id) = id
                 && self.saved.chief_workers.get(path) != Some(&id)

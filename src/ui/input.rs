@@ -106,6 +106,8 @@ pub struct TextInput {
     placeholder: SharedString,
     multiline: bool,
     mono: bool,
+    /// Shows `*`s instead of the text, and won't copy or cut it: for secrets.
+    masked: bool,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -165,6 +167,7 @@ impl TextInput {
             placeholder: SharedString::default(),
             multiline: false,
             mono: false,
+            masked: false,
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -183,6 +186,18 @@ impl TextInput {
     pub fn mono(mut self) -> Self {
         self.mono = true;
         self
+    }
+
+    /// A secret: shown as `*`s, one per byte so offsets and selections match
+    /// the hidden text, and never copied or cut to the clipboard.
+    pub fn masked(mut self) -> Self {
+        self.masked = true;
+        self
+    }
+
+    /// The text as drawn: the content, or `*`s for it when masked.
+    fn shown(&self) -> String {
+        if self.masked { "*".repeat(self.content.len()) } else { self.content.clone() }
     }
 
     pub fn placeholder(mut self, text: impl Into<SharedString>) -> Self {
@@ -438,11 +453,14 @@ impl TextInput {
         if self.selected_range.is_empty() {
             return cx.propagate();
         }
+        if self.masked {
+            return;
+        }
         cx.write_to_clipboard(ClipboardItem::new_string(self.content[self.selected_range.clone()].to_string()));
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
+        if !self.selected_range.is_empty() && !self.masked {
             cx.write_to_clipboard(ClipboardItem::new_string(self.content[self.selected_range.clone()].to_string()));
             self.replace_text_in_range(None, "", window, cx)
         }
@@ -569,7 +587,7 @@ impl EntityInputHandler for TextInput {
     ) -> Option<String> {
         let range = self.range_from_utf16(&range_utf16);
         actual_range.replace(self.range_to_utf16(&range));
-        Some(self.content[range].to_string())
+        Some(self.shown()[range].to_string())
     }
 
     fn selected_text_range(
@@ -712,7 +730,7 @@ fn display_runs(input: &TextInput, window: &Window, cx: &App) -> (SharedString, 
     let (text, color): (SharedString, _) = if input.content.is_empty() {
         (input.placeholder.clone(), theme(cx).text_placeholder)
     } else {
-        (input.content.clone().into(), style.color)
+        (input.shown().into(), style.color)
     };
     let run = TextRun {
         len: text.len(),

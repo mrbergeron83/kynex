@@ -60,6 +60,8 @@ struct OpenSession {
     busy: bool,
     waiting: bool,
     finished: bool,
+    /// It runs on OpenRouter (the row shows so).
+    openrouter: bool,
 }
 
 impl KynexApp {
@@ -162,6 +164,7 @@ impl KynexApp {
                     _ => None,
                 }),
                 busy: s.busy,
+                openrouter: s.provider().provider() == kynex_core::provider::Provider::OpenRouter,
                 waiting: s.waiting(),
                 finished: s.finished,
             })
@@ -266,6 +269,7 @@ impl KynexApp {
             let to = if o.busy || o.waiting || o.finished { &mut fresh_active } else { &mut fresh };
             to.push(
                 session_row(("open", uid as usize), title.into(), is_current, &t)
+                    .when(o.openrouter, |r| r.child(openrouter_mark(("open-provider", uid as usize), &t)))
                     .children(news_lamp(("open-status", uid as usize), o.busy, o.waiting, o.finished, cx))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.confirm_delete = None;
@@ -373,7 +377,9 @@ impl KynexApp {
                     .into_any_element(),
                 false => title,
             };
+            let on_openrouter = self.groups_for(&cwd).provider_of(&id) == kynex_core::provider::Provider::OpenRouter;
             let row = session_row_with(("session", n), title, is_current || picked, &t)
+                .when(on_openrouter, |r| r.child(openrouter_mark(("session-provider", n), &t)))
                 .group("session-row")
                 .tooltip(Tooltip::with_meta(
                     info.title.clone(),
@@ -485,13 +491,26 @@ impl KynexApp {
         let today = dates::today();
         let dated: Vec<(String, dates::Day)> =
             arranged.top.iter().map(|id| (id.clone(), days.get(id).copied().unwrap_or(today))).collect();
+        // Grouped by provider, when picked and there's more than one: a header
+        // each, newest first under it, instead of the dates.
+        let by_provider = match self.saved.sessions_by_provider && query.is_empty() {
+            true => Some(self.groups_for(&cwd).by_provider(&arranged.top)).filter(|split| split.len() > 1),
+            false => None,
+        };
         let sections = match headers && query.is_empty() {
             // With other sections about, even a single day gets its header.
             true => dates::sections(&dated, today).or_else(|| dates::lone_section(&dated, today)),
             false => dates::sections(&dated, today).filter(|_| query.is_empty()),
         };
-        match sections {
-            Some(sections) => {
+        match (by_provider, sections) {
+            (Some(split), _) => {
+                for (provider, ids) in split {
+                    rows.push(list_header(provider.label(), rows.is_empty(), cx).into_any_element());
+                    order.extend(ids.iter().cloned());
+                    rows.extend(take(ids));
+                }
+            }
+            (None, Some(sections)) => {
                 for (bucket, ids) in sections {
                     let open = self.groups_for(&cwd).date_open(bucket);
                     let first = rows.is_empty();
@@ -505,7 +524,7 @@ impl KynexApp {
                     }
                 }
             }
-            None => {
+            (None, None) => {
                 order.extend(arranged.top.iter().cloned());
                 rows.extend(take(arranged.top));
             }
@@ -662,6 +681,22 @@ fn session_row_with(
         .relative()
         .child(row_wash(current, hover, t.selection))
         .child(title)
+}
+
+/// A small mark on the row of a session that runs on OpenRouter.
+fn openrouter_mark(id: impl Into<gpui::ElementId>, t: &Palette) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .px_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(t.border_variant)
+        .font_family(mono())
+        .text_xs()
+        .text_color(t.text_placeholder)
+        .child("OR")
+        .tooltip(Tooltip::text("Runs on OpenRouter"))
 }
 
 /// A row's name as text, brighter on the shown session.

@@ -19,7 +19,8 @@
 Kynex is a desktop app for working with [Claude Code](https://claude.com/claude-code). It runs
 your installed `claude` CLI behind the scenes, so you get the same agent, tools, skills, MCP
 servers and settings, with the same account and quota. You don't need an API key. It runs on
-Windows, macOS and Linux.
+Windows, macOS and Linux. Optionally, sessions can also run on other models through
+[OpenRouter](https://openrouter.ai) with your own key.
 
 ## Why use it
 
@@ -56,6 +57,8 @@ and sessions going, Kynex keeps them easier to follow:
 - **Extensions:** add, check and remove MCP servers, including a one-click browser server.
 - **Find anything:** command palette (Ctrl+K) and find in the conversation (Ctrl+F).
 - **Storage:** see how much disk sessions use and clean up old ones.
+- **OpenRouter:** run a session on another model (Qwen, Kimi, GLM…) with your OpenRouter key,
+  side by side with your Claude sessions.
 
 ## Install
 
@@ -81,7 +84,8 @@ code-signed yet.
 
 ### First start
 
-1. Start Kynex. If Claude Code isn't installed or signed in, Kynex offers to do both.
+1. Start Kynex. If Claude Code isn't installed or signed in, Kynex offers to do both. You can
+   also start with an OpenRouter key instead of signing in (see below).
 2. Add a project folder with the button, or drag the folder onto the window. Each project
    gets its own tab and colour.
 3. Start a session (Ctrl+N) and type what you want done.
@@ -96,7 +100,8 @@ code-signed yet.
   stashes a draft, and **Ctrl+G** opens it in your editor.
 - **Esc Esc** on an empty message box opens Rewind: pick a message to go back to it, with or
   without the file changes made after it.
-- The chip under the message box picks the model and effort.
+- The chips under the message box pick the model and effort, and on a new session the provider
+  (Anthropic or OpenRouter) when both are set up.
 
 ### Answering prompts
 
@@ -109,15 +114,15 @@ Claude settings (the shield in the toolbar).
 ### Around the window
 
 - **Sessions panel** (left): right-click a session to rename, pin, group or archive it, or
-  drag it into a group.
+  drag it into a group. Its menu (the arrow in its header) can also group sessions by provider.
 - **Timeline** (Ctrl+Shift+T): every message you sent with the files edited and commands run
   in that turn. Click a step to jump to it.
 - **Terminal** (Ctrl+`): a shell under the conversation. The Run button on a code block runs
   its command there.
 - **Git**: the Code / Git switch in the toolbar, or a branch chip over the conversation,
   opens the Git view to stage, commit, see diffs and history, and pull or push.
-- **Status footer**: CPU and memory of Kynex and its processes, your usage limits, and
-  updates waiting to be installed.
+- **Status footer**: CPU and memory of Kynex and its processes, your usage limits, what's
+  left on your OpenRouter key, and updates waiting to be installed.
 
 ### Shortcuts
 
@@ -141,9 +146,43 @@ Keyboard).
 ### Settings
 
 The gear in the title bar (Ctrl+,) has Kynex's own settings: which `claude` to use, the
-default shell, theme, fonts, zoom, notifications, keep-awake, and Storage for cleaning up old
-sessions. Each project's Claude settings (the shield in the toolbar) hold its permission
+default shell, Providers (your Anthropic sign-in and OpenRouter), theme, fonts, zoom,
+notifications, keep-awake, and Storage for cleaning up old sessions. Each project's Claude settings (the shield in the toolbar) hold its permission
 mode, effort, extra folders and rules.
+
+### Other models through OpenRouter
+
+Kynex can run a session on a model from [OpenRouter](https://openrouter.ai) instead of Claude,
+using Claude Code as before. You pay OpenRouter for what you use; your Claude plan isn't touched.
+
+1. Create a key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) and add
+   credit to your account.
+2. In Settings → Providers, paste the key under OpenRouter and click **Save and check**. Kynex
+   keeps it in your OS keychain (Credential Manager, Keychain or the Secret Service), never in
+   its own files, and checks it: credit left, or what's wrong.
+3. On a new session, pick **OpenRouter** in the provider chip under the message box, then a
+   model from **My models**. A session keeps its provider once you've sent something; start a
+   new session to switch.
+
+Good to know:
+
+- **My models** (Settings → Providers) are the models the menu offers. Search OpenRouter's
+  catalogue to add one, with prices shown, or type its ID. Models marked **No tools** can't
+  edit files or run commands, so they're no use for Claude Code.
+- **Output cap**: OpenRouter sessions are limited to 8,000 output tokens per reply by default.
+  Without a cap, Claude Code asks for up to 64K tokens and OpenRouter refuses requests your credit
+  can't cover (402). Lower it if you see "out of credits"; raise it for long edits.
+- **Free models** (IDs ending in `:free`) cost nothing but are rate-limited and shared, so expect
+  "rate-limited" (429) at busy times. OpenRouter changes which models are free; Kynex marks them
+  in the search.
+- **Other models aren't Claude.** Weaker models may struggle with Claude Code's file edits and
+  tool use. Qwen and other models keep their own safety training and behaviour; Claude's
+  doesn't come with Claude Code.
+- If you set OpenRouter up by hand before (`OPENROUTER_API_KEY` and `OR_MODEL`, or `ANTHROPIC_*`
+  variables pointing at OpenRouter), Kynex picks it up on first launch and moves the key into the
+  keychain. Your Anthropic sessions never go through OpenRouter.
+- Costs: the footer shows what's left on your key. Kynex doesn't show a per-turn price for
+  OpenRouter sessions, because Claude Code can only price Claude models.
 
 ## Links
 

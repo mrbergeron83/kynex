@@ -17,12 +17,34 @@ and versions follow [Semantic Versioning](https://semver.org/).
   A reporter above the conversation shows every worker, what it's doing, its question and the
   tokens it has used, with Stop and Stop all.
 
+- Settings → Providers: your Anthropic sign-in (sign in or out), and OpenRouter: a key kept in the
+  OS keychain and checked against OpenRouter (credit left, or what's wrong: a bad key, no credits,
+  rate limits, an unknown model), the output cap, and My models, picked from OpenRouter's catalogue
+  with prices and free models marked.
+- OpenRouter without a terminal: on launch Kynex picks up a setup made by hand (`OPENROUTER_API_KEY` /
+  `OR_MODEL`, or `ANTHROPIC_*` variables or a `~/.claude/settings.json` env block pointing at
+  OpenRouter), moves the key into the keychain and checks it. The sign-in screen offers OpenRouter
+  next to Anthropic, and with an OpenRouter key Kynex opens without an Anthropic sign-in, new
+  sessions running on OpenRouter.
+- A provider picker beside the model picker on a new session, when both are set up: the model list
+  follows it (Claude's models, or My models), effort hides on OpenRouter, and the project remembers
+  the pick. A session keeps its provider once it starts and reopens on it; OpenRouter sessions
+  carry an OR mark in the sessions panel (whose menu can group sessions by provider) and are named
+  from their first words. The footer shows
+  what's left on the OpenRouter key beside the usage limits; OpenRouter sessions show no
+  Claude-priced cost.
+
 ### Changed
 
 - The model is per project (and chats have their own), with no pick for every tab any more.
   "This session" at the top of the composer's model menu pins a model to the open session
   instead, which the chip shows with a bubble; the pin is kept with the session, so it still
   applies when the session is resumed.
+
+### Removed
+
+- Projects inside WSL (`\\wsl.localhost\…`) no longer run Claude, git or editors inside the
+  distro; WSL isn't supported.
 
 ## [0.0.11] - 2026-10-30
 

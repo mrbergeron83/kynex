@@ -20,11 +20,14 @@ impl KynexApp {
         // quieter, since the whole message is right below.
         let name = s.session_id.as_deref().and_then(|id| self.session_name(id));
         let stand_in = s.items.iter().find_map(|i| match i {
-            Item::User { text, .. } if !text.trim().is_empty() => Some(fmt::first_words(text, 8)),
+            Item::User { text, .. } if !text.trim().is_empty() => {
+                Some(fmt::first_words(text, kynex_core::titles::FIRST_WORDS))
+            }
             _ => None,
         });
         let turns = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
         let (cost, kind, cwd, context, busy) = (s.total_cost, s.kind, s.cwd.clone(), s.context, s.busy);
+        let knows_cost = s.provider().provider().knows_cost();
         let id = s.session_id.clone();
         // The session's files, once it's saved and has a folder to keep them in.
         let scratch = (kind == Kind::Code && id.is_some()).then(|| {
@@ -185,7 +188,8 @@ impl KynexApp {
         if turns > 0 {
             stats.push(format!("{turns} turn{}", if turns == 1 { "" } else { "s" }));
         }
-        if cost > 0.0 {
+        // The CLI prices every turn as Claude; on another provider that's wrong.
+        if cost > 0.0 && knows_cost {
             stats.push(format!("${cost:.3}"));
         }
         Some(

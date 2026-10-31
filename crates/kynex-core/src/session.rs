@@ -16,10 +16,10 @@ use std::time::{Duration, Instant, SystemTime};
 use serde_json::{Value, json};
 
 use crate::commands::SlashCommand;
+use crate::project;
 use crate::queue::Queue;
 use crate::session_log::{LoggedImage, Span};
 use crate::tasks::{self, Tasks};
-use crate::{project, wsl};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -282,6 +282,8 @@ pub struct Session {
     pub model: String,
     /// A model pinned to this session in the picker, over its project's.
     pub own_model: Option<String>,
+    /// Who answers it; see [`Self::set_provider`].
+    provider: crate::provider::Launch,
     pub items: Vec<Item>,
     pub session_id: Option<String>,
     pub busy: bool,
@@ -298,6 +300,8 @@ pub struct Session {
     pub mode: project::Mode,
     /// Messages written while Claude works; the next goes when a turn ends.
     pub queue: Queue,
+    /// Reopened from a past conversation ([`Self::resume`]), not started here.
+    reopened: bool,
     /// Background tasks running in this session's process.
     pub tasks: Tasks,
     /// The MCP servers its process reported when it started, and how they're doing.
@@ -455,6 +459,7 @@ impl Session {
             cwd,
             model: String::new(),
             own_model: None,
+            provider: Default::default(),
             items: Vec::new(),
             session_id: None,
             busy: false,
@@ -465,6 +470,7 @@ impl Session {
             worker: false,
             mode,
             queue: Queue::default(),
+            reopened: false,
             tasks: Tasks::default(),
             mcp: Vec::new(),
             mcp_tools: Default::default(),
@@ -500,6 +506,53 @@ impl Session {
         }
     }
 
+    /// Who answers this session.
+    pub fn provider(&self) -> &crate::provider::Launch {
+        &self.provider
+    }
+
+    /// Picks who answers this session. Only a new session can: once it has
+    /// any activity (a message, a process, a conversation to resume) its
+    /// provider is fixed, and switching means starting a new session.
+    pub fn set_provider(&mut self, provider: crate::provider::Launch) -> Result<(), String> {
+        if provider == self.provider {
+            return Ok(());
+        }
+        if !self.is_new() {
+            return Err(format!(
+                "This session runs on {}; start a new session to use {}.",
+                self.provider.provider().label(),
+                provider.provider().label()
+            ));
+        }
+        // A process started early, before anything was sent, starts again on it;
+        // the id it reported names no conversation, so it goes too.
+        if self.child.is_some() {
+            self.kill();
+        }
+        self.session_id = None;
+        self.provider = provider;
+        Ok(())
+    }
+
+    /// A new session with no activity: not reopened, nothing sent, nothing in
+    /// its transcript. A process started early to save time doesn't count, nor
+    /// the id that process may already have reported.
+    pub fn is_new(&self) -> bool {
+        !self.reopened && !self.talked && self.items.is_empty()
+    }
+
+    /// Puts a reopened session back on the provider it ran on, before any
+    /// process of this run starts. Its conversation is the same; only a session
+    /// already running here, or one that has started, keeps what it has.
+    pub fn restore_provider(&mut self, provider: crate::provider::Launch) -> Result<(), String> {
+        if self.child.is_some() || self.talked {
+            return Err(format!("This session already runs on {}.", self.provider.provider().label()));
+        }
+        self.provider = provider;
+        Ok(())
+    }
+
     /// Reopen a previous conversation: replay its transcript from Claude Code's
     /// own session log, and `--resume` it on the next message. The log is read
     /// on a thread of its own, newest turns first, so this returns at once;
@@ -507,6 +560,7 @@ impl Session {
     pub fn resume(kind: Kind, cwd: PathBuf, id: String, wake: Wake) -> Self {
         let mut s = Self::new(kind, cwd);
         s.session_id = Some(id);
+        s.reopened = true;
         s.wake = wake;
         s.load(None);
         s
@@ -652,7 +706,7 @@ impl Session {
     }
 
     fn spawn(&mut self) -> Result<(), String> {
-        let mut cmd = claude_command(&self.cwd);
+        let mut cmd = claude_command(&self.cwd, &self.provider.with_model(&self.model));
         // Checkpoints of the files Claude edits, so a rewind can restore them.
         cmd.env(crate::rewind::CHECKPOINTS_ENV, "1");
         cmd.args([
@@ -667,6 +721,13 @@ impl Session {
             "stdio",
         ]);
         let mut launched = None;
+        // One `--settings`: the project's rules, and the provider's variables,
+        // which outrank an env block in the user's own settings.
+        let launch = self.provider.with_model(&self.model);
+        let mut settings = serde_json::Map::new();
+        if let Some(env) = launch.settings_env() {
+            settings.insert("env".into(), env.into());
+        }
         match self.kind {
             Kind::Chat => {
                 cmd.args(["--tools", ""]);
@@ -675,9 +736,12 @@ impl Session {
             }
             // Read fresh on every start, so edits in Claude settings apply to the next process.
             Kind::Code => {
-                let (perms, claude) = (project::Permissions::load(&self.cwd), project::ClaudeSettings::load(&self.cwd));
-                if let Some(settings) = perms.as_cli_settings() {
-                    cmd.args(["--settings", &settings]);
+                let perms = project::Permissions::load(&self.cwd);
+                let claude = project::ClaudeSettings::load(&self.cwd).for_provider(self.provider.provider());
+                if let Some(Value::Object(rules)) =
+                    perms.as_cli_settings().and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                {
+                    settings.extend(rules);
                 }
                 if self.worker {
                     // No prompts, its own worktree, and the chief's contract.
@@ -696,6 +760,9 @@ impl Session {
                     cmd.args(["--mcp-config", &crate::browser_server::mcp_config(ready)]);
                 }
             }
+        }
+        if !settings.is_empty() {
+            cmd.args(["--settings", &Value::Object(settings).to_string()]);
         }
         if !self.model.is_empty() {
             cmd.args(["--model", &self.model]);
@@ -816,10 +883,13 @@ impl Session {
     }
 
     /// Sets the model it starts on. A process warmed up but not talked to yet
-    /// stops, to start again on it; one in use keeps its model until it next starts.
+    /// stops, to start again on it; one in use keeps its model until it next
+    /// starts. On OpenRouter, where a model can go away under a conversation,
+    /// an idle one stops too: the next message resumes it on the new model.
     pub fn use_model(&mut self, model: String) {
         if self.child.is_some() {
-            if self.talked || model == self.model {
+            let openrouter = self.provider.provider() == crate::provider::Provider::OpenRouter;
+            if model == self.model || (self.talked && !(openrouter && !self.busy)) {
                 return;
             }
             self.kill();
@@ -881,6 +951,7 @@ impl Session {
     /// (see [`project::Launched::update`]); otherwise marks it [`Self::stale`].
     /// A process that isn't running reads them when it starts.
     pub fn apply_settings(&mut self, perms: &project::Permissions, claude: &project::ClaudeSettings) {
+        let claude = &claude.for_provider(self.provider.provider());
         let Some(launched) = &mut self.launched else { return };
         match launched.update(perms, claude) {
             project::Update::Same => {}
@@ -1108,8 +1179,13 @@ impl Session {
                     self.handle(v);
                 }
                 Event::Stderr(s) => {
-                    if !s.trim().is_empty() {
-                        self.items.push(Item::Error(s));
+                    let provider = self.provider.provider();
+                    let shown: Vec<&str> = s.lines().filter(|l| provider.shows_stderr(l)).collect();
+                    if !shown.is_empty() {
+                        self.items.push(Item::Error(shown.join(
+                            "
+",
+                        )));
                     }
                 }
                 Event::Exited => exited = true,
@@ -1533,23 +1609,16 @@ impl SessionInfo {
         (other_folder || default.is_some_and(|d| d != branch)).then_some(branch)
     }
 }
-/// `~/.claude/projects`, under the WSL user's home for projects that live in WSL.
-fn projects_dir(cwd: &Path) -> Option<PathBuf> {
-    let home = match wsl::parse(cwd) {
-        Some(w) => w.home()?,
-        None => PathBuf::from(std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?),
-    };
+/// `~/.claude/projects`.
+fn projects_dir() -> Option<PathBuf> {
+    let home = PathBuf::from(std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?);
     Some(home.join(".claude").join("projects"))
 }
 
 /// Claude Code keeps a directory's sessions in `~/.claude/projects/<cwd>`, with
 /// every character that isn't a letter or digit replaced by `-`.
 fn transcripts_dir(cwd: &Path) -> Option<PathBuf> {
-    let path = match wsl::parse(cwd) {
-        Some(w) => w.path,
-        None => cwd.to_string_lossy().into_owned(),
-    };
-    let name: String = path.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let name: String = cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
     // Looked up once per folder: `~/.claude/projects` can hold hundreds.
     static FOUND: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();
     let found = FOUND.get_or_init(Default::default);
@@ -1557,7 +1626,7 @@ fn transcripts_dir(cwd: &Path) -> Option<PathBuf> {
         return Some(dir.clone());
     }
     // The drive letter's case depends on who launched Claude (`C:` vs `c:`).
-    let dir = std::fs::read_dir(projects_dir(cwd)?)
+    let dir = std::fs::read_dir(projects_dir()?)
         .ok()?
         .filter_map(Result::ok)
         .map(|d| d.path())
@@ -1573,11 +1642,7 @@ pub(crate) fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
         return Some(p);
     }
     // Fall back to every project, in case the folder was renamed or moved.
-    std::fs::read_dir(projects_dir(cwd)?)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|d| d.path().join(&file))
-        .find(|p| p.is_file())
+    std::fs::read_dir(projects_dir()?).ok()?.filter_map(Result::ok).map(|d| d.path().join(&file)).find(|p| p.is_file())
 }
 
 /// A user-role log entry the CLI wrote itself, like the `<task-notification>`
@@ -1588,23 +1653,17 @@ fn written_by_cli(v: &Value) -> bool {
     v["promptSource"] == "system" || v["origin"]["kind"].is_string() || text.starts_with("<task-notification>")
 }
 
-/// `claude`, to be run in `cwd` (inside WSL for a WSL folder), without a console window.
-pub(crate) fn claude_command(cwd: &Path) -> Command {
-    #[cfg_attr(not(windows), allow(unused_mut))]
-    let mut cmd = match wsl::parse(cwd) {
-        Some(w) => w.command("claude"),
-        None => {
-            let mut c = Command::new(crate::cli::program());
-            c.current_dir(cwd);
-            c
-        }
-    };
+/// `claude`, to be run in `cwd` without a console window, with `provider`'s environment.
+pub(crate) fn claude_command(cwd: &Path, provider: &crate::provider::Launch) -> Command {
+    let mut cmd = Command::new(crate::cli::program());
+    cmd.current_dir(cwd);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
+    provider.apply(&mut cmd);
     cmd
 }
 
@@ -1623,8 +1682,9 @@ pub struct ModelInfo {
 /// What the CLI reports in the stream-json `initialize` handshake when started
 /// in `cwd`: models, slash commands, agents and so on. Sends no message, so it
 /// costs nothing. Blocks for a second or two; call it off the UI thread.
+/// Asks the CLI as the user set it up ([`crate::provider::Launch::Anthropic`]).
 pub(crate) fn initialize(cwd: &Path) -> Result<Value, String> {
-    let mut cmd = claude_command(cwd);
+    let mut cmd = claude_command(cwd, &crate::provider::Launch::Anthropic);
     cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -2531,6 +2591,75 @@ mod tests {
     }
 
     #[test]
+    fn an_openrouter_model_switch_reaches_a_session_in_use() {
+        use crate::provider::{Launch, OpenRouterSettings};
+        let running = |provider: Launch| {
+            let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+            s.set_provider(provider).unwrap();
+            s.model = "old".into();
+            let exe = std::env::current_exe().expect("test binary");
+            s.child = Some(Command::new(exe).arg("--list").stdout(Stdio::null()).spawn().expect("spawn"));
+            s.talked = true;
+            s
+        };
+        let openrouter = Launch::OpenRouter { key: "k".into(), settings: OpenRouterSettings::default() };
+
+        // Anthropic: the process in use keeps its model until it next starts.
+        let mut s = running(Launch::Anthropic);
+        s.use_model("new".into());
+        assert!(s.child.is_some() && s.model == "old");
+        s.kill();
+
+        // OpenRouter, idle: it stops, and the next message resumes it on the new model.
+        let mut s = running(openrouter.clone());
+        s.use_model("new".into());
+        assert!(s.child.is_none() && s.model == "new");
+
+        // OpenRouter, mid-turn: left alone.
+        let mut s = running(openrouter);
+        s.busy = true;
+        s.use_model("new".into());
+        assert!(s.child.is_some() && s.model == "old");
+        s.kill();
+    }
+
+    #[test]
+    fn only_a_new_session_switches_provider() {
+        use crate::provider::{Launch, OpenRouterSettings, Provider};
+        let openrouter = || Launch::OpenRouter { key: "k".into(), settings: OpenRouterSettings::default() };
+        let mut s = Session::new(Kind::Code, std::env::temp_dir());
+        assert_eq!(s.provider().provider(), Provider::Anthropic);
+        s.set_provider(openrouter()).unwrap();
+        s.set_provider(Launch::Anthropic).unwrap();
+
+        // Warmed up early, with the id its process reported: still new; it starts again.
+        let exe = std::env::current_exe().expect("test binary");
+        s.child = Some(Command::new(exe).arg("--list").stdout(Stdio::null()).spawn().expect("spawn"));
+        s.session_id = Some("early".into());
+        assert!(s.is_new());
+        s.set_provider(openrouter()).unwrap();
+        assert!(s.child.is_none() && s.session_id.is_none());
+        s.set_provider(Launch::Anthropic).unwrap();
+
+        s.items.push(Item::User { text: "hi".into(), images: Vec::new() });
+        let err = s.set_provider(openrouter()).unwrap_err();
+        assert!(err.contains("new session"), "{err}");
+        assert_eq!(s.provider(), &Launch::Anthropic);
+        // Picking the one it has is fine.
+        s.set_provider(Launch::Anthropic).unwrap();
+
+        let mut resumed = Session::new(Kind::Code, std::env::temp_dir());
+        resumed.session_id = Some("abc".into());
+        resumed.reopened = true;
+        assert!(resumed.set_provider(openrouter()).is_err());
+        // Reopened, it goes back to the provider it ran on, until it starts here.
+        resumed.restore_provider(openrouter()).unwrap();
+        assert_eq!(resumed.provider().provider(), Provider::OpenRouter);
+        resumed.talked = true;
+        assert!(resumed.restore_provider(Launch::Anthropic).is_err());
+    }
+
+    #[test]
     fn title_is_first_real_user_message() {
         let path = std::env::temp_dir().join(format!("kynex-title-{}.jsonl", std::process::id()));
         let lines = [
@@ -2686,7 +2815,7 @@ mod tests {
         let second = &points[0];
         assert!(second.checkpoint && second.changed == ["fruit.txt"], "unexpected rewind checkpoint metadata");
         s.kill();
-        crate::rewind::restore_files(&project, &id, second).unwrap();
+        crate::rewind::restore_files(&project, &id, second, s.provider()).unwrap();
         assert!(!project.join("fruit.txt").exists(), "the file is still there");
         s.rewind_to(second);
         assert_eq!(s.items.iter().filter(|i| matches!(i, Item::User { .. })).count(), 1);

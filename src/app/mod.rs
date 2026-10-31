@@ -45,7 +45,9 @@
 //! | `leaving.rs`        | menus, modals and panels animating out as they close |
 //! | `settings.rs`       | the project's Claude settings modal                  |
 //! | `app_settings.rs`   | the app's Settings modal: CLI, shell, appearance     |
+//! | `providers.rs`      | Settings → Providers: Anthropic sign-in, OpenRouter key, cap, My models |
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
+//! | `provider_setup.rs` | OpenRouter key on launch, new sessions' provider, OpenRouter on the setup screen |
 //! | `app_update.rs`     | Kynex updating itself: checks, the update toast      |
 //! | `about.rs`          | the About Kynex modal: version, paths, updates       |
 //! | `storage.rs`        | Settings → Storage: sessions' disk use, cleanup      |
@@ -86,6 +88,8 @@ mod menus;
 mod models;
 mod palette;
 mod prompts;
+mod provider_setup;
+mod providers;
 mod queue;
 mod rewind;
 mod scratch_modal;
@@ -298,6 +302,17 @@ pub struct KynexApp {
     setup: Setup,
     /// Where to paste the code the sign-in page shows.
     login_code: Entity<TextInput>,
+    /// The OpenRouter key, once loaded from the keychain (`provider_setup.rs`):
+    /// with it, new sessions can run on OpenRouter and a user signed out of
+    /// Anthropic gets past the setup screen.
+    openrouter_key: Option<String>,
+    /// The OpenRouter key's credit for the footer, and when it was asked.
+    openrouter_credit: Option<(kynex_core::openrouter::KeyInfo, std::time::Instant)>,
+    openrouter_credit_asking: bool,
+    /// The setup screen's OpenRouter key field, while its check runs, and why it failed.
+    setup_key: Entity<TextInput>,
+    setup_key_busy: bool,
+    setup_key_error: Option<String>,
     focus: FocusHandle,
     wake: session::Wake,
 }
@@ -355,6 +370,14 @@ impl KynexApp {
         })
         .detach();
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.check_setup(cx))).detach();
+        cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.load_openrouter(cx))).detach();
+        let setup_key = cx.new(|cx| TextInput::new(cx).mono().masked().placeholder("Paste your OpenRouter key"));
+        cx.subscribe(&setup_key, |this, _, ev, cx| {
+            if let InputEvent::Submit = ev {
+                this.setup_openrouter_key(cx);
+            }
+        })
+        .detach();
         let group_name = cx.new(|cx| TextInput::new(cx).placeholder("Name"));
         cx.subscribe(&group_name, |this, _, ev, cx| {
             if let InputEvent::Submit = ev {
@@ -506,6 +529,12 @@ impl KynexApp {
             cli_check: CliCheck::default(),
             setup: Setup::Checking,
             login_code,
+            openrouter_key: None,
+            openrouter_credit: None,
+            openrouter_credit_asking: false,
+            setup_key,
+            setup_key_busy: false,
+            setup_key_error: None,
             focus: cx.focus_handle(),
             wake,
         }
@@ -530,6 +559,7 @@ impl KynexApp {
         let mut shown_ended = false;
         // Sessions whose history came in from their log, and how many items went in front.
         let mut histories = Vec::new();
+        let mut openrouter_turn_ended = false;
         for s in self.all_sessions_mut() {
             // Before `seen`: history isn't news (no toasts for old tasks).
             if let Some(n) = s.take_history() {
@@ -547,13 +577,15 @@ impl KynexApp {
                 touched.insert(s.cwd.clone());
             }
             shown_ended |= was_busy && !s.busy && Some(s.uid) == shown;
+            openrouter_turn_ended |=
+                was_busy && !s.busy && s.provider().provider() == kynex_core::provider::Provider::OpenRouter;
             for item in s.items.get(seen..).into_iter().flatten() {
                 if let session::Item::Task(n) = item {
                     ended.push((s.uid, n.clone()));
                 }
             }
             if let Some(init) = s.take_init() {
-                reports.push((s.cwd.clone(), init));
+                reports.push((s.cwd.clone(), init, s.provider().provider()));
             }
             // The account's limits: whichever session reported last is newest.
             if let Some(newer) = s.take_limits() {
@@ -566,13 +598,20 @@ impl KynexApp {
         for (key, n) in histories {
             self.history_came(key, n);
         }
+        // A turn spent some of it.
+        if openrouter_turn_ended {
+            self.refresh_openrouter_credit(cx);
+        }
         if let Some(limits) = limits {
             self.limits_reported(limits, cx);
         }
         // What a session reported as it started: its folder's commands, the models.
-        for (cwd, init) in reports {
+        for (cwd, init, provider) in reports {
             self.commands_reported(cwd, init.commands, cx);
-            models::reported(init.models, cx);
+            // Claude's model list; an OpenRouter session's models are My models.
+            if provider == kynex_core::provider::Provider::Anthropic {
+                models::reported(init.models, cx);
+            }
         }
         if let Some(key) = shown.filter(|_| shown_ended) {
             self.turn_ended(key);
@@ -650,7 +689,7 @@ impl Render for KynexApp {
         // Toasts sit in the corner picked in Settings, the same in every view;
         // the conversation's own bars and composer are measured to stay clear of.
         let toasts = self.render_toasts(window, cx);
-        let in_conversation = matches!(self.setup, Setup::Checking | Setup::Ready) && view != Some(View::Git);
+        let in_conversation = self.workspace_ready() && view != Some(View::Git);
         if !in_conversation {
             self.toast_room.set(None);
         }

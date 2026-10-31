@@ -15,6 +15,8 @@ use crate::ui::{Icon, Tooltip, divider, icon, menu_item, popover, scrollbar};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Menu {
+    /// Who answers a new session: Anthropic or OpenRouter.
+    Provider,
     Model,
     Kynex,
     Theme,
@@ -220,7 +222,29 @@ impl KynexApp {
                             .into_any_element(),
                     );
                 }
-                items.extend(self.model_items(cx));
+                if self.active_provider() == kynex_core::provider::Provider::OpenRouter {
+                    items.extend(self.openrouter_model_items(cx));
+                } else {
+                    items.extend(self.model_items(cx));
+                }
+            }
+            Menu::Provider => {
+                let current = self.active_provider();
+                for (n, p) in self.providers_available().into_iter().enumerate() {
+                    let help = match p {
+                        kynex_core::provider::Provider::Anthropic => "Your Claude plan or Console account",
+                        kynex_core::provider::Provider::OpenRouter => "Your models, with your OpenRouter key",
+                    };
+                    items.push(
+                        menu_item(("provider", n), p.label(), current == p, cx)
+                            .child(div().flex_none().text_xs().text_color(t.text_placeholder).child(help))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.menu = None;
+                                this.set_provider(p, cx);
+                            }))
+                            .into_any_element(),
+                    );
+                }
             }
             Menu::Theme => {
                 for (n, (th, name)) in THEMES.iter().enumerate() {

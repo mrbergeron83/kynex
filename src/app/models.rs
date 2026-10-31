@@ -201,6 +201,85 @@ impl KynexApp {
     }
 }
 
+impl KynexApp {
+    /// The model menu on OpenRouter: My models, and a way to change them.
+    pub(super) fn openrouter_model_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let t = theme(cx).clone();
+        let current = self.active_model();
+        let current = if current.is_empty() { self.folder_model() } else { current };
+        let default = self.saved.openrouter.default_model().to_string();
+        let mut items: Vec<AnyElement> = self
+            .saved
+            .openrouter
+            .models
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(n, id)| {
+                let selected = id == current;
+                let note = match (id.ends_with(":free"), id == default) {
+                    (true, true) => "Free · default",
+                    (true, false) => "Free",
+                    (false, true) => "Default",
+                    (false, false) => "",
+                };
+                div()
+                    .id(("openrouter-pick", n))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(t.hover))
+                    .when(selected, |d| d.bg(t.active))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().text_sm().text_color(t.text).child(openrouter_label(&id)))
+                            .child(div().text_xs().text_color(t.text_muted).truncate().child(if note.is_empty() {
+                                id.clone()
+                            } else {
+                                format!("{id} · {note}")
+                            })),
+                    )
+                    .when(selected, |d| d.child(icon(Icon::Check, t.text_muted)))
+                    .on_click(pick(id, cx))
+                    .into_any_element()
+            })
+            .collect();
+        items.push(div().my_1().child(divider(cx)).into_any_element());
+        items.push(
+            div()
+                .id("openrouter-manage")
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .cursor_pointer()
+                .text_sm()
+                .text_color(t.text_muted)
+                .hover(move |s| s.bg(t.hover).text_color(t.text))
+                .child("Add or remove models in Settings → Providers…")
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.menu = None;
+                    this.open_settings_on(super::app_settings::PROVIDERS_SECTION, cx);
+                }))
+                .into_any_element(),
+        );
+        items
+    }
+}
+
+/// An OpenRouter model as the composer shows it: the name after its vendor,
+/// `qwen3-coder:free` for `qwen/qwen3-coder:free`.
+pub fn openrouter_label(id: &str) -> String {
+    id.split_once('/').map_or(id, |(_, name)| name).to_string()
+}
+
 /// Picking `value` in the model menu; a version pill's click stops at the pill.
 fn pick(value: String, cx: &mut Context<KynexApp>) -> impl Fn(&ClickEvent, &mut Window, &mut App) + use<> {
     let app = cx.entity().downgrade();

@@ -175,12 +175,23 @@ impl KynexApp {
                 .into_any_element();
         }
         if count == 0 {
+            let on_openrouter = self.active_provider() == kynex_core::provider::Provider::OpenRouter;
             let msg = match self.saved.active {
                 Active::Chat if self.saved.chief_view => {
                     "Give the chief a goal. It sends the work to your projects' chief workers and reports back."
+                        .to_string()
                 }
-                Active::Chat => "Start a conversation. Uses your Claude Code login, no API key needed.",
-                Active::Project(_) => "Ask Claude Code to work on this project.",
+                Active::Chat if on_openrouter => {
+                    format!("Start a conversation. Runs on {} through OpenRouter.", self.active_model_name())
+                }
+                Active::Chat => "Start a conversation. Uses your Claude Code login, no API key needed.".to_string(),
+                Active::Project(_) if on_openrouter => {
+                    format!(
+                        "Ask Claude Code to work on this project, on {} through OpenRouter.",
+                        self.active_model_name()
+                    )
+                }
+                Active::Project(_) => "Ask Claude Code to work on this project.".to_string(),
             };
             // A new conversation in a project starts under its name, in its colour.
             let name = self.active_project().map(|p| {
@@ -693,7 +704,10 @@ impl KynexApp {
                 if *tools > 0 {
                     recap.push(format!("{tools} tool{}", if *tools == 1 { "" } else { "s" }));
                 }
-                recap.push(format!("${cost:.2}"));
+                // The CLI prices every turn as Claude; on another provider that's wrong.
+                if session.provider().provider().knows_cost() {
+                    recap.push(format!("${cost:.2}"));
+                }
                 let color = if *is_error { t.error } else { t.text_placeholder };
                 let cwd = session.cwd.clone();
                 let chips = files.iter().take(MAX_CHIPS).enumerate().map(|(n, f)| {

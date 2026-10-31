@@ -28,10 +28,19 @@ impl KynexApp {
             .or_else(|| items.iter().take(recent).find(wanted));
         let Some(next) = next else { return };
         let (id, first) = (next.id.clone(), next.first.clone());
+        // OpenRouter sessions, and any while signed out of Anthropic (no Haiku to
+        // ask), are named by their first words.
+        let dir = self.active_dir();
+        let provider = match self.groups_for(&dir).provider_of(&id) {
+            kynex_core::provider::Provider::Anthropic if self.anthropic_signed_out() => {
+                kynex_core::provider::Provider::OpenRouter
+            }
+            other => other,
+        };
         self.naming = Some(id.clone());
         self.naming_tried.insert(id.clone());
         cx.spawn(async move |this, cx| {
-            let named = cx.background_spawn(async move { titles::generate(&first).map(|t| (id, t)) }).await;
+            let named = cx.background_spawn(async move { titles::generate(&first, provider).map(|t| (id, t)) }).await;
             this.update(cx, |this, cx| {
                 this.naming = None;
                 match named {

@@ -255,7 +255,7 @@ impl KynexApp {
         self.app_settings = None;
         self.open_app_settings(cx);
         if let Some(s) = &mut self.app_settings {
-            s.section = 3;
+            s.section = super::app_settings::STORAGE_SECTION;
         }
         let v = self.storage_view(cx);
         v.open.insert(id.clone());

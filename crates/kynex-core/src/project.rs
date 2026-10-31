@@ -200,9 +200,26 @@ pub struct ClaudeSettings {
     /// default. A session can pin its own over it ([`crate::groups::SessionGroups`]).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub model: String,
+    /// Who this project's new sessions start on; a new session can pick the other.
+    #[serde(skip_serializing_if = "crate::provider::Provider::is_anthropic_ref")]
+    pub provider: crate::provider::Provider,
+    /// The OpenRouter model its new OpenRouter sessions start on; empty is
+    /// the default of My models.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub openrouter_model: String,
 }
 
 impl ClaudeSettings {
+    /// These settings as a session on `provider` uses them: no effort where
+    /// the provider's models don't take it.
+    pub fn for_provider(&self, provider: crate::provider::Provider) -> Self {
+        let mut s = self.clone();
+        if !provider.takes_effort() {
+            s.effort.clear();
+        }
+        s
+    }
+
     const FILE: &str = "claude.json";
 
     pub fn load(project: &Path) -> Self {
@@ -442,6 +459,7 @@ mod tests {
             effort: "high".into(),
             add_dirs: vec![PathBuf::from("/srv/shared")],
             model: "opus".into(),
+            ..Default::default()
         };
         // The model goes to each session, not through these flags.
         assert_eq!(s.cli_args(), ["--effort", "high", "--add-dir", "/srv/shared"]);
@@ -498,6 +516,22 @@ mod tests {
         let old: ClaudeSettings = serde_json::from_str(r#"{"mode":"auto","effort":"max"}"#).unwrap();
         assert_eq!(old.model, "");
         assert!(!serde_json::to_string(&ClaudeSettings::default()).unwrap().contains("model"));
+    }
+
+    #[test]
+    fn a_project_picks_its_provider_and_openrouter_drops_effort() {
+        use crate::provider::Provider;
+        let s = ClaudeSettings {
+            provider: Provider::OpenRouter,
+            openrouter_model: "qwen/qwen3-coder:free".into(),
+            effort: "high".into(),
+            ..Default::default()
+        };
+        let back: ClaudeSettings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!((back.provider, back.openrouter_model.as_str()), (Provider::OpenRouter, "qwen/qwen3-coder:free"));
+        assert_eq!(serde_json::from_str::<ClaudeSettings>("{}").unwrap().provider, Provider::Anthropic);
+        assert!(s.for_provider(Provider::OpenRouter).cli_args().iter().all(|a| a != "--effort"));
+        assert!(s.for_provider(Provider::Anthropic).cli_args().contains(&"--effort".to_string()));
     }
 
     #[test]

@@ -161,7 +161,7 @@ impl KynexApp {
 
     fn restore(&mut self, key: Key, point: Point, restore: Restore, cx: &mut Context<Self>) {
         let Some(s) = self.session_for(key) else { return };
-        let (Some(id), cwd) = (s.session_id.clone(), s.cwd.clone()) else { return };
+        let (Some(id), cwd, provider) = (s.session_id.clone(), s.cwd.clone(), s.provider().clone()) else { return };
         // The next message starts a process that reads the rewound state.
         s.kill();
         if !restore.code() {
@@ -170,7 +170,7 @@ impl KynexApp {
         self.toast(Toast::info("Restoring files…"));
         cx.spawn(async move |this, cx| {
             let p = point.clone();
-            let done = cx.background_spawn(async move { rewind::restore_files(&cwd, &id, &p) }).await;
+            let done = cx.background_spawn(async move { rewind::restore_files(&cwd, &id, &p, &provider) }).await;
             this.update(cx, |this, cx| {
                 match done {
                     Ok(()) => {

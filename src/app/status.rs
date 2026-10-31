@@ -51,6 +51,26 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// What's left on the OpenRouter key, once asked: beside the Anthropic
+    /// limits, opening Settings → Providers.
+    pub(super) fn render_openrouter_credit(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let t = theme(cx).clone();
+        let (info, at) = self.openrouter_credit.as_ref().filter(|_| self.openrouter_key.is_some())?;
+        let low = info.limit_remaining.is_some_and(|left| left < 1.0);
+        let checked = kynex_core::fmt::ago(std::time::SystemTime::now() - at.elapsed());
+        Some(
+            ghost_button("openrouter-credit", cx)
+                .gap_1p5()
+                .child(div().text_color(t.text_placeholder).child("OpenRouter"))
+                .child(div().text_color(if low { t.warning } else { t.text_muted }).child(info.short()))
+                .tooltip(Tooltip::with_meta("OpenRouter credit", format!("{} · checked {checked}", info.credit())))
+                .on_click(
+                    cx.listener(|this, _, _, cx| this.open_settings_on(super::app_settings::PROVIDERS_SECTION, cx)),
+                )
+                .into_any_element(),
+        )
+    }
+
     /// The account's 5-hour and weekly windows side by side, "5h ▬ 42%  7d ▬ 53%",
     /// then Fable's own weekly one once a Fable turn has reported it, with reset
     /// times in the tooltip. Each turns amber close to its limit, and
