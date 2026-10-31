@@ -141,3 +141,10 @@ path = "fuzz_targets/browser_reply.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "openrouter"
+path = "fuzz_targets/openrouter.rs"
+test = false
+doc = false
+bench = false

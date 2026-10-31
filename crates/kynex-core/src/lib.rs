@@ -36,6 +36,7 @@ pub mod mentions;
 pub mod model_groups;
 pub mod motion;
 pub mod open;
+pub mod openrouter;
 pub mod palette;
 pub mod paths;
 pub mod plugins;

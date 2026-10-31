@@ -127,6 +127,20 @@ pub fn markdown(text: &str) {
 
 /// Versions and update info: `claude --version` and installer output, npm and
 /// GitHub release info, `SHA256SUMS`, typed slash commands.
+/// OpenRouter's answers to a key check (curl's output: a body, then the status),
+/// and a key written into curl's config.
+pub fn openrouter(text: &str) {
+    if let Some((status, body)) = crate::openrouter::split_status(text) {
+        let _ = crate::openrouter::answer(status, &body, "m").map_err(|p| p.message());
+    }
+    let _ = crate::openrouter::answer(200, text, "m");
+    let _ = crate::openrouter::key_info(text).map(|k| k.credit());
+    if let Some(config) = crate::openrouter::curl_config(text, "https://openrouter.ai/api/v1/key", None) {
+        // Whatever the key, the config is two lines: the URL and its header.
+        assert_eq!(config.lines().count(), 2, "{config:?}");
+    }
+}
+
 pub fn versions(bytes: &[u8]) {
     let text = String::from_utf8_lossy(bytes);
     let _ = cli::last_line(bytes);
@@ -283,6 +297,7 @@ mod tests {
             github(t);
             file_links(t);
             highlight(t);
+            openrouter(t);
         }
         claude_config(
             r#"{"mcpServers":{"a":{"command":"x","args":[1]}},"projects":{"/work/app":{}},"plugins":{"p":[{}]}}"#,
