@@ -3,6 +3,12 @@
 //! update check, so Kynex needs no HTTP stack. The key goes to curl on stdin
 //! (`--config -`), never as an argument another process could read.
 
+pub(crate) mod catalogue;
+mod config;
+
+pub use catalogue::{CatalogModel, SEARCH_LIMIT, catalogue, search};
+pub use config::{LastCheck, MAX_OUTPUT_TOKENS, MIN_OUTPUT_TOKENS, OpenRouterConfig, valid_model_id};
+
 use std::io::Write;
 use std::process::Stdio;
 
@@ -87,6 +93,22 @@ impl std::fmt::Display for Problem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.message())
     }
+}
+
+/// A saved key as Settings shows it: its prefix and last four characters,
+/// `sk-or-v1-…3f9a`, enough to tell keys apart and never enough to use one.
+pub fn key_hint(key: &str) -> String {
+    let key = key.trim();
+    let chars: Vec<char> = key.chars().collect();
+    if chars.len() < 16 {
+        return "…".repeat(usize::from(!chars.is_empty()));
+    }
+    let prefix: String = match key.match_indices('-').nth(2) {
+        Some((i, _)) if i < 12 => key[..=i].to_string(),
+        _ => chars[..3].iter().collect(),
+    };
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    format!("{prefix}…{tail}")
 }
 
 /// Checks `key` and `model`: the key's validity and credit, then one tiny
@@ -232,6 +254,14 @@ mod tests {
         assert_eq!(curl_config("sk-or\nurl = \"https://evil.example\"", KEY_URL, None), None);
         assert_eq!(curl_config("sk\u{7}or", KEY_URL, None), None);
         assert_eq!(curl_config("   ", KEY_URL, None), None);
+    }
+
+    #[test]
+    fn hints_show_the_prefix_and_last_four() {
+        assert_eq!(key_hint("sk-or-v1-0123456789abcdef3f9a"), "sk-or-v1-…3f9a");
+        assert_eq!(key_hint("abcdefghijklmnopqrstuvwxyz"), "abc…wxyz");
+        assert_eq!(key_hint("short"), "…");
+        assert_eq!(key_hint(""), "");
     }
 
     #[test]

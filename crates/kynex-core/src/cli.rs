@@ -59,6 +59,77 @@ pub fn status() -> Status {
     }
 }
 
+/// Who the CLI is signed in as, for Settings → Providers.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Account {
+    pub logged_in: bool,
+    /// `claude.ai` (a subscription) or `console` (API billing), as the CLI says.
+    pub method: Option<String>,
+    pub email: Option<String>,
+    /// The plan: `pro`, `max`, `team`…
+    pub plan: Option<String>,
+    /// Signed in some other way than an Anthropic login: an API key, Bedrock,
+    /// Vertex. Signing out doesn't apply.
+    pub other_provider: Option<String>,
+}
+
+impl Account {
+    /// One line on the account: "Signed in as you@example.com · Max plan".
+    pub fn describe(&self) -> String {
+        if let Some(p) = &self.other_provider {
+            return format!("Claude Code uses {p}, set up outside Kynex.");
+        }
+        if !self.logged_in {
+            return "Not signed in.".into();
+        }
+        let who = self.email.as_deref().map_or("Signed in".to_string(), |e| format!("Signed in as {e}"));
+        match (&self.plan, self.method.as_deref()) {
+            (Some(plan), _) => format!("{who} · {} plan", capitalized(plan)),
+            (None, Some("console")) => format!("{who} · Anthropic Console"),
+            _ => who,
+        }
+    }
+}
+
+fn capitalized(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
+/// The account `claude auth status --json` reports. Blocks on the CLI.
+pub fn account() -> Result<Account, String> {
+    let out = command(program())
+        .args(["auth", "status", "--json"])
+        .output()
+        .map_err(|e| format!("failed to start `claude`: {e}"))?;
+    parse_account(&out.stdout).ok_or_else(|| "`claude auth status` gave no account details".into())
+}
+
+fn parse_account(json: &[u8]) -> Option<Account> {
+    let v: serde_json::Value = serde_json::from_slice(json).ok()?;
+    let text = |k: &str| v[k].as_str().filter(|s| !s.is_empty()).map(str::to_string);
+    let provider = text("apiProvider");
+    Some(Account {
+        logged_in: v["loggedIn"].as_bool()?,
+        method: text("authMethod"),
+        email: text("email"),
+        plan: text("subscriptionType"),
+        other_provider: provider.filter(|p| p != "firstParty"),
+    })
+}
+
+/// Signs the CLI out of its Anthropic account (`claude auth logout`). Blocks.
+pub fn logout() -> Result<(), String> {
+    let out =
+        command(program()).args(["auth", "logout"]).output().map_err(|e| format!("failed to start `claude`: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    let msg = if err.trim().is_empty() { String::from_utf8_lossy(&out.stdout) } else { err };
+    Err(format!("Couldn't sign out: {}", msg.trim()))
+}
+
 /// Installs the native build with the official installer script.
 pub fn install() -> Result<(), String> {
     let mut cmd = if cfg!(windows) {
@@ -281,6 +352,22 @@ pub fn is_newer(candidate: &str, current: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_account() {
+        let json = br#"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty",
+                        "email":"me@example.com","subscriptionType":"max"}"#;
+        let a = parse_account(json).unwrap();
+        assert_eq!(a.describe(), "Signed in as me@example.com · Max plan");
+        let console = parse_account(br#"{"loggedIn":true,"authMethod":"console","apiProvider":"firstParty"}"#);
+        assert_eq!(console.unwrap().describe(), "Signed in · Anthropic Console");
+        let out = parse_account(br#"{"loggedIn":false,"apiProvider":"firstParty"}"#).unwrap();
+        assert_eq!(out.describe(), "Not signed in.");
+        let bedrock = parse_account(br#"{"loggedIn":false,"apiProvider":"bedrock"}"#).unwrap();
+        assert_eq!(bedrock.describe(), "Claude Code uses bedrock, set up outside Kynex.");
+        assert_eq!(parse_account(b"not json"), None);
+        assert_eq!(parse_account(b"{}"), None);
+    }
 
     #[test]
     fn compares_versions() {

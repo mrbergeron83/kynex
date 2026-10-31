@@ -135,6 +135,12 @@ pub fn openrouter(text: &str) {
     }
     let _ = crate::openrouter::answer(200, text, "m");
     let _ = crate::openrouter::key_info(text).map(|k| k.credit());
+    if let Ok(models) = crate::openrouter::catalogue::parse(text) {
+        for m in crate::openrouter::search(&models, text.get(..8).unwrap_or("")) {
+            let _ = (m.price(), m.context_label(), m.is_free());
+        }
+    }
+    let _ = crate::openrouter::valid_model_id(text);
     if let Some(config) = crate::openrouter::curl_config(text, "https://openrouter.ai/api/v1/key", None) {
         // Whatever the key, the config is two lines: the URL and its header.
         assert_eq!(config.lines().count(), 2, "{config:?}");

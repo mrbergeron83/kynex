@@ -15,6 +15,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   A reporter above the conversation shows every worker, what it's doing, its question and the
   tokens it has used, with Stop and Stop all.
 
+- Settings → Providers: your Anthropic sign-in (sign in or out), and OpenRouter: a key kept in the
+  OS keychain and checked against OpenRouter (credit left, or what's wrong: a bad key, no credits,
+  rate limits, an unknown model), the output cap, and My models, picked from OpenRouter's catalogue
+  with prices and free models marked. Sessions don't run on OpenRouter yet.
+
 ### Changed
 
 - The model is per project (and chats have their own), with no pick for every tab any more.

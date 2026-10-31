@@ -169,7 +169,7 @@ impl KynexApp {
 
     /// Starts `claude auth login` (which opens the browser) and watches it until
     /// it finishes or the user cancels.
-    fn sign_in(&mut self, console: bool, cx: &mut Context<Self>) {
+    pub(super) fn sign_in(&mut self, console: bool, cx: &mut Context<Self>) {
         match cli::Login::start(console) {
             Ok(login) => self.setup = Setup::SigningIn(login),
             Err(e) => self.setup = Setup::LoggedOut { error: Some(e) },

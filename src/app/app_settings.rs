@@ -1,6 +1,7 @@
 //! The app's own Settings modal (Ctrl+, / Cmd+,), apart from a project's Claude
-//! settings: the `claude` CLI and terminal shell, theme, fonts and animations,
-//! and the shortcuts file. Edits save to `state.json` at once.
+//! settings: the `claude` CLI and terminal shell, providers (`providers.rs`),
+//! theme, fonts and animations, and the shortcuts file. Edits save to
+//! `state.json` at once.
 
 use std::path::PathBuf;
 
@@ -30,6 +31,7 @@ pub struct AppSettingsView {
     pub(super) section: usize,
     /// The `claude` in use and what it says its version is, once asked.
     cli: Option<CliInfo>,
+    pub(super) providers: super::providers::ProvidersView,
 }
 
 /// Found off the UI thread when the modal opens, so no frame searches PATH.
@@ -41,7 +43,9 @@ struct CliInfo {
     version: Result<String, String>,
 }
 
-const SECTIONS: [&str; 4] = ["General", "Appearance", "Keyboard", "Storage"];
+const SECTIONS: [&str; 5] = ["General", "Providers", "Appearance", "Keyboard", "Storage"];
+/// Where Storage is in [`SECTIONS`], for opening Settings on it.
+pub(super) const STORAGE_SECTION: usize = 4;
 
 impl KynexApp {
     pub(super) fn open_app_settings(&mut self, cx: &mut Context<Self>) {
@@ -50,7 +54,8 @@ impl KynexApp {
         }
         self.settings = None;
         self.extensions = None;
-        self.app_settings = Some(AppSettingsView { section: 0, cli: None });
+        let providers = self.new_providers_view(cx);
+        self.app_settings = Some(AppSettingsView { section: 0, cli: None, providers });
         // Storage is measured again each time Settings opens; the last stays up meanwhile.
         if let Some(s) = &mut self.storage {
             s.stale = true;
@@ -167,8 +172,9 @@ impl KynexApp {
         );
         let content = match section {
             0 => self.render_general(&t, cx),
-            1 => self.render_appearance(&t, cx),
-            2 => self.render_keyboard(&t, cx),
+            1 => self.render_providers(&t, cx),
+            2 => self.render_appearance(&t, cx),
+            3 => self.render_keyboard(&t, cx),
             _ => self.render_storage(&t, cx),
         };
         let footer = format!("Stored in {}", data_dir().join("state.json").display());

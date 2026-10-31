@@ -45,6 +45,7 @@
 //! | `leaving.rs`        | menus, modals and panels animating out as they close |
 //! | `settings.rs`       | the project's Claude settings modal                  |
 //! | `app_settings.rs`   | the app's Settings modal: CLI, shell, appearance     |
+//! | `providers.rs`      | Settings → Providers: Anthropic sign-in, OpenRouter key, cap, My models |
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
 //! | `app_update.rs`     | Kynex updating itself: checks, the update toast      |
 //! | `about.rs`          | the About Kynex modal: version, paths, updates       |
@@ -86,6 +87,7 @@ mod menus;
 mod models;
 mod palette;
 mod prompts;
+mod providers;
 mod queue;
 mod rewind;
 mod scratch_modal;
