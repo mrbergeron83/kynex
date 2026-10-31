@@ -5,6 +5,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Kynex asks to trust a project folder Claude Code hasn't trusted yet, instead of the CLI
+  quietly ignoring its `.claude/settings.json` and `.mcp.json`.
+
+### Fixed
+
+- A new session no longer gets stuck on "No conversation found with session ID" when its
+  process restarts before the first message (#224).
 ### Changed
 
 - The composer's model and effort pickers are two separate chips instead of one.

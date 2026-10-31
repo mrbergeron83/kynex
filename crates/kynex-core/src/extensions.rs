@@ -304,7 +304,7 @@ fn project_entry<'a>(projects: &'a Map<String, Value>, cwd: &Path) -> Option<&'a
 }
 
 /// A path for comparing: `/` separators, no trailing one.
-fn norm(p: &str) -> String {
+pub(crate) fn norm(p: &str) -> String {
     let p = p.replace('\\', "/");
     let trimmed = p.trim_end_matches('/');
     if trimmed.is_empty() || trimmed.ends_with(':') { p } else { trimmed.into() }
