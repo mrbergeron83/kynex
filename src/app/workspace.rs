@@ -147,7 +147,8 @@ impl KynexApp {
     }
 
     /// Gives a session the model it starts on: the one pinned to it (restored
-    /// from its folder's sessions when it resumes), else its folder's.
+    /// from its folder's sessions when it resumes), else its folder's; and a
+    /// new one its provider.
     fn start_model(&mut self, s: &mut Session) {
         let cwd = s.cwd.clone();
         if let Some(id) = &s.session_id
@@ -155,7 +156,8 @@ impl KynexApp {
         {
             s.own_model = self.groups_for(&cwd).model_of(id).map(str::to_string);
         }
-        s.model = s.own_model.clone().unwrap_or_else(|| self.claude_settings(&cwd).model);
+        s.model = s.own_model.clone().unwrap_or_else(|| self.dir_model(&cwd));
+        self.give_provider(s);
     }
 
     /// The session the composer talks to.

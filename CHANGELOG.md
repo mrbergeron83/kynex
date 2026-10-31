@@ -18,7 +18,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Settings → Providers: your Anthropic sign-in (sign in or out), and OpenRouter: a key kept in the
   OS keychain and checked against OpenRouter (credit left, or what's wrong: a bad key, no credits,
   rate limits, an unknown model), the output cap, and My models, picked from OpenRouter's catalogue
-  with prices and free models marked. Sessions don't run on OpenRouter yet.
+  with prices and free models marked.
+- OpenRouter without a terminal: on launch Kynex picks up a setup made by hand (`OPENROUTER_API_KEY` /
+  `OR_MODEL`, or `ANTHROPIC_*` variables or a `~/.claude/settings.json` env block pointing at
+  OpenRouter), moves the key into the keychain and checks it. The sign-in screen offers OpenRouter
+  next to Anthropic, and with an OpenRouter key Kynex opens without an Anthropic sign-in, new
+  sessions running on OpenRouter.
 
 ### Changed
 

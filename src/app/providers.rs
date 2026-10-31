@@ -199,10 +199,14 @@ impl KynexApp {
             "Saving and checking the key…",
             move || {
                 Keychain::os().and_then(|k| k.set(Secret::OpenRouterKey, &key))?;
-                Ok::<_, String>((openrouter::key_hint(&key), openrouter::check(&key, &model)))
+                Ok::<_, String>((key.clone(), openrouter::check(&key, &model)))
             },
             move |this, saved, cx| match saved {
-                Ok((hint, check)) => {
+                Ok((key, check)) => {
+                    let hint = openrouter::key_hint(&key);
+                    this.openrouter_key = Some(key);
+                    this.saved.openrouter.key_removed = false;
+                    this.refresh_new_sessions();
                     if let Some(p) = this.providers_mut() {
                         p.key = KeyState::Saved(hint);
                         p.replacing = false;
@@ -244,6 +248,9 @@ impl KynexApp {
                         p.replacing = false;
                     }
                     this.saved.openrouter.last_check = None;
+                    this.saved.openrouter.key_removed = true;
+                    this.openrouter_key = None;
+                    this.refresh_new_sessions();
                     this.save();
                 }
                 Err(e) => this.providers_error(e),

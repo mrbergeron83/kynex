@@ -23,6 +23,9 @@ pub struct OpenRouterConfig {
     /// `CLAUDE_CODE_MAX_OUTPUT_TOKENS` for every OpenRouter session.
     pub max_output_tokens: u32,
     pub last_check: Option<LastCheck>,
+    /// The user removed the key in Settings, so a setup found on launch
+    /// (`OPENROUTER_API_KEY`…) isn't brought back in. Saving a key clears it.
+    pub key_removed: bool,
 }
 
 impl Default for OpenRouterConfig {
@@ -32,6 +35,7 @@ impl Default for OpenRouterConfig {
             default_model: DEFAULT_OPENROUTER_MODEL.into(),
             max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             last_check: None,
+            key_removed: false,
         }
     }
 }

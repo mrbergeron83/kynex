@@ -141,6 +141,8 @@ pub fn openrouter(text: &str) {
         }
     }
     let _ = crate::openrouter::valid_model_id(text);
+    let _ = crate::openrouter::import::find(|_| None, Some(text));
+    let _ = crate::openrouter::import::reg_value(text, "OPENROUTER_API_KEY");
     if let Some(config) = crate::openrouter::curl_config(text, "https://openrouter.ai/api/v1/key", None) {
         // Whatever the key, the config is two lines: the URL and its header.
         assert_eq!(config.lines().count(), 2, "{config:?}");

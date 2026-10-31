@@ -5,6 +5,7 @@
 
 pub(crate) mod catalogue;
 mod config;
+pub mod import;
 
 pub use catalogue::{CatalogModel, SEARCH_LIMIT, catalogue, search};
 pub use config::{LastCheck, MAX_OUTPUT_TOKENS, MIN_OUTPUT_TOKENS, OpenRouterConfig, valid_model_id};

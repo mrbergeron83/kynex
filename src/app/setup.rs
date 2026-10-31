@@ -143,6 +143,7 @@ impl KynexApp {
                     cli::Status::Missing => Setup::Missing { error: None },
                     cli::Status::LoggedOut => Setup::LoggedOut { error: None },
                 };
+                this.refresh_new_sessions();
                 cx.notify();
             })
             .ok();
@@ -231,6 +232,7 @@ impl KynexApp {
         };
         let error = |e: &Option<String>| e.clone().map(|e| div().text_xs().text_color(t.error).child(e));
         let (title, body, content): (&str, &str, AnyElement) = match &self.setup {
+            _ if self.workspace_ready() => return None,
             Setup::Checking | Setup::Ready => return None,
             Setup::Missing { error: e } => (
                 "Set up Claude Code",
@@ -278,6 +280,7 @@ impl KynexApp {
                                     .on_click(cx.listener(|this, _, _, cx| this.sign_in(true, cx))),
                             ),
                     )
+                    .child(self.render_setup_openrouter(&t, cx))
                     .into_any_element(),
             ),
             Setup::SigningIn(login) => {

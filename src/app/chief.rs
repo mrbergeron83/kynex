@@ -55,6 +55,7 @@ impl KynexApp {
                 None => Session::new(Kind::Chat, chief_dir()),
             };
             s.model = self.dir_model(&chief_dir());
+            self.give_provider(&mut s);
             s.wake = self.wake.clone();
             self.chief.live.sessions.push(s);
             self.chief.live.active = 0;
@@ -174,6 +175,12 @@ impl KynexApp {
         let spent = self.saved.chief_spent.get(path).copied().unwrap_or_default();
         let key = self.chief.workers.get(path).copied();
         let wake = self.wake.clone();
+        let launch = self.new_session_launch();
+        let give = |s: &mut Session| {
+            if s.set_provider(launch.clone()).is_ok() && !matches!(launch, kynex_core::provider::Launch::Anthropic) {
+                s.model.clear();
+            }
+        };
         let live = self.code.entry(path.to_path_buf()).or_default();
         let open = live
             .sessions
@@ -185,6 +192,7 @@ impl KynexApp {
                 None => Session::new(Kind::Code, path.to_path_buf()),
             };
             s.model = model;
+            give(&mut s);
             s.wake = wake;
             // What it used in earlier runs counts too.
             s.spent = spent;
