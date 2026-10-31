@@ -14,16 +14,24 @@ use super::state::{Active, ProjectState, View};
 impl KynexApp {
     /// Every open session, in every tab.
     pub(super) fn all_sessions(&self) -> impl Iterator<Item = &Session> {
-        self.chat.sessions.iter().chain(self.code.values().flat_map(|l| l.sessions.iter()))
+        self.chat
+            .sessions
+            .iter()
+            .chain(&self.chief.live.sessions)
+            .chain(self.code.values().flat_map(|l| l.sessions.iter()))
     }
 
     pub(super) fn all_sessions_mut(&mut self) -> impl Iterator<Item = &mut Session> {
-        self.chat.sessions.iter_mut().chain(self.code.values_mut().flat_map(|l| l.sessions.iter_mut()))
+        self.chat
+            .sessions
+            .iter_mut()
+            .chain(&mut self.chief.live.sessions)
+            .chain(self.code.values_mut().flat_map(|l| l.sessions.iter_mut()))
     }
 
     /// Copy live session ids into the saved state so they survive a restart.
     pub(super) fn sync_session_ids(&mut self) {
-        let mut changed = false;
+        let mut changed = self.sync_chief_ids();
         let chat_id = self.chat.current().and_then(|s| s.session_id.clone());
         if self.saved.chat_session_id != chat_id {
             self.saved.chat_session_id = chat_id;
@@ -39,6 +47,24 @@ impl KynexApp {
         }
         if changed {
             self.save();
+            self.save_session_models();
+        }
+    }
+
+    /// Writes the model pinned to a session that only now has an id, as
+    /// [`Self::set_session_model`] does once it has one.
+    fn save_session_models(&mut self) {
+        let pins: Vec<_> = self
+            .chat
+            .sessions
+            .iter()
+            .chain(self.code.values().flat_map(|l| l.sessions.iter()))
+            .filter_map(|s| Some((s.cwd.clone(), s.session_id.clone()?, s.own_model.clone()?)))
+            .collect();
+        for (cwd, id, model) in pins {
+            if self.groups_for(&cwd).model_of(&id) != Some(model.as_str()) {
+                self.edit_groups(&cwd, |g| g.set_model(&id, Some(&model)));
+            }
         }
     }
 
@@ -47,6 +73,14 @@ impl KynexApp {
             Active::Project(i) => self.saved.projects.get(i),
             Active::Chat => None,
         }
+    }
+
+    /// The active tab's folder: the project's path, or chat's own.
+    pub(super) fn active_dir(&self) -> PathBuf {
+        if self.in_chief() {
+            return kynex_core::paths::chief_dir();
+        }
+        self.active_project().map_or_else(chat_dir, |p| p.path.clone())
     }
 
     /// The shown session's uid.
@@ -60,6 +94,7 @@ impl KynexApp {
 
     fn active_live(&self) -> Option<&Live> {
         match self.saved.active {
+            Active::Chat if self.saved.chief_view => Some(&self.chief.live),
             Active::Chat => Some(&self.chat),
             Active::Project(i) => self.saved.projects.get(i).and_then(|p| self.code.get(&p.path)),
         }
@@ -72,30 +107,55 @@ impl KynexApp {
     /// The open sessions in the active tab's folder, created (with the saved
     /// session resumed) on first use.
     pub(super) fn live_mut(&mut self) -> Option<&mut Live> {
+        if self.in_chief() {
+            // Not until it's turned on, past its warning.
+            return self.saved.chief_consented.then(|| self.chief_live_mut());
+        }
         let wake = self.wake.clone();
-        let (kind, path, resume, model, live) = match self.saved.active {
-            Active::Chat => (Kind::Chat, chat_dir(), None, self.saved.model.clone(), &mut self.chat),
+        let (kind, path, resume) = match self.saved.active {
+            Active::Chat => (Kind::Chat, chat_dir(), None),
             Active::Project(i) => {
                 let p = self.saved.projects.get(i)?;
                 if p.view != View::Code {
                     return None;
                 }
-                let (path, resume) = (p.path.clone(), p.session_id.clone());
-                let model = self.claude_settings(&path).model_or(&self.saved.model).to_string();
-                (Kind::Code, path.clone(), resume, model, self.code.entry(path).or_default())
+                (Kind::Code, p.path.clone(), p.session_id.clone())
             }
         };
-        if live.sessions.is_empty() {
+        let empty = match kind {
+            Kind::Chat => self.chat.sessions.is_empty(),
+            Kind::Code => self.code.get(&path).is_none_or(|l| l.sessions.is_empty()),
+        };
+        if empty {
             let mut s = match resume {
-                Some(id) => Session::resume(kind, path, id, wake.clone()),
-                None => Session::new(kind, path),
+                Some(id) => Session::resume(kind, path.clone(), id, wake.clone()),
+                None => Session::new(kind, path.clone()),
             };
-            s.model = model;
+            self.start_model(&mut s);
             s.wake = wake;
+            let live = match kind {
+                Kind::Chat => &mut self.chat,
+                Kind::Code => self.code.entry(path.clone()).or_default(),
+            };
             live.sessions.push(s);
             live.active = 0;
         }
-        Some(live)
+        match kind {
+            Kind::Chat => Some(&mut self.chat),
+            Kind::Code => self.code.get_mut(&path),
+        }
+    }
+
+    /// Gives a session the model it starts on: the one pinned to it (restored
+    /// from its folder's sessions when it resumes), else its folder's.
+    fn start_model(&mut self, s: &mut Session) {
+        let cwd = s.cwd.clone();
+        if let Some(id) = &s.session_id
+            && s.own_model.is_none()
+        {
+            s.own_model = self.groups_for(&cwd).model_of(id).map(str::to_string);
+        }
+        s.model = s.own_model.clone().unwrap_or_else(|| self.claude_settings(&cwd).model);
     }
 
     /// The session the composer talks to.
@@ -118,7 +178,7 @@ impl KynexApp {
     /// Shows `s` in the active tab. Sessions it replaces keep running if
     /// they're working; idle ones close.
     pub(super) fn open_session(&mut self, mut s: Session) {
-        s.model = self.active_model();
+        self.start_model(&mut s);
         s.wake = self.wake.clone();
         let Some(live) = self.live_mut() else { return };
         let closed = live.show(s);

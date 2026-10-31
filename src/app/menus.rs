@@ -180,14 +180,14 @@ impl KynexApp {
                 }
             }
             Menu::Model => {
-                // In a project: whether picks apply everywhere or only here (#136).
-                // Switching keeps the menu open; "This project" starts from the model in use.
-                if let Some(path) = self.active_project().map(|p| p.path.clone()) {
-                    let own = self.project_model().is_some();
+                // Whether picks apply to the folder's sessions or only this one (#136).
+                // Switching keeps the menu open; "This session" starts from the model in use.
+                {
+                    let own = self.session_model().is_some();
                     let current = self.active_model();
+                    let folder = if self.active_project().is_some() { "This project" } else { "All chats" };
                     let hover = t.hover;
                     let scope = |n: usize, label: &'static str, on: bool, cx: &mut Context<Self>| {
-                        let path = path.clone();
                         let pin = (n == 1).then(|| current.clone());
                         div()
                             .id(("model-scope", n))
@@ -203,8 +203,7 @@ impl KynexApp {
                             .when(!on, |d| d.hover(move |s| s.bg(hover)))
                             .child(label)
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.set_project_model(path.clone(), pin.clone(), cx);
-                                cx.notify();
+                                this.set_session_model(pin.clone(), cx);
                             }))
                     };
                     items.push(
@@ -216,8 +215,8 @@ impl KynexApp {
                             .rounded_md()
                             .border_1()
                             .border_color(t.border_variant)
-                            .child(scope(0, "Everywhere", !own, cx))
-                            .child(scope(1, "This project", own, cx))
+                            .child(scope(0, folder, !own, cx))
+                            .child(scope(1, "This session", own, cx))
                             .into_any_element(),
                     );
                 }

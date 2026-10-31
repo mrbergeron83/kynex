@@ -176,6 +176,9 @@ impl KynexApp {
         }
         if count == 0 {
             let msg = match self.saved.active {
+                Active::Chat if self.saved.chief_view => {
+                    "Give the chief a goal. It sends the work to your projects' chief workers and reports back."
+                }
                 Active::Chat => "Start a conversation. Uses your Claude Code login, no API key needed.",
                 Active::Project(_) => "Ask Claude Code to work on this project.",
             };
@@ -538,6 +541,10 @@ impl KynexApp {
         });
 
         match item {
+            // Kynex's own messages to the chief.
+            Item::User { text, .. } if self.in_chief() && text.starts_with(kynex_core::chief::NOTICE) => {
+                self.render_chief_notice(text, cx)
+            }
             Item::User { text, images } => div()
                 .flex()
                 .flex_col()

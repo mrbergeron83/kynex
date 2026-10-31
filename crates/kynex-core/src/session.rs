@@ -278,14 +278,21 @@ pub struct Session {
     pub uid: u64,
     pub kind: Kind,
     pub cwd: PathBuf,
+    /// The model its process starts on (`--model`); empty is the CLI's default.
     pub model: String,
+    /// A model pinned to this session in the picker, over its project's.
+    pub own_model: Option<String>,
     pub items: Vec<Item>,
     pub session_id: Option<String>,
     pub busy: bool,
     /// A turn ended and the user hasn't looked at it yet; the UI clears it.
     pub finished: bool,
     pub total_cost: f64,
+    /// Tokens and cost of every turn this session object has seen, subagents included.
+    pub spent: crate::spent::Spent,
     pub context: ContextUse,
+    /// A chief worker ([`crate::chief`]): it runs with no permission prompts.
+    pub worker: bool,
     /// The live permission mode: starts at the project's default, follows the
     /// CLI's reports, and is switched from the composer without a restart.
     pub mode: project::Mode,
@@ -447,12 +454,15 @@ impl Session {
             kind,
             cwd,
             model: String::new(),
+            own_model: None,
             items: Vec::new(),
             session_id: None,
             busy: false,
             finished: false,
             total_cost: 0.0,
+            spent: Default::default(),
             context: ContextUse::default(),
+            worker: false,
             mode,
             queue: Queue::default(),
             tasks: Tasks::default(),
@@ -660,6 +670,8 @@ impl Session {
         match self.kind {
             Kind::Chat => {
                 cmd.args(["--tools", ""]);
+                // The chief of staff, in its folder: its role and Kynex's tools.
+                cmd.args(crate::chief::launch_args_for(&self.cwd));
             }
             // Read fresh on every start, so edits in Claude settings apply to the next process.
             Kind::Code => {
@@ -667,7 +679,12 @@ impl Session {
                 if let Some(settings) = perms.as_cli_settings() {
                     cmd.args(["--settings", &settings]);
                 }
-                cmd.args(["--permission-mode", self.mode.cli()]);
+                if self.worker {
+                    // No prompts, its own worktree, and the chief's contract.
+                    cmd.args(crate::chief::worker_args(&self.cwd)?);
+                } else {
+                    cmd.args(["--permission-mode", self.mode.cli()]);
+                }
                 cmd.args(claude.cli_args());
                 launched = Some(project::Launched::new(&perms, &claude));
                 // Kynex's own browser servers, under the configured names; one
@@ -1301,6 +1318,7 @@ impl Session {
                 self.context.window = known_window(&self.reply_model).or(biggest).or(self.context.window);
                 let cost = v["total_cost_usd"].as_f64().unwrap_or(0.0);
                 self.total_cost = cost.max(self.total_cost);
+                self.spent.add_turn(&v);
                 self.settle_thoughts();
                 let (tools, files) = self.turn_recap();
                 self.items.push(Item::Result {

@@ -5,6 +5,23 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A chief of staff in the Chat tab (Chat → Chief): give it a goal and it sends the work to a
+  chief worker in each project, relays their questions, and reports back as each one finishes.
+  The chief runs on Haiku and can open or create projects. Workers run on their project's model
+  with no permission prompts (a warning says so before it turns on), each in its own git worktree
+  (branch `chief-worker`), and can use subagents; pushes, deletions and publishing are flagged.
+  A reporter above the conversation shows every worker, what it's doing, its question and the
+  tokens it has used, with Stop and Stop all.
+
+### Changed
+
+- The model is per project (and chats have their own), with no pick for every tab any more.
+  "This session" at the top of the composer's model menu pins a model to the open session
+  instead, which the chip shows with a bubble; the pin is kept with the session, so it still
+  applies when the session is resumed.
+
 ## [0.0.11] - 2026-10-30
 
 ### Added

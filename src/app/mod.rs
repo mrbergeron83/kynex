@@ -30,6 +30,8 @@
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
 //! | `handoff.rs`        | "waiting for you in the browser" banner, Continue    |
+//! | `chief.rs`          | the chief of staff: its tools, workers, their reports |
+//! | `chief_view.rs`     | its view: the warning, the reporter, Kynex's messages |
 //! | `attention.rs`      | OS notifications and the icon's "needs you" dot     |
 //! | `background.rs`     | close to tray / Dock, keep awake, `claude` started early, idle sessions sleep |
 //! | `history.rs`        | ↑ / ↓ history, Ctrl+R search, stash, Esc Esc, editor |
@@ -63,6 +65,8 @@ mod app_update;
 mod appearance;
 mod attention;
 mod background;
+mod chief;
+mod chief_view;
 mod composer;
 mod drafts;
 mod extensions;
@@ -120,6 +124,7 @@ use gpui::{
 use kynex_core::cli::UpdateState;
 use kynex_core::live::{Key, Live};
 use kynex_core::paths::chat_dir;
+use kynex_core::project::ClaudeSettings;
 use kynex_core::session::{self, Attachment, Kind, Session};
 
 use drafts::Draft;
@@ -154,6 +159,8 @@ pub struct KynexApp {
     saved: Saved,
     code: HashMap<PathBuf, Live>,
     chat: Live,
+    /// The chief of staff, its server and its workers (`chief.rs`).
+    chief: chief::Chief,
     git: HashMap<PathBuf, Entity<GitView>>,
     /// The folder whose Git view is open in a modal over the conversation.
     git_modal: Option<PathBuf>,
@@ -322,7 +329,7 @@ impl KynexApp {
             Some(id) => Session::resume(Kind::Chat, chat_dir(), id, wake.clone()),
             None => Session::new(Kind::Chat, chat_dir()),
         };
-        chat.model = saved.model.clone();
+        chat.model = ClaudeSettings::load(&chat_dir()).model;
         chat.wake = wake.clone();
         let chat = Live::of(chat);
 
@@ -419,6 +426,7 @@ impl KynexApp {
             saved,
             code: HashMap::new(),
             chat,
+            chief: Default::default(),
             git: HashMap::new(),
             git_modal: None,
             worktrees: HashMap::new(),
@@ -582,6 +590,7 @@ impl KynexApp {
                     .ok();
             });
         }
+        self.poll_chief(cx);
         self.restart_idle();
         self.sync_session_ids();
         self.sync_attention(cx);
@@ -673,6 +682,15 @@ impl Render for KynexApp {
                         )),
                 )
                 .into_any_element()
+        } else if self.in_chief() && !self.saved.chief_consented {
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .child(self.render_toolbar(cx))
+                .child(self.render_chief_consent(cx))
+                .into_any_element()
         } else {
             div()
                 .flex()
@@ -688,6 +706,7 @@ impl Render for KynexApp {
                         .bg(t.editor)
                         .child(self.render_toolbar(cx))
                         .children(self.render_session_header(cx))
+                        .children(self.render_reporter(window, cx))
                         // The timeline runs the full height beside the transcript
                         // and the composer under it, down to the terminal dock.
                         .child(

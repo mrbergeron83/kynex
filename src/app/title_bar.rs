@@ -70,7 +70,9 @@ impl KynexApp {
             None => (0..n).collect(),
         };
         *self.tab_spans.borrow_mut() = vec![(0., 0.); n];
-        let mut tabs = vec![self.render_tab(0, 0, "Chat".into(), None, None, status(&self.chat), cx)];
+        let (chat, chief) = (status(&self.chat), status(&self.chief.live));
+        let chat = (chat.0 || chief.0, chat.1 || chief.1, chat.2 || chief.2);
+        let mut tabs = vec![self.render_tab(0, 0, "Chat".into(), None, None, chat, cx)];
         for (slot, i) in order.into_iter().enumerate() {
             let p = &self.saved.projects[i];
             let state = self.code.get(&p.path).map_or((false, false, false), status);
