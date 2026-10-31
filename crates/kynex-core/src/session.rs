@@ -302,6 +302,10 @@ pub struct Session {
     pub queue: Queue,
     /// Reopened from a past conversation ([`Self::resume`]), not started here.
     reopened: bool,
+    /// `session_id` names a conversation the CLI has a log of: reopened, or
+    /// sent a message. A process warmed up early reports an id before that,
+    /// which a restart mustn't `--resume` ("No conversation found").
+    conversation: bool,
     /// Background tasks running in this session's process.
     pub tasks: Tasks,
     /// The MCP servers its process reported when it started, and how they're doing.
@@ -471,6 +475,7 @@ impl Session {
             mode,
             queue: Queue::default(),
             reopened: false,
+            conversation: false,
             tasks: Tasks::default(),
             mcp: Vec::new(),
             mcp_tools: Default::default(),
@@ -561,6 +566,7 @@ impl Session {
         let mut s = Self::new(kind, cwd);
         s.session_id = Some(id);
         s.reopened = true;
+        s.conversation = true;
         s.wake = wake;
         s.load(None);
         s
@@ -649,6 +655,7 @@ impl Session {
             }
             None => {
                 self.session_id = None;
+                self.conversation = false;
                 self.resume_at = None;
             }
         }
@@ -703,6 +710,11 @@ impl Session {
     /// Whether this session wants the user: a turn ended unseen, or a prompt waits.
     pub fn wants_you(&self) -> bool {
         self.finished || self.waiting()
+    }
+
+    /// The conversation a new process continues, if there is one to continue.
+    fn resume_id(&self) -> Option<&str> {
+        self.session_id.as_deref().filter(|_| self.conversation)
     }
 
     fn spawn(&mut self) -> Result<(), String> {
@@ -767,7 +779,7 @@ impl Session {
         if !self.model.is_empty() {
             cmd.args(["--model", &self.model]);
         }
-        if let Some(id) = &self.session_id {
+        if let Some(id) = self.resume_id() {
             cmd.args(["--resume", id]);
             // After a rewind: continue from there, branching off what came after.
             if let Some(at) = self.resume_at.take() {
@@ -847,6 +859,7 @@ impl Session {
         self.items.push(Item::User { text, images });
         self.busy = true;
         self.talked = true;
+        self.conversation = true;
         self.answered = false;
         self.quiet_since = Instant::now();
         self.active_at = Instant::now();
@@ -2621,6 +2634,21 @@ mod tests {
         s.use_model("new".into());
         assert!(s.child.is_some() && s.model == "old");
         s.kill();
+    }
+
+    #[test]
+    fn a_warmed_up_id_is_not_resumed() {
+        // A process warmed up early reported an id, then stopped (sleep, a
+        // settings restart): no log was written, so the next one starts fresh.
+        let mut s = Session::new(Kind::Code, std::env::temp_dir());
+        s.handle(json!({ "type": "system", "subtype": "init", "session_id": "early" }));
+        assert_eq!(s.resume_id(), None);
+        // Once a message went out, the conversation is resumed.
+        s.conversation = true;
+        assert_eq!(s.resume_id(), Some("early"));
+        // A reopened one always is.
+        let resumed = Session::resume(Kind::Code, std::env::temp_dir(), "abc".into(), Arc::new(|| {}));
+        assert_eq!(resumed.resume_id(), Some("abc"));
     }
 
     #[test]
