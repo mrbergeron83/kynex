@@ -220,6 +220,21 @@ impl Launch {
         Env { set, remove }
     }
 
+    /// This provider's variables for `--settings`, which outranks an `env`
+    /// block in the user's `~/.claude/settings.json` (the environment
+    /// doesn't). The key isn't among them: a command line is no place for it,
+    /// so it stays in the environment only. `None` for Anthropic.
+    pub fn settings_env(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
+        let env = self.env(std::iter::empty::<(&str, &str)>());
+        let vars: serde_json::Map<String, serde_json::Value> = env
+            .set
+            .into_iter()
+            .filter(|(name, _)| *name != "ANTHROPIC_AUTH_TOKEN")
+            .map(|(name, value)| (name.to_string(), value.into()))
+            .collect();
+        (!vars.is_empty()).then_some(vars)
+    }
+
     /// Gives `cmd` this provider's environment, on top of Kynex's own.
     pub fn apply(&self, cmd: &mut Command) {
         let env = self.env(std::env::vars_os());
@@ -280,8 +295,9 @@ pub fn overrides_warning(names: &[String]) -> Option<String> {
         return None;
     }
     Some(format!(
-        "The \"env\" block in ~/.claude/settings.json sets {}, which may override the provider Kynex picks. \
-         Remove {} to let Kynex choose.",
+        "The \"env\" block in ~/.claude/settings.json sets {}, and Claude Code applies it over Kynex's \
+         choices. OpenRouter sessions override it, but Anthropic sessions (and an OpenRouter key set there) \
+         follow it. Remove {} to let Kynex choose.",
         names.join(", "),
         if names.len() == 1 { "it" } else { "them" }
     ))
@@ -457,6 +473,17 @@ mod tests {
         assert!(Provider::OpenRouter.shows_stderr("Error: something real"));
         assert!(!Provider::Anthropic.shows_stderr("  "));
         assert!(Provider::Anthropic.knows_cost() && !Provider::OpenRouter.knows_cost());
+    }
+
+    #[test]
+    fn settings_carry_everything_but_the_key() {
+        let vars = openrouter("qwen/qwen3-coder", 8000).settings_env().unwrap();
+        assert_eq!(vars["ANTHROPIC_BASE_URL"], "https://openrouter.ai/api");
+        assert_eq!(vars["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "qwen/qwen3-coder");
+        assert_eq!(vars["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], "8000");
+        assert!(!vars.contains_key("ANTHROPIC_AUTH_TOKEN"));
+        assert!(!serde_json::to_string(&vars).unwrap().contains("sk-or-test"));
+        assert_eq!(Launch::Anthropic.settings_env(), None);
     }
 
     #[test]

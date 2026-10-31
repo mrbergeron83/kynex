@@ -721,6 +721,13 @@ impl Session {
             "stdio",
         ]);
         let mut launched = None;
+        // One `--settings`: the project's rules, and the provider's variables,
+        // which outrank an env block in the user's own settings.
+        let launch = self.provider.with_model(&self.model);
+        let mut settings = serde_json::Map::new();
+        if let Some(env) = launch.settings_env() {
+            settings.insert("env".into(), env.into());
+        }
         match self.kind {
             Kind::Chat => {
                 cmd.args(["--tools", ""]);
@@ -731,8 +738,10 @@ impl Session {
             Kind::Code => {
                 let perms = project::Permissions::load(&self.cwd);
                 let claude = project::ClaudeSettings::load(&self.cwd).for_provider(self.provider.provider());
-                if let Some(settings) = perms.as_cli_settings() {
-                    cmd.args(["--settings", &settings]);
+                if let Some(Value::Object(rules)) =
+                    perms.as_cli_settings().and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                {
+                    settings.extend(rules);
                 }
                 if self.worker {
                     // No prompts, its own worktree, and the chief's contract.
@@ -751,6 +760,9 @@ impl Session {
                     cmd.args(["--mcp-config", &crate::browser_server::mcp_config(ready)]);
                 }
             }
+        }
+        if !settings.is_empty() {
+            cmd.args(["--settings", &Value::Object(settings).to_string()]);
         }
         if !self.model.is_empty() {
             cmd.args(["--model", &self.model]);

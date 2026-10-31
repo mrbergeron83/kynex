@@ -34,6 +34,9 @@ pub struct ProvidersView {
     /// What's underway: "Checking the key…".
     busy: Option<&'static str>,
     error: Option<String>,
+    /// Provider variables in `~/.claude/settings.json`'s env block, which may
+    /// override what Kynex sets, in words; read when Settings opens.
+    overrides: Option<String>,
 }
 
 #[derive(Clone)]
@@ -85,6 +88,7 @@ impl KynexApp {
         .detach();
         self.load_account(cx);
         self.load_openrouter_key(cx);
+        self.load_settings_overrides(cx);
         ProvidersView {
             account: None,
             key: KeyState::Loading,
@@ -95,11 +99,26 @@ impl KynexApp {
             catalogue: None,
             busy: None,
             error: None,
+            overrides: None,
         }
     }
 
     fn providers_mut(&mut self) -> Option<&mut ProvidersView> {
         self.app_settings.as_mut().map(|s| &mut s.providers)
+    }
+
+    fn load_settings_overrides(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let names = cx.background_spawn(async { kynex_core::provider::user_settings_overrides() }).await;
+            this.update(cx, |this, cx| {
+                if let Some(p) = this.providers_mut() {
+                    p.overrides = kynex_core::provider::overrides_warning(&names);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn load_account(&mut self, cx: &mut Context<Self>) {
@@ -331,10 +350,26 @@ impl KynexApp {
 
     pub(super) fn render_providers(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
         let Some(p) = self.app_settings.as_ref().map(|s| &s.providers) else { return div() };
+        let overrides = p.overrides.clone().map(|warning| {
+            div()
+                .flex()
+                .items_start()
+                .gap_2()
+                .px_2()
+                .py_1p5()
+                .rounded_md()
+                .border_1()
+                .border_color(t.warning)
+                .text_xs()
+                .text_color(t.text_muted)
+                .child(div().mt(px(1.)).child(icon(Icon::Shield, t.warning).size_3()))
+                .child(div().flex_1().min_w_0().child(warning))
+        });
         div()
             .flex()
             .flex_col()
             .gap_6()
+            .children(overrides)
             .child(self.render_anthropic(p, t, cx))
             .child(self.render_openrouter_key(p, t, cx))
             .child(self.render_output_cap(p, t, cx))
