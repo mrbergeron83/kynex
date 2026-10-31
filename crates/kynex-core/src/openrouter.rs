@@ -37,6 +37,15 @@ pub struct KeyInfo {
 }
 
 impl KeyInfo {
+    /// The credit in a few characters, for the footer: "$4.20 left", "$1.50 used", "Free".
+    pub fn short(&self) -> String {
+        match self.limit_remaining {
+            Some(left) => format!("${left:.2} left"),
+            None if self.is_free_tier => "Free tier".into(),
+            None => format!("${:.2} used", self.usage),
+        }
+    }
+
     /// The credit left, in words: "$4.20 left of $10.00", "$1.50 used, no limit".
     pub fn credit(&self) -> String {
         match (self.limit_remaining, self.limit) {
@@ -110,6 +119,14 @@ pub fn key_hint(key: &str) -> String {
     };
     let tail: String = chars[chars.len() - 4..].iter().collect();
     format!("{prefix}…{tail}")
+}
+
+/// What OpenRouter says about `key` now: its credit, with no test request.
+/// Blocks on one request.
+pub fn credit(key: &str) -> Result<KeyInfo, Problem> {
+    let (status, body) = request(key, KEY_URL, None)?;
+    answer(status, &body, "")?;
+    key_info(&body).ok_or_else(|| Problem::Other(status, "no key details in the answer".into()))
 }
 
 /// Checks `key` and `model`: the key's validity and credit, then one tiny
@@ -321,9 +338,11 @@ mod tests {
         assert_eq!(info.label.as_deref(), Some("sk-or-v1-abc...xyz"));
         assert_eq!((info.usage, info.limit, info.limit_remaining), (1.25, Some(10.0), Some(8.75)));
         assert_eq!(info.credit(), "$8.75 left of $10.00");
+        assert_eq!(info.short(), "$8.75 left");
 
         let unlimited = key_info(r#"{"data":{"usage":1.5,"limit":null,"limit_remaining":null}}"#).unwrap();
         assert_eq!(unlimited.credit(), "$1.50 used, no limit on this key");
+        assert_eq!(unlimited.short(), "$1.50 used");
         let free = key_info(r#"{"data":{"usage":0,"is_free_tier":true}}"#).unwrap();
         assert_eq!(free.credit(), "free tier: free models only");
 

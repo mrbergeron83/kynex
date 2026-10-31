@@ -62,7 +62,7 @@ impl KynexApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                this.openrouter_loaded(loaded);
+                this.openrouter_loaded(loaded, cx);
                 cx.notify();
             })
             .ok();
@@ -70,7 +70,7 @@ impl KynexApp {
         .detach();
     }
 
-    fn openrouter_loaded(&mut self, loaded: Loaded) {
+    fn openrouter_loaded(&mut self, loaded: Loaded, cx: &mut Context<Self>) {
         match loaded {
             Loaded::Key(key) => self.openrouter_key = key,
             Loaded::NoKeychain(e) => eprintln!("kynex: no keychain for the OpenRouter key: {e}"),
@@ -104,6 +104,35 @@ impl KynexApp {
             }
         }
         self.refresh_new_sessions();
+        self.refresh_openrouter_credit(cx);
+    }
+
+    /// Asks OpenRouter what's left on the key, for the footer; at most every
+    /// few seconds, however many turns end.
+    pub(super) fn refresh_openrouter_credit(&mut self, cx: &mut Context<Self>) {
+        const MIN_GAP: std::time::Duration = std::time::Duration::from_secs(10);
+        let Some(key) = self.openrouter_key.clone() else {
+            self.openrouter_credit = None;
+            return;
+        };
+        let recent = self.openrouter_credit.as_ref().is_some_and(|(_, at)| at.elapsed() < MIN_GAP);
+        if self.openrouter_credit_asking || recent {
+            return;
+        }
+        self.openrouter_credit_asking = true;
+        cx.spawn(async move |this, cx| {
+            let credit = cx.background_spawn(async move { openrouter::credit(&key) }).await;
+            this.update(cx, |this, cx| {
+                this.openrouter_credit_asking = false;
+                match credit {
+                    Ok(info) => this.openrouter_credit = Some((info, std::time::Instant::now())),
+                    Err(e) => eprintln!("kynex: couldn't read the OpenRouter credit: {e}"),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Whether the CLI can't run Anthropic sessions: not signed in.
@@ -263,6 +292,7 @@ impl KynexApp {
                         this.openrouter_key = Some(key);
                         this.setup_key.update(cx, |input, cx| input.set_text("", cx));
                         this.refresh_new_sessions();
+                        this.refresh_openrouter_credit(cx);
                     }
                     Err(e) => this.setup_key_error = Some(e),
                 }

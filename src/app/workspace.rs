@@ -32,16 +32,19 @@ impl KynexApp {
     /// Copy live session ids into the saved state so they survive a restart.
     pub(super) fn sync_session_ids(&mut self) {
         let mut changed = self.sync_chief_ids();
-        let chat_id = self.chat.current().and_then(|s| s.session_id.clone());
+        // A new session's early process may report an id before anything is
+        // sent; it names no conversation, so it isn't kept to resume.
+        let started = |s: &Session| s.session_id.clone().filter(|_| !s.is_new());
+        let chat_id = self.chat.current().and_then(started);
         if self.saved.chat_session_id != chat_id {
             self.saved.chat_session_id = chat_id;
             changed = true;
         }
         for p in &mut self.saved.projects {
             if let Some(s) = self.code.get(&p.path).and_then(Live::current)
-                && p.session_id != s.session_id
+                && p.session_id != started(s)
             {
-                p.session_id = s.session_id.clone();
+                p.session_id = started(s);
                 changed = true;
             }
         }
@@ -60,6 +63,7 @@ impl KynexApp {
             .sessions
             .iter()
             .chain(self.code.values().flat_map(|l| l.sessions.iter()))
+            .filter(|s| !s.is_new())
             .filter_map(|s| Some((s.cwd.clone(), s.session_id.clone()?, s.own_model.clone(), s.provider().provider())))
             .collect();
         for (cwd, id, model, provider) in started {

@@ -207,6 +207,8 @@ impl KynexApp {
                     this.openrouter_key = Some(key);
                     this.saved.openrouter.key_removed = false;
                     this.refresh_new_sessions();
+                    this.openrouter_credit = None;
+                    this.refresh_openrouter_credit(cx);
                     if let Some(p) = this.providers_mut() {
                         p.key = KeyState::Saved(hint);
                         p.replacing = false;
@@ -250,6 +252,7 @@ impl KynexApp {
                     this.saved.openrouter.last_check = None;
                     this.saved.openrouter.key_removed = true;
                     this.openrouter_key = None;
+                    this.openrouter_credit = None;
                     this.refresh_new_sessions();
                     this.save();
                 }

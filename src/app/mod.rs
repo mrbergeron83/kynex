@@ -306,6 +306,9 @@ pub struct KynexApp {
     /// with it, new sessions can run on OpenRouter and a user signed out of
     /// Anthropic gets past the setup screen.
     openrouter_key: Option<String>,
+    /// The OpenRouter key's credit for the footer, and when it was asked.
+    openrouter_credit: Option<(kynex_core::openrouter::KeyInfo, std::time::Instant)>,
+    openrouter_credit_asking: bool,
     /// The setup screen's OpenRouter key field, while its check runs, and why it failed.
     setup_key: Entity<TextInput>,
     setup_key_busy: bool,
@@ -527,6 +530,8 @@ impl KynexApp {
             setup: Setup::Checking,
             login_code,
             openrouter_key: None,
+            openrouter_credit: None,
+            openrouter_credit_asking: false,
             setup_key,
             setup_key_busy: false,
             setup_key_error: None,
@@ -554,6 +559,7 @@ impl KynexApp {
         let mut shown_ended = false;
         // Sessions whose history came in from their log, and how many items went in front.
         let mut histories = Vec::new();
+        let mut openrouter_turn_ended = false;
         for s in self.all_sessions_mut() {
             // Before `seen`: history isn't news (no toasts for old tasks).
             if let Some(n) = s.take_history() {
@@ -571,6 +577,8 @@ impl KynexApp {
                 touched.insert(s.cwd.clone());
             }
             shown_ended |= was_busy && !s.busy && Some(s.uid) == shown;
+            openrouter_turn_ended |=
+                was_busy && !s.busy && s.provider().provider() == kynex_core::provider::Provider::OpenRouter;
             for item in s.items.get(seen..).into_iter().flatten() {
                 if let session::Item::Task(n) = item {
                     ended.push((s.uid, n.clone()));
@@ -589,6 +597,10 @@ impl KynexApp {
         }
         for (key, n) in histories {
             self.history_came(key, n);
+        }
+        // A turn spent some of it.
+        if openrouter_turn_ended {
+            self.refresh_openrouter_credit(cx);
         }
         if let Some(limits) = limits {
             self.limits_reported(limits, cx);

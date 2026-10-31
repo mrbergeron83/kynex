@@ -363,7 +363,7 @@ impl KynexApp {
     /// Keeps the chief's and its workers' session ids for the next run.
     pub(super) fn sync_chief_ids(&mut self) -> bool {
         let mut changed = false;
-        let id = self.chief.live.current().and_then(|s| s.session_id.clone());
+        let id = self.chief.live.current().filter(|s| !s.is_new()).and_then(|s| s.session_id.clone());
         if id.is_some() && self.saved.chief_session_id != id {
             self.saved.chief_session_id = id;
             changed = true;
@@ -373,6 +373,7 @@ impl KynexApp {
                 .code
                 .get(path)
                 .and_then(|l| l.sessions.iter().find(|s| s.uid == *key))
+                .filter(|s| !s.is_new())
                 .and_then(|s| s.session_id.clone());
             if let Some(id) = id
                 && self.saved.chief_workers.get(path) != Some(&id)

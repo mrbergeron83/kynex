@@ -69,6 +69,7 @@ impl KynexApp {
             .text_xs()
             .children(resources)
             .child(div().flex_1())
+            .children(self.render_openrouter_credit(cx))
             .children(self.render_usage(cx))
             .children(self.render_update_pill(cx))
     }
