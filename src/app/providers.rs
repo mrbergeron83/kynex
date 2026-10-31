@@ -603,6 +603,7 @@ impl KynexApp {
                             div().truncate().text_xs().text_color(t.text_muted).child(format!("{} · {detail}", m.name)),
                         ),
                 )
+                .when(!m.tools, |d| d.child(tag("No tools", t)))
                 .when(m.is_free(), |d| d.child(tag("Free", t)))
                 .when(added, |d| d.child(tag("Added", t)))
         });

@@ -25,6 +25,9 @@ pub struct SessionGroups {
     /// Models pinned to a session, by session id, over the project's own;
     /// empty is the CLI's default.
     pub models: BTreeMap<String, String>,
+    /// The provider each session ran on, by session id, when it isn't
+    /// Anthropic; a reopened session runs on it again.
+    pub providers: BTreeMap<String, crate::provider::Provider>,
 }
 
 /// The longest name a session can be given, in characters.
@@ -207,6 +210,20 @@ impl SessionGroups {
         self.models.get(id).map(String::as_str)
     }
 
+    /// The provider a session ran on: Anthropic unless recorded otherwise.
+    pub fn provider_of(&self, id: &str) -> crate::provider::Provider {
+        self.providers.get(id).copied().unwrap_or_default()
+    }
+
+    /// Records the provider a session runs on.
+    pub fn set_provider(&mut self, id: &str, provider: crate::provider::Provider) {
+        if provider == crate::provider::Provider::Anthropic {
+            self.providers.remove(id);
+        } else {
+            self.providers.insert(id.to_string(), provider);
+        }
+    }
+
     /// Pins a model to a session (`Some`), or has it follow the project's (`None`).
     pub fn set_model(&mut self, id: &str, model: Option<&str>) {
         match model {
@@ -335,6 +352,7 @@ impl SessionGroups {
         self.pinned.retain(|s| s != id);
         self.names.remove(id);
         self.models.remove(id);
+        self.providers.remove(id);
     }
 
     /// Sorts session ids (newest first) into the pinned ones, the top level,
@@ -563,6 +581,22 @@ mod tests {
         g.set_model("t", Some("opus"));
         g.forget("t");
         assert_eq!(g, SessionGroups::default());
+    }
+
+    #[test]
+    fn providers_recorded_per_session() {
+        use crate::provider::Provider;
+        let mut g = SessionGroups::default();
+        assert_eq!(g.provider_of("s"), Provider::Anthropic);
+        g.set_provider("s", Provider::OpenRouter);
+        assert_eq!(g.provider_of("s"), Provider::OpenRouter);
+        let back: SessionGroups = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
+        assert_eq!(back.provider_of("s"), Provider::OpenRouter);
+        g.set_provider("s", Provider::Anthropic);
+        assert!(g.providers.is_empty());
+        g.set_provider("t", Provider::OpenRouter);
+        g.forget("t");
+        assert!(g.providers.is_empty());
     }
 
     #[test]

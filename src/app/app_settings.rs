@@ -44,7 +44,8 @@ struct CliInfo {
 }
 
 const SECTIONS: [&str; 5] = ["General", "Providers", "Appearance", "Keyboard", "Storage"];
-/// Where Storage is in [`SECTIONS`], for opening Settings on it.
+/// Where Providers and Storage are in [`SECTIONS`], for opening Settings on them.
+pub(super) const PROVIDERS_SECTION: usize = 1;
 pub(super) const STORAGE_SECTION: usize = 4;
 
 impl KynexApp {
@@ -61,6 +62,17 @@ impl KynexApp {
             s.stale = true;
         }
         self.read_cli_version(cx);
+        cx.notify();
+    }
+
+    /// Opens Settings on one of its [`SECTIONS`].
+    pub(super) fn open_settings_on(&mut self, section: usize, cx: &mut Context<Self>) {
+        if self.app_settings.is_none() {
+            self.open_app_settings(cx);
+        }
+        if let Some(s) = &mut self.app_settings {
+            s.section = section;
+        }
         cx.notify();
     }
 

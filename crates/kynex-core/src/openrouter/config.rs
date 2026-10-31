@@ -7,8 +7,6 @@ use serde::{Deserialize, Serialize};
 use super::{KeyInfo, Problem};
 use crate::provider::{DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_OPENROUTER_MODEL, OpenRouterSettings};
 
-/// The free variant offered next to the default from the start.
-const DEFAULT_FREE_MODEL: &str = "qwen/qwen3-coder:free";
 /// The output cap's bounds: enough for an edit, and no more than models give.
 pub const MIN_OUTPUT_TOKENS: u32 = 1000;
 pub const MAX_OUTPUT_TOKENS: u32 = 128_000;
@@ -31,7 +29,8 @@ pub struct OpenRouterConfig {
 impl Default for OpenRouterConfig {
     fn default() -> Self {
         Self {
-            models: vec![DEFAULT_OPENROUTER_MODEL.into(), DEFAULT_FREE_MODEL.into()],
+            // Free variants come and go (qwen3-coder:free went in 2026), so none is assumed.
+            models: vec![DEFAULT_OPENROUTER_MODEL.into()],
             default_model: DEFAULT_OPENROUTER_MODEL.into(),
             max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             last_check: None,
@@ -134,9 +133,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn starts_with_the_coder_and_its_free_variant() {
+    fn starts_with_the_coder() {
         let c = OpenRouterConfig::default();
-        assert_eq!(c.models, ["qwen/qwen3-coder", "qwen/qwen3-coder:free"]);
+        assert_eq!(c.models, ["qwen/qwen3-coder"]);
         assert_eq!(c.default_model(), "qwen/qwen3-coder");
         assert_eq!(c.settings(None), OpenRouterSettings { model: "qwen/qwen3-coder".into(), max_output_tokens: 8000 });
         assert_eq!(c.settings(Some("qwen/qwen3-coder:free")).model, "qwen/qwen3-coder:free");
@@ -145,6 +144,7 @@ mod tests {
     #[test]
     fn adds_removes_and_picks_the_default() {
         let mut c = OpenRouterConfig::default();
+        c.add_model("qwen/qwen3-coder:free").unwrap();
         c.add_model(" moonshotai/kimi-k2 ").unwrap();
         c.add_model("moonshotai/kimi-k2").unwrap();
         assert_eq!(c.models.len(), 3);

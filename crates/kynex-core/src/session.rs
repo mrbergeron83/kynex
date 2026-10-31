@@ -526,6 +526,17 @@ impl Session {
         Ok(())
     }
 
+    /// Puts a reopened session back on the provider it ran on, before any
+    /// process of this run starts. Its conversation is the same; only a session
+    /// already running here, or one that has started, keeps what it has.
+    pub fn restore_provider(&mut self, provider: crate::provider::Launch) -> Result<(), String> {
+        if self.child.is_some() || self.talked {
+            return Err(format!("This session already runs on {}.", self.provider.provider().label()));
+        }
+        self.provider = provider;
+        Ok(())
+    }
+
     /// Reopen a previous conversation: replay its transcript from Claude Code's
     /// own session log, and `--resume` it on the next message. The log is read
     /// on a thread of its own, newest turns first, so this returns at once;
@@ -678,7 +689,7 @@ impl Session {
     }
 
     fn spawn(&mut self) -> Result<(), String> {
-        let mut cmd = claude_command(&self.cwd, &self.provider);
+        let mut cmd = claude_command(&self.cwd, &self.provider.with_model(&self.model));
         // Checkpoints of the files Claude edits, so a rewind can restore them.
         cmd.env(crate::rewind::CHECKPOINTS_ENV, "1");
         cmd.args([
@@ -701,7 +712,8 @@ impl Session {
             }
             // Read fresh on every start, so edits in Claude settings apply to the next process.
             Kind::Code => {
-                let (perms, claude) = (project::Permissions::load(&self.cwd), project::ClaudeSettings::load(&self.cwd));
+                let perms = project::Permissions::load(&self.cwd);
+                let claude = project::ClaudeSettings::load(&self.cwd).for_provider(self.provider.provider());
                 if let Some(settings) = perms.as_cli_settings() {
                     cmd.args(["--settings", &settings]);
                 }
@@ -907,6 +919,7 @@ impl Session {
     /// (see [`project::Launched::update`]); otherwise marks it [`Self::stale`].
     /// A process that isn't running reads them when it starts.
     pub fn apply_settings(&mut self, perms: &project::Permissions, claude: &project::ClaudeSettings) {
+        let claude = &claude.for_provider(self.provider.provider());
         let Some(launched) = &mut self.launched else { return };
         match launched.update(perms, claude) {
             project::Update::Same => {}
@@ -2559,6 +2572,11 @@ mod tests {
         let mut resumed = Session::new(Kind::Code, std::env::temp_dir());
         resumed.session_id = Some("abc".into());
         assert!(resumed.set_provider(openrouter()).is_err());
+        // Reopened, it goes back to the provider it ran on, until it starts here.
+        resumed.restore_provider(openrouter()).unwrap();
+        assert_eq!(resumed.provider().provider(), Provider::OpenRouter);
+        resumed.talked = true;
+        assert!(resumed.restore_provider(Launch::Anthropic).is_err());
     }
 
     #[test]

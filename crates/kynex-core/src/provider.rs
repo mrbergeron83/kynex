@@ -50,6 +50,17 @@ pub enum Provider {
 }
 
 impl Provider {
+    /// Whether its models take Claude's `--effort` levels. OpenRouter's
+    /// mostly don't, so OpenRouter sessions get none and the picker hides.
+    pub fn takes_effort(self) -> bool {
+        self == Provider::Anthropic
+    }
+
+    /// For `skip_serializing_if`: Anthropic, the default, isn't written.
+    pub fn is_anthropic_ref(&self) -> bool {
+        *self == Provider::Anthropic
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Provider::Anthropic => "Anthropic",
@@ -115,6 +126,19 @@ impl Launch {
             .get(crate::secrets::Secret::OpenRouterKey)?
             .ok_or("No OpenRouter key is saved. Add one in Settings → Providers.")?;
         Ok(Launch::OpenRouter { key, settings })
+    }
+
+    /// This provider for a session on `model`: OpenRouter's main and background
+    /// models all become it, so a switch reaches every call; empty keeps its
+    /// own. Anthropic is unchanged (its model goes as `--model`).
+    pub fn with_model(&self, model: &str) -> Launch {
+        match self {
+            Launch::OpenRouter { key, settings } if !model.trim().is_empty() => Launch::OpenRouter {
+                key: key.clone(),
+                settings: OpenRouterSettings { model: model.trim().to_string(), ..settings.clone() },
+            },
+            _ => self.clone(),
+        }
     }
 
     pub fn provider(&self) -> Provider {
@@ -389,6 +413,19 @@ mod tests {
         k.set(Secret::OpenRouterKey, "sk-or-saved").unwrap();
         let launch = Launch::openrouter(OpenRouterSettings::default(), &k).unwrap();
         assert_eq!(get(&launch.env(NONE), "ANTHROPIC_AUTH_TOKEN"), Some("sk-or-saved"));
+    }
+
+    #[test]
+    fn a_session_model_reaches_every_openrouter_model_variable() {
+        let env = openrouter("qwen/qwen3-coder", 8000).with_model("moonshotai/kimi-k2").env(NONE);
+        for name in MODELS {
+            assert_eq!(get(&env, name), Some("moonshotai/kimi-k2"), "{name}");
+        }
+        assert_eq!(get(&env, "CLAUDE_CODE_MAX_OUTPUT_TOKENS"), Some("8000"));
+        let kept = openrouter("qwen/qwen3-coder", 8000).with_model(" ").env(NONE);
+        assert_eq!(get(&kept, "ANTHROPIC_MODEL"), Some("qwen/qwen3-coder"));
+        assert_eq!(Launch::Anthropic.with_model("opus"), Launch::Anthropic);
+        assert!(Provider::Anthropic.takes_effort() && !Provider::OpenRouter.takes_effort());
     }
 
     #[test]

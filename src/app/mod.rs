@@ -577,7 +577,7 @@ impl KynexApp {
                 }
             }
             if let Some(init) = s.take_init() {
-                reports.push((s.cwd.clone(), init));
+                reports.push((s.cwd.clone(), init, s.provider().provider()));
             }
             // The account's limits: whichever session reported last is newest.
             if let Some(newer) = s.take_limits() {
@@ -594,9 +594,12 @@ impl KynexApp {
             self.limits_reported(limits, cx);
         }
         // What a session reported as it started: its folder's commands, the models.
-        for (cwd, init) in reports {
+        for (cwd, init, provider) in reports {
             self.commands_reported(cwd, init.commands, cx);
-            models::reported(init.models, cx);
+            // Claude's model list; an OpenRouter session's models are My models.
+            if provider == kynex_core::provider::Provider::Anthropic {
+                models::reported(init.models, cx);
+            }
         }
         if let Some(key) = shown.filter(|_| shown_ended) {
             self.turn_ended(key);

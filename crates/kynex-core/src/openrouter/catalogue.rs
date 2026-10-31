@@ -19,6 +19,9 @@ pub struct CatalogModel {
     pub completion: Option<f64>,
     /// The context window, in tokens.
     pub context: Option<u64>,
+    /// It takes tool calls. Claude Code works through tools, so a model
+    /// without them can only chat.
+    pub tools: bool,
 }
 
 impl CatalogModel {
@@ -91,6 +94,8 @@ pub(crate) fn parse(body: &str) -> Result<Vec<CatalogModel>, String> {
                 prompt: per_million(&m["pricing"]["prompt"]),
                 completion: per_million(&m["pricing"]["completion"]),
                 context: m["context_length"].as_u64(),
+                // Lists without the field are taken at their word: assume tools.
+                tools: m["supported_parameters"].as_array().is_none_or(|p| p.iter().any(|v| v == "tools")),
             })
         })
         .collect();
@@ -122,7 +127,8 @@ pub fn search<'a>(models: &'a [CatalogModel], query: &str) -> Vec<&'a CatalogMod
             Some((rank, m))
         })
         .collect();
-    found.sort_by_key(|(rank, m)| (*rank, m.id.len()));
+    // Models that can't use tools go last: Claude Code can't edit files with them.
+    found.sort_by_key(|(rank, m)| (!m.tools, *rank, m.id.len()));
     found.into_iter().take(SEARCH_LIMIT).map(|(_, m)| m).collect()
 }
 
@@ -136,7 +142,7 @@ mod tests {
         {"id":"qwen/qwen3-coder:free","name":"Qwen: Qwen3 Coder 480B A35B (free)","context_length":262144,
          "pricing":{"prompt":"0","completion":"0"}},
         {"id":"openrouter/auto","name":"Auto Router","context_length":2000000,
-         "pricing":{"prompt":"-1","completion":"-1"}},
+         "pricing":{"prompt":"-1","completion":"-1"}, "supported_parameters":["temperature"]},
         {"id":"anthropic/claude-sonnet-4","name":"Anthropic: Claude Sonnet 4","context_length":1000000,
          "pricing":{"prompt":"0.000003","completion":"0.000015"}},
         {"name":"no id"},
@@ -156,6 +162,7 @@ mod tests {
         assert_eq!(models[3].price(), "Free");
         assert_eq!(models[1].price(), "Price varies");
         assert_eq!(models[1].context_label().as_deref(), Some("2M context"));
+        assert!(!models[1].tools && coder.tools);
         assert_eq!(models[0].price(), "$3 in · $15 out per M tokens");
     }
 
@@ -174,6 +181,8 @@ mod tests {
         assert_eq!(ids("coder free"), ["qwen/qwen3-coder:free"]);
         assert_eq!(ids("SONNET"), ["anthropic/claude-sonnet-4"]);
         assert_eq!(ids("router"), ["openrouter/auto"]);
+        // No tools: last, even when its ID matches best.
+        assert_eq!(ids("o").last().copied(), Some("openrouter/auto"));
         assert!(ids("nothing-like-this").is_empty());
         assert_eq!(ids("").len(), 4);
     }

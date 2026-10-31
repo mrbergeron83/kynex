@@ -24,6 +24,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   OpenRouter), moves the key into the keychain and checks it. The sign-in screen offers OpenRouter
   next to Anthropic, and with an OpenRouter key Kynex opens without an Anthropic sign-in, new
   sessions running on OpenRouter.
+- A provider picker beside the model picker on a new session, when both are set up: the model list
+  follows it (Claude's models, or My models), effort hides on OpenRouter, and the project remembers
+  the pick. A session keeps its provider once it starts and reopens on it; OpenRouter sessions
+  carry an OR mark in the sessions panel and are named from their first words.
 
 ### Changed
 

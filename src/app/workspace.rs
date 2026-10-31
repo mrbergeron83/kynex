@@ -52,18 +52,27 @@ impl KynexApp {
     }
 
     /// Writes the model pinned to a session that only now has an id, as
-    /// [`Self::set_session_model`] does once it has one.
+    /// [`Self::set_session_model`] does once it has one, and the provider it
+    /// runs on, so it reopens on it.
     fn save_session_models(&mut self) {
-        let pins: Vec<_> = self
+        let started: Vec<_> = self
             .chat
             .sessions
             .iter()
             .chain(self.code.values().flat_map(|l| l.sessions.iter()))
-            .filter_map(|s| Some((s.cwd.clone(), s.session_id.clone()?, s.own_model.clone()?)))
+            .filter_map(|s| Some((s.cwd.clone(), s.session_id.clone()?, s.own_model.clone(), s.provider().provider())))
             .collect();
-        for (cwd, id, model) in pins {
-            if self.groups_for(&cwd).model_of(&id) != Some(model.as_str()) {
-                self.edit_groups(&cwd, |g| g.set_model(&id, Some(&model)));
+        for (cwd, id, model, provider) in started {
+            let g = self.groups_for(&cwd);
+            let (pin_changed, provider_changed) =
+                (model.is_some() && g.model_of(&id) != model.as_deref(), g.provider_of(&id) != provider);
+            if pin_changed || provider_changed {
+                self.edit_groups(&cwd, |g| {
+                    if let Some(m) = &model {
+                        g.set_model(&id, Some(m));
+                    }
+                    g.set_provider(&id, provider);
+                });
             }
         }
     }
@@ -156,8 +165,7 @@ impl KynexApp {
         {
             s.own_model = self.groups_for(&cwd).model_of(id).map(str::to_string);
         }
-        s.model = s.own_model.clone().unwrap_or_else(|| self.dir_model(&cwd));
-        self.give_provider(s);
+        self.start_session(s);
     }
 
     /// The session the composer talks to.

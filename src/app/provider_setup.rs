@@ -3,9 +3,11 @@
 //! session starts on, and OpenRouter on the setup screen, so a user without an
 //! Anthropic sign-in still gets in.
 
+use std::path::Path;
+
 use gpui::{AnyElement, Context, div, prelude::*};
 use kynex_core::openrouter::{self, import};
-use kynex_core::provider::Launch;
+use kynex_core::provider::{Launch, Provider};
 use kynex_core::secrets::{Keychain, Secret};
 use kynex_core::session::Session;
 use kynex_core::toasts::Toast;
@@ -105,51 +107,103 @@ impl KynexApp {
     }
 
     /// Whether the CLI can't run Anthropic sessions: not signed in.
-    fn anthropic_signed_out(&self) -> bool {
+    pub(super) fn anthropic_signed_out(&self) -> bool {
         matches!(self.setup, Setup::LoggedOut { .. } | Setup::SigningIn(_))
     }
 
-    /// The provider a new session starts on: Anthropic, or OpenRouter when
-    /// that's the only one set up.
-    pub(super) fn new_session_launch(&self) -> Launch {
-        match &self.openrouter_key {
-            Some(key) if self.anthropic_signed_out() => {
-                Launch::OpenRouter { key: key.clone(), settings: self.saved.openrouter.settings(None) }
-            }
-            _ => Launch::Anthropic,
+    /// The providers set up: Anthropic while the CLI is signed in, OpenRouter
+    /// once it has a key.
+    pub(super) fn providers_available(&self) -> Vec<Provider> {
+        let mut all = Vec::new();
+        if !self.anthropic_signed_out() {
+            all.push(Provider::Anthropic);
+        }
+        if self.openrouter_key.is_some() {
+            all.push(Provider::OpenRouter);
+        }
+        all
+    }
+
+    /// `provider` with what its sessions need, if it's set up.
+    fn launch_for(&self, provider: Provider) -> Option<Launch> {
+        match provider {
+            Provider::Anthropic => Some(Launch::Anthropic),
+            Provider::OpenRouter => self
+                .openrouter_key
+                .clone()
+                .map(|key| Launch::OpenRouter { key, settings: self.saved.openrouter.settings(None) }),
         }
     }
 
-    /// Gives a session that hasn't started the provider new sessions get. On
-    /// OpenRouter the model is left to the provider's own (`ANTHROPIC_MODEL`).
-    pub(super) fn give_provider(&self, s: &mut Session) {
-        if s.set_provider(self.new_session_launch()).is_ok() && !matches!(s.provider(), Launch::Anthropic) {
-            s.model.clear();
+    /// The provider `dir`'s new sessions start on: its own pick if that's set
+    /// up, else whichever is.
+    pub(super) fn folder_provider(&self, dir: &Path) -> Provider {
+        let picked = self.claude_settings(dir).provider;
+        let available = self.providers_available();
+        if available.contains(&picked) { picked } else { available.first().copied().unwrap_or_default() }
+    }
+
+    /// The OpenRouter model `dir`'s new OpenRouter sessions start on: its own,
+    /// if it's still one of My models, else their default.
+    pub(super) fn folder_openrouter_model(&self, dir: &Path) -> String {
+        let picked = self.claude_settings(dir).openrouter_model;
+        if self.saved.openrouter.models.contains(&picked) {
+            picked
+        } else {
+            self.saved.openrouter.default_model().to_string()
         }
     }
 
-    /// Re-picks the provider (and model) of every open session that hasn't
-    /// started, after a sign-in, sign-out or key change.
+    /// The model `dir`'s sessions on `provider` start on.
+    pub(super) fn folder_model_on(&self, dir: &Path, provider: Provider) -> String {
+        match provider {
+            Provider::Anthropic => self.dir_model(dir),
+            Provider::OpenRouter => self.folder_openrouter_model(dir),
+        }
+    }
+
+    /// The provider a session in `cwd` starts on: a reopened one (`id`) the
+    /// provider it ran on, Anthropic if that isn't set up any more; a new one
+    /// its folder's.
+    fn start_launch(&mut self, cwd: &Path, id: Option<&str>) -> Launch {
+        let provider = match id {
+            Some(id) => self.groups_for(cwd).provider_of(id),
+            None => self.folder_provider(cwd),
+        };
+        self.launch_for(provider).unwrap_or(Launch::Anthropic)
+    }
+
+    /// Gives `s` the provider and model it starts on: see [`Self::start_launch`],
+    /// and the model pinned to it, else its folder's for that provider.
+    pub(super) fn start_session(&mut self, s: &mut Session) {
+        let (launch, models) = self.start_parts(&s.cwd, s.session_id.as_deref());
+        apply_start(s, launch, &models);
+    }
+
+    /// What [`apply_start`] needs for a session in `cwd` (reopened if `id`).
+    pub(super) fn start_parts(&mut self, cwd: &Path, id: Option<&str>) -> (Launch, [String; 2]) {
+        let models = [Provider::Anthropic, Provider::OpenRouter].map(|p| self.folder_model_on(cwd, p));
+        (self.start_launch(cwd, id), models)
+    }
+
+    /// Re-picks the provider and model of every open session that hasn't
+    /// started, after a sign-in, sign-out, key change or a project's pick.
     pub(super) fn refresh_new_sessions(&mut self) {
-        let launch = self.new_session_launch();
-        let mut fresh: Vec<&mut Session> = self
+        let fresh: Vec<_> = self
             .code
-            .values_mut()
-            .chain([&mut self.chat, &mut self.chief.live])
-            .flat_map(|live| live.sessions.iter_mut())
+            .values()
+            .chain([&self.chat, &self.chief.live])
+            .flat_map(|live| live.sessions.iter())
             .filter(|s| s.session_id.is_none() && s.items.is_empty() && !s.is_running())
+            .map(|s| {
+                let models = [Provider::Anthropic, Provider::OpenRouter].map(|p| self.folder_model_on(&s.cwd, p));
+                let launch = self.launch_for(self.folder_provider(&s.cwd)).unwrap_or(Launch::Anthropic);
+                (s.uid, launch, models)
+            })
             .collect();
-        let mut models = Vec::new();
-        for s in &mut fresh {
-            if s.set_provider(launch.clone()).is_ok() {
-                models.push((s.uid, s.cwd.clone(), s.own_model.clone()));
-            }
-        }
-        let on_openrouter = !matches!(launch, Launch::Anthropic);
-        for (uid, cwd, own) in models {
-            let model = if on_openrouter { String::new() } else { own.unwrap_or_else(|| self.dir_model(&cwd)) };
+        for (uid, launch, models) in fresh {
             if let Some(s) = self.find_session_mut(uid) {
-                s.model = model;
+                apply_start(s, launch, &models);
             }
         }
     }
@@ -253,6 +307,17 @@ impl KynexApp {
             .children(self.setup_key_error.clone().map(|e| div().text_xs().text_color(t.error).child(e)))
             .into_any_element()
     }
+}
+
+/// Puts `s` on `launch` (restoring it if reopened) and its pinned model, else
+/// `models` (Anthropic's, OpenRouter's) for the provider it ends up on.
+pub(super) fn apply_start(s: &mut Session, launch: Launch, models: &[String; 2]) {
+    let _ = if s.session_id.is_some() { s.restore_provider(launch) } else { s.set_provider(launch) };
+    let folder = match s.provider().provider() {
+        Provider::Anthropic => &models[0],
+        Provider::OpenRouter => &models[1],
+    };
+    s.model = s.own_model.clone().unwrap_or_else(|| folder.clone());
 }
 
 fn lowercase_first(s: &str) -> String {

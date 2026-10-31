@@ -246,12 +246,19 @@ impl KynexApp {
         let worker = session.is_some_and(|s| s.worker);
         let mode = session.filter(|s| s.kind == Kind::Code && !s.worker).map(|s| s.mode);
         models::fetch_models(cx);
-        let model_label = models::model_label(&self.active_model());
+        // Who answers: a picker on a new session when both are set up, else
+        // a label (a session keeps its provider once it starts).
+        let provider = self.active_provider();
+        let on_openrouter = provider == kynex_core::provider::Provider::OpenRouter;
+        let fresh = session.is_none_or(|s| s.session_id.is_none() && s.items.is_empty() && !s.is_running());
+        let can_switch = fresh && self.providers_available().len() > 1;
+        let show_provider = can_switch || on_openrouter;
+        let model_label = self.active_model_name();
         // A session with a model of its own marks the chip with a message bubble.
         let own_model = self.session_model().is_some();
         // Effort lives in the project's Claude settings (a tiny file); chat has
         // none. Its own chip beside the model's: "Effort" for the default, else the level.
-        let effort_label = self.active_project().filter(|_| mode.is_some()).map(|p| {
+        let effort_label = self.active_project().filter(|_| mode.is_some() && provider.takes_effort()).map(|p| {
             let effort = self.claude_settings(&p.path).effort;
             project::EFFORTS
                 .iter()
@@ -499,6 +506,27 @@ impl KynexApp {
                                 )
                             })
                     }))
+                    .when(show_provider, |d| {
+                        d.child(
+                            ghost_button("provider", cx)
+                                .text_color(t.text_muted)
+                                .gap_1()
+                                .child(provider.label())
+                                .when(can_switch, |b| b.child(icon(Icon::ChevronDown, t.text_placeholder).size_3()))
+                                .tooltip(Tooltip::text(if can_switch {
+                                    "Who answers this session; it's fixed once it starts"
+                                } else if fresh {
+                                    "Set up the other provider in Settings → Providers to switch"
+                                } else {
+                                    "Fixed for this session: start a new session to use another provider"
+                                }))
+                                .when(can_switch, |b| {
+                                    b.on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                                        this.open_menu(Menu::Provider, ev.position(), Anchor::BottomLeft, cx)
+                                    }))
+                                }),
+                        )
+                    })
                     // One chip, "Opus 5.5 · High": each half opens its own picker.
                     .child({
                         let has_effort = effort_label.is_some();
