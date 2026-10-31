@@ -854,10 +854,13 @@ impl Session {
     }
 
     /// Sets the model it starts on. A process warmed up but not talked to yet
-    /// stops, to start again on it; one in use keeps its model until it next starts.
+    /// stops, to start again on it; one in use keeps its model until it next
+    /// starts. On OpenRouter, where a model can go away under a conversation,
+    /// an idle one stops too: the next message resumes it on the new model.
     pub fn use_model(&mut self, model: String) {
         if self.child.is_some() {
-            if self.talked || model == self.model {
+            let openrouter = self.provider.provider() == crate::provider::Provider::OpenRouter;
+            if model == self.model || (self.talked && !(openrouter && !self.busy)) {
                 return;
             }
             self.kill();
@@ -2551,6 +2554,39 @@ mod tests {
         std::fs::write(&path, "not json\n{\"cwd\":\"\"}\n").unwrap();
         assert_eq!(cwd_of(&path), None);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn an_openrouter_model_switch_reaches_a_session_in_use() {
+        use crate::provider::{Launch, OpenRouterSettings};
+        let running = |provider: Launch| {
+            let mut s = Session::new(Kind::Chat, std::env::temp_dir());
+            s.set_provider(provider).unwrap();
+            s.model = "old".into();
+            let exe = std::env::current_exe().expect("test binary");
+            s.child = Some(Command::new(exe).arg("--list").stdout(Stdio::null()).spawn().expect("spawn"));
+            s.talked = true;
+            s
+        };
+        let openrouter = Launch::OpenRouter { key: "k".into(), settings: OpenRouterSettings::default() };
+
+        // Anthropic: the process in use keeps its model until it next starts.
+        let mut s = running(Launch::Anthropic);
+        s.use_model("new".into());
+        assert!(s.child.is_some() && s.model == "old");
+        s.kill();
+
+        // OpenRouter, idle: it stops, and the next message resumes it on the new model.
+        let mut s = running(openrouter.clone());
+        s.use_model("new".into());
+        assert!(s.child.is_none() && s.model == "new");
+
+        // OpenRouter, mid-turn: left alone.
+        let mut s = running(openrouter);
+        s.busy = true;
+        s.use_model("new".into());
+        assert!(s.child.is_some() && s.model == "old");
+        s.kill();
     }
 
     #[test]
