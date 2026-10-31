@@ -119,6 +119,8 @@ pub struct Saved {
     /// OpenRouter: My models, the default, the output cap, the last key check
     /// (Settings → Providers). The key itself is in the OS keychain.
     pub openrouter: kynex_core::openrouter::OpenRouterConfig,
+    /// The sessions panel splits ungrouped sessions by provider, under a header each.
+    pub sessions_by_provider: bool,
 }
 
 impl Default for Saved {
@@ -158,6 +160,7 @@ impl Default for Saved {
             chief_spent: HashMap::new(),
             chief_working: Vec::new(),
             openrouter: Default::default(),
+            sessions_by_provider: false,
         }
     }
 }

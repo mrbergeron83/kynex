@@ -215,6 +215,17 @@ impl SessionGroups {
         self.providers.get(id).copied().unwrap_or_default()
     }
 
+    /// `ids` split by the provider each ran on, Anthropic's first, keeping
+    /// their order; providers with none are left out.
+    pub fn by_provider(&self, ids: &[String]) -> Vec<(crate::provider::Provider, Vec<String>)> {
+        use crate::provider::Provider;
+        [Provider::Anthropic, Provider::OpenRouter]
+            .into_iter()
+            .map(|p| (p, ids.iter().filter(|id| self.provider_of(id) == p).cloned().collect::<Vec<_>>()))
+            .filter(|(_, ids)| !ids.is_empty())
+            .collect()
+    }
+
     /// Records the provider a session runs on.
     pub fn set_provider(&mut self, id: &str, provider: crate::provider::Provider) {
         if provider == crate::provider::Provider::Anthropic {
@@ -597,6 +608,17 @@ mod tests {
         g.set_provider("t", Provider::OpenRouter);
         g.forget("t");
         assert!(g.providers.is_empty());
+
+        // Split for the panel: Anthropic's first, order kept, empty ones left out.
+        g.set_provider("b", Provider::OpenRouter);
+        g.set_provider("d", Provider::OpenRouter);
+        let ids: Vec<String> = ["a", "b", "c", "d"].map(String::from).to_vec();
+        let split = g.by_provider(&ids);
+        assert_eq!(split.len(), 2);
+        assert_eq!((split[0].0, split[0].1.clone()), (Provider::Anthropic, vec!["a".to_string(), "c".into()]));
+        assert_eq!((split[1].0, split[1].1.clone()), (Provider::OpenRouter, vec!["b".to_string(), "d".into()]));
+        let only = g.by_provider(&["a".to_string()]);
+        assert_eq!(only.len(), 1);
     }
 
     #[test]

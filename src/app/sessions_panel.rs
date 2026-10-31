@@ -491,13 +491,26 @@ impl KynexApp {
         let today = dates::today();
         let dated: Vec<(String, dates::Day)> =
             arranged.top.iter().map(|id| (id.clone(), days.get(id).copied().unwrap_or(today))).collect();
+        // Grouped by provider, when picked and there's more than one: a header
+        // each, newest first under it, instead of the dates.
+        let by_provider = match self.saved.sessions_by_provider && query.is_empty() {
+            true => Some(self.groups_for(&cwd).by_provider(&arranged.top)).filter(|split| split.len() > 1),
+            false => None,
+        };
         let sections = match headers && query.is_empty() {
             // With other sections about, even a single day gets its header.
             true => dates::sections(&dated, today).or_else(|| dates::lone_section(&dated, today)),
             false => dates::sections(&dated, today).filter(|_| query.is_empty()),
         };
-        match sections {
-            Some(sections) => {
+        match (by_provider, sections) {
+            (Some(split), _) => {
+                for (provider, ids) in split {
+                    rows.push(list_header(provider.label(), rows.is_empty(), cx).into_any_element());
+                    order.extend(ids.iter().cloned());
+                    rows.extend(take(ids));
+                }
+            }
+            (None, Some(sections)) => {
                 for (bucket, ids) in sections {
                     let open = self.groups_for(&cwd).date_open(bucket);
                     let first = rows.is_empty();
@@ -511,7 +524,7 @@ impl KynexApp {
                     }
                 }
             }
-            None => {
+            (None, None) => {
                 order.extend(arranged.top.iter().cloned());
                 rows.extend(take(arranged.top));
             }

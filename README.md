@@ -114,7 +114,7 @@ Claude settings (the shield in the toolbar).
 ### Around the window
 
 - **Sessions panel** (left): right-click a session to rename, pin, group or archive it, or
-  drag it into a group.
+  drag it into a group. Its menu (the arrow in its header) can also group sessions by provider.
 - **Timeline** (Ctrl+Shift+T): every message you sent with the files edited and commands run
   in that turn. Click a step to jump to it.
 - **Terminal** (Ctrl+`): a shell under the conversation. The Run button on a code block runs

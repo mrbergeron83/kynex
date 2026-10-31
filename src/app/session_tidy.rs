@@ -117,19 +117,28 @@ impl KynexApp {
 
     /// The panel header's menu: archive sessions not used for a while.
     pub(super) fn sessions_panel_menu_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        TIDY_AGES
-            .iter()
-            .enumerate()
-            .map(|(i, (days, label))| {
-                let days = *days;
-                menu_item(("tidy", i), format!("Archive sessions older than {label}"), false, cx)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.menu = None;
-                        this.archive_older_than(days, cx);
-                    }))
-                    .into_any_element()
-            })
-            .collect()
+        let by_provider = self.saved.sessions_by_provider;
+        let mut items = vec![
+            menu_item("sessions-by-provider", "Group by provider", by_provider, cx)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.menu = None;
+                    this.saved.sessions_by_provider = !by_provider;
+                    this.save();
+                    cx.notify();
+                }))
+                .into_any_element(),
+            div().my_1().child(divider(cx)).into_any_element(),
+        ];
+        items.extend(TIDY_AGES.iter().enumerate().map(|(i, (days, label))| {
+            let days = *days;
+            menu_item(("tidy", i), format!("Archive sessions older than {label}"), false, cx)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.menu = None;
+                    this.archive_older_than(days, cx);
+                }))
+                .into_any_element()
+        }));
+        items
     }
 
     /// Archives the listed sessions of the shown folder not used in `days`;
