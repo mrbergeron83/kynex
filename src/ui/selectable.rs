@@ -310,10 +310,15 @@ impl Element for Selectable {
                 if phase != DispatchPhase::Bubble || e.button != MouseButton::Left || !hitbox.is_hovered(window) {
                     return;
                 }
-                let ix = layout.index_for_position(e.position).unwrap_or_else(|ix| ix).min(content.len());
                 let (from, to) = match e.click_count {
-                    1 => (ix, ix),
-                    2 => word_at(&content, ix),
+                    1 => {
+                        let ix = caret_at(&layout, &content, e.position);
+                        (ix, ix)
+                    }
+                    2 => word_at(
+                        &content,
+                        layout.index_for_position(e.position).unwrap_or_else(|ix| ix).min(content.len()),
+                    ),
                     _ => (0, content.len()),
                 };
                 let sel = cx.default_global::<Selection>();
@@ -329,8 +334,7 @@ impl Element for Selectable {
             }
         });
         window.on_mouse_event({
-            let layout = layout.clone();
-            let len = self.content.len();
+            let (layout, content) = (layout.clone(), self.content.clone());
             move |e: &MouseMoveEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble || e.position.y < bounds.top() || e.position.y >= bounds.bottom() {
                     return;
@@ -339,7 +343,7 @@ impl Element for Selectable {
                 if !sel.dragging || sel.group != group || !e.dragging() {
                     return;
                 }
-                let ix = layout.index_for_position(e.position).unwrap_or_else(|ix| ix).min(len);
+                let ix = caret_at(&layout, &content, e.position);
                 if sel.head != Some((spot, ix)) {
                     cx.default_global::<Selection>().head = Some((spot, ix));
                     window.refresh();
@@ -368,6 +372,23 @@ impl Element for Selectable {
                 }
             }
         });
+    }
+}
+
+/// The character boundary nearest `pos`, where a selection starts or ends.
+/// gpui's `index_for_position` gives the character under the pointer, which
+/// left the last letter out when a drag ended on its right half.
+fn caret_at(layout: &gpui::TextLayout, content: &str, pos: gpui::Point<Pixels>) -> usize {
+    let ix = match layout.index_for_position(pos) {
+        Ok(ix) => ix.min(content.len()),
+        Err(ix) => return ix.min(content.len()),
+    };
+    let Some(c) = content.get(ix..).and_then(|rest| rest.chars().next()) else { return ix };
+    let next = ix + c.len_utf8();
+    match (layout.position_for_index(ix), layout.position_for_index(next)) {
+        // Past the middle of a character on the same row: after it.
+        (Some(a), Some(b)) if (a.y - b.y).abs() < px_eps() && pos.x > a.x + (b.x - a.x) / 2. => next,
+        _ => ix,
     }
 }
 

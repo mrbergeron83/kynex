@@ -14,6 +14,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - A new session no longer gets stuck on "No conversation found with session ID" when its
   process restarts before the first message (#224).
+- Drag-selecting chat text no longer misses the first or last letter (#226).
+
 ### Changed
 
 - The composer's model and effort pickers are two separate chips instead of one.
