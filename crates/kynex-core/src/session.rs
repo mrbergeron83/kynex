@@ -525,10 +525,12 @@ impl Session {
                 provider.provider().label()
             ));
         }
-        // A process started early, before anything was sent, starts again on it.
+        // A process started early, before anything was sent, starts again on it;
+        // the id it reported names no conversation, so it goes too.
         if self.child.is_some() {
             self.kill();
         }
+        self.session_id = None;
         self.provider = provider;
         Ok(())
     }
@@ -2619,9 +2621,8 @@ mod tests {
         s.session_id = Some("early".into());
         assert!(s.is_new());
         s.set_provider(openrouter()).unwrap();
-        assert!(s.child.is_none());
+        assert!(s.child.is_none() && s.session_id.is_none());
         s.set_provider(Launch::Anthropic).unwrap();
-        s.session_id = None;
 
         s.items.push(Item::User { text: "hi".into(), images: Vec::new() });
         let err = s.set_provider(openrouter()).unwrap_err();
