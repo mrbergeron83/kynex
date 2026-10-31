@@ -30,6 +30,7 @@
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
 //! | `handoff.rs`        | "waiting for you in the browser" banner, Continue    |
+//! | `trust.rs`          | "trust this folder?" strip, as the CLI's dialog       |
 //! | `chief.rs`          | the chief of staff: its tools, workers, their reports |
 //! | `chief_view.rs`     | its view: the warning, the reporter, Kynex's messages |
 //! | `attention.rs`      | OS notifications and the icon's "needs you" dot     |
@@ -114,6 +115,7 @@ mod toasts;
 mod tool_rows;
 mod toolbar;
 mod transcript;
+mod trust;
 mod viewer;
 mod workspace;
 mod worktrees;
@@ -254,6 +256,8 @@ pub struct KynexApp {
     resizing_terminal: bool,
     /// Whether a newer Claude Code is out, or being installed.
     cli_update: UpdateState,
+    /// Folders the CLI would ignore settings in until trusted; see `trust.rs`.
+    trust: trust::Trust,
     /// Kynex's own update: found, downloading, installed or failed.
     app_update: UpdateState,
     /// When Kynex last asked GitHub for a newer version, and whether it's asking now.
@@ -503,6 +507,7 @@ impl KynexApp {
             resizing_sessions: false,
             resizing_terminal: false,
             cli_update: UpdateState::Idle,
+            trust: Default::default(),
             app_update: UpdateState::Idle,
             update_checked: None,
             update_checking: false,

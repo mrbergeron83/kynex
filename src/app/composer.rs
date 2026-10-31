@@ -146,6 +146,7 @@ impl KynexApp {
     pub(super) fn render_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         let update = self.render_cli_update(cx);
+        let trust = self.render_trust(cx);
         let queued = self.render_queue(cx);
         let running = self.render_running_tasks(cx);
         let handoff = self.render_handoff(cx);
@@ -186,6 +187,7 @@ impl KynexApp {
                     .flex_col()
                     .gap_1p5()
                     .children(update)
+                    .children(trust)
                     .children(running)
                     .children(handoff)
                     .children(queued)

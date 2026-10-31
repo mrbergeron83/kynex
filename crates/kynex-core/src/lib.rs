@@ -63,6 +63,7 @@ pub mod titles;
 pub mod toasts;
 pub mod transcript;
 pub mod tray;
+pub mod trust;
 pub mod update;
 pub mod usage;
 pub mod watch;
