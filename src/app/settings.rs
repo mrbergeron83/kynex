@@ -201,7 +201,7 @@ impl KynexApp {
             self.claude_settings.insert(path, claude);
         }
         // A pinned model belongs to the provider it was picked on.
-        if let Some(s) = self.session_mut().filter(|s| s.session_id.is_none() && s.items.is_empty()) {
+        if let Some(s) = self.session_mut().filter(|s| s.is_new()) {
             s.own_model = None;
         }
         self.refresh_new_sessions();

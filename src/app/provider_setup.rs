@@ -176,7 +176,8 @@ impl KynexApp {
     /// Gives `s` the provider and model it starts on: see [`Self::start_launch`],
     /// and the model pinned to it, else its folder's for that provider.
     pub(super) fn start_session(&mut self, s: &mut Session) {
-        let (launch, models) = self.start_parts(&s.cwd, s.session_id.as_deref());
+        let id = s.session_id.clone().filter(|_| !s.is_new());
+        let (launch, models) = self.start_parts(&s.cwd, id.as_deref());
         apply_start(s, launch, &models);
     }
 
@@ -194,7 +195,7 @@ impl KynexApp {
             .values()
             .chain([&self.chat, &self.chief.live])
             .flat_map(|live| live.sessions.iter())
-            .filter(|s| s.session_id.is_none() && s.items.is_empty() && !s.is_running())
+            .filter(|s| s.is_new())
             .map(|s| {
                 let models = [Provider::Anthropic, Provider::OpenRouter].map(|p| self.folder_model_on(&s.cwd, p));
                 let launch = self.launch_for(self.folder_provider(&s.cwd)).unwrap_or(Launch::Anthropic);
@@ -312,7 +313,7 @@ impl KynexApp {
 /// Puts `s` on `launch` (restoring it if reopened) and its pinned model, else
 /// `models` (Anthropic's, OpenRouter's) for the provider it ends up on.
 pub(super) fn apply_start(s: &mut Session, launch: Launch, models: &[String; 2]) {
-    let _ = if s.session_id.is_some() { s.restore_provider(launch) } else { s.set_provider(launch) };
+    let _ = if s.is_new() { s.set_provider(launch) } else { s.restore_provider(launch) };
     let folder = match s.provider().provider() {
         Provider::Anthropic => &models[0],
         Provider::OpenRouter => &models[1],

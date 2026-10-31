@@ -11,7 +11,7 @@ use gpui::{
 };
 use kynex_core::attach::{is_image, prepare_image};
 use kynex_core::project::{self, Mode};
-use kynex_core::session::{Attachment, Kind};
+use kynex_core::session::{Attachment, Kind, Session};
 
 use kynex_core::toasts::Toast;
 
@@ -250,7 +250,7 @@ impl KynexApp {
         // a label (a session keeps its provider once it starts).
         let provider = self.active_provider();
         let on_openrouter = provider == kynex_core::provider::Provider::OpenRouter;
-        let fresh = session.is_none_or(|s| s.session_id.is_none() && s.items.is_empty() && !s.is_running());
+        let fresh = session.is_none_or(Session::is_new);
         let can_switch = fresh && self.providers_available().len() > 1;
         let show_provider = can_switch || on_openrouter;
         let model_label = self.active_model_name();

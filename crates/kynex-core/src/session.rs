@@ -300,6 +300,8 @@ pub struct Session {
     pub mode: project::Mode,
     /// Messages written while Claude works; the next goes when a turn ends.
     pub queue: Queue,
+    /// Reopened from a past conversation ([`Self::resume`]), not started here.
+    reopened: bool,
     /// Background tasks running in this session's process.
     pub tasks: Tasks,
     /// The MCP servers its process reported when it started, and how they're doing.
@@ -468,6 +470,7 @@ impl Session {
             worker: false,
             mode,
             queue: Queue::default(),
+            reopened: false,
             tasks: Tasks::default(),
             mcp: Vec::new(),
             mcp_tools: Default::default(),
@@ -515,15 +518,26 @@ impl Session {
         if provider == self.provider {
             return Ok(());
         }
-        if self.session_id.is_some() || !self.items.is_empty() || self.child.is_some() {
+        if !self.is_new() {
             return Err(format!(
                 "This session runs on {}; start a new session to use {}.",
                 self.provider.provider().label(),
                 provider.provider().label()
             ));
         }
+        // A process started early, before anything was sent, starts again on it.
+        if self.child.is_some() {
+            self.kill();
+        }
         self.provider = provider;
         Ok(())
+    }
+
+    /// A new session with no activity: not reopened, nothing sent, nothing in
+    /// its transcript. A process started early to save time doesn't count, nor
+    /// the id that process may already have reported.
+    pub fn is_new(&self) -> bool {
+        !self.reopened && !self.talked && self.items.is_empty()
     }
 
     /// Puts a reopened session back on the provider it ran on, before any
@@ -544,6 +558,7 @@ impl Session {
     pub fn resume(kind: Kind, cwd: PathBuf, id: String, wake: Wake) -> Self {
         let mut s = Self::new(kind, cwd);
         s.session_id = Some(id);
+        s.reopened = true;
         s.wake = wake;
         s.load(None);
         s
@@ -2598,6 +2613,16 @@ mod tests {
         s.set_provider(openrouter()).unwrap();
         s.set_provider(Launch::Anthropic).unwrap();
 
+        // Warmed up early, with the id its process reported: still new; it starts again.
+        let exe = std::env::current_exe().expect("test binary");
+        s.child = Some(Command::new(exe).arg("--list").stdout(Stdio::null()).spawn().expect("spawn"));
+        s.session_id = Some("early".into());
+        assert!(s.is_new());
+        s.set_provider(openrouter()).unwrap();
+        assert!(s.child.is_none());
+        s.set_provider(Launch::Anthropic).unwrap();
+        s.session_id = None;
+
         s.items.push(Item::User { text: "hi".into(), images: Vec::new() });
         let err = s.set_provider(openrouter()).unwrap_err();
         assert!(err.contains("new session"), "{err}");
@@ -2607,6 +2632,7 @@ mod tests {
 
         let mut resumed = Session::new(Kind::Code, std::env::temp_dir());
         resumed.session_id = Some("abc".into());
+        resumed.reopened = true;
         assert!(resumed.set_provider(openrouter()).is_err());
         // Reopened, it goes back to the provider it ran on, until it starts here.
         resumed.restore_provider(openrouter()).unwrap();
