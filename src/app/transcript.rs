@@ -704,7 +704,10 @@ impl KynexApp {
                 if *tools > 0 {
                     recap.push(format!("{tools} tool{}", if *tools == 1 { "" } else { "s" }));
                 }
-                recap.push(format!("${cost:.2}"));
+                // The CLI prices every turn as Claude; on another provider that's wrong.
+                if session.provider().provider().knows_cost() {
+                    recap.push(format!("${cost:.2}"));
+                }
                 let color = if *is_error { t.error } else { t.text_placeholder };
                 let cwd = session.cwd.clone();
                 let chips = files.iter().take(MAX_CHIPS).enumerate().map(|(n, f)| {

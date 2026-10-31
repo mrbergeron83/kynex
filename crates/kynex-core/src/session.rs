@@ -1167,8 +1167,13 @@ impl Session {
                     self.handle(v);
                 }
                 Event::Stderr(s) => {
-                    if !s.trim().is_empty() {
-                        self.items.push(Item::Error(s));
+                    let provider = self.provider.provider();
+                    let shown: Vec<&str> = s.lines().filter(|l| provider.shows_stderr(l)).collect();
+                    if !shown.is_empty() {
+                        self.items.push(Item::Error(shown.join(
+                            "
+",
+                        )));
                     }
                 }
                 Event::Exited => exited = true,

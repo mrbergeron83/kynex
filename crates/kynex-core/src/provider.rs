@@ -61,6 +61,24 @@ impl Provider {
         *self == Provider::Anthropic
     }
 
+    /// Whether the CLI's cost figures mean anything here. It prices every
+    /// turn as a Claude model; OpenRouter's models cost something else.
+    pub fn knows_cost(self) -> bool {
+        self == Provider::Anthropic
+    }
+
+    /// The CLI's stderr lines a session on this provider shows; the rest is
+    /// noise there. On OpenRouter the CLI warns that the claude.ai connectors
+    /// are off (the key replaces the login, by design) and that it doesn't
+    /// know the model's name, on every start.
+    pub fn shows_stderr(self, line: &str) -> bool {
+        let line = line.trim();
+        let noise = self == Provider::OpenRouter
+            && (line.contains("claude.ai connectors are disabled")
+                || line.starts_with("[claude-code:unrecognized_model]"));
+        !line.is_empty() && !noise
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             Provider::Anthropic => "Anthropic",
@@ -426,6 +444,19 @@ mod tests {
         assert_eq!(get(&kept, "ANTHROPIC_MODEL"), Some("qwen/qwen3-coder"));
         assert_eq!(Launch::Anthropic.with_model("opus"), Launch::Anthropic);
         assert!(Provider::Anthropic.takes_effort() && !Provider::OpenRouter.takes_effort());
+    }
+
+    #[test]
+    fn openrouter_hides_the_clis_noise_and_cost() {
+        let connectors = "⚠ claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set";
+        let model = r#"[claude-code:unrecognized_model] {"model":"qwen/qwen3-coder","query_source":"sdk"}"#;
+        for line in [connectors, model] {
+            assert!(!Provider::OpenRouter.shows_stderr(line), "{line}");
+            assert!(Provider::Anthropic.shows_stderr(line), "{line}");
+        }
+        assert!(Provider::OpenRouter.shows_stderr("Error: something real"));
+        assert!(!Provider::Anthropic.shows_stderr("  "));
+        assert!(Provider::Anthropic.knows_cost() && !Provider::OpenRouter.knows_cost());
     }
 
     #[test]

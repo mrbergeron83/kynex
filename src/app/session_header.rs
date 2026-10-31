@@ -27,6 +27,7 @@ impl KynexApp {
         });
         let turns = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
         let (cost, kind, cwd, context, busy) = (s.total_cost, s.kind, s.cwd.clone(), s.context, s.busy);
+        let knows_cost = s.provider().provider().knows_cost();
         let id = s.session_id.clone();
         // The session's files, once it's saved and has a folder to keep them in.
         let scratch = (kind == Kind::Code && id.is_some()).then(|| {
@@ -187,7 +188,8 @@ impl KynexApp {
         if turns > 0 {
             stats.push(format!("{turns} turn{}", if turns == 1 { "" } else { "s" }));
         }
-        if cost > 0.0 {
+        // The CLI prices every turn as Claude; on another provider that's wrong.
+        if cost > 0.0 && knows_cost {
             stats.push(format!("${cost:.3}"));
         }
         Some(
