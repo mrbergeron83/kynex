@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The composer's model and effort pickers are two separate chips instead of one.
+
 ## [0.0.12] - 2026-10-31
 
 ### Added
