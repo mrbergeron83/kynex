@@ -30,25 +30,16 @@ pub use worktree::{
     Worktree, add_worktree, default_worktree_path, list_worktrees, prune_worktrees, remove_worktree, worktree_in,
 };
 
-use crate::wsl;
-
 /// `git` for `root`, set up to never prompt on a terminal (there is none) and
 /// to print paths unquoted.
 fn command(root: &Path) -> Command {
-    let mut cmd = match wsl::parse(root) {
-        // Linux git in the distro: fast, and agrees with Claude about line endings and file modes.
-        Some(w) => w.command("git"),
-        None => {
-            let mut c = Command::new("git");
-            c.arg("-C").arg(root);
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                c.creation_flags(0x0800_0000);
-            }
-            c
-        }
-    };
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(root);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
     // Reads shouldn't take the index lock a running Claude session may want.
     cmd.args(["--no-optional-locks", "-c", "core.quotepath=false", "-c", "color.ui=false"]);
     cmd.env("GIT_TERMINAL_PROMPT", "0");

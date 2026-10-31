@@ -28,10 +28,12 @@ impl KynexApp {
             .or_else(|| items.iter().take(recent).find(wanted));
         let Some(next) = next else { return };
         let (id, first) = (next.id.clone(), next.first.clone());
+        // Signed out of Anthropic, there's no Haiku to ask: OpenRouter titles are the first words.
+        let provider = self.new_session_launch().provider();
         self.naming = Some(id.clone());
         self.naming_tried.insert(id.clone());
         cx.spawn(async move |this, cx| {
-            let named = cx.background_spawn(async move { titles::generate(&first).map(|t| (id, t)) }).await;
+            let named = cx.background_spawn(async move { titles::generate(&first, provider).map(|t| (id, t)) }).await;
             this.update(cx, |this, cx| {
                 this.naming = None;
                 match named {

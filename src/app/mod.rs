@@ -45,7 +45,9 @@
 //! | `leaving.rs`        | menus, modals and panels animating out as they close |
 //! | `settings.rs`       | the project's Claude settings modal                  |
 //! | `app_settings.rs`   | the app's Settings modal: CLI, shell, appearance     |
+//! | `providers.rs`      | Settings → Providers: Anthropic sign-in, OpenRouter key, cap, My models |
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
+//! | `provider_setup.rs` | OpenRouter key on launch, new sessions' provider, OpenRouter on the setup screen |
 //! | `app_update.rs`     | Kynex updating itself: checks, the update toast      |
 //! | `about.rs`          | the About Kynex modal: version, paths, updates       |
 //! | `storage.rs`        | Settings → Storage: sessions' disk use, cleanup      |
@@ -86,6 +88,8 @@ mod menus;
 mod models;
 mod palette;
 mod prompts;
+mod provider_setup;
+mod providers;
 mod queue;
 mod rewind;
 mod scratch_modal;
@@ -298,6 +302,14 @@ pub struct KynexApp {
     setup: Setup,
     /// Where to paste the code the sign-in page shows.
     login_code: Entity<TextInput>,
+    /// The OpenRouter key, once loaded from the keychain (`provider_setup.rs`):
+    /// with it, new sessions can run on OpenRouter and a user signed out of
+    /// Anthropic gets past the setup screen.
+    openrouter_key: Option<String>,
+    /// The setup screen's OpenRouter key field, while its check runs, and why it failed.
+    setup_key: Entity<TextInput>,
+    setup_key_busy: bool,
+    setup_key_error: Option<String>,
     focus: FocusHandle,
     wake: session::Wake,
 }
@@ -355,6 +367,14 @@ impl KynexApp {
         })
         .detach();
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.check_setup(cx))).detach();
+        cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.load_openrouter(cx))).detach();
+        let setup_key = cx.new(|cx| TextInput::new(cx).mono().masked().placeholder("Paste your OpenRouter key"));
+        cx.subscribe(&setup_key, |this, _, ev, cx| {
+            if let InputEvent::Submit = ev {
+                this.setup_openrouter_key(cx);
+            }
+        })
+        .detach();
         let group_name = cx.new(|cx| TextInput::new(cx).placeholder("Name"));
         cx.subscribe(&group_name, |this, _, ev, cx| {
             if let InputEvent::Submit = ev {
@@ -506,6 +526,10 @@ impl KynexApp {
             cli_check: CliCheck::default(),
             setup: Setup::Checking,
             login_code,
+            openrouter_key: None,
+            setup_key,
+            setup_key_busy: false,
+            setup_key_error: None,
             focus: cx.focus_handle(),
             wake,
         }
@@ -650,7 +674,7 @@ impl Render for KynexApp {
         // Toasts sit in the corner picked in Settings, the same in every view;
         // the conversation's own bars and composer are measured to stay clear of.
         let toasts = self.render_toasts(window, cx);
-        let in_conversation = matches!(self.setup, Setup::Checking | Setup::Ready) && view != Some(View::Git);
+        let in_conversation = self.workspace_ready() && view != Some(View::Git);
         if !in_conversation {
             self.toast_room.set(None);
         }

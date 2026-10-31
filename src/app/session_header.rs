@@ -20,7 +20,9 @@ impl KynexApp {
         // quieter, since the whole message is right below.
         let name = s.session_id.as_deref().and_then(|id| self.session_name(id));
         let stand_in = s.items.iter().find_map(|i| match i {
-            Item::User { text, .. } if !text.trim().is_empty() => Some(fmt::first_words(text, 8)),
+            Item::User { text, .. } if !text.trim().is_empty() => {
+                Some(fmt::first_words(text, kynex_core::titles::FIRST_WORDS))
+            }
             _ => None,
         });
         let turns = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();

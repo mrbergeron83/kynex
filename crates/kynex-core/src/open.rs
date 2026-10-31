@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::process::detach;
-use crate::wsl;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Opener {
@@ -14,22 +13,8 @@ pub enum Opener {
     Terminal,
 }
 
-/// Opens `path` with `opener`. WSL projects open VS Code over Remote - WSL and
-/// the terminal inside the distro.
+/// Opens `path` with `opener`.
 pub fn open_project(opener: Opener, path: &Path) -> Result<(), String> {
-    if let Some(w) = wsl::parse(path) {
-        return match opener {
-            Opener::Code => {
-                let remote = format!("wsl+{}", w.distro);
-                open_with("code", &["--remote".as_ref(), remote.as_ref(), w.path.as_ref()])
-            }
-            Opener::Explorer => open_with("explorer", &[path.as_os_str()]),
-            Opener::Terminal => open_with(
-                "wt",
-                &["wsl.exe".as_ref(), "-d".as_ref(), w.distro.as_ref(), "--cd".as_ref(), w.path.as_ref()],
-            ),
-        };
-    }
     match opener {
         Opener::Code => open_with("code", &[path.as_os_str()]),
         Opener::Explorer if cfg!(target_os = "windows") => open_with("explorer", &[path.as_os_str()]),
@@ -104,12 +89,9 @@ pub fn edit_text(text: &str) -> Result<String, String> {
 
 /// Opens a file in VS Code at `line` / `col` (`code -g`) if `code` is on PATH,
 /// else with the OS's default app for it (which ignores the line). Doesn't wait:
-/// the editor is detached and stays open when Kynex closes. Files inside WSL
-/// always go to the default opener.
+/// the editor is detached and stays open when Kynex closes.
 pub fn open_file(path: &Path, line: Option<u32>, col: Option<u32>) -> Result<(), String> {
-    if wsl::parse(path).is_none()
-        && let Some(code) = find_code()
-    {
+    if let Some(code) = find_code() {
         let mut target = path.as_os_str().to_os_string();
         if let Some(line) = line {
             target.push(format!(":{line}"));

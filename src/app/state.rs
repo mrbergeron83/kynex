@@ -116,6 +116,9 @@ pub struct Saved {
     /// when last saved, which a restart cut short.
     pub chief_spent: HashMap<PathBuf, kynex_core::spent::Spent>,
     pub chief_working: Vec<PathBuf>,
+    /// OpenRouter: My models, the default, the output cap, the last key check
+    /// (Settings → Providers). The key itself is in the OS keychain.
+    pub openrouter: kynex_core::openrouter::OpenRouterConfig,
 }
 
 impl Default for Saved {
@@ -154,6 +157,7 @@ impl Default for Saved {
             chief_workers: HashMap::new(),
             chief_spent: HashMap::new(),
             chief_working: Vec::new(),
+            openrouter: Default::default(),
         }
     }
 }
