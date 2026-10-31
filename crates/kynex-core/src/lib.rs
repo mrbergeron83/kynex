@@ -48,6 +48,7 @@ pub mod queue;
 pub mod resources;
 pub mod rewind;
 pub mod scale;
+pub mod secrets;
 pub mod session;
 pub mod session_files;
 pub mod session_log;

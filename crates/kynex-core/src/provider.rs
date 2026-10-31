@@ -108,6 +108,15 @@ pub struct Env {
 }
 
 impl Launch {
+    /// OpenRouter with `settings` and the key saved in `keychain`.
+    /// Blocks on the keychain.
+    pub fn openrouter(settings: OpenRouterSettings, keychain: &crate::secrets::Keychain) -> Result<Launch, String> {
+        let key = keychain
+            .get(crate::secrets::Secret::OpenRouterKey)?
+            .ok_or("No OpenRouter key is saved. Add one in Settings → Providers.")?;
+        Ok(Launch::OpenRouter { key, settings })
+    }
+
     pub fn provider(&self) -> Provider {
         match self {
             Launch::Anthropic => Provider::Anthropic,
@@ -369,6 +378,17 @@ mod tests {
         assert!(one.contains("ANTHROPIC_BASE_URL") && one.contains("Remove it"), "{one}");
         let two = overrides_warning(&["A".into(), "B".into()]).unwrap();
         assert!(two.contains("A, B") && two.contains("Remove them"), "{two}");
+    }
+
+    #[test]
+    fn openrouter_takes_its_key_from_the_keychain() {
+        use crate::secrets::{Keychain, Secret};
+        let k = Keychain::with_store(keyring_core::mock::Store::new().unwrap(), "kynex-test");
+        let err = Launch::openrouter(OpenRouterSettings::default(), &k).unwrap_err();
+        assert!(err.contains("No OpenRouter key"), "{err}");
+        k.set(Secret::OpenRouterKey, "sk-or-saved").unwrap();
+        let launch = Launch::openrouter(OpenRouterSettings::default(), &k).unwrap();
+        assert_eq!(get(&launch.env(NONE), "ANTHROPIC_AUTH_TOKEN"), Some("sk-or-saved"));
     }
 
     #[test]

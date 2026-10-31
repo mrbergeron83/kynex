@@ -21,8 +21,11 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 sysinfo.workspace = true
+# The OS keychain, for the OpenRouter key (secrets.rs); one store per OS below.
+keyring-core = "1"
 
 [target.'cfg(windows)'.dependencies]
+windows-native-keyring-store = "1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Power", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 # The same as gpui's, for the shell's COM interfaces: the taskbar badge and shortcut app IDs (attention.rs).
 windows = { version = "0.62", features = [
@@ -38,6 +41,7 @@ windows = { version = "0.62", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1", features = ["keychain"] }
 # The same as gpui's, for the Dock badge (attention.rs).
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSResponder"] }
@@ -45,6 +49,8 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+# Secret Service over D-Bus in pure Rust (zbus, already in gpui's tree): no libdbus to build against.
+zbus-secret-service-keyring-store = { version = "1", features = ["rt-async-io-crypto-rust"] }
 
 [lints]
 workspace = true
