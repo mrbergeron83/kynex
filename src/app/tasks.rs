@@ -49,7 +49,9 @@ impl KynexApp {
 
     /// Goes to an open session, in whichever tab it's in.
     pub(super) fn go_to_session(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) {
-        let target = if self.chat.sessions.iter().any(|s| s.uid == key) {
+        let chief = self.chief.live.sessions.iter().any(|s| s.uid == key);
+        let target = if chief || self.chat.sessions.iter().any(|s| s.uid == key) {
+            self.saved.chief_view = chief;
             Some(Active::Chat)
         } else {
             self.code
@@ -180,12 +182,7 @@ impl KynexApp {
 
     /// An open session's name: its title, else its first message.
     pub(super) fn session_title(&self, key: Key) -> Option<String> {
-        let s = self
-            .chat
-            .sessions
-            .iter()
-            .chain(self.code.values().flat_map(|l| l.sessions.iter()))
-            .find(|s| s.uid == key)?;
+        let s = self.all_sessions().find(|s| s.uid == key)?;
         let first =
             s.items.iter().find_map(|i| if let Item::User { text, .. } = i { Some(text.as_str()) } else { None })?;
         let line = first.lines().find(|l| !l.trim().is_empty())?.trim();

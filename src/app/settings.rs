@@ -97,7 +97,16 @@ impl KynexApp {
 
     /// The model the active folder's sessions start on unless pinned otherwise.
     pub(super) fn folder_model(&self) -> String {
-        self.claude_settings(&self.active_dir()).model
+        self.dir_model(&self.active_dir())
+    }
+
+    /// The model dir's sessions start on: its own, or Haiku for the chief.
+    pub(super) fn dir_model(&self, dir: &Path) -> String {
+        let model = self.claude_settings(dir).model;
+        if model.is_empty() && dir == kynex_core::paths::chief_dir() {
+            return kynex_core::chief::DEFAULT_MODEL.into();
+        }
+        model
     }
 
     /// Picks a model where it applies now: the shown session's own, if it has

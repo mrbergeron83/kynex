@@ -14,16 +14,24 @@ use super::state::{Active, ProjectState, View};
 impl KynexApp {
     /// Every open session, in every tab.
     pub(super) fn all_sessions(&self) -> impl Iterator<Item = &Session> {
-        self.chat.sessions.iter().chain(self.code.values().flat_map(|l| l.sessions.iter()))
+        self.chat
+            .sessions
+            .iter()
+            .chain(&self.chief.live.sessions)
+            .chain(self.code.values().flat_map(|l| l.sessions.iter()))
     }
 
     pub(super) fn all_sessions_mut(&mut self) -> impl Iterator<Item = &mut Session> {
-        self.chat.sessions.iter_mut().chain(self.code.values_mut().flat_map(|l| l.sessions.iter_mut()))
+        self.chat
+            .sessions
+            .iter_mut()
+            .chain(&mut self.chief.live.sessions)
+            .chain(self.code.values_mut().flat_map(|l| l.sessions.iter_mut()))
     }
 
     /// Copy live session ids into the saved state so they survive a restart.
     pub(super) fn sync_session_ids(&mut self) {
-        let mut changed = false;
+        let mut changed = self.sync_chief_ids();
         let chat_id = self.chat.current().and_then(|s| s.session_id.clone());
         if self.saved.chat_session_id != chat_id {
             self.saved.chat_session_id = chat_id;
@@ -69,6 +77,9 @@ impl KynexApp {
 
     /// The active tab's folder: the project's path, or chat's own.
     pub(super) fn active_dir(&self) -> PathBuf {
+        if self.in_chief() {
+            return kynex_core::paths::chief_dir();
+        }
         self.active_project().map_or_else(chat_dir, |p| p.path.clone())
     }
 
@@ -83,6 +94,7 @@ impl KynexApp {
 
     fn active_live(&self) -> Option<&Live> {
         match self.saved.active {
+            Active::Chat if self.saved.chief_view => Some(&self.chief.live),
             Active::Chat => Some(&self.chat),
             Active::Project(i) => self.saved.projects.get(i).and_then(|p| self.code.get(&p.path)),
         }
@@ -95,6 +107,10 @@ impl KynexApp {
     /// The open sessions in the active tab's folder, created (with the saved
     /// session resumed) on first use.
     pub(super) fn live_mut(&mut self) -> Option<&mut Live> {
+        if self.in_chief() {
+            // Not until it's turned on, past its warning.
+            return self.saved.chief_consented.then(|| self.chief_live_mut());
+        }
         let wake = self.wake.clone();
         let (kind, path, resume) = match self.saved.active {
             Active::Chat => (Kind::Chat, chat_dir(), None),

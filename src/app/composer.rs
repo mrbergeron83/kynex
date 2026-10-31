@@ -242,7 +242,9 @@ impl KynexApp {
 
         let session = self.active_session();
         let busy = session.is_some_and(|s| s.busy);
-        let mode = session.filter(|s| s.kind == Kind::Code).map(|s| s.mode);
+        // A chief worker runs without prompts; its mode doesn't apply.
+        let worker = session.is_some_and(|s| s.worker);
+        let mode = session.filter(|s| s.kind == Kind::Code && !s.worker).map(|s| s.mode);
         models::fetch_models(cx);
         let model_label = models::model_label(&self.active_model());
         // A session with a model of its own marks the chip with a message bubble.
@@ -542,6 +544,19 @@ impl KynexApp {
                                 .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
                                     this.open_menu(Menu::Mode, ev.position(), Anchor::BottomLeft, cx)
                                 })),
+                        )
+                    })
+                    .when(worker, |d| {
+                        d.child(
+                            div()
+                                .id("worker-mode")
+                                .px_1p5()
+                                .text_color(t.warning)
+                                .child("Chief worker · no prompts")
+                                .tooltip(Tooltip::text(
+                                    "The chief of staff runs this session with no permission prompts, in its \
+                                     own worktree",
+                                )),
                         )
                     })
                     .child(div().flex_1())

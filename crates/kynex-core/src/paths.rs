@@ -18,6 +18,11 @@ pub fn chat_dir() -> PathBuf {
     data_dir().join("chat")
 }
 
+/// The folder the chief of staff's sessions run in ([`crate::chief`]).
+pub fn chief_dir() -> PathBuf {
+    data_dir().join("chief")
+}
+
 /// A folder's last component, for tab titles; the whole path if it has none.
 pub fn project_name(p: &Path) -> String {
     p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.display().to_string())

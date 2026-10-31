@@ -105,6 +105,17 @@ pub struct Saved {
     pub on_close: OnClose,
     /// How long an idle session keeps its `claude` process.
     pub sleep_after: SleepAfter,
+    /// The chief of staff (`kynex_core::chief`): the Chat tab shows it instead
+    /// of chat, it was turned on past its warning, its session, and each
+    /// project's chief worker session.
+    pub chief_view: bool,
+    pub chief_consented: bool,
+    pub chief_session_id: Option<String>,
+    pub chief_workers: HashMap<PathBuf, String>,
+    /// What each chief worker has used, across runs; and the ones working
+    /// when last saved, which a restart cut short.
+    pub chief_spent: HashMap<PathBuf, kynex_core::spent::Spent>,
+    pub chief_working: Vec<PathBuf>,
 }
 
 impl Default for Saved {
@@ -137,6 +148,12 @@ impl Default for Saved {
             keep_awake: KeepAwake::default(),
             on_close: OnClose::default(),
             sleep_after: SleepAfter::default(),
+            chief_view: false,
+            chief_consented: false,
+            chief_session_id: None,
+            chief_workers: HashMap::new(),
+            chief_spent: HashMap::new(),
+            chief_working: Vec::new(),
         }
     }
 }
