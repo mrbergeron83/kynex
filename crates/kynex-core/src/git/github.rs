@@ -47,9 +47,6 @@ pub struct PullRequest {
 
 /// `gh` in `root`, never asking anything.
 fn gh(root: &Path, args: &[&str]) -> Result<String, String> {
-    if crate::wsl::parse(root).is_some() {
-        return Err("GitHub lookups don't run for WSL folders".into());
-    }
     let mut cmd = Command::new("gh");
     cmd.args(args).current_dir(root).env("GH_PROMPT_DISABLED", "1").env("NO_COLOR", "1");
     #[cfg(windows)]

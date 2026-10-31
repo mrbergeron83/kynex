@@ -41,6 +41,7 @@ pub mod paths;
 pub mod plugins;
 pub mod process;
 pub mod project;
+pub mod provider;
 pub mod pulse;
 pub mod questions;
 pub mod queue;
@@ -65,5 +66,4 @@ pub mod usage;
 pub mod watch;
 #[cfg(windows)]
 pub mod win_shell;
-pub mod wsl;
 pub mod zoom;

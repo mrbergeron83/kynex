@@ -16,10 +16,10 @@ use std::time::{Duration, Instant, SystemTime};
 use serde_json::{Value, json};
 
 use crate::commands::SlashCommand;
+use crate::project;
 use crate::queue::Queue;
 use crate::session_log::{LoggedImage, Span};
 use crate::tasks::{self, Tasks};
-use crate::{project, wsl};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -282,6 +282,8 @@ pub struct Session {
     pub model: String,
     /// A model pinned to this session in the picker, over its project's.
     pub own_model: Option<String>,
+    /// Who answers it; see [`Self::set_provider`].
+    provider: crate::provider::Launch,
     pub items: Vec<Item>,
     pub session_id: Option<String>,
     pub busy: bool,
@@ -455,6 +457,7 @@ impl Session {
             cwd,
             model: String::new(),
             own_model: None,
+            provider: Default::default(),
             items: Vec::new(),
             session_id: None,
             busy: false,
@@ -498,6 +501,29 @@ impl Session {
             browser_servers: Vec::new(),
             browser_given: Vec::new(),
         }
+    }
+
+    /// Who answers this session.
+    pub fn provider(&self) -> &crate::provider::Launch {
+        &self.provider
+    }
+
+    /// Picks who answers this session. Only a new session can: once it has
+    /// any activity (a message, a process, a conversation to resume) its
+    /// provider is fixed, and switching means starting a new session.
+    pub fn set_provider(&mut self, provider: crate::provider::Launch) -> Result<(), String> {
+        if provider == self.provider {
+            return Ok(());
+        }
+        if self.session_id.is_some() || !self.items.is_empty() || self.child.is_some() {
+            return Err(format!(
+                "This session runs on {}; start a new session to use {}.",
+                self.provider.provider().label(),
+                provider.provider().label()
+            ));
+        }
+        self.provider = provider;
+        Ok(())
     }
 
     /// Reopen a previous conversation: replay its transcript from Claude Code's
@@ -652,7 +678,7 @@ impl Session {
     }
 
     fn spawn(&mut self) -> Result<(), String> {
-        let mut cmd = claude_command(&self.cwd);
+        let mut cmd = claude_command(&self.cwd, &self.provider);
         // Checkpoints of the files Claude edits, so a rewind can restore them.
         cmd.env(crate::rewind::CHECKPOINTS_ENV, "1");
         cmd.args([
@@ -1533,23 +1559,16 @@ impl SessionInfo {
         (other_folder || default.is_some_and(|d| d != branch)).then_some(branch)
     }
 }
-/// `~/.claude/projects`, under the WSL user's home for projects that live in WSL.
-fn projects_dir(cwd: &Path) -> Option<PathBuf> {
-    let home = match wsl::parse(cwd) {
-        Some(w) => w.home()?,
-        None => PathBuf::from(std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?),
-    };
+/// `~/.claude/projects`.
+fn projects_dir() -> Option<PathBuf> {
+    let home = PathBuf::from(std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?);
     Some(home.join(".claude").join("projects"))
 }
 
 /// Claude Code keeps a directory's sessions in `~/.claude/projects/<cwd>`, with
 /// every character that isn't a letter or digit replaced by `-`.
 fn transcripts_dir(cwd: &Path) -> Option<PathBuf> {
-    let path = match wsl::parse(cwd) {
-        Some(w) => w.path,
-        None => cwd.to_string_lossy().into_owned(),
-    };
-    let name: String = path.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let name: String = cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
     // Looked up once per folder: `~/.claude/projects` can hold hundreds.
     static FOUND: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();
     let found = FOUND.get_or_init(Default::default);
@@ -1557,7 +1576,7 @@ fn transcripts_dir(cwd: &Path) -> Option<PathBuf> {
         return Some(dir.clone());
     }
     // The drive letter's case depends on who launched Claude (`C:` vs `c:`).
-    let dir = std::fs::read_dir(projects_dir(cwd)?)
+    let dir = std::fs::read_dir(projects_dir()?)
         .ok()?
         .filter_map(Result::ok)
         .map(|d| d.path())
@@ -1573,11 +1592,7 @@ pub(crate) fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
         return Some(p);
     }
     // Fall back to every project, in case the folder was renamed or moved.
-    std::fs::read_dir(projects_dir(cwd)?)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|d| d.path().join(&file))
-        .find(|p| p.is_file())
+    std::fs::read_dir(projects_dir()?).ok()?.filter_map(Result::ok).map(|d| d.path().join(&file)).find(|p| p.is_file())
 }
 
 /// A user-role log entry the CLI wrote itself, like the `<task-notification>`
@@ -1588,23 +1603,17 @@ fn written_by_cli(v: &Value) -> bool {
     v["promptSource"] == "system" || v["origin"]["kind"].is_string() || text.starts_with("<task-notification>")
 }
 
-/// `claude`, to be run in `cwd` (inside WSL for a WSL folder), without a console window.
-pub(crate) fn claude_command(cwd: &Path) -> Command {
-    #[cfg_attr(not(windows), allow(unused_mut))]
-    let mut cmd = match wsl::parse(cwd) {
-        Some(w) => w.command("claude"),
-        None => {
-            let mut c = Command::new(crate::cli::program());
-            c.current_dir(cwd);
-            c
-        }
-    };
+/// `claude`, to be run in `cwd` without a console window, with `provider`'s environment.
+pub(crate) fn claude_command(cwd: &Path, provider: &crate::provider::Launch) -> Command {
+    let mut cmd = Command::new(crate::cli::program());
+    cmd.current_dir(cwd);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
+    provider.apply(&mut cmd);
     cmd
 }
 
@@ -1623,8 +1632,9 @@ pub struct ModelInfo {
 /// What the CLI reports in the stream-json `initialize` handshake when started
 /// in `cwd`: models, slash commands, agents and so on. Sends no message, so it
 /// costs nothing. Blocks for a second or two; call it off the UI thread.
+/// Asks the CLI as the user set it up ([`crate::provider::Launch::Anthropic`]).
 pub(crate) fn initialize(cwd: &Path) -> Result<Value, String> {
-    let mut cmd = claude_command(cwd);
+    let mut cmd = claude_command(cwd, &crate::provider::Launch::Anthropic);
     cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -2531,6 +2541,27 @@ mod tests {
     }
 
     #[test]
+    fn only_a_new_session_switches_provider() {
+        use crate::provider::{Launch, OpenRouterSettings, Provider};
+        let openrouter = || Launch::OpenRouter { key: "k".into(), settings: OpenRouterSettings::default() };
+        let mut s = Session::new(Kind::Code, std::env::temp_dir());
+        assert_eq!(s.provider().provider(), Provider::Anthropic);
+        s.set_provider(openrouter()).unwrap();
+        s.set_provider(Launch::Anthropic).unwrap();
+
+        s.items.push(Item::User { text: "hi".into(), images: Vec::new() });
+        let err = s.set_provider(openrouter()).unwrap_err();
+        assert!(err.contains("new session"), "{err}");
+        assert_eq!(s.provider(), &Launch::Anthropic);
+        // Picking the one it has is fine.
+        s.set_provider(Launch::Anthropic).unwrap();
+
+        let mut resumed = Session::new(Kind::Code, std::env::temp_dir());
+        resumed.session_id = Some("abc".into());
+        assert!(resumed.set_provider(openrouter()).is_err());
+    }
+
+    #[test]
     fn title_is_first_real_user_message() {
         let path = std::env::temp_dir().join(format!("kynex-title-{}.jsonl", std::process::id()));
         let lines = [
@@ -2686,7 +2717,7 @@ mod tests {
         let second = &points[0];
         assert!(second.checkpoint && second.changed == ["fruit.txt"], "unexpected rewind checkpoint metadata");
         s.kill();
-        crate::rewind::restore_files(&project, &id, second).unwrap();
+        crate::rewind::restore_files(&project, &id, second, s.provider()).unwrap();
         assert!(!project.join("fruit.txt").exists(), "the file is still there");
         s.rewind_to(second);
         assert_eq!(s.items.iter().filter(|i| matches!(i, Item::User { .. })).count(), 1);

@@ -31,7 +31,8 @@ impl KynexApp {
         self.naming = Some(id.clone());
         self.naming_tried.insert(id.clone());
         cx.spawn(async move |this, cx| {
-            let named = cx.background_spawn(async move { titles::generate(&first).map(|t| (id, t)) }).await;
+            let named =
+                cx.background_spawn(async move { titles::generate(&first, Default::default()).map(|t| (id, t)) }).await;
             this.update(cx, |this, cx| {
                 this.naming = None;
                 match named {

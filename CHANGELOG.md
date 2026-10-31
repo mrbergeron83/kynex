@@ -22,6 +22,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   instead, which the chip shows with a bubble; the pin is kept with the session, so it still
   applies when the session is resumed.
 
+### Removed
+
+- Projects inside WSL (`\\wsl.localhost\…`) no longer run Claude, git or editors inside the
+  distro; WSL isn't supported.
+
 ## [0.0.11] - 2026-10-30
 
 ### Added

@@ -18,8 +18,7 @@ protocol, so no API key is needed.
   OSes; don't hard-code Windows paths, shells or tools in shared code.
 - Development and testing happen on **native Windows only**. Use PowerShell / Windows
   tooling; don't reach for WSL.
-- `crates/kynex-core/src/wsl.rs` and the `\\wsl.localhost` handling exist but are out of scope for now.
-  Don't extend or debug WSL paths unless asked; just don't break them.
+- WSL folders aren't supported; don't add WSL-specific code.
 
 ## You are running inside Kynex
 
@@ -106,7 +105,7 @@ A cargo workspace with two crates:
     commit, fetch / pull / push), `worktree`; `open.rs` — open a folder in VS Code / file
     manager / terminal; `attach.rs` — image attachments; `fmt.rs` — times and turn recaps;
     `paths.rs` — `data_dir()` and friends; `process.rs` — child processes die with Kynex (a
-    job object on Windows, `PR_SET_PDEATHSIG` on Linux) unless `detach`ed, like editors it opens; `wsl.rs` — WSL paths (out of scope for now)
+    job object on Windows, `PR_SET_PDEATHSIG` on Linux) unless `detach`ed, like editors it opens
   - `terminal/` — interactive terminals on `alacritty_terminal` (ConPTY on Windows): spawning
     PowerShell / Git Bash, keys to bytes, render snapshots with resolved colours, selection;
     shells inherit Kynex's rights (`elevated()` says if that's administrator)

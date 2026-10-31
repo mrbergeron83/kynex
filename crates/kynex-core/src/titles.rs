@@ -8,10 +8,13 @@
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
 
 use crate::paths::data_dir;
+
+/// How many of the first message's words make a title when no model names it.
+pub const FIRST_WORDS: usize = 8;
 
 fn store() -> &'static Mutex<HashMap<String, String>> {
     static STORE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
@@ -36,27 +39,27 @@ pub fn remember(id: &str, title: &str) {
     let _ = crate::project::write_json(&data_dir().join("titles.json"), &*map);
 }
 
-/// Asks a small model for a title for a conversation that opened with
-/// `first_message`. One short `claude -p` call: no tools, nothing saved as a
-/// session. Blocks for a few seconds.
-pub fn generate(first_message: &str) -> Result<String, String> {
+/// A title for a conversation that opened with `first_message`, on `provider`.
+/// Anthropic sessions ask a small model: one short `claude -p` call, no tools,
+/// nothing saved as a session; it blocks for a few seconds. OpenRouter sessions
+/// spend nothing on it and take the message's first words.
+pub fn generate(first_message: &str, provider: crate::provider::Provider) -> Result<String, String> {
+    if provider == crate::provider::Provider::OpenRouter {
+        return Some(crate::fmt::first_words(first_message, FIRST_WORDS))
+            .filter(|t| !t.is_empty())
+            .ok_or_else(|| "the first message has no words".into());
+    }
     let excerpt: String = first_message.chars().take(1500).collect();
     let prompt = format!(
         "Name this coding conversation in 2 to 6 words, the way a session list would, \
          e.g. \"Git worktree cleanup\" or \"Fix login redirect\". Reply with the name only.\n\n\
          The conversation opened with:\n{excerpt}"
     );
-    let mut cmd = Command::new(crate::cli::program());
+    let mut cmd = crate::session::claude_command(&std::env::temp_dir(), &crate::provider::Launch::Anthropic);
     cmd.args(["-p", "--model", "haiku", "--no-session-persistence", "--tools", "", "--output-format", "text"])
-        .current_dir(std::env::temp_dir())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000);
-    }
     let mut child =
         crate::process::dies_with_parent(&mut cmd).spawn().map_err(|e| format!("couldn't run claude: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
@@ -89,6 +92,14 @@ fn clean(reply: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::Provider;
+
+    #[test]
+    fn openrouter_titles_are_the_first_words() {
+        let first = "fix the scrolling bug in the git view when a diff is long";
+        assert_eq!(generate(first, Provider::OpenRouter).unwrap(), "fix the scrolling bug in the git view…");
+        assert!(generate("  ", Provider::OpenRouter).is_err());
+    }
 
     #[test]
     fn cleans_model_replies() {
@@ -102,7 +113,7 @@ mod tests {
     #[test]
     #[ignore = "needs the claude CLI and uses a little quota"]
     fn generates_a_title() {
-        let t = generate("the git view is lacking polish, add staging and a commit box").unwrap();
+        let t = generate("the git view is lacking polish, add staging and a commit box", Provider::Anthropic).unwrap();
         assert!(!t.is_empty() && t.len() <= 61, "{t}");
     }
 }
