@@ -245,8 +245,8 @@ impl KynexApp {
         let mode = session.filter(|s| s.kind == Kind::Code).map(|s| s.mode);
         models::fetch_models(cx);
         let model_label = models::model_label(&self.active_model());
-        // A project with its own model marks the chip with a folder.
-        let own_model = self.project_model().is_some();
+        // A session with a model of its own marks the chip with a message bubble.
+        let own_model = self.session_model().is_some();
         // Effort lives in the project's Claude settings (a tiny file); chat has
         // none. Its own chip beside the model's: "Effort" for the default, else the level.
         let effort_label = self.active_project().filter(|_| mode.is_some()).map(|p| {
@@ -257,9 +257,11 @@ impl KynexApp {
                 .map_or_else(|| "Effort".to_string(), |(_, name)| format!("{name} effort"))
         });
         let chip_tip = if own_model {
-            "Model for this project; applies from the next session start"
+            "Model pinned to this session; applies from its next start"
+        } else if self.active_project().is_some() {
+            "Model for this project's sessions; applies from the next session start"
         } else {
-            "Model, for every tab; applies from the next session start"
+            "Model for chats; applies from the next session start"
         };
         let in_project = matches!(self.saved.active, Active::Project(_));
         let placeholder = if self.rewinding() {
@@ -506,7 +508,7 @@ impl KynexApp {
                                     .text_color(t.text_muted)
                                     .gap_1()
                                     .when(has_effort, |b| b.pr_0p5())
-                                    .when(own_model, |b| b.child(icon(Icon::Folder, t.text_placeholder).size_3()))
+                                    .when(own_model, |b| b.child(icon(Icon::Message, t.text_placeholder).size_3()))
                                     .child(model_label)
                                     .when(!has_effort, |b| {
                                         b.child(icon(Icon::ChevronDown, t.text_placeholder).size_3())

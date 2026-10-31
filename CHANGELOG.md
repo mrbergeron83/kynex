@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The model is per project (and chats have their own), with no pick for every tab any more.
+  "This session" at the top of the composer's model menu pins a model to the open session
+  instead, which the chip shows with a bubble; the pin is kept with the session, so it still
+  applies when the session is resumed.
+
 ## [0.0.11] - 2026-10-30
 
 ### Added

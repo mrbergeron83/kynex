@@ -278,7 +278,10 @@ pub struct Session {
     pub uid: u64,
     pub kind: Kind,
     pub cwd: PathBuf,
+    /// The model its process starts on (`--model`); empty is the CLI's default.
     pub model: String,
+    /// A model pinned to this session in the picker, over its project's.
+    pub own_model: Option<String>,
     pub items: Vec<Item>,
     pub session_id: Option<String>,
     pub busy: bool,
@@ -447,6 +450,7 @@ impl Session {
             kind,
             cwd,
             model: String::new(),
+            own_model: None,
             items: Vec::new(),
             session_id: None,
             busy: false,

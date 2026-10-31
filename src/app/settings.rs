@@ -84,45 +84,63 @@ impl KynexApp {
         self.claude_settings.get(path).cloned().unwrap_or_else(|| ClaudeSettings::load(path))
     }
 
-    /// The model the active tab's new sessions start on: the project's own, if
-    /// it has one, else the one for every tab.
+    /// The model the shown session runs on: its own, if one is pinned to it,
+    /// else its folder's (the project's, or chat's).
     pub(super) fn active_model(&self) -> String {
-        match self.active_project() {
-            Some(p) => self.claude_settings(&p.path).model_or(&self.saved.model).to_string(),
-            None => self.saved.model.clone(),
-        }
+        self.session_model().unwrap_or_else(|| self.folder_model())
     }
 
-    /// The active project's own model, if it has one.
-    pub(super) fn project_model(&self) -> Option<String> {
-        self.active_project().and_then(|p| self.claude_settings(&p.path).model)
+    /// The model pinned to the shown session, if any.
+    pub(super) fn session_model(&self) -> Option<String> {
+        self.active_session().and_then(|s| s.own_model.clone())
     }
 
-    /// Picks a model where it applies now: the project's own, if it has one,
-    /// else every tab's. Sessions start on it from their next start.
+    /// The model the active folder's sessions start on unless pinned otherwise.
+    pub(super) fn folder_model(&self) -> String {
+        self.claude_settings(&self.active_dir()).model
+    }
+
+    /// Picks a model where it applies now: the shown session's own, if it has
+    /// one, else its folder's. A session starts on it from its next start.
     pub(super) fn set_model(&mut self, id: String, cx: &mut Context<Self>) {
-        match self.active_project().filter(|_| self.project_model().is_some()) {
-            Some(p) => self.set_project_model(p.path.clone(), Some(id), cx),
-            None => {
-                self.saved.model = id;
-                self.save();
-            }
+        if self.session_model().is_some() {
+            self.set_session_model(Some(id), cx);
+        } else {
+            self.set_project_model(self.active_dir(), id, cx);
         }
         cx.notify();
     }
 
-    /// Gives a project its own model (`Some`), or has it follow every tab's (`None`).
-    pub(super) fn set_project_model(&mut self, path: PathBuf, model: Option<String>, cx: &mut Context<Self>) {
+    /// Pins a model to the shown session (`Some`), or has it follow its folder's
+    /// (`None`). Saved with the folder's sessions once the session has an id.
+    pub(super) fn set_session_model(&mut self, model: Option<String>, cx: &mut Context<Self>) {
+        let folder = self.folder_model();
+        let Some(s) = self.session_mut() else { return };
+        s.own_model = model.clone();
+        s.use_model(model.clone().unwrap_or(folder));
+        let (cwd, id) = (s.cwd.clone(), s.session_id.clone());
+        if let Some(id) = id {
+            self.edit_groups(&cwd, |g| g.set_model(&id, model.as_deref()));
+        }
+        cx.notify();
+    }
+
+    /// Sets a folder's model, from the modal or the composer's picker. Its
+    /// sessions without a pin start on it from their next start.
+    pub(super) fn set_project_model(&mut self, path: PathBuf, model: String, cx: &mut Context<Self>) {
         if self.settings.as_ref().is_some_and(|s| s.path == path) {
             return self.edit_settings(cx, |v| v.claude.model = model);
         }
         let mut claude = self.claude_settings(&path);
         if claude.model != model {
-            claude.model = model;
+            claude.model = model.clone();
             if let Err(e) = claude.save(&path) {
                 self.toast(Toast::error(e));
             }
             self.claude_settings.insert(path, claude);
+        }
+        if let Some(s) = self.session_mut().filter(|s| s.own_model.is_none()) {
+            s.use_model(model);
         }
     }
 
@@ -388,7 +406,7 @@ impl KynexApp {
                             .text_xs()
                             .text_color(t.text_muted)
                             .child(
-                                "The model and effort are also in the composer. The model applies to every tab, unless its menu gives this project its own.",
+                                "The model and effort are also in the composer, where a session can pin a model of its own over the project's.",
                             ),
                     )
             }

@@ -196,10 +196,10 @@ pub struct ClaudeSettings {
     pub effort: String,
     /// Extra folders Claude may read and edit, like `--add-dir`.
     pub add_dirs: Vec<PathBuf>,
-    /// The model this project's new sessions start on, over the one picked for
-    /// every tab; `None` follows that one. `Some("")` is the CLI's default.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
+    /// The model this project's new sessions start on; empty is the CLI's
+    /// default. A session can pin its own over it ([`crate::groups::SessionGroups`]).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub model: String,
 }
 
 impl ClaudeSettings {
@@ -211,11 +211,6 @@ impl ClaudeSettings {
 
     pub fn save(&self, project: &Path) -> Result<(), String> {
         save(project, Self::FILE, self)
-    }
-
-    /// The model for this project's new sessions: its own, else `global`.
-    pub fn model_or<'a>(&'a self, global: &'a str) -> &'a str {
-        self.model.as_deref().unwrap_or(global)
     }
 
     /// CLI flags for everything but the mode, which each session tracks itself.
@@ -446,7 +441,7 @@ mod tests {
             mode: Mode::Plan,
             effort: "high".into(),
             add_dirs: vec![PathBuf::from("/srv/shared")],
-            model: Some("opus".into()),
+            model: "opus".into(),
         };
         // The model goes to each session, not through these flags.
         assert_eq!(s.cli_args(), ["--effort", "high", "--add-dir", "/srv/shared"]);
@@ -495,24 +490,13 @@ mod tests {
     }
 
     #[test]
-    fn project_model_wins_over_the_global_one() {
-        let mut s = ClaudeSettings::default();
-        assert_eq!(s.model_or("sonnet"), "sonnet");
-        s.model = Some("opus".into());
-        assert_eq!(s.model_or("sonnet"), "opus");
-        // Pinned to the CLI's default, even when every tab uses another.
-        s.model = Some(String::new());
-        assert_eq!(s.model_or("sonnet"), "");
-    }
-
-    #[test]
     fn project_model_round_trips_and_older_files_still_load() {
-        let s = ClaudeSettings { model: Some("haiku".into()), ..Default::default() };
+        let s = ClaudeSettings { model: "haiku".into(), ..Default::default() };
         let back: ClaudeSettings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
-        assert_eq!(back.model.as_deref(), Some("haiku"));
-        // Written before the field existed, or following every tab: no key at all.
+        assert_eq!(back.model, "haiku");
+        // Written before the field existed, or on the CLI's default: no key at all.
         let old: ClaudeSettings = serde_json::from_str(r#"{"mode":"auto","effort":"max"}"#).unwrap();
-        assert_eq!(old.model, None);
+        assert_eq!(old.model, "");
         assert!(!serde_json::to_string(&ClaudeSettings::default()).unwrap().contains("model"));
     }
 

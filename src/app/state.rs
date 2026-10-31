@@ -60,7 +60,6 @@ pub struct WindowState {
 pub struct Saved {
     pub projects: Vec<ProjectState>,
     pub active: Active,
-    pub model: String,
     pub chat_session_id: Option<String>,
     pub theme: Theme,
     /// Interface and code font families; empty means the built-in ones.
@@ -113,7 +112,6 @@ impl Default for Saved {
         Self {
             projects: Vec::new(),
             active: Active::Chat,
-            model: String::new(),
             chat_session_id: None,
             theme: Theme::default(),
             ui_font: String::new(),

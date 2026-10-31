@@ -120,6 +120,7 @@ use gpui::{
 use kynex_core::cli::UpdateState;
 use kynex_core::live::{Key, Live};
 use kynex_core::paths::chat_dir;
+use kynex_core::project::ClaudeSettings;
 use kynex_core::session::{self, Attachment, Kind, Session};
 
 use drafts::Draft;
@@ -322,7 +323,7 @@ impl KynexApp {
             Some(id) => Session::resume(Kind::Chat, chat_dir(), id, wake.clone()),
             None => Session::new(Kind::Chat, chat_dir()),
         };
-        chat.model = saved.model.clone();
+        chat.model = ClaudeSettings::load(&chat_dir()).model;
         chat.wake = wake.clone();
         let chat = Live::of(chat);
 

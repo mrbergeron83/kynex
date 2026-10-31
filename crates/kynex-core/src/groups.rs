@@ -22,6 +22,9 @@ pub struct SessionGroups {
     pub pinned: Vec<String>,
     /// Names given by hand, by session id; they win over generated ones.
     pub names: BTreeMap<String, String>,
+    /// Models pinned to a session, by session id, over the project's own;
+    /// empty is the CLI's default.
+    pub models: BTreeMap<String, String>,
 }
 
 /// The longest name a session can be given, in characters.
@@ -199,6 +202,23 @@ impl SessionGroups {
         }
     }
 
+    /// The model pinned to a session, if any.
+    pub fn model_of(&self, id: &str) -> Option<&str> {
+        self.models.get(id).map(String::as_str)
+    }
+
+    /// Pins a model to a session (`Some`), or has it follow the project's (`None`).
+    pub fn set_model(&mut self, id: &str, model: Option<&str>) {
+        match model {
+            Some(m) => {
+                self.models.insert(id.to_string(), m.to_string());
+            }
+            None => {
+                self.models.remove(id);
+            }
+        }
+    }
+
     /// Hides a session; it leaves its group (and the pinned ones), and comes back at the top level.
     pub fn archive(&mut self, id: &str) {
         self.leave_group(id);
@@ -314,6 +334,7 @@ impl SessionGroups {
         self.unarchive(id);
         self.pinned.retain(|s| s != id);
         self.names.remove(id);
+        self.models.remove(id);
     }
 
     /// Sorts session ids (newest first) into the pinned ones, the top level,
@@ -539,8 +560,22 @@ mod tests {
         // A deleted session takes its name and pin with it.
         g.rename("t", "Keep");
         g.toggle_pin("t");
+        g.set_model("t", Some("opus"));
         g.forget("t");
         assert_eq!(g, SessionGroups::default());
+    }
+
+    #[test]
+    fn models_pinned_to_a_session() {
+        let mut g = SessionGroups::default();
+        assert_eq!(g.model_of("s"), None);
+        g.set_model("s", Some("haiku"));
+        assert_eq!(g.model_of("s"), Some("haiku"));
+        // Pinned to the CLI's default, whatever the project picks.
+        g.set_model("s", Some(""));
+        assert_eq!(g.model_of("s"), Some(""));
+        g.set_model("s", None);
+        assert_eq!(g.model_of("s"), None);
     }
 
     #[test]
@@ -551,6 +586,7 @@ mod tests {
         g.archive("t");
         g.toggle_pin("u");
         g.rename("u", "Named");
+        g.set_model("u", Some("sonnet"));
         let back: SessionGroups = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
         assert_eq!(back, g);
         // Older or partial files still load.
