@@ -324,13 +324,17 @@ impl KynexApp {
     }
 }
 
-/// A worker's use in a line: its tokens, and what they cost, with how much went to
-/// Opus (careful mode's planning and review) when any did.
+/// A worker's use in a line: its tokens, and what they cost, with the split between
+/// models when more than one took part (careful mode's Opus planning, Haiku doing).
 fn spent_line(s: &kynex_core::spent::Spent) -> String {
     let tokens = format!("{} tokens", fmt::tokens(s.tokens()));
-    match (s.cost > 0.0, s.opus_cost > 0.0) {
-        (false, _) => tokens,
-        (true, false) => format!("{tokens} · ${:.2}", s.cost),
-        (true, true) => format!("{tokens} · ${:.2} (Opus ${:.2})", s.cost, s.opus_cost),
+    if s.cost <= 0.0 {
+        return tokens;
     }
+    let split = s.by_model();
+    if split.len() < 2 {
+        return format!("{tokens} · ${:.2}", s.cost);
+    }
+    let parts: Vec<String> = split.iter().map(|(name, cost)| format!("{name} ${cost:.2}")).collect();
+    format!("{tokens} · ${:.2} ({})", s.cost, parts.join(" · "))
 }
