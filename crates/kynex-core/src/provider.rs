@@ -213,6 +213,16 @@ impl Launch {
         }
     }
 
+    /// The OpenRouter model it runs on; `None` on Anthropic.
+    pub fn model(&self) -> Option<&str> {
+        match self {
+            Launch::Anthropic => None,
+            Launch::OpenRouter { settings, .. } | Launch::OpenRouterChat { settings, .. } => {
+                Some(settings.model.as_str()).filter(|m| !m.trim().is_empty())
+            }
+        }
+    }
+
     pub fn provider(&self) -> Provider {
         match self {
             Launch::Anthropic => Provider::Anthropic,

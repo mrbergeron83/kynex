@@ -121,6 +121,16 @@ impl OpenRouterConfig {
         !self.no_tools.iter().any(|m| m == id)
     }
 
+    /// Remembers that `id` takes no tool calls (a request said so). Returns
+    /// whether that's news.
+    pub fn mark_no_tools(&mut self, id: &str) -> bool {
+        if !self.models.iter().any(|m| m == id) || !self.takes_tools(id) {
+            return false;
+        }
+        self.no_tools.push(id.to_string());
+        true
+    }
+
     /// Learns from OpenRouter's catalogue which of My models take tool calls.
     /// Models it doesn't list keep what was known. Returns whether anything changed.
     pub fn learn_tools(&mut self, catalogue: &[super::CatalogModel]) -> bool {
@@ -251,6 +261,11 @@ mod tests {
         c.remove_model("venice/dolphin").unwrap();
         c.learn_tools(&[]);
         assert!(c.no_tools.is_empty(), "forgotten with the model");
+        // Told by a failed request.
+        assert!(c.mark_no_tools("qwen/qwen3-coder"));
+        assert!(!c.mark_no_tools("qwen/qwen3-coder"), "known already");
+        assert!(!c.mark_no_tools("not/mine"));
+        assert!(!c.takes_tools("qwen/qwen3-coder"));
     }
 
     #[test]

@@ -571,6 +571,7 @@ impl KynexApp {
         // in the background flashes the taskbar / bounces the Dock icon.
         let mut called = false;
         let mut reports = Vec::new();
+        let mut without_tools = Vec::new();
         let mut limits: Option<kynex_core::usage::Limits> = None;
         // Folders whose files may have just changed: a turn ended or a tool call finished.
         let mut touched = HashSet::new();
@@ -608,6 +609,9 @@ impl KynexApp {
             if let Some(init) = s.take_init() {
                 reports.push((s.cwd.clone(), init, s.provider().provider()));
             }
+            if let Some(model) = s.take_no_tools() {
+                without_tools.push((s.uid, model));
+            }
             // The account's limits: whichever session reported last is newest.
             if let Some(newer) = s.take_limits() {
                 limits = Some(match limits {
@@ -627,6 +631,9 @@ impl KynexApp {
             self.limits_reported(limits, cx);
         }
         // What a session reported as it started: its folder's commands, the models.
+        for (key, model) in without_tools {
+            self.model_without_tools(key, &model);
+        }
         for (cwd, init, provider) in reports {
             self.commands_reported(cwd, init.commands, cx);
             // Claude's model list; an OpenRouter session's models are My models.

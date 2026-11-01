@@ -128,6 +128,37 @@ impl KynexApp {
         .detach();
     }
 
+    /// A Work session's request failed because `model` takes no tool calls:
+    /// remember it, so new sessions on it start in Chat, and offer to carry
+    /// session `key` on in Chat.
+    pub(super) fn model_without_tools(&mut self, key: kynex_core::live::Key, model: &str) {
+        if self.saved.openrouter.mark_no_tools(model) {
+            self.save();
+            self.refresh_new_sessions();
+        }
+        let name = super::models::openrouter_label(model);
+        self.toast(
+            Toast::warning(format!("{name} can't work in Claude Code: it takes no tool calls"))
+                .detail("It can still chat. New sessions on it start in Chat.")
+                .session(key)
+                .action(kynex_core::toasts::Action::ContinueInChat(key)),
+        );
+    }
+
+    /// Moves session `key` to Chat, same model and conversation, and sends
+    /// its last message again there.
+    pub(super) fn continue_in_chat(&mut self, key: kynex_core::live::Key, cx: &mut Context<Self>) {
+        let Some(s) = self.find_session_mut(key) else { return };
+        if !s.move_to_chat() {
+            return;
+        }
+        if let Some(id) = s.session_id.clone() {
+            let cwd = s.cwd.clone();
+            self.edit_groups(&cwd, |g| g.set_provider(&id, Provider::OpenRouterChat));
+        }
+        cx.notify();
+    }
+
     /// Takes in which of My models take tool calls, from OpenRouter's catalogue.
     pub(super) fn learn_tools(&mut self, models: &[openrouter::CatalogModel]) {
         if self.saved.openrouter.learn_tools(models) {

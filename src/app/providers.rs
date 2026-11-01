@@ -328,14 +328,19 @@ impl KynexApp {
         if id.is_empty() {
             return;
         }
-        if self.edit_openrouter(cx, |c| c.add_model(id))
-            && let Some(p) = self.providers_mut()
-        {
+        if !self.edit_openrouter(cx, |c| c.add_model(id)) {
+            return;
+        }
+        let catalogue = self.providers_mut().map(|p| {
             p.add_input.update(cx, |input, cx| input.set_text("", cx));
-            // Whether it takes tools, from the catalogue it was found in.
-            if let Some(Ok(models)) = p.catalogue.clone() {
-                self.learn_tools(&models);
-            }
+            p.catalogue.clone()
+        });
+        // Whether it takes tools: from the catalogue it was found in, from the
+        // one still loading once it's in, else asked for now.
+        match catalogue.flatten() {
+            Some(Ok(models)) if !models.is_empty() => self.learn_tools(&models),
+            Some(Ok(_)) => {}
+            _ => self.refresh_openrouter_tools(cx),
         }
     }
 

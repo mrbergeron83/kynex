@@ -354,6 +354,9 @@ pub struct Session {
     applying: Vec<String>,
     /// The model that wrote the last reply, whose window `context` is measured against.
     reply_model: String,
+    /// An OpenRouter model that turned out to take no tool calls (its request
+    /// failed for it), until the app takes it.
+    no_tools: Option<String>,
     /// What the process reported when it started, until the app takes it.
     init: Option<Init>,
     /// The account's usage limits from the last `rate_limit_event`, until the app takes them.
@@ -503,6 +506,7 @@ impl Session {
             launched: None,
             applying: Vec::new(),
             reply_model: String::new(),
+            no_tools: None,
             init: None,
             limits: None,
             resume_at: None,
@@ -831,6 +835,29 @@ impl Session {
         // answer comes before any reply, and nothing else about the session changes.
         self.write(json!({ "type": "control_request", "request_id": INIT_ID, "request": { "subtype": "initialize" } }));
         Ok(())
+    }
+
+    /// The OpenRouter model a request just failed for because it takes no
+    /// tool calls, once.
+    pub fn take_no_tools(&mut self) -> Option<String> {
+        self.no_tools.take()
+    }
+
+    /// Moves an OpenRouter session to Chat (the harness), same model and
+    /// conversation, and sends its last message again there. For a Work
+    /// session whose model turned out to take no tools. Returns whether it moved.
+    pub fn move_to_chat(&mut self) -> bool {
+        let crate::provider::Launch::OpenRouter { key, settings } = self.provider.clone() else { return false };
+        self.kill();
+        self.provider = crate::provider::Launch::OpenRouterChat { key, settings };
+        let last = self.items.iter().rev().find_map(|i| match i {
+            Item::User { text, .. } => Some(text.clone()),
+            _ => None,
+        });
+        if let Some(text) = last.filter(|t| !t.trim().is_empty()) {
+            self.send(text, Vec::new());
+        }
+        true
     }
 
     /// The commands and models the process reported when it started, once.
@@ -1325,6 +1352,17 @@ impl Session {
                         tokens: n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens"),
                         window: known_window(&self.reply_model).or(self.context.window),
                     };
+                }
+                // OpenRouter refused the request: the model takes no tool calls.
+                if v["message"]["model"] == "<synthetic>"
+                    && self.child.is_some()
+                    && self.provider.provider().is_openrouter()
+                {
+                    let said =
+                        v["message"]["content"].as_array().into_iter().flatten().filter_map(|b| b["text"].as_str());
+                    if said.into_iter().any(crate::openrouter::says_no_tools) {
+                        self.no_tools = self.provider.with_model(&self.model).model().map(str::to_string);
+                    }
                 }
                 for block in v["message"]["content"].as_array().into_iter().flatten() {
                     match block["type"].as_str() {
