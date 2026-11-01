@@ -167,6 +167,9 @@ impl KynexApp {
         cx.spawn(async move |this, cx| {
             let found = cx.background_spawn(async { openrouter::catalogue() }).await;
             this.update(cx, |this, cx| {
+                if let Ok(models) = &found {
+                    this.learn_tools(models);
+                }
                 if let Some(p) = this.providers_mut() {
                     p.catalogue = Some(found);
                 }
@@ -329,6 +332,10 @@ impl KynexApp {
             && let Some(p) = self.providers_mut()
         {
             p.add_input.update(cx, |input, cx| input.set_text("", cx));
+            // Whether it takes tools, from the catalogue it was found in.
+            if let Some(Ok(models)) = p.catalogue.clone() {
+                self.learn_tools(&models);
+            }
         }
     }
 

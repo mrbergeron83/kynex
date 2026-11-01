@@ -24,6 +24,10 @@ pub struct OpenRouterConfig {
     /// The user removed the key in Settings, so a setup found on launch
     /// (`OPENROUTER_API_KEY`…) isn't brought back in. Saving a key clears it.
     pub key_removed: bool,
+    /// My models that OpenRouter's catalogue says take no tool calls: Claude
+    /// Code can't work with them, so they only chat.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub no_tools: Vec<String>,
 }
 
 impl Default for OpenRouterConfig {
@@ -35,6 +39,7 @@ impl Default for OpenRouterConfig {
             max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             last_check: None,
             key_removed: false,
+            no_tools: Vec::new(),
         }
     }
 }
@@ -108,6 +113,33 @@ impl OpenRouterConfig {
         }
         self.max_output_tokens = n;
         Ok(())
+    }
+
+    /// Whether `id` takes tool calls, so it can work in Claude Code. A model
+    /// the catalogue hasn't been asked about is taken at its word: yes.
+    pub fn takes_tools(&self, id: &str) -> bool {
+        !self.no_tools.iter().any(|m| m == id)
+    }
+
+    /// Learns from OpenRouter's catalogue which of My models take tool calls.
+    /// Models it doesn't list keep what was known. Returns whether anything changed.
+    pub fn learn_tools(&mut self, catalogue: &[super::CatalogModel]) -> bool {
+        let before = self.no_tools.clone();
+        for m in &self.models {
+            let Some(listed) = catalogue.iter().find(|c| c.id == *m) else { continue };
+            let known = self.no_tools.iter().position(|n| n == m);
+            match (listed.tools, known) {
+                (false, None) => self.no_tools.push(m.clone()),
+                (true, Some(i)) => {
+                    self.no_tools.remove(i);
+                }
+                _ => {}
+            }
+        }
+        // Models no longer mine are forgotten.
+        let models = self.models.clone();
+        self.no_tools.retain(|n| models.contains(n));
+        self.no_tools != before
     }
 
     /// Remembers how a check of `model` went, at `at` (seconds since 1970).
@@ -192,6 +224,33 @@ mod tests {
         for bad in ["", "qwen", "/x", "x/", "qwen/ coder", "a:b/c", "qwen/coder\n"] {
             assert!(!valid_model_id(bad), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn learns_which_models_take_tools() {
+        let listed = |id: &str, tools: bool| super::super::CatalogModel {
+            id: id.into(),
+            name: id.into(),
+            prompt: None,
+            completion: None,
+            context: None,
+            tools,
+        };
+        let mut c = OpenRouterConfig::default();
+        c.add_model("venice/dolphin").unwrap();
+        assert!(c.takes_tools("venice/dolphin"), "unknown until the catalogue says");
+        let catalogue = [listed("qwen/qwen3-coder", true), listed("venice/dolphin", false), listed("not/mine", false)];
+        assert!(c.learn_tools(&catalogue));
+        assert!(!c.takes_tools("venice/dolphin") && c.takes_tools("qwen/qwen3-coder") && c.takes_tools("not/mine"));
+        assert!(!c.learn_tools(&catalogue), "nothing new");
+        // A catalogue without it keeps what was known; one that gained tools clears it.
+        assert!(!c.learn_tools(&[]));
+        assert!(c.learn_tools(&[listed("venice/dolphin", true)]));
+        assert!(c.takes_tools("venice/dolphin"));
+        c.learn_tools(&catalogue);
+        c.remove_model("venice/dolphin").unwrap();
+        c.learn_tools(&[]);
+        assert!(c.no_tools.is_empty(), "forgotten with the model");
     }
 
     #[test]

@@ -229,7 +229,7 @@ impl KynexApp {
                 }
             }
             Menu::Provider => {
-                let current = self.active_provider();
+                let current = self.active_provider().picker();
                 for (n, p) in self.providers_available().into_iter().enumerate() {
                     let help = p.help();
                     items.push(
@@ -237,7 +237,10 @@ impl KynexApp {
                             .child(div().flex_none().text_xs().text_color(t.text_placeholder).child(help))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.menu = None;
-                                this.set_provider(p, cx);
+                                // The one it's on already keeps its Chat / Work mode.
+                                if this.active_provider().picker() != p {
+                                    this.set_provider(p, cx);
+                                }
                             }))
                             .into_any_element(),
                     );

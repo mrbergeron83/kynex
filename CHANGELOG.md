@@ -7,10 +7,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- OpenRouter chat, a second OpenRouter provider: chat with any OpenRouter model, including ones
-  without tool calling that Claude Code can't use. Replies stream in, and conversations list,
-  reopen and rewind like other sessions, with OpenRouter's real cost. Chat only: no tools and
-  no files (#243).
+- OpenRouter sessions pick Work or Chat in the composer. Work is Claude Code, as before; Chat only
+  talks, so any OpenRouter model works, including ones without tool calling that Claude Code can't
+  use. Those are marked "No tools" and switch a new session to Chat. Chat has its own model per
+  project; replies stream in, sessions list, reopen and rewind like the rest, and show OpenRouter's
+  real cost (#243).
 
 ## [0.0.14] - 2026-11-01
 

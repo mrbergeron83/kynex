@@ -69,6 +69,15 @@ impl Provider {
         *self == Provider::Anthropic
     }
 
+    /// The provider as the provider picker lists it: OpenRouter chat is
+    /// OpenRouter there, its Chat mode picked beside it in the composer.
+    pub fn picker(self) -> Provider {
+        match self {
+            Provider::OpenRouterChat => Provider::OpenRouter,
+            other => other,
+        }
+    }
+
     /// Whether it answers with OpenRouter's models (and key, and model list).
     pub fn is_openrouter(self) -> bool {
         matches!(self, Provider::OpenRouter | Provider::OpenRouterChat)
@@ -105,8 +114,8 @@ impl Provider {
     pub fn help(self) -> &'static str {
         match self {
             Provider::Anthropic => "Your Claude plan or Console account",
-            Provider::OpenRouter => "Your models in Claude Code, with your OpenRouter key",
-            Provider::OpenRouterChat => "Any OpenRouter model, chat only: no tools, no files",
+            Provider::OpenRouter => "Your models, with your OpenRouter key: work, or just chat",
+            Provider::OpenRouterChat => "Any of your OpenRouter models, chat only: no tools, no files",
         }
     }
 }

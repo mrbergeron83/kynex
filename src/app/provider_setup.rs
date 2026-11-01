@@ -105,6 +105,35 @@ impl KynexApp {
         }
         self.refresh_new_sessions();
         self.refresh_openrouter_credit(cx);
+        self.refresh_openrouter_tools(cx);
+    }
+
+    /// Asks OpenRouter's catalogue which of My models take tool calls, once a
+    /// key is there: a model that doesn't can only chat.
+    pub(super) fn refresh_openrouter_tools(&mut self, cx: &mut Context<Self>) {
+        if self.openrouter_key.is_none() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let found = cx.background_spawn(async { openrouter::catalogue() }).await;
+            this.update(cx, |this, cx| match found {
+                Ok(models) => {
+                    this.learn_tools(&models);
+                    cx.notify();
+                }
+                Err(e) => eprintln!("kynex: couldn't read OpenRouter's models: {e}"),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Takes in which of My models take tool calls, from OpenRouter's catalogue.
+    pub(super) fn learn_tools(&mut self, models: &[openrouter::CatalogModel]) {
+        if self.saved.openrouter.learn_tools(models) {
+            self.save();
+            self.refresh_new_sessions();
+        }
     }
 
     /// Asks OpenRouter what's left on the key, for the footer; at most every
@@ -140,15 +169,16 @@ impl KynexApp {
         matches!(self.setup, Setup::LoggedOut { .. } | Setup::SigningIn(_))
     }
 
-    /// The providers set up: Anthropic while the CLI is signed in, OpenRouter
-    /// (in the CLI, and as chat) once it has a key.
+    /// The providers set up, as the provider picker lists them: Anthropic while
+    /// the CLI is signed in, OpenRouter once it has a key (its Chat mode,
+    /// [`Provider::OpenRouterChat`], is picked beside it in the composer).
     pub(super) fn providers_available(&self) -> Vec<Provider> {
         let mut all = Vec::new();
         if !self.anthropic_signed_out() {
             all.push(Provider::Anthropic);
         }
         if self.openrouter_key.is_some() {
-            all.extend([Provider::OpenRouter, Provider::OpenRouterChat]);
+            all.push(Provider::OpenRouter);
         }
         all
     }
@@ -173,7 +203,30 @@ impl KynexApp {
     pub(super) fn folder_provider(&self, dir: &Path) -> Provider {
         let picked = self.claude_settings(dir).provider;
         let available = self.providers_available();
-        if available.contains(&picked) { picked } else { available.first().copied().unwrap_or_default() }
+        if available.contains(&picked.picker()) { picked } else { available.first().copied().unwrap_or_default() }
+    }
+
+    /// The provider `dir`'s next new session starts on: its folder's, but
+    /// Chat on OpenRouter when the Work model takes no tools (Claude Code
+    /// can't use it).
+    pub(super) fn new_session_provider(&self, dir: &Path) -> Provider {
+        match self.folder_provider(dir) {
+            Provider::OpenRouter if !self.saved.openrouter.takes_tools(&self.folder_openrouter_model(dir)) => {
+                Provider::OpenRouterChat
+            }
+            other => other,
+        }
+    }
+
+    /// The model `dir`'s new Chat sessions start on: its own Chat pick if it's
+    /// still one of My models, else the default.
+    pub(super) fn folder_openrouter_chat_model(&self, dir: &Path) -> String {
+        let picked = self.claude_settings(dir).openrouter_chat_model;
+        if self.saved.openrouter.models.contains(&picked) {
+            picked
+        } else {
+            self.saved.openrouter.default_model().to_string()
+        }
     }
 
     /// The OpenRouter model `dir`'s new OpenRouter sessions start on: its own,
@@ -191,8 +244,14 @@ impl KynexApp {
     pub(super) fn folder_model_on(&self, dir: &Path, provider: Provider) -> String {
         match provider {
             Provider::Anthropic => self.dir_model(dir),
-            Provider::OpenRouter | Provider::OpenRouterChat => self.folder_openrouter_model(dir),
+            Provider::OpenRouter => self.folder_openrouter_model(dir),
+            Provider::OpenRouterChat => self.folder_openrouter_chat_model(dir),
         }
+    }
+
+    /// The models `dir`'s sessions start on, one per provider in [`Provider::ALL`]'s order.
+    fn folder_models(&self, dir: &Path) -> [String; 3] {
+        Provider::ALL.map(|p| self.folder_model_on(dir, p))
     }
 
     /// The provider a session in `cwd` starts on: a reopened one (`id`) the
@@ -201,7 +260,7 @@ impl KynexApp {
     fn start_launch(&mut self, cwd: &Path, id: Option<&str>) -> Launch {
         let provider = match id {
             Some(id) => self.groups_for(cwd).provider_of(id),
-            None => self.folder_provider(cwd),
+            None => self.new_session_provider(cwd),
         };
         self.launch_in(cwd, provider)
     }
@@ -222,8 +281,8 @@ impl KynexApp {
     }
 
     /// What [`apply_start`] needs for a session in `cwd` (reopened if `id`).
-    pub(super) fn start_parts(&mut self, cwd: &Path, id: Option<&str>) -> (Launch, [String; 2]) {
-        let models = [Provider::Anthropic, Provider::OpenRouter].map(|p| self.folder_model_on(cwd, p));
+    pub(super) fn start_parts(&mut self, cwd: &Path, id: Option<&str>) -> (Launch, [String; 3]) {
+        let models = self.folder_models(cwd);
         (self.start_launch(cwd, id), models)
     }
 
@@ -237,8 +296,8 @@ impl KynexApp {
             .flat_map(|live| live.sessions.iter())
             .filter(|s| s.is_new())
             .map(|s| {
-                let models = [Provider::Anthropic, Provider::OpenRouter].map(|p| self.folder_model_on(&s.cwd, p));
-                let launch = self.launch_in(&s.cwd, self.folder_provider(&s.cwd));
+                let models = self.folder_models(&s.cwd);
+                let launch = self.launch_in(&s.cwd, self.new_session_provider(&s.cwd));
                 (s.uid, launch, models)
             })
             .collect();
@@ -304,6 +363,7 @@ impl KynexApp {
                         this.setup_key.update(cx, |input, cx| input.set_text("", cx));
                         this.refresh_new_sessions();
                         this.refresh_openrouter_credit(cx);
+                        this.refresh_openrouter_tools(cx);
                     }
                     Err(e) => this.setup_key_error = Some(e),
                 }
@@ -352,14 +412,11 @@ impl KynexApp {
 }
 
 /// Puts `s` on `launch` (restoring it if reopened) and its pinned model, else
-/// `models` (Anthropic's, OpenRouter's) for the provider it ends up on.
-pub(super) fn apply_start(s: &mut Session, launch: Launch, models: &[String; 2]) {
+/// `models` (one per provider, in [`Provider::ALL`]'s order) for the provider it ends up on.
+pub(super) fn apply_start(s: &mut Session, launch: Launch, models: &[String; 3]) {
     let _ = if s.is_new() { s.set_provider(launch) } else { s.restore_provider(launch) };
-    let folder = match s.provider().provider() {
-        Provider::Anthropic => &models[0],
-        Provider::OpenRouter | Provider::OpenRouterChat => &models[1],
-    };
-    s.model = s.own_model.clone().unwrap_or_else(|| folder.clone());
+    let at = Provider::ALL.iter().position(|p| *p == s.provider().provider()).unwrap_or(0);
+    s.model = s.own_model.clone().unwrap_or_else(|| models[at].clone());
 }
 
 fn lowercase_first(s: &str) -> String {

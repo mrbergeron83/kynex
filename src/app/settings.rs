@@ -143,7 +143,7 @@ impl KynexApp {
 
     /// Who answers the shown session, or the active folder's new ones.
     pub(super) fn active_provider(&self) -> kynex_core::provider::Provider {
-        self.active_session().map_or_else(|| self.folder_provider(&self.active_dir()), |s| s.provider().provider())
+        self.active_session().map_or_else(|| self.new_session_provider(&self.active_dir()), |s| s.provider().provider())
     }
 
     /// The model dir's sessions start on: its own, or Haiku for the chief.
@@ -160,6 +160,8 @@ impl KynexApp {
     pub(super) fn set_model(&mut self, id: String, cx: &mut Context<Self>) {
         if self.session_model().is_some() {
             self.set_session_model(Some(id), cx);
+        } else if self.active_provider() == kynex_core::provider::Provider::OpenRouterChat {
+            self.set_project_openrouter_chat_model(self.active_dir(), id, cx);
         } else if self.active_provider().is_openrouter() {
             self.set_project_openrouter_model(self.active_dir(), id, cx);
         } else {
@@ -207,6 +209,23 @@ impl KynexApp {
         let mut claude = self.claude_settings(&path);
         if claude.openrouter_model != model {
             claude.openrouter_model = model.clone();
+            if let Err(e) = claude.save(&path) {
+                self.toast(Toast::error(e));
+            }
+            self.claude_settings.insert(path, claude);
+        }
+        if let Some(s) = self.session_mut().filter(|s| s.own_model.is_none()) {
+            s.use_model(model);
+        }
+        cx.notify();
+    }
+
+    /// Sets the model a folder's new Chat sessions (OpenRouter chat) start on;
+    /// the shown session, if it follows its folder, from its next start.
+    pub(super) fn set_project_openrouter_chat_model(&mut self, path: PathBuf, model: String, cx: &mut Context<Self>) {
+        let mut claude = self.claude_settings(&path);
+        if claude.openrouter_chat_model != model {
+            claude.openrouter_chat_model = model.clone();
             if let Err(e) = claude.save(&path) {
                 self.toast(Toast::error(e));
             }
