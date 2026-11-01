@@ -48,6 +48,7 @@ pub mod questions;
 pub mod queue;
 pub mod resources;
 pub mod rewind;
+pub mod rules;
 pub mod scale;
 pub mod secrets;
 pub mod session;

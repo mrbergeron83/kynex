@@ -45,6 +45,7 @@
 //! | `palette.rs`        | the command palette (Ctrl+K)                         |
 //! | `leaving.rs`        | menus, modals and panels animating out as they close |
 //! | `settings.rs`       | the project's Claude settings modal                  |
+//! | `rules_view.rs`     | its "Rules in effect": every rule, a command tester  |
 //! | `app_settings.rs`   | the app's Settings modal: CLI, shell, appearance     |
 //! | `providers.rs`      | Settings → Providers: Anthropic sign-in, OpenRouter key, cap, My models |
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
@@ -93,6 +94,7 @@ mod provider_setup;
 mod providers;
 mod queue;
 mod rewind;
+mod rules_view;
 mod scratch_modal;
 mod session_groups;
 mod session_header;
@@ -201,6 +203,8 @@ pub struct KynexApp {
     last_esc: Option<std::time::Instant>,
     composer: Entity<TextInput>,
     new_rule: Entity<TextInput>,
+    /// The command typed in the settings' "Rules in effect" to try the rules on.
+    rule_test: Entity<TextInput>,
     attachments: Vec<Attachment>,
     /// Unsent messages of the sessions not shown, by draft key; and the shown
     /// session's uid and draft key, whose message is in the composer.
@@ -406,6 +410,13 @@ impl KynexApp {
             }
         })
         .detach();
+        let rule_test = cx.new(|cx| TextInput::new(cx).mono().placeholder("git add -A && git commit -m x && git push"));
+        cx.subscribe(&rule_test, |_, _, ev, cx| {
+            if let InputEvent::Changed = ev {
+                cx.notify();
+            }
+        })
+        .detach();
 
         cx.observe_window_bounds(window, |this, window, _| {
             let bounds = window.window_bounds();
@@ -473,6 +484,7 @@ impl KynexApp {
             last_esc: None,
             composer,
             new_rule,
+            rule_test,
             attachments: Vec::new(),
             drafts: HashMap::new(),
             draft_for: None,

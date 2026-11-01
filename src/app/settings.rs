@@ -25,6 +25,10 @@ pub struct SettingsView {
     pub path: PathBuf,
     pub perms: Permissions,
     pub claude: ClaudeSettings,
+    /// The rules in the user's, the repo's and its local settings files, read
+    /// when the modal opened, and what couldn't be read.
+    pub files: Vec<kynex_core::rules::Rule>,
+    pub file_errors: Vec<String>,
     section: usize,
 }
 
@@ -32,9 +36,12 @@ impl KynexApp {
     pub(super) fn open_settings(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.app_settings = None;
         self.extensions = None;
+        let (files, file_errors) = kynex_core::rules::load_files(&path);
         self.settings = Some(SettingsView {
             perms: Permissions::load(&path),
             claude: self.claude_settings(&path),
+            files,
+            file_errors,
             path,
             section: 0,
         });
@@ -280,7 +287,7 @@ impl KynexApp {
     ) -> Option<AnyElement> {
         let view = self.settings.as_ref()?;
         let t = theme(cx).clone();
-        const SECTIONS: [&str; 3] = ["Permissions", "Model", "Appearance"];
+        const SECTIONS: [&str; 4] = ["Permissions", "Rules in effect", "Model", "Appearance"];
         let section = view.section.min(SECTIONS.len() - 1);
         let path = view.path.clone();
         let vp = window.viewport_size();
@@ -443,7 +450,8 @@ impl KynexApp {
                             ),
                     )
             }
-            1 => {
+            1 => self.render_rules_in_effect(view, &t, cx),
+            2 => {
                 let effort = project::EFFORTS.iter().find(|e| e.0 == view.claude.effort).map_or("Default", |e| e.1);
                 div()
                     .flex()

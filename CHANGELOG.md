@@ -9,6 +9,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - A permission prompt says why it appeared under its title: which settings file holds the ask
   rule that matched, or that Auto mode's safety check, a hook or the permission mode asked (#233).
+- Claude settings → Rules in effect: every permission rule that applies to the project, from your
+  user settings, the repo's `.claude/settings.json` and `settings.local.json` and Kynex's own, with
+  a box to try a command (allowed, asks or denied, and by which rule, judged part by part of a `&&`
+  chain) and a note where an ask or deny rule cuts into an allow (#233).
 
 ## [0.0.13] - 2026-10-31
 
