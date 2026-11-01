@@ -13,6 +13,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   user settings, the repo's `.claude/settings.json` and `settings.local.json` and Kynex's own, with
   a box to try a command (allowed, asks or denied, and by which rule, judged part by part of a `&&`
   chain) and a note where an ask or deny rule cuts into an allow (#233).
+- Claude settings → Setup, which a folder opens on the first time you open it: whether Claude Code
+  trusts the folder (with a Trust button), the mode new sessions start in, the ask rules that will
+  prompt even in Auto mode, and starter rules for what's in the folder (git, Cargo, npm, Python,
+  Go, .NET) to allow in one click, for both Bash and PowerShell. Never a push (#233).
 
 ## [0.0.13] - 2026-10-31
 

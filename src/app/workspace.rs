@@ -321,7 +321,12 @@ impl KynexApp {
                 && let Some(dir) = paths.into_iter().next()
             {
                 this.update(cx, |this, cx| {
-                    this.add_project(dir);
+                    // A folder opened for the first time starts on its setup checklist.
+                    let first = !this.saved.projects.iter().any(|p| p.path == dir);
+                    this.add_project(dir.clone());
+                    if first {
+                        this.open_project_settings_on(dir, super::settings::SETUP_SECTION, cx);
+                    }
                     cx.notify();
                 })
                 .ok();

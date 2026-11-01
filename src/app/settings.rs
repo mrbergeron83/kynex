@@ -29,11 +29,24 @@ pub struct SettingsView {
     /// when the modal opened, and what couldn't be read.
     pub files: Vec<kynex_core::rules::Rule>,
     pub file_errors: Vec<String>,
+    /// Starter rules for what's in the folder, found when the modal opened.
+    pub starters: Vec<kynex_core::starters::Starter>,
     section: usize,
 }
 
+/// The Setup section, where a project's settings open the first time.
+pub(super) const SETUP_SECTION: usize = 0;
+/// Permissions, where they open otherwise.
+const PERMISSIONS_SECTION: usize = 1;
+
 impl KynexApp {
     pub(super) fn open_settings(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.open_project_settings_on(path, PERMISSIONS_SECTION, cx);
+    }
+
+    /// Opens a project's Claude settings on `section`. Blocks briefly, reading
+    /// the settings files and the folder's top level.
+    pub(super) fn open_project_settings_on(&mut self, path: PathBuf, section: usize, cx: &mut Context<Self>) {
         self.app_settings = None;
         self.extensions = None;
         let (files, file_errors) = kynex_core::rules::load_files(&path);
@@ -42,15 +55,16 @@ impl KynexApp {
             claude: self.claude_settings(&path),
             files,
             file_errors,
+            starters: kynex_core::starters::detect(&path),
             path,
-            section: 0,
+            section,
         });
         cx.notify();
     }
 
     /// Applies an edit in the settings modal. Edits save immediately and reach
     /// the project's running sessions ([`Self::apply_project_settings`]).
-    fn edit_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut SettingsView)) {
+    pub(super) fn edit_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut SettingsView)) {
         let Some(view) = &mut self.settings else { return };
         let (perms_before, claude_before) = (view.perms.clone(), view.claude.clone());
         f(view);
@@ -287,7 +301,7 @@ impl KynexApp {
     ) -> Option<AnyElement> {
         let view = self.settings.as_ref()?;
         let t = theme(cx).clone();
-        const SECTIONS: [&str; 4] = ["Permissions", "Rules in effect", "Model", "Appearance"];
+        const SECTIONS: [&str; 5] = ["Setup", "Permissions", "Rules in effect", "Model", "Appearance"];
         let section = view.section.min(SECTIONS.len() - 1);
         let path = view.path.clone();
         let vp = window.viewport_size();
@@ -304,7 +318,8 @@ impl KynexApp {
         );
 
         let content = match section {
-            0 => {
+            SETUP_SECTION => self.render_project_setup(view, &t, cx),
+            PERMISSIONS_SECTION => {
                 let modes = Mode::ALL.into_iter().enumerate().map(|(n, m)| {
                     let selected = view.claude.mode == m;
                     let hover = t.hover;
@@ -450,8 +465,8 @@ impl KynexApp {
                             ),
                     )
             }
-            1 => self.render_rules_in_effect(view, &t, cx),
-            2 => {
+            2 => self.render_rules_in_effect(view, &t, cx),
+            3 => {
                 let effort = project::EFFORTS.iter().find(|e| e.0 == view.claude.effort).map_or("Default", |e| e.1);
                 div()
                     .flex()

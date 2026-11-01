@@ -45,6 +45,7 @@
 //! | `palette.rs`        | the command palette (Ctrl+K)                         |
 //! | `leaving.rs`        | menus, modals and panels animating out as they close |
 //! | `settings.rs`       | the project's Claude settings modal                  |
+//! | `project_setup.rs`  | its "Setup": trust, mode, ask rules, starter rules   |
 //! | `rules_view.rs`     | its "Rules in effect": every rule, a command tester  |
 //! | `app_settings.rs`   | the app's Settings modal: CLI, shell, appearance     |
 //! | `providers.rs`      | Settings → Providers: Anthropic sign-in, OpenRouter key, cap, My models |
@@ -89,6 +90,7 @@ mod mentions;
 mod menus;
 mod models;
 mod palette;
+mod project_setup;
 mod prompts;
 mod provider_setup;
 mod providers;
