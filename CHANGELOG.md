@@ -28,6 +28,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   mode switch per project that adds a read-only Opus planner and reviewer for larger or riskier tasks,
   and a choice of Haiku, Sonnet or Opus for the project's workers. The reporter shows each worker's
   cost, and how much of it Opus took, and lists the subagents running under it (#237).
+- Prices per million tokens show on the model picker, in the worker-model choice and on the KNX Ops
+  start screen, for the 5.5 models (Haiku $0.10 in / $0.50 out, Sonnet $2 / $10, Opus $4 / $20),
+  so the cost of a choice is in front of you (#237).
 
 ### Changed
 

@@ -15,12 +15,12 @@ impl KynexApp {
     /// The KNX Ops tab before it's turned on: what it does and what it risks.
     pub(super) fn render_chief_consent(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
-        let point = |text: &'static str| {
+        let point = |text: &str| {
             div()
                 .flex()
                 .gap_2()
                 .child(div().flex_none().pt(px(7.)).child(div().size(px(4.)).rounded_full().bg(t.text_muted)))
-                .child(div().flex_1().child(text))
+                .child(div().flex_1().child(text.to_string()))
         };
         let mut points = vec![
             point(
@@ -31,9 +31,10 @@ impl KynexApp {
                 "Each worker changes only its own git worktree of the project (branch chief-worker), so it \
                  doesn't touch the copy you work in. You review and merge its branch.",
             ),
-            point(
-                "Every worker uses your Claude quota, on Haiku unless the project picks another model. The reporter shows what each has used.",
-            ),
+            point(&format!(
+                "Every worker uses your Claude quota, on Haiku ({}) unless the project picks another model. The reporter shows what each has used.",
+                kynex_core::prices::of_name("Haiku 5.5").map(kynex_core::prices::label).unwrap_or_default()
+            )),
         ];
         if kynex_core::terminal::elevated() {
             points.push(point("Kynex is running as administrator, so the workers' commands do too."));

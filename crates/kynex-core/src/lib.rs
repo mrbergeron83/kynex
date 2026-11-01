@@ -41,6 +41,7 @@ pub mod openrouter;
 pub mod palette;
 pub mod paths;
 pub mod plugins;
+pub mod prices;
 pub mod process;
 pub mod project;
 pub mod provider;

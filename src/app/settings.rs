@@ -508,9 +508,11 @@ impl KynexApp {
                         "The model KNX Ops workers run on, and careful mode, which adds a read-only Opus planner and reviewer for larger or riskier tasks. They apply from a worker's next start.",
                         &t,
                     )))
-                    .children([("", "Haiku", "The default and the cheapest: as correct as Opus on clear, checkable tasks in our tests."),
-                        ("sonnet", "Sonnet", "A step up for work Haiku fumbles, about ten times Haiku's cost."),
-                        ("opus", "Opus", "The strongest, 10 to 30 times Haiku's cost: for hard, ambiguous work.")]
+                    .children([
+                        ("", "Haiku 5.5", "As correct as Opus on clear, checkable tasks in our tests. The default."),
+                        ("sonnet", "Sonnet 5.5", "A step up for work Haiku fumbles."),
+                        ("opus", "Opus 5.5", "The strongest: for hard, ambiguous work."),
+                    ]
                         .into_iter()
                         .enumerate()
                         .map(|(n, (id, name, help))| {
@@ -532,7 +534,7 @@ impl KynexApp {
                                         .flex()
                                         .flex_col()
                                         .child(div().text_sm().child(name))
-                                        .child(div().text_xs().text_color(t.text_muted).child(help)),
+                                        .child(div().text_xs().text_color(t.text_muted).child(kynex_core::prices::with_price(name, help))),
                                 )
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.edit_settings(cx, |v| v.claude.worker_model = id.to_string())

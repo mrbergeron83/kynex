@@ -122,14 +122,14 @@ impl KynexApp {
                         .flex_col()
                         .child(div().text_sm().text_color(t.text).child(title))
                         .when(!description.is_empty(), |d| {
-                            d.child(div().text_xs().text_color(t.text_muted).truncate().child(description))
+                            d.child(div().text_xs().text_color(t.text_muted).child(description))
                         }),
                 )
         };
         if let Some(m) = default {
             let selected = current.is_empty();
             items.push(
-                row("model-default".into(), m.name, m.description, selected)
+                row("model-default".into(), m.name, default_description(&m.description), selected)
                     .when(selected, |d| d.child(icon(Icon::Check, t.text_muted)))
                     .on_click(pick(m.value, cx))
                     .into_any_element(),
@@ -141,10 +141,15 @@ impl KynexApp {
             let selected = newest.value == current;
             let title = if newest.label.is_empty() { f.name.clone() } else { format!("{} {}", f.name, newest.label) };
             items.push(
-                row(format!("model-flagship-{n}").into(), title, newest.description.clone(), selected)
-                    .when(selected, |d| d.child(icon(Icon::Check, t.text_muted)))
-                    .on_click(pick(newest.value.clone(), cx))
-                    .into_any_element(),
+                row(
+                    format!("model-flagship-{n}").into(),
+                    title.clone(),
+                    kynex_core::prices::with_price(&title, &newest.description),
+                    selected,
+                )
+                .when(selected, |d| d.child(icon(Icon::Check, t.text_muted)))
+                .on_click(pick(newest.value.clone(), cx))
+                .into_any_element(),
             );
         }
         // The rest: a line per family, its older versions newest first.
@@ -307,4 +312,11 @@ pub fn reported(list: Vec<ModelInfo>, cx: &mut Context<KynexApp>) {
         }
     })
     .detach();
+}
+
+/// The default's description with its price: it starts with the model it
+/// resolves to ("Opus 5.5 · Best for everyday, complex tasks").
+fn default_description(description: &str) -> String {
+    let resolved = description.split(" · ").next().unwrap_or("");
+    kynex_core::prices::with_price(resolved, description)
 }
