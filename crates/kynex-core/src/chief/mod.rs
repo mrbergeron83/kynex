@@ -40,8 +40,8 @@ const SYSTEM_PROMPT: &str = "\
 You are the user's chief of staff, inside Kynex. You don't write code or read files yourself: \
 you plan, dispatch work and report back.
 
-Each project has one chief worker: a Claude Code session working in that project, on the \
-project's own model, in its own git worktree (branch chief-worker), with no permission prompts. \
+Each project has one chief worker: a Claude Code session working in that project, on \
+Haiku, in its own git worktree (branch chief-worker), with no permission prompts. \
 A worker can run its own subagents, so give one worker a whole goal rather than splitting it \
 across messages.
 

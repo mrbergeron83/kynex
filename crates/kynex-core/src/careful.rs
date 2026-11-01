@@ -1,15 +1,14 @@
-//! The economy flow for chief workers: Opus plans, Haiku executes. The
-//! worker's own session is a cheap coordinator that hands a task to three
-//! subagents (`--agents`): a `planner` that turns it into an exact plan, an
-//! `executor` that carries the plan out, and a `reviewer` that checks the
-//! diff. Planning and review are short and read-only, so they take the strong,
-//! pricey model; execution, the long loop of reading, editing and rerunning
-//! that most of a session's tokens go to, takes the fast, cheap one.
-
+//! Careful mode for chief workers, which is off unless a project turns it on.
+//! By default a worker is a plain Haiku session: in our benchmarks Haiku did
+//! clear, checkable tasks as correctly as Opus at a thirtieth of the price.
+//! Careful mode adds a read-only Opus `planner` and `reviewer` and a Haiku
+//! `executor` as subagents (`--agents`), with the worker itself a Haiku
+//! coordinator that calls on them for larger or riskier tasks. Planning and
+//! review are short, so the strong model is spent where a mistake costs most.
 use serde_json::json;
 
-/// The model of the worker's own session, which only coordinates.
-pub const COORDINATOR_MODEL: &str = "haiku";
+/// The model chief workers run on: Haiku, which in careful mode only coordinates.
+pub const WORKER_MODEL: &str = "haiku";
 /// The model that plans and reviews.
 pub const THINKER_MODEL: &str = "opus";
 /// The model that executes.
@@ -98,13 +97,13 @@ mod tests {
         assert!(a["executor"]["tools"].is_null());
     }
 
-    /// The flow end to end: Haiku coordinates, Opus plans, Haiku executes, and
+    /// Careful mode end to end: Haiku coordinates, Opus plans, Haiku executes, and
     /// the turn's usage shows both models. Costs a few cents of Opus. Run with
     /// `cargo test -- --ignored the_flow_uses_both_models --nocapture`.
     #[test]
     #[ignore = "needs the claude CLI and uses some quota, Opus included"]
     fn the_flow_uses_both_models() {
-        let dir = std::env::temp_dir().join(format!("kynex-economy-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kynex-careful-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let out = std::process::Command::new(crate::cli::program())
             .args([
@@ -113,7 +112,7 @@ mod tests {
                  test_calc.py with a test for each. It's a task with several steps: use your planner first, \
                  then your executor.",
                 "--model",
-                COORDINATOR_MODEL,
+                WORKER_MODEL,
                 "--output-format",
                 "json",
                 "--permission-mode",
@@ -146,7 +145,7 @@ mod tests {
     #[ignore = "needs the claude CLI and uses a little quota"]
     fn the_cli_takes_the_agents() {
         let out = std::process::Command::new(crate::cli::program())
-            .args(["-p", "Reply with the single word OK.", "--model", COORDINATOR_MODEL, "--agents", &agents()])
+            .args(["-p", "Reply with the single word OK.", "--model", WORKER_MODEL, "--agents", &agents()])
             .current_dir(std::env::temp_dir())
             .output()
             .unwrap();

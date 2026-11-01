@@ -498,14 +498,14 @@ impl KynexApp {
                     )
                     .child(div().pt_3().child(heading(
                         "KNX Ops workers",
-                        "This project's worker runs the economy flow: a Haiku coordinator, Opus planning and reviewing larger tasks, Haiku executing. It starts on a worker's next start.",
+                        "KNX Ops workers run on Haiku: in our tests it did clear tasks as correctly as Opus at a thirtieth of the cost. Careful mode adds a read-only Opus planner and reviewer for larger or riskier tasks. It applies from a worker's next start.",
                         &t,
                     )))
                     .child({
-                        let on = !view.claude.economy_off;
+                        let on = view.claude.careful;
                         let hover = t.hover;
                         div()
-                            .id("economy")
+                            .id("careful")
                             .flex()
                             .items_start()
                             .gap_2()
@@ -519,15 +519,15 @@ impl KynexApp {
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .child(div().text_sm().child("Opus plans, Haiku executes"))
+                                    .child(div().text_sm().child("Careful mode"))
                                     .child(
                                         div().text_xs().text_color(t.text_muted).child(
-                                            "Cheaper and faster on bigger tasks, and the reporter shows what Opus took. Anthropic only.",
+                                            "Opus plans and reviews, Haiku executes. Costs more and was slower in tests; for work where Haiku isn't enough. The reporter shows what Opus took. Anthropic only.",
                                         ),
                                     ),
                             )
                             .on_click(
-                                cx.listener(|this, _, _, cx| this.edit_settings(cx, |v| v.claude.economy_off = !v.claude.economy_off)),
+                                cx.listener(|this, _, _, cx| this.edit_settings(cx, |v| v.claude.careful = !v.claude.careful)),
                             )
                     })
             }

@@ -29,7 +29,7 @@ pub fn worktree(project: &Path) -> Result<Option<PathBuf>, String> {
 /// The `claude` arguments that make a session in `project` a chief worker:
 /// no permission prompts, its worktree and its
 /// instructions. Blocks on git the first time (see [`worktree`]).
-pub fn worker_args(project: &Path, economy: bool) -> Result<Vec<String>, String> {
+pub fn worker_args(project: &Path, careful: bool) -> Result<Vec<String>, String> {
     let tree = worktree(project)?;
     // Questions go through Kynex's own `ask_user` tool (an MCP tool Kynex serves), which waits for the
     // user on KNX Ops's stack; the CLI's `AskUserQuestion` isn't offered.
@@ -40,15 +40,15 @@ pub fn worker_args(project: &Path, economy: bool) -> Result<Vec<String>, String>
         args.extend(["--add-dir".into(), t.display().to_string()]);
     }
     let mut prompt = worker_prompt(project, tree.as_deref());
-    if economy {
+    if careful {
         // Opus plans and reviews, Haiku executes: the worker itself only coordinates.
-        args.extend(["--agents".into(), crate::economy::agents()]);
+        args.extend(["--agents".into(), crate::careful::agents()]);
         prompt.push_str(
             "
 
 ",
         );
-        prompt.push_str(crate::economy::COORDINATOR_PROMPT);
+        prompt.push_str(crate::careful::COORDINATOR_PROMPT);
     }
     args.extend(["--append-system-prompt".into(), prompt]);
     Ok(args)
@@ -309,7 +309,7 @@ mod tests {
         let args = worker_args(&repo, true).unwrap();
         assert!(args.contains(&tree.display().to_string()));
         assert!(args.last().unwrap().contains("STATUS: done | blocked | failed"));
-        // The economy flow adds the subagents and how to use them; without it, neither.
+        // Careful mode adds the subagents and how to use them; without it, neither.
         assert!(args.windows(2).any(|w| w[0] == "--agents" && w[1].contains("planner")));
         assert!(args.last().unwrap().contains("you coordinate"));
         let plain = worker_args(&repo, false).unwrap();

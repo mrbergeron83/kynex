@@ -32,7 +32,7 @@ impl KynexApp {
                  doesn't touch the copy you work in. You review and merge its branch.",
             ),
             point(
-                "Every worker uses your Claude quota, on its project's model. The reporter shows what each has used.",
+                "Every worker uses your Claude quota, on Haiku, cheap by design. The reporter shows what each has used.",
             ),
         ];
         if kynex_core::terminal::elevated() {
@@ -60,7 +60,7 @@ impl KynexApp {
                     .child(div().text_color(t.text_muted).child(
                         "Your chief of staff. Give it a goal and it sends the work to one worker per project, \
                          follows it, answers their questions or brings them to you, and reports back. It runs \
-                         on Haiku; each worker runs on its project's model and can use subagents.",
+                         on Haiku; each worker runs on Haiku (a project can turn on careful mode, with Opus planning and review) and can use subagents.",
                     ))
                     .child(div().font_weight(FontWeight::MEDIUM).child("Before you turn it on"))
                     .child(div().flex().flex_col().gap_2().text_color(t.text_muted).children(points))
@@ -309,7 +309,7 @@ impl KynexApp {
 }
 
 /// A worker's use in a line: its tokens, and what they cost, with how much went to
-/// Opus (the economy flow's planning and review) when any did.
+/// Opus (careful mode's planning and review) when any did.
 fn spent_line(s: &kynex_core::spent::Spent) -> String {
     let tokens = format!("{} tokens", fmt::tokens(s.tokens()));
     match (s.cost > 0.0, s.opus_cost > 0.0) {

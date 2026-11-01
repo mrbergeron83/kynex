@@ -758,14 +758,13 @@ impl Session {
                     settings.extend(rules);
                 }
                 if self.worker {
-                    // No prompts, its own worktree, and the chief's contract; on Anthropic, the economy
-                    // flow too (Haiku coordinates, Opus plans, Haiku executes), unless the project turned it off.
-                    let economy =
-                        !claude.economy_off && self.provider.provider() == crate::provider::Provider::Anthropic;
-                    if economy {
-                        self.model = crate::economy::COORDINATOR_MODEL.into();
+                    // No prompts, its own worktree, and the chief's contract. On Anthropic a worker runs on
+                    // Haiku, with careful mode's Opus planner and reviewer when the project turned it on.
+                    let anthropic = self.provider.provider() == crate::provider::Provider::Anthropic;
+                    if anthropic {
+                        self.model = crate::careful::WORKER_MODEL.into();
                     }
-                    cmd.args(crate::chief::worker_args(&self.cwd, economy)?);
+                    cmd.args(crate::chief::worker_args(&self.cwd, claude.careful && anthropic)?);
                 } else {
                     cmd.args(["--permission-mode", self.mode.cli()]);
                 }

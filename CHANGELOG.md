@@ -22,10 +22,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   its project), the box under the conversation answers the first one, and you can pick another
   from the list above it. Your answer goes straight back to the worker, which carries on; the
   chief hears when a question is asked and answered, and isn't blocked otherwise (#235).
-- KNX Ops workers run an economy flow by default (Anthropic only): the worker itself is a Haiku
-  coordinator, a read-only Opus planner and reviewer handle larger or riskier tasks, and Haiku
-  executes. Small tasks go straight to Haiku. The reporter shows each worker's cost and how much of
-  it Opus took; Claude settings → Model has a switch to turn it off for a project (#237).
+- KNX Ops workers run on Haiku (Anthropic) instead of their project's model: in benchmarks it did
+  clear tasks as correctly as Opus at a thirtieth of the cost. Claude settings → Model has a Careful
+  mode switch per project that adds a read-only Opus planner and reviewer for larger or riskier tasks.
+  The reporter shows each worker's cost, and how much of it Opus took (#237).
 
 ### Changed
 

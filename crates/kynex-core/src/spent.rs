@@ -13,7 +13,7 @@ pub struct Spent {
     pub cache_write: u64,
     /// The CLI's estimate in USD, at list prices.
     pub cost: f64,
-    /// The part of `cost` that went to Opus models: with the economy flow, the planning and review.
+    /// The part of `cost` that went to Opus models: in careful mode, the planning and review.
     pub opus_cost: f64,
 }
 
