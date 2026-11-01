@@ -197,6 +197,8 @@ pub enum Item {
         input: Value,
         suggestions: Value,
         description: String,
+        /// Why the CLI asked, in words (empty if it didn't say); see [`crate::why`].
+        why: String,
         state: PermState,
     },
     /// The end of a turn, with a recap of it: how many tools ran and which files changed.
@@ -756,8 +758,17 @@ impl Session {
                     settings.extend(rules);
                 }
                 if self.worker {
-                    // No prompts, its own worktree, and the chief's contract.
-                    cmd.args(crate::chief::worker_args(&self.cwd)?);
+                    // No prompts, its own worktree, and the chief's contract. On Anthropic a worker runs on
+                    // Haiku, with careful mode's Opus planner and reviewer when the project turned it on.
+                    let anthropic = self.provider.provider() == crate::provider::Provider::Anthropic;
+                    if anthropic {
+                        self.model = if claude.worker_model.is_empty() {
+                            crate::careful::WORKER_MODEL.into()
+                        } else {
+                            claude.worker_model.clone()
+                        };
+                    }
+                    cmd.args(crate::chief::worker_args(&self.cwd, claude.careful && anthropic)?);
                 } else {
                     cmd.args(["--permission-mode", self.mode.cli()]);
                 }
@@ -1381,6 +1392,7 @@ impl Session {
                     input: v["request"]["input"].clone(),
                     suggestions: v["request"]["permission_suggestions"].clone(),
                     description: v["request"]["description"].as_str().unwrap_or("").into(),
+                    why: crate::why::explain(&v["request"]),
                     state: PermState::Pending,
                 });
             }
@@ -2221,6 +2233,7 @@ mod tests {
             input: Value::Null,
             suggestions: Value::Null,
             description: String::new(),
+            why: String::new(),
             state: PermState::Pending,
         });
         assert!(s.wants_you());
@@ -2634,6 +2647,25 @@ mod tests {
         s.use_model("new".into());
         assert!(s.child.is_some() && s.model == "old");
         s.kill();
+    }
+
+    #[test]
+    fn a_prompt_carries_why_the_cli_asked() {
+        let mut s = Session::new(Kind::Code, std::env::temp_dir());
+        s.handle(json!({ "type": "control_request", "request_id": "r1", "request": {
+            "subtype": "can_use_tool", "tool_name": "Bash", "input": { "command": "git push" },
+            "decision_reason_type": "rule", "decision_reason_rule_source": "projectSettings" } }));
+        s.handle(json!({ "type": "control_request", "request_id": "r2", "request": {
+            "subtype": "can_use_tool", "tool_name": "Bash", "input": {} } }));
+        let whys: Vec<_> = s
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Permission { why, .. } => Some(why.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(whys, ["An ask rule in this project's .claude/settings.json matches this.", ""]);
     }
 
     #[test]

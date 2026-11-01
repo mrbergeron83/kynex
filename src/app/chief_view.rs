@@ -12,15 +12,15 @@ use crate::theme::theme;
 use crate::ui::{Icon, Lamp, Tooltip, ghost_button, icon, lamp, outline_button, primary_button, px};
 
 impl KynexApp {
-    /// The Chat tab's Chief view before it's turned on: what it does and what it risks.
+    /// The KNX Ops tab before it's turned on: what it does and what it risks.
     pub(super) fn render_chief_consent(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
-        let point = |text: &'static str| {
+        let point = |text: &str| {
             div()
                 .flex()
                 .gap_2()
                 .child(div().flex_none().pt(px(7.)).child(div().size(px(4.)).rounded_full().bg(t.text_muted)))
-                .child(div().flex_1().child(text))
+                .child(div().flex_1().child(text.to_string()))
         };
         let mut points = vec![
             point(
@@ -31,9 +31,10 @@ impl KynexApp {
                 "Each worker changes only its own git worktree of the project (branch chief-worker), so it \
                  doesn't touch the copy you work in. You review and merge its branch.",
             ),
-            point(
-                "Every worker uses your Claude quota, on its project's model. The reporter shows what each has used.",
-            ),
+            point(&format!(
+                "Every worker uses your Claude quota, on Haiku ({}) unless the project picks another model. The reporter shows what each has used.",
+                kynex_core::prices::of_name("Haiku 5.5").map(kynex_core::prices::label).unwrap_or_default()
+            )),
         ];
         if kynex_core::terminal::elevated() {
             points.push(point("Kynex is running as administrator, so the workers' commands do too."));
@@ -56,11 +57,11 @@ impl KynexApp {
                     .border_color(t.border)
                     .bg(t.panel)
                     .text_sm()
-                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Chief of staff"))
+                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("KNX Ops"))
                     .child(div().text_color(t.text_muted).child(
-                        "Give the chief a goal. It sends the work to one chief worker per project, follows it, \
-                         answers their questions or brings them to you, and reports back. The chief runs on \
-                         Haiku; each worker runs on its project's model and can use subagents.",
+                        "Your chief of staff. Give it a goal and it sends the work to one worker per project, \
+                         follows it, answers their questions or brings them to you, and reports back. It runs \
+                         on Haiku; each worker runs on Haiku (a project can pick another model, or turn on careful mode with Opus planning and review) and can use subagents.",
                     ))
                     .child(div().font_weight(FontWeight::MEDIUM).child("Before you turn it on"))
                     .child(div().flex().flex_col().gap_2().text_color(t.text_muted).children(points))
@@ -69,7 +70,7 @@ impl KynexApp {
                             .flex()
                             .gap_2()
                             .pt_2()
-                            .child(primary_button("chief-on", "Turn on the chief", cx).on_click(cx.listener(
+                            .child(primary_button("chief-on", "Turn on KNX Ops", cx).on_click(cx.listener(
                                 |this, _, window, cx| {
                                     this.saved.chief_consented = true;
                                     this.save();
@@ -107,7 +108,7 @@ impl KynexApp {
             .gap_2()
             .h(px(24.))
             .text_xs()
-            .child(div().font_weight(FontWeight::MEDIUM).child("Chief"))
+            .child(div().font_weight(FontWeight::MEDIUM).child("KNX Ops"))
             .child(div().text_color(t.text_placeholder).child(format!(
                     "{} · {} tokens · all {} tokens",
                     self.chief
@@ -126,13 +127,54 @@ impl KynexApp {
                         .text_color(t.text_muted)
                         .child(icon(Icon::Stop, t.text_muted).size_3())
                         .child("Stop all")
-                        .tooltip(Tooltip::text("Stop the chief and every worker, and drop what they had queued"))
+                        .tooltip(Tooltip::text("Stop KNX Ops and every worker, and drop what they had queued"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.stop_everything();
                             cx.notify();
                         })),
                 )
             });
+        // The workers' questions waiting for you, oldest first; the box below
+        // answers the picked one (the oldest unless you pick another).
+        let focus = self.chief_focus().map(|a| a.id);
+        let stack = self.question_stack();
+        let hover = t.hover;
+        let stack_view = (!stack.is_empty()).then(|| {
+            let n = stack.len();
+            div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .pb_1()
+                .child(div().text_xs().font_weight(FontWeight::MEDIUM).text_color(t.warning).child(format!(
+                    "{n} question{} for you. Answer in the box below; pick one here to answer it first.",
+                    if n == 1 { "" } else { "s" }
+                )))
+                .children(stack.into_iter().enumerate().map(|(i, a)| {
+                    let current = focus == Some(a.id);
+                    let id = a.id;
+                    let age = fmt::elapsed(a.since.elapsed());
+                    div()
+                        .id(("ops-question", i))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .h(px(22.))
+                        .px_2()
+                        .rounded_md()
+                        .text_xs()
+                        .cursor_pointer()
+                        .when(current, |d| d.bg(t.active))
+                        .when(!current, |d| d.hover(move |s| s.bg(hover)))
+                        .child(div().flex_none().font_weight(FontWeight::MEDIUM).child(a.name))
+                        .child(div().flex_1().min_w_0().truncate().text_color(t.text_muted).child(a.headline))
+                        .child(div().flex_none().text_color(t.text_placeholder).child(age))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.chief.focus = Some(id);
+                            cx.notify();
+                        }))
+                }))
+        });
         let rows: Vec<AnyElement> = workers
             .iter()
             .enumerate()
@@ -204,12 +246,7 @@ impl KynexApp {
                             .child(
                                 div().flex_1().min_w_0().truncate().text_color(t.text_muted).child(detail.join(" · ")),
                             )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_color(t.text_placeholder)
-                                    .child(format!("{} tokens", fmt::tokens(w.spent.tokens()))),
-                            )
+                            .child(div().flex_none().text_color(t.text_placeholder).child(spent_line(&w.spent)))
                             .children(open)
                             .children(stop),
                     )
@@ -218,6 +255,21 @@ impl KynexApp {
                             div().pl(px(15.)).pb_0p5().text_color(colour).line_clamp(2).child(text)
                         }),
                     )
+                    .children(w.subagents.iter().take(4).map(|a| {
+                        div()
+                            .pl(px(15.))
+                            .text_color(t.text_placeholder)
+                            .truncate()
+                            .child(format!("↳ {} · {}", a.kind, a.what))
+                    }))
+                    .when(w.subagents.len() > 4, |d| {
+                        d.child(
+                            div()
+                                .pl(px(15.))
+                                .text_color(t.text_placeholder)
+                                .child(format!("↳ +{} more", w.subagents.len() - 4)),
+                        )
+                    })
                     .into_any_element()
             })
             .collect();
@@ -232,6 +284,7 @@ impl KynexApp {
                 .border_b_1()
                 .border_color(t.border_variant)
                 .child(head)
+                .children(stack_view)
                 .when(rows.is_empty(), |d| {
                     d.child(div().text_xs().text_color(t.text_placeholder).child("No workers yet."))
                 })
@@ -268,5 +321,16 @@ impl KynexApp {
                     }),
             )
             .into_any_element()
+    }
+}
+
+/// A worker's use in a line: its tokens, and what they cost, with how much went to
+/// Opus (careful mode's planning and review) when any did.
+fn spent_line(s: &kynex_core::spent::Spent) -> String {
+    let tokens = format!("{} tokens", fmt::tokens(s.tokens()));
+    match (s.cost > 0.0, s.opus_cost > 0.0) {
+        (false, _) => tokens,
+        (true, false) => format!("{tokens} · ${:.2}", s.cost),
+        (true, true) => format!("{tokens} · ${:.2} (Opus ${:.2})", s.cost, s.opus_cost),
     }
 }

@@ -37,8 +37,36 @@ pub(super) struct Chief {
     warnings: HashMap<Key, Vec<String>>,
     /// Workers a restart cut short have been reported.
     resumed: bool,
+    /// The questions workers have asked with `ask_user` and you haven't answered,
+    /// oldest first. Each holds the worker's tool call, which waits for the answer.
+    pub(super) pending: Vec<PendingAsk>,
+    /// The question picked in the stack to answer first, over the oldest.
+    pub(super) focus: Option<u64>,
+    next_ask: u64,
 }
 
+/// A worker's question, and the tool call waiting for its answer.
+pub(super) struct PendingAsk {
+    id: u64,
+    path: PathBuf,
+    /// In `AskUserQuestion`'s shape, which the question prompt draws.
+    input: serde_json::Value,
+    headline: String,
+    since: Instant,
+    request: Request,
+}
+
+/// One question on the stack, as the views see it.
+#[derive(Clone)]
+pub(super) struct Ask {
+    pub(super) id: u64,
+    pub(super) path: PathBuf,
+    pub(super) name: String,
+    /// What it asks, in a line.
+    pub(super) headline: String,
+    pub(super) since: Instant,
+    pub(super) input: serde_json::Value,
+}
 impl KynexApp {
     /// The Chat tab is showing the chief.
     pub(super) fn in_chief(&self) -> bool {
@@ -116,6 +144,10 @@ impl KynexApp {
                 self.stop_worker(key);
                 Ok(format!("Stopped the {} worker's turn.", project_name(&path)))
             }),
+            Call::Ask { project, input } => {
+                self.stack_question(project.clone(), input.clone(), r);
+                return;
+            }
             Call::OpenProject { path } => chief::existing_project(path).map(|p| self.add_project_quietly(p)),
             Call::CreateProject { path } => {
                 // `git init` runs off the UI thread; the call waits for it.
@@ -210,6 +242,9 @@ impl KynexApp {
 
     /// Stops a worker's turn, and what it had queued.
     pub(super) fn stop_worker(&mut self, key: Key) {
+        if let Some(path) = self.chief.workers.iter().find(|(_, k)| **k == key).map(|(p, _)| p.clone()) {
+            self.drop_asks(&path);
+        }
         if let Some(s) = self.session_for(key) {
             s.queue.take_all();
             if s.busy {
@@ -232,12 +267,18 @@ impl KynexApp {
 
     /// A worker's session as the chief and the reporter see it.
     fn worker_view(&self, path: &Path, s: &Session) -> Worker {
-        worker_of(
+        let mut w = worker_of(
             path,
             s,
             self.chief.started.get(&s.uid).copied(),
             self.chief.warnings.get(&s.uid).cloned().unwrap_or_default(),
-        )
+        );
+        // Waiting on a question of yours.
+        if let Some(a) = self.chief.pending.iter().find(|a| a.path == path) {
+            w.state = State::NeedsYou;
+            w.question = Some(a.headline.clone());
+        }
+        w
     }
 
     /// Every chief worker: the open ones, then the ones asleep.
@@ -260,8 +301,89 @@ impl KynexApp {
         workers
     }
 
-    /// Tells the chief when a worker ends a turn or waits on the user, and
-    /// you when a worker runs something risky.
+    /// The workers' unanswered questions, oldest first.
+    pub(super) fn question_stack(&self) -> Vec<Ask> {
+        self.chief
+            .pending
+            .iter()
+            .map(|a| Ask {
+                id: a.id,
+                path: a.path.clone(),
+                name: project_name(&a.path),
+                headline: a.headline.clone(),
+                since: a.since,
+                input: a.input.clone(),
+            })
+            .collect()
+    }
+
+    /// The question to answer now: the one picked in the stack, else the oldest.
+    pub(super) fn chief_focus(&self) -> Option<Ask> {
+        let stack = self.question_stack();
+        let picked = self.chief.focus.and_then(|id| stack.iter().find(|a| a.id == id));
+        picked.or(stack.first()).cloned()
+    }
+
+    /// A worker's `ask_user`: onto the stack, holding its call until you answer.
+    /// The chief hears of it, and you do too if you're not in KNX Ops.
+    fn stack_question(&mut self, path: PathBuf, input: serde_json::Value, request: Request) {
+        let Some(key) = self.chief.workers.get(&path).copied() else {
+            request.answer(Err("Kynex has no chief worker open for this project.".into()));
+            return;
+        };
+        let (name, headline) = (project_name(&path), chief::question_headline(&input));
+        let notice = self.open_worker(&path).map(|s| chief::question_notice(&self.worker_view(&path, s), &headline));
+        let id = self.chief.next_ask;
+        self.chief.next_ask += 1;
+        self.chief.pending.push(PendingAsk {
+            id,
+            path,
+            input,
+            headline: headline.clone(),
+            since: Instant::now(),
+            request,
+        });
+        if let Some(n) = notice {
+            self.tell_chief(vec![n]);
+        }
+        if !self.in_chief() {
+            self.toast(
+                Toast::warning(format!("The {name} worker has a question"))
+                    .detail(headline)
+                    .session(key)
+                    .action(Action::GoToSession(key)),
+            );
+        }
+    }
+
+    /// Answers a stacked question: the worker's call returns what you chose,
+    /// and the chief is told. Returns whether there was such a question.
+    pub(super) fn answer_ask(&mut self, id: u64, answer: &kynex_core::session::Answer) -> bool {
+        let Some(i) = self.chief.pending.iter().position(|a| a.id == id) else { return false };
+        let ask = self.chief.pending.remove(i);
+        let answers = match answer {
+            kynex_core::session::Answer::Questions(map) => map.clone(),
+            _ => serde_json::Map::new(),
+        };
+        ask.request.answer(Ok(chief::answer_text(&answers)));
+        if self.chief.focus == Some(id) {
+            self.chief.focus = None;
+        }
+        if !answers.is_empty()
+            && let Some(s) = self.open_worker(&ask.path)
+        {
+            let n = chief::answered_notice(&self.worker_view(&ask.path, s), &ask.headline);
+            self.tell_chief(vec![n]);
+        }
+        true
+    }
+
+    /// Withdraws a worker's questions, as when it stops: its calls end with an error.
+    fn drop_asks(&mut self, path: &Path) {
+        self.chief.pending.retain(|a| a.path != path);
+    }
+    /// Tells the chief when a worker ends a turn or asks something, and you
+    /// when a worker runs something risky.
     fn report_workers(&mut self) {
         let mut notices = Vec::new();
         let mut toasts = Vec::new();
@@ -272,6 +394,7 @@ impl KynexApp {
             let Some(s) = self.code.get_mut(&path).and_then(|l| l.sessions.iter_mut().find(|s| s.uid == key)) else {
                 // Its session closed; the next dispatch resumes it.
                 self.chief.workers.remove(&path);
+                self.chief.pending.retain(|a| a.path != path);
                 self.chief.was_busy.remove(&key);
                 self.chief.was_waiting.remove(&key);
                 self.chief.seen.remove(&key);
@@ -328,8 +451,13 @@ impl KynexApp {
                     self.chief.started.remove(&key);
                 }
             }
+            // A worker that isn't working has no call waiting: its questions are void.
+            if !busy {
+                self.chief.pending.retain(|a| a.path != path);
+            }
+            let w = worker_of(&path, s, started, Vec::new());
             if waiting && !was_waiting {
-                notices.push(chief::waiting_notice(&worker_of(&path, s, started, Vec::new())));
+                notices.push(chief::waiting_notice(&w));
             }
             set(&mut self.chief.was_busy, key, busy);
             set(&mut self.chief.was_waiting, key, waiting);
@@ -346,7 +474,7 @@ impl KynexApp {
     }
 
     /// Sends the chief Kynex's messages, or queues them while it's busy.
-    fn tell_chief(&mut self, notices: Vec<String>) {
+    pub(super) fn tell_chief(&mut self, notices: Vec<String>) {
         if notices.is_empty() {
             return;
         }
@@ -411,19 +539,34 @@ fn worker_of(path: &Path, s: &Session, started: Option<Instant>, warnings: Vec<S
     };
     // Subagents in the foreground are tool calls still running; background ones are tasks.
     let turn = s.items.iter().rposition(|i| matches!(i, Item::User { .. })).unwrap_or(0);
-    let foreground = s.items[turn..]
+    let mut subagents: Vec<chief::Subagent> = s.items[turn..]
         .iter()
-        .filter(|i| {
-            matches!(i, Item::ToolUse { name, timing, .. } if (name == "Agent" || name == "Task") && timing.is_running())
+        .filter_map(|i| match i {
+            Item::ToolUse { name, input, timing, .. } if (name == "Agent" || name == "Task") && timing.is_running() => {
+                let v: serde_json::Value = serde_json::from_str(input).unwrap_or_default();
+                Some(chief::Subagent {
+                    kind: v["subagent_type"].as_str().unwrap_or("agent").into(),
+                    what: v["description"].as_str().unwrap_or("").into(),
+                })
+            }
+            _ => None,
         })
-        .count();
+        .collect();
+    subagents
+        .extend(s.tasks.running.iter().map(|t| chief::Subagent { kind: t.kind.clone(), what: t.description.clone() }));
     Worker {
         path: path.to_path_buf(),
         model: if s.model.is_empty() { "default".into() } else { s.model.clone() },
         state,
         turn: started.filter(|_| s.busy).map(|t| t.elapsed()),
-        spent: s.spent,
-        agents: foreground + s.tasks.running.len(),
+        // The CLI prices at Anthropic's list; that means nothing on another provider.
+        spent: if s.provider().provider() == kynex_core::provider::Provider::Anthropic {
+            s.spent
+        } else {
+            kynex_core::spent::Spent { cost: 0.0, opus_cost: 0.0, ..s.spent }
+        },
+        agents: subagents.len(),
+        subagents,
         queued: s.queue.items().len(),
         question: report.and_then(|r| r.question).filter(|_| blocked),
         warnings,

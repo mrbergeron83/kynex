@@ -115,6 +115,8 @@ impl KynexApp {
     /// Opens a worktree as a tab, on its Git view, to look at its changes.
     pub(super) fn open_worktree_changes(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.add_project(path);
+        // A worktree is another view of a project you have: no setup checklist for it.
+        self.setup_for = None;
         if let Active::Project(i) = self.saved.active
             && let Some(p) = self.saved.projects.get_mut(i)
         {

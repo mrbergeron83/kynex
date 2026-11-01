@@ -74,8 +74,14 @@ impl KynexApp {
         .detach();
     }
 
+    /// The files the CLI would ignore in `dir` until it's trusted, once checked
+    /// (empty: nothing to ask); `None` while that's unknown.
+    pub(super) fn untrusted_files(&self, dir: &std::path::Path) -> Option<Vec<&'static str>> {
+        self.trust.checked.get(dir).cloned()
+    }
+
     /// Trusts `dir` as the CLI's dialog would; idle sessions there restart to pick it up.
-    fn trust_folder(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
+    pub(super) fn trust_folder(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let target = dir.clone();
             let done = cx.background_spawn(async move { kynex_core::trust::trust(&target) }).await;

@@ -5,6 +5,38 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A permission prompt says why it appeared under its title: which settings file holds the ask
+  rule that matched, or that Auto mode's safety check, a hook or the permission mode asked (#233).
+- Claude settings → Rules in effect: every permission rule that applies to the project, from your
+  user settings, the repo's `.claude/settings.json` and `settings.local.json` and Kynex's own, with
+  a box to try a command (allowed, asks or denied, and by which rule, judged part by part of a `&&`
+  chain) and a note where an ask or deny rule cuts into an allow (#233).
+- Claude settings → Setup, which a folder opens on the first time you open it (from Open project, the
+  Git view or the sessions list; not a worktree): whether Claude Code
+  trusts the folder (with a Trust button), the mode new sessions start in, the ask rules that will
+  prompt even in Auto mode, and starter rules for what's in the folder (git, Cargo, npm, Python,
+  Go, .NET) to allow in one click, for both Bash and PowerShell. Never a push (#233).
+- KNX Ops workers can ask you multiple-choice questions, through an `ask_user` tool Kynex gives
+  them (it doesn't depend on the CLI's own question tool). They stack up (oldest first, each with
+  its project), the box under the conversation answers the first one, and you can pick another
+  from the list above it. Your answer goes straight back to the worker, which carries on; the
+  chief hears when a question is asked and answered, and isn't blocked otherwise (#235).
+- KNX Ops workers run on Haiku (Anthropic) instead of their project's model: in benchmarks it did
+  clear tasks as correctly as Opus at a thirtieth of the cost. Claude settings → Model has a Careful
+  mode switch per project that adds a read-only Opus planner and reviewer for larger or riskier tasks,
+  and a choice of Haiku, Sonnet or Opus for the project's workers. The reporter shows each worker's
+  cost, and how much of it Opus took, and lists the subagents running under it (#237).
+- Prices per million tokens show on the model picker, in the worker-model choice and on the KNX Ops
+  start screen, for the 5.5 models (Haiku $0.10 in / $0.50 out, Sonnet $2 / $10, Opus $4 / $20),
+  so the cost of a choice is in front of you (#237).
+
+### Changed
+
+- The chief of staff is now **KNX Ops**, a tab of its own in the title bar after Chat (it was a
+  switch inside Chat). Ctrl+1 is Chat, Ctrl+2 KNX Ops, and the projects start at Ctrl+3 (#230).
+
 ## [0.0.13] - 2026-10-31
 
 ### Added

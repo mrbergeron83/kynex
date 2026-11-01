@@ -278,6 +278,8 @@ impl KynexApp {
         let idx = match self.saved.projects.iter().position(|p| p.path == path) {
             Some(i) => i,
             None => {
+                // A folder opened for the first time starts on its setup checklist (open_pending_setup).
+                self.setup_for = Some(path.clone());
                 self.saved.projects.push(ProjectState { path, view: View::Code, session_id: None });
                 self.saved.projects.len() - 1
             }

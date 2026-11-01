@@ -25,25 +25,53 @@ pub struct SettingsView {
     pub path: PathBuf,
     pub perms: Permissions,
     pub claude: ClaudeSettings,
+    /// The rules in the user's, the repo's and its local settings files, read
+    /// when the modal opened, and what couldn't be read.
+    pub files: Vec<kynex_core::rules::Rule>,
+    pub file_errors: Vec<String>,
+    /// Starter rules for what's in the folder, found when the modal opened.
+    pub starters: Vec<kynex_core::starters::Starter>,
     section: usize,
 }
 
+/// The Setup section, where a project's settings open the first time.
+pub(super) const SETUP_SECTION: usize = 0;
+/// Permissions, where they open otherwise.
+const PERMISSIONS_SECTION: usize = 1;
+
 impl KynexApp {
     pub(super) fn open_settings(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.open_project_settings_on(path, PERMISSIONS_SECTION, cx);
+    }
+
+    /// Opens a project's Claude settings on `section`. Blocks briefly, reading
+    /// the settings files and the folder's top level.
+    pub(super) fn open_project_settings_on(&mut self, path: PathBuf, section: usize, cx: &mut Context<Self>) {
         self.app_settings = None;
         self.extensions = None;
+        let (files, file_errors) = kynex_core::rules::load_files(&path);
         self.settings = Some(SettingsView {
             perms: Permissions::load(&path),
             claude: self.claude_settings(&path),
+            files,
+            file_errors,
+            starters: kynex_core::starters::detect(&path),
             path,
-            section: 0,
+            section,
         });
         cx.notify();
     }
 
+    /// Opens the Setup checklist of a project opened for the first time, whichever way.
+    pub(super) fn open_pending_setup(&mut self, cx: &mut Context<Self>) {
+        if let Some(path) = self.setup_for.take() {
+            self.open_project_settings_on(path, SETUP_SECTION, cx);
+        }
+    }
+
     /// Applies an edit in the settings modal. Edits save immediately and reach
     /// the project's running sessions ([`Self::apply_project_settings`]).
-    fn edit_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut SettingsView)) {
+    pub(super) fn edit_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut SettingsView)) {
         let Some(view) = &mut self.settings else { return };
         let (perms_before, claude_before) = (view.perms.clone(), view.claude.clone());
         f(view);
@@ -280,7 +308,7 @@ impl KynexApp {
     ) -> Option<AnyElement> {
         let view = self.settings.as_ref()?;
         let t = theme(cx).clone();
-        const SECTIONS: [&str; 3] = ["Permissions", "Model", "Appearance"];
+        const SECTIONS: [&str; 5] = ["Setup", "Permissions", "Rules in effect", "Model", "Appearance"];
         let section = view.section.min(SECTIONS.len() - 1);
         let path = view.path.clone();
         let vp = window.viewport_size();
@@ -297,7 +325,8 @@ impl KynexApp {
         );
 
         let content = match section {
-            0 => {
+            SETUP_SECTION => self.render_project_setup(view, &t, cx),
+            PERMISSIONS_SECTION => {
                 let modes = Mode::ALL.into_iter().enumerate().map(|(n, m)| {
                     let selected = view.claude.mode == m;
                     let hover = t.hover;
@@ -443,7 +472,8 @@ impl KynexApp {
                             ),
                     )
             }
-            1 => {
+            2 => self.render_rules_in_effect(view, &t, cx),
+            3 => {
                 let effort = project::EFFORTS.iter().find(|e| e.0 == view.claude.effort).map_or("Default", |e| e.1);
                 div()
                     .flex()
@@ -473,6 +503,71 @@ impl KynexApp {
                                 "The model and effort are also in the composer, where a session can pin a model of its own over the project's.",
                             ),
                     )
+                    .child(div().pt_3().child(heading(
+                        "KNX Ops workers",
+                        "The model KNX Ops workers run on, and careful mode, which adds a read-only Opus planner and reviewer for larger or riskier tasks. They apply from a worker's next start.",
+                        &t,
+                    )))
+                    .children([
+                        ("", "Haiku 5.5", "As correct as Opus on clear, checkable tasks in our tests. The default."),
+                        ("sonnet", "Sonnet 5.5", "A step up for work Haiku fumbles."),
+                        ("opus", "Opus 5.5", "The strongest: for hard, ambiguous work."),
+                    ]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(n, (id, name, help))| {
+                            let selected = view.claude.worker_model == id;
+                            let hover = t.hover;
+                            div()
+                                .id(("worker-model", n))
+                                .flex()
+                                .items_start()
+                                .gap_2()
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .hover(move |s| s.bg(hover))
+                                .child(radio(selected, &t))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .child(div().text_sm().child(name))
+                                        .child(div().text_xs().text_color(t.text_muted).child(kynex_core::prices::with_price(name, help))),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.edit_settings(cx, |v| v.claude.worker_model = id.to_string())
+                                }))
+                        }))                    .child({
+                        let on = view.claude.careful;
+                        let hover = t.hover;
+                        div()
+                            .id("careful")
+                            .flex()
+                            .items_start()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(hover))
+                            .child(radio(on, &t))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(div().text_sm().child("Careful mode"))
+                                    .child(
+                                        div().text_xs().text_color(t.text_muted).child(
+                                            "Opus plans and reviews, Haiku executes. Costs more and was slower in tests; for work where Haiku isn't enough. The reporter shows what Opus took. Anthropic only.",
+                                        ),
+                                    ),
+                            )
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.edit_settings(cx, |v| v.claude.careful = !v.claude.careful)),
+                            )
+                    })
             }
             _ => self.render_colour_picker(&path, &t, cx),
         };

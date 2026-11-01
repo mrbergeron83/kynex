@@ -58,6 +58,8 @@ pub struct Request {
     pub input: Value,
     pub suggestions: Value,
     pub description: String,
+    /// Why the CLI asked (empty if it didn't say); shown under the title.
+    pub why: String,
     pub kind: Kind,
 }
 
@@ -351,6 +353,9 @@ impl PromptView {
             .gap_2()
             .child(self.header(cx))
             .when(show_desc, |d| d.child(div().text_sm().text_color(t.text_muted).child(self.req.description.clone())))
+            .when(!self.req.why.is_empty(), |d| {
+                d.child(div().text_xs().text_color(t.text_placeholder).child(format!("Why: {}", self.req.why)))
+            })
             .child({
                 let scroll = scrollbar::handle("preview");
                 let area =

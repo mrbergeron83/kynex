@@ -27,16 +27,30 @@ pub fn worktree(project: &Path) -> Result<Option<PathBuf>, String> {
 }
 
 /// The `claude` arguments that make a session in `project` a chief worker:
-/// no permission prompts, no questions to the user, its worktree and its
+/// no permission prompts, its worktree and its
 /// instructions. Blocks on git the first time (see [`worktree`]).
-pub fn worker_args(project: &Path) -> Result<Vec<String>, String> {
+pub fn worker_args(project: &Path, careful: bool) -> Result<Vec<String>, String> {
     let tree = worktree(project)?;
+    // Questions go through Kynex's own `ask_user` tool (an MCP tool Kynex serves), which waits for the
+    // user on KNX Ops's stack; the CLI's `AskUserQuestion` isn't offered.
     let mut args: Vec<String> =
         ["--dangerously-skip-permissions", "--disallowedTools", "AskUserQuestion"].map(String::from).to_vec();
+    args.extend(super::server::worker_launch_args(project));
     if let Some(t) = &tree {
         args.extend(["--add-dir".into(), t.display().to_string()]);
     }
-    args.extend(["--append-system-prompt".into(), worker_prompt(project, tree.as_deref())]);
+    let mut prompt = worker_prompt(project, tree.as_deref());
+    if careful {
+        // Opus plans and reviews, Haiku executes: the worker itself only coordinates.
+        args.extend(["--agents".into(), crate::careful::agents()]);
+        prompt.push_str(
+            "
+
+",
+        );
+        prompt.push_str(crate::careful::COORDINATOR_PROMPT);
+    }
+    args.extend(["--append-system-prompt".into(), prompt]);
     Ok(args)
 }
 
@@ -59,8 +73,12 @@ fn worker_prompt(project: &Path, tree: Option<&Path>) -> String {
 
 {place}
 
-You can't ask the user anything. When you need a decision you can't make from the task, stop and ask \
-it in your report.
+When you need a decision you can't make from the task, ask it with the ask_user tool (from the kynex \
+MCP server): one question with two to six clear options, the one you'd pick first. It waits for the \
+user and returns their answer; then carry on with it. Ask only when it matters, and don't guess at \
+anything that can't be undone: the user is answering for several projects at once, and their answers \
+stack up in Kynex. If you don't have that tool, stop and put the question in your report instead \
+(STATUS: blocked).
 
 End every turn with this report, as the last thing you write:
 
@@ -264,7 +282,7 @@ mod tests {
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "start"]);
         let out = std::process::Command::new(crate::cli::program())
             .args(["-p", "Create hello.txt containing the word hi. Don't commit.", "--model", "haiku"])
-            .args(worker_args(&repo).unwrap())
+            .args(worker_args(&repo, false).unwrap())
             .current_dir(&repo)
             .output()
             .unwrap();
@@ -288,9 +306,14 @@ mod tests {
         assert!(tree.join(".git").exists());
         // The second time it's the same one.
         assert_eq!(worktree(&repo).unwrap(), Some(tree.clone()));
-        let args = worker_args(&repo).unwrap();
+        let args = worker_args(&repo, true).unwrap();
         assert!(args.contains(&tree.display().to_string()));
         assert!(args.last().unwrap().contains("STATUS: done | blocked | failed"));
+        // Careful mode adds the subagents and how to use them; without it, neither.
+        assert!(args.windows(2).any(|w| w[0] == "--agents" && w[1].contains("planner")));
+        assert!(args.last().unwrap().contains("you coordinate"));
+        let plain = worker_args(&repo, false).unwrap();
+        assert!(!plain.iter().any(|a| a == "--agents") && !plain.last().unwrap().contains("you coordinate"));
         // A plain folder has none.
         let plain = dir.join("plain");
         std::fs::create_dir_all(&plain).unwrap();
