@@ -133,6 +133,47 @@ impl KynexApp {
                         })),
                 )
             });
+        // The workers' questions waiting for you, oldest first; the box below
+        // answers the picked one (the oldest unless you pick another).
+        let focus = self.chief_focus().map(|a| a.id);
+        let stack = self.question_stack();
+        let hover = t.hover;
+        let stack_view = (!stack.is_empty()).then(|| {
+            let n = stack.len();
+            div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .pb_1()
+                .child(div().text_xs().font_weight(FontWeight::MEDIUM).text_color(t.warning).child(format!(
+                    "{n} question{} for you. Answer in the box below; pick one here to answer it first.",
+                    if n == 1 { "" } else { "s" }
+                )))
+                .children(stack.into_iter().enumerate().map(|(i, a)| {
+                    let current = focus == Some(a.id);
+                    let id = a.id;
+                    let age = fmt::elapsed(a.since.elapsed());
+                    div()
+                        .id(("ops-question", i))
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .h(px(22.))
+                        .px_2()
+                        .rounded_md()
+                        .text_xs()
+                        .cursor_pointer()
+                        .when(current, |d| d.bg(t.active))
+                        .when(!current, |d| d.hover(move |s| s.bg(hover)))
+                        .child(div().flex_none().font_weight(FontWeight::MEDIUM).child(a.name))
+                        .child(div().flex_1().min_w_0().truncate().text_color(t.text_muted).child(a.headline))
+                        .child(div().flex_none().text_color(t.text_placeholder).child(age))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.chief.focus = Some(id);
+                            cx.notify();
+                        }))
+                }))
+        });
         let rows: Vec<AnyElement> = workers
             .iter()
             .enumerate()
@@ -232,6 +273,7 @@ impl KynexApp {
                 .border_b_1()
                 .border_color(t.border_variant)
                 .child(head)
+                .children(stack_view)
                 .when(rows.is_empty(), |d| {
                     d.child(div().text_xs().text_color(t.text_placeholder).child("No workers yet."))
                 })

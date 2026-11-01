@@ -17,6 +17,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   trusts the folder (with a Trust button), the mode new sessions start in, the ask rules that will
   prompt even in Auto mode, and starter rules for what's in the folder (git, Cargo, npm, Python,
   Go, .NET) to allow in one click, for both Bash and PowerShell. Never a push (#233).
+- KNX Ops workers can ask you multiple-choice questions, through an `ask_user` tool Kynex gives
+  them (it doesn't depend on the CLI's own question tool). They stack up (oldest first, each with
+  its project), the box under the conversation answers the first one, and you can pick another
+  from the list above it. Your answer goes straight back to the worker, which carries on; the
+  chief hears when a question is asked and answered, and isn't blocked otherwise (#235).
 
 ### Changed
 

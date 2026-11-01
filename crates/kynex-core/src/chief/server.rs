@@ -6,7 +6,7 @@ use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -14,11 +14,18 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::{Call, NAME, SYSTEM_PROMPT, tools};
+use super::{Call, NAME, SYSTEM_PROMPT, tools, worker_tools};
 use crate::session::Wake;
 
-/// How long a tool call waits for the app.
+/// How long a tool call waits for the app, except a worker's question, which waits for the user.
 const ANSWER_WAIT: Duration = Duration::from_secs(30);
+
+/// Who is calling: the chief, or the worker of a project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Role {
+    Chief,
+    Worker(PathBuf),
+}
 
 /// A tool call waiting for the app's answer.
 pub struct Request {
@@ -60,6 +67,7 @@ impl Server {
                 std::thread::spawn(move || serve(stream, &auth, &tx, &wake));
             }
         });
+        set_worker_endpoint(Some((port, token.clone())));
         Ok(Self { port, token, rx, stop })
     }
 
@@ -93,6 +101,7 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        set_worker_endpoint(None);
         // Wakes the accept loop so it sees the flag.
         let _ = TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], self.port)), Duration::from_millis(200));
     }
@@ -111,7 +120,55 @@ pub fn set_launch_args(args: Vec<String>) {
     }
 }
 
-/// The extra `claude` arguments for a chat session in `cwd`: the chief's, in its folder.
+/// Where the server listens, for the workers' `ask_user`, while it runs.
+fn worker_endpoint() -> &'static Mutex<Option<(u16, String)>> {
+    static ENDPOINT: OnceLock<Mutex<Option<(u16, String)>>> = OnceLock::new();
+    ENDPOINT.get_or_init(Mutex::default)
+}
+
+fn set_worker_endpoint(endpoint: Option<(u16, String)>) {
+    if let Ok(mut e) = worker_endpoint().lock() {
+        *e = endpoint;
+    }
+}
+
+/// The ``claude`` arguments that give a worker in ``project`` Kynex's ``ask_user``,
+/// next to the project's own MCP servers; none while the server isn't running.
+pub fn worker_launch_args(project: &Path) -> Vec<String> {
+    let Some((port, token)) = worker_endpoint().lock().ok().and_then(|e| e.clone()) else {
+        return Vec::new();
+    };
+    let config = json!({ "mcpServers": { NAME: {
+        "type": "http",
+        "url": format!("http://127.0.0.1:{port}/worker/{}", hex(&project.to_string_lossy())),
+        "headers": { "Authorization": format!("Bearer {token}") },
+    } } });
+    vec!["--mcp-config".into(), config.to_string()]
+}
+
+fn hex(s: &str) -> String {
+    s.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
+fn unhex(s: &str) -> Option<String> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    let bytes: Option<Vec<u8>> =
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect();
+    String::from_utf8(bytes?).ok()
+}
+
+/// Who a request's path is for: ``/mcp`` the chief, ``/worker/<hex path>`` a worker.
+fn role_for(target: &str) -> Option<Role> {
+    let path = target.split('?').next().unwrap_or("");
+    if path == "/mcp" {
+        return Some(Role::Chief);
+    }
+    path.strip_prefix("/worker/").and_then(unhex).filter(|p| !p.is_empty()).map(|p| Role::Worker(PathBuf::from(p)))
+}
+
+/// The extra ``claude`` arguments for a chat session in ``cwd``: the chief's, in its folder.
 pub fn launch_args_for(cwd: &Path) -> Vec<String> {
     if cwd != crate::paths::chief_dir() {
         return Vec::new();
@@ -140,12 +197,14 @@ fn serve(stream: TcpStream, auth: &str, tx: &Sender<Request>, wake: &Wake) {
         http(401, "")
     } else if req.method != "POST" {
         http(405, "")
-    } else {
+    } else if let Some(role) = role_for(&req.target) {
         let message = serde_json::from_slice::<Value>(&req.body).unwrap_or(Value::Null);
-        match handle(&message, |call| ask(call, tx, wake)) {
+        match handle(&message, &role, |call| ask(call, tx, wake)) {
             Some(answer) => http(200, &answer.to_string()),
             None => http(202, ""),
         }
+    } else {
+        http(404, "")
     };
     let _ = out.write_all(response.as_bytes());
     // Closing with bytes unread resets the connection on Windows, losing the
@@ -157,14 +216,21 @@ fn serve(stream: TcpStream, auth: &str, tx: &Sender<Request>, wake: &Wake) {
 
 /// Passes `call` to the app and waits for its answer.
 fn ask(call: Call, tx: &Sender<Request>, wake: &Wake) -> Result<String, String> {
+    // A worker's question waits as long as the user takes; the rest, a moment.
+    let patient = matches!(call, Call::Ask { .. });
     let (reply, answer) = channel();
     tx.send(Request { call, reply }).map_err(|_| "Kynex is closing".to_string())?;
     wake();
+    if patient {
+        return answer.recv().map_err(|_| "The question was withdrawn: Kynex stopped this worker.".to_string())?;
+    }
     answer.recv_timeout(ANSWER_WAIT).map_err(|_| "Kynex didn't answer in time".to_string())?
 }
 
 struct HttpRequest {
     method: String,
+    /// The request target, e.g. `/mcp`.
+    target: String,
     authorization: Option<String>,
     body: Vec<u8>,
 }
@@ -172,7 +238,9 @@ struct HttpRequest {
 fn read_request(r: &mut impl BufRead) -> Option<HttpRequest> {
     let mut line = String::new();
     r.read_line(&mut line).ok()?;
-    let method = line.split_whitespace().next()?.to_string();
+    let mut first = line.split_whitespace();
+    let method = first.next()?.to_string();
+    let target = first.next().unwrap_or("").to_string();
     let (mut length, mut authorization) = (0usize, None);
     loop {
         line.clear();
@@ -197,7 +265,7 @@ fn read_request(r: &mut impl BufRead) -> Option<HttpRequest> {
     }
     let mut body = vec![0; length];
     r.read_exact(&mut body).ok()?;
-    Some(HttpRequest { method, authorization, body })
+    Some(HttpRequest { method, target, authorization, body })
 }
 
 fn http(status: u16, body: &str) -> String {
@@ -205,6 +273,7 @@ fn http(status: u16, body: &str) -> String {
         200 => "OK",
         202 => "Accepted",
         401 => "Unauthorized",
+        404 => "Not Found",
         _ => "Method Not Allowed",
     };
     format!(
@@ -215,7 +284,7 @@ fn http(status: u16, body: &str) -> String {
 
 /// The JSON-RPC answer to `message`, `None` for a notification. Tool calls
 /// go to `call`.
-fn handle(message: &Value, call: impl FnOnce(Call) -> Result<String, String>) -> Option<Value> {
+fn handle(message: &Value, role: &Role, call: impl FnOnce(Call) -> Result<String, String>) -> Option<Value> {
     let id = message.get("id")?.clone();
     let method = message["method"].as_str().unwrap_or("");
     let result = match method {
@@ -225,10 +294,15 @@ fn handle(message: &Value, call: impl FnOnce(Call) -> Result<String, String>) ->
             "serverInfo": { "name": NAME, "version": env!("CARGO_PKG_VERSION") },
         }),
         "ping" => json!({}),
-        "tools/list" => json!({ "tools": tools() }),
+        "tools/list" => json!({ "tools": if *role == Role::Chief { tools() } else { worker_tools() } }),
         "tools/call" => {
             let params = &message["params"];
-            let outcome = Call::parse(params["name"].as_str().unwrap_or(""), &params["arguments"]).and_then(call);
+            let name = params["name"].as_str().unwrap_or("");
+            let parsed = match role {
+                Role::Chief => Call::parse(name, &params["arguments"]),
+                Role::Worker(project) => Call::parse_worker(name, &params["arguments"], project.clone()),
+            };
+            let outcome = parsed.and_then(call);
             let (text, is_error) = match outcome {
                 Ok(t) => (t, false),
                 Err(e) => (e, true),
@@ -255,30 +329,130 @@ mod tests {
         let init = handle(
             &json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": { "protocolVersion": "2025-03-26" } }),
+            &Role::Chief,
             |_| unreachable!(),
         )
         .unwrap();
         assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
         assert!(init["result"]["capabilities"]["tools"].is_object());
         assert_eq!(
-            handle(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }), |_| unreachable!()),
+            handle(
+                &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+                &Role::Chief,
+                |_| unreachable!()
+            ),
             None
         );
-        let list = handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }), |_| unreachable!()).unwrap();
+        let list =
+            handle(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }), &Role::Chief, |_| unreachable!())
+                .unwrap();
         assert_eq!(list["result"]["tools"].as_array().unwrap().len(), tools().as_array().unwrap().len());
         let call = json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": { "name": "result", "arguments": { "project": "kynex" } } });
-        let ok = handle(&call, |c| {
+        let ok = handle(&call, &Role::Chief, |c| {
             assert_eq!(c, Call::Result { project: "kynex".into() });
             Ok("done".into())
         })
         .unwrap();
         assert_eq!(ok["result"]["content"][0]["text"], "done");
         assert_eq!(ok["result"]["isError"], false);
-        let err = handle(&call, |_| Err("no".into())).unwrap();
+        let err = handle(&call, &Role::Chief, |_| Err("no".into())).unwrap();
         assert_eq!(err["result"]["isError"], true);
-        let unknown = handle(&json!({ "jsonrpc": "2.0", "id": 4, "method": "resources/list" }), |_| unreachable!());
+        let unknown =
+            handle(&json!({ "jsonrpc": "2.0", "id": 4, "method": "resources/list" }), &Role::Chief, |_| unreachable!());
         assert_eq!(unknown.unwrap()["error"]["code"], -32601);
+    }
+
+    #[test]
+    fn a_worker_gets_ask_user_and_nothing_else() {
+        let project = PathBuf::from("/r/kynex");
+        let role = Role::Worker(project.clone());
+        let list =
+            handle(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }), &role, |_| unreachable!()).unwrap();
+        let names: Vec<&str> =
+            list["result"]["tools"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
+        assert_eq!(names, ["ask_user"]);
+        // The chief's tools aren't a worker's.
+        let dispatch = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": { "name": "dispatch", "arguments": { "project": "x", "prompt": "y" } } });
+        assert_eq!(handle(&dispatch, &role, |_| unreachable!()).unwrap()["result"]["isError"], true);
+        let ask = json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "ask_user",
+            "arguments": { "question": "Which DB?", "header": "Database", "options": ["Postgres", { "label": "SQLite", "description": "one file" }] } } });
+        let answered = handle(&ask, &role, |c| {
+            let Call::Ask { project: p, input } = c else { panic!("{c:?}") };
+            assert_eq!(p, project);
+            assert_eq!(input["questions"][0]["question"], "Which DB?");
+            assert_eq!(input["questions"][0]["options"][1]["description"], "one file");
+            assert_eq!(input["questions"][0]["multiSelect"], false);
+            Ok("The user answered: SQLite".into())
+        })
+        .unwrap();
+        assert_eq!(answered["result"]["content"][0]["text"], "The user answered: SQLite");
+        // Too few choices is the worker's mistake to fix.
+        let thin = json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": { "name": "ask_user", "arguments": { "question": "?", "options": ["only"] } } });
+        assert_eq!(handle(&thin, &role, |_| unreachable!()).unwrap()["result"]["isError"], true);
+    }
+
+    #[test]
+    fn routes_by_path_and_round_trips_a_project_path() {
+        assert_eq!(role_for("/mcp"), Some(Role::Chief));
+        let path = r"C:\Users\me\repos\ünï code";
+        assert_eq!(role_for(&format!("/worker/{}", hex(path))), Some(Role::Worker(PathBuf::from(path))));
+        assert_eq!(role_for("/worker/zz"), None);
+        assert_eq!(role_for("/worker/"), None);
+        assert_eq!(role_for("/elsewhere"), None);
+    }
+
+    #[test]
+    fn answers_are_told_in_words() {
+        let mut answers = serde_json::Map::new();
+        assert!(crate::chief::answer_text(&answers).starts_with("The user didn't answer"));
+        answers.insert("Which DB?".into(), json!("SQLite"));
+        assert_eq!(crate::chief::answer_text(&answers), "The user answered:\nWhich DB? → SQLite");
+    }
+
+    /// A real worker asks through `ask_user` and gets the answer back. Run with
+    /// `cargo test -- --ignored a_worker_asks`.
+    #[test]
+    #[ignore = "needs the claude CLI and uses a little quota"]
+    fn a_worker_asks_through_ask_user() {
+        let server = Server::start(Arc::new(|| {})).unwrap();
+        let project = std::env::temp_dir();
+        let mut cmd = std::process::Command::new(crate::cli::program());
+        cmd.args([
+            "-p",
+            "Use the ask_user tool now to ask which colour I prefer, with the options Red and Blue. \
+             Then repeat the answer you got, word for word.",
+            "--model",
+            DEFAULT_MODEL,
+            "--allowedTools",
+            &format!("mcp__{NAME}"),
+        ])
+        .args(worker_launch_args(&project))
+        .current_dir(&project);
+        let run = std::thread::spawn(move || cmd.output().unwrap());
+        let mut asked = None;
+        while !run.is_finished() {
+            for r in server.requests() {
+                if let Call::Ask { project: p, input } = &r.call {
+                    assert_eq!(*p, std::env::temp_dir());
+                    asked = Some(input.clone());
+                }
+                let mut answers = serde_json::Map::new();
+                answers.insert("which".into(), json!("Blue"));
+                r.answer(Ok(crate::chief::answer_text(&answers)));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let out = run.join().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        let input = asked
+            .unwrap_or_else(|| panic!("no question; stdout: {text}; stderr: {}", String::from_utf8_lossy(&out.stderr)));
+        let labels: Vec<&str> =
+            input["questions"][0]["options"].as_array().unwrap().iter().filter_map(|o| o["label"].as_str()).collect();
+        assert_eq!(labels, ["Red", "Blue"]);
+        assert!(text.contains("Blue"), "{text}");
     }
 
     #[test]
