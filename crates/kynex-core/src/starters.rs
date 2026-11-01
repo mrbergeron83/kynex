@@ -90,7 +90,11 @@ mod tests {
     use crate::rules::Source;
 
     fn folder(files: &[&str]) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("kynex-starters-{}-{}", std::process::id(), files.join("-")));
+        let dir = std::env::temp_dir().join(format!(
+            "kynex-starters-{}-{}",
+            std::process::id(),
+            files.join("-").replace('/', "_")
+        ));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         for f in files {
@@ -113,7 +117,9 @@ mod tests {
         assert!(git.rules.contains(&"PowerShell(git commit *)".to_string()));
         assert!(git.rules.iter().all(|r| !r.contains("push")));
         std::fs::remove_dir_all(&dir).ok();
-        assert!(detect(&folder(&["notes.txt"])).is_empty());
+        let plain = folder(&["notes.txt"]);
+        assert!(detect(&plain).is_empty());
+        std::fs::remove_dir_all(&plain).ok();
     }
 
     #[test]
