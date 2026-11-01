@@ -1,4 +1,4 @@
-//! The custom title bar: app name, one tab per project (Chat first), Settings
+//! The custom title bar: app name, Chat and KNX Ops, one tab per project, Settings
 //! and the window buttons. Usage limits and the update pill are in the footer.
 //! The theme lives in Settings and the Kynex menu's Appearance.
 
@@ -12,7 +12,7 @@ use kynex_core::paths::project_name;
 use kynex_core::tab_order;
 
 use super::KynexApp;
-use super::keys::{MoveTabLeft, MoveTabRight, OpenProject, OpenSettings};
+use super::keys::{MoveTabLeft, MoveTabRight, OpenProject, OpenSettings, PROJECTS_AT};
 use super::menus::Menu;
 use super::state::Active;
 use crate::chrome::{self, TITLE_BAR_HEIGHT};
@@ -70,15 +70,25 @@ impl KynexApp {
             None => (0..n).collect(),
         };
         *self.tab_spans.borrow_mut() = vec![(0., 0.); n];
-        let (chat, chief) = (status(&self.chat), status(&self.chief.live));
-        let chat = (chat.0 || chief.0, chat.1 || chief.1, chat.2 || chief.2);
-        let mut tabs = vec![self.render_tab(0, 0, "Chat".into(), None, None, chat, cx)];
+        let (chat, ops) = (status(&self.chat), status(&self.chief.live));
+        let mut tabs = vec![
+            self.render_tab(0, 0, "Chat".into(), None, None, chat, cx),
+            self.render_tab(1, 0, "KNX Ops".into(), None, Some("KNX Ops".into()), ops, cx),
+        ];
         for (slot, i) in order.into_iter().enumerate() {
             let p = &self.saved.projects[i];
             let state = self.code.get(&p.path).map_or((false, false, false), status);
             let tooltip = p.path.display().to_string();
             let colour = self.project_colour(&p.path, &t);
-            tabs.push(self.render_tab(i + 1, slot, project_name(&p.path).into(), colour, Some(tooltip), state, cx));
+            tabs.push(self.render_tab(
+                i + PROJECTS_AT,
+                slot,
+                project_name(&p.path).into(),
+                colour,
+                Some(tooltip),
+                state,
+                cx,
+            ));
         }
 
         // The shown project's colour tints the bar, with a line of it along the bottom.
@@ -136,8 +146,8 @@ impl KynexApp {
             .child(chrome::window_controls(window, cx))
     }
 
-    /// `pos` is the tab's place in the bar (Chat is 0), `slot` where a project
-    /// tab is shown while one is dragged.
+    /// `pos` is the tab's place in the bar (Chat is 0, KNX Ops 1, then the
+    /// projects), `slot` where a project tab is shown while one is dragged.
     #[allow(clippy::too_many_arguments)]
     fn render_tab(
         &self,
@@ -153,8 +163,8 @@ impl KynexApp {
         let active = self.tab_pos() == pos;
         let hover = t.hover;
         let fg = if active { t.text } else { t.text_muted };
-        let lifted = self.tab_drag.is_some_and(|d| d.from + 1 == pos);
-        let drag = DraggedTab { from: pos.saturating_sub(1), label: label.clone(), colour };
+        let lifted = self.tab_drag.is_some_and(|d| d.from + PROJECTS_AT == pos);
+        let drag = DraggedTab { from: pos.saturating_sub(PROJECTS_AT), label: label.clone(), colour };
         let spans = self.tab_spans.clone();
         div()
             .id(("tab", pos))
@@ -170,17 +180,32 @@ impl KynexApp {
             .cursor_pointer()
             .when(active, |d| d.bg(t.active))
             .when(!active, |d| d.hover(move |s| s.bg(hover)))
-            .child(icon(if pos == 0 { Icon::Message } else { Icon::Folder }, colour.unwrap_or(fg)).size_3p5())
+            .child(
+                icon(
+                    match pos {
+                        0 => Icon::Message,
+                        1 => Icon::Timeline,
+                        _ => Icon::Folder,
+                    },
+                    colour.unwrap_or(fg),
+                )
+                .size_3p5(),
+            )
             .child(label)
             .map(|d| match Lamp::of(busy, waiting, finished) {
                 Lamp::Idle => d,
                 state => d.child(lamp(("tab-lamp", pos), state, cx)),
             })
             .when_some(tooltip, |d, tip| {
-                d.tooltip(Tooltip::with_meta(tip, "Middle-click to close · right-click for more"))
+                let meta = if pos >= PROJECTS_AT {
+                    "Middle-click to close · right-click for more"
+                } else {
+                    "Chief of staff: dispatches your goals to a worker in each project and reports back"
+                };
+                d.tooltip(Tooltip::with_meta(tip, meta))
             })
             .on_click(cx.listener(move |this, _, window, cx| this.jump(pos, window, cx)))
-            .when(pos > 0, |d| {
+            .when(pos >= PROJECTS_AT, |d| {
                 // Where it is, for working out which slot a dragged tab is over.
                 let record = canvas(
                     move |b, _, _| {
@@ -199,14 +224,14 @@ impl KynexApp {
                     .on_mouse_down(
                         MouseButton::Middle,
                         cx.listener(move |this, _, _, cx| {
-                            this.close_project(pos - 1);
+                            this.close_project(pos - PROJECTS_AT);
                             cx.notify();
                         }),
                     )
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
-                            this.open_menu(Menu::Tab(pos - 1), ev.position, Anchor::TopLeft, cx)
+                            this.open_menu(Menu::Tab(pos - PROJECTS_AT), ev.position, Anchor::TopLeft, cx)
                         }),
                     )
             })

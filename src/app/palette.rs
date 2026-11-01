@@ -60,8 +60,13 @@ struct Row {
 
 #[derive(Clone)]
 enum Target {
-    Session { path: PathBuf, id: String },
+    Session {
+        path: PathBuf,
+        id: String,
+    },
     Tab(Active),
+    /// KNX Ops, the chief of staff.
+    Ops,
     Command(Cmd),
 }
 
@@ -250,15 +255,19 @@ impl KynexApp {
                 });
             }
         }
-        let tabs = std::iter::once((Active::Chat, "Chat".to_string(), String::new())).chain(
-            self.saved
-                .projects
-                .iter()
-                .enumerate()
-                .map(|(i, p)| (Active::Project(i), project_name(&p.path), p.path.display().to_string())),
-        );
-        for (tab, name, path) in tabs {
-            rows.push(Row { target: Target::Tab(tab), detail: path.clone().into(), hint: "".into() });
+        let tabs =
+            [
+                (Target::Tab(Active::Chat), "Chat".to_string(), String::new()),
+                (Target::Ops, "KNX Ops".to_string(), "chief of staff".to_string()),
+            ]
+            .into_iter()
+            .chain(
+                self.saved.projects.iter().enumerate().map(|(i, p)| {
+                    (Target::Tab(Active::Project(i)), project_name(&p.path), p.path.display().to_string())
+                }),
+            );
+        for (target, name, path) in tabs {
+            rows.push(Row { target, detail: path.clone().into(), hint: "".into() });
             entries.push(Entry { kind: Kind::Project, title: name, keywords: path, when: None });
         }
         for (cmd, label, words) in commands() {
@@ -322,6 +331,8 @@ impl KynexApp {
                 }
                 self.focus_input(window, cx);
             }
+            Target::Tab(Active::Chat) => self.jump(0, window, cx),
+            Target::Ops => self.jump(1, window, cx),
             Target::Tab(tab) => {
                 self.select(tab, window, cx);
                 self.focus_input(window, cx);

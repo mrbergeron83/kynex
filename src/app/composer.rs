@@ -570,10 +570,10 @@ impl KynexApp {
                                 .id("worker-mode")
                                 .px_1p5()
                                 .text_color(t.warning)
-                                .child("Chief worker · no prompts")
+                                .child("KNX Ops worker · no prompts")
                                 .tooltip(Tooltip::text(
-                                    "The chief of staff runs this session with no permission prompts, in its \
-                                     own worktree",
+                                    "KNX Ops (the chief of staff) runs this session with no permission prompts, \
+                                     in its own worktree",
                                 )),
                         )
                     })

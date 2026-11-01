@@ -131,6 +131,9 @@ const TRANSCRIPT_KEYS: [&str; 4] = ["home", "end", "up", "down"];
 
 const ESC_ESC: &str = "escape escape";
 
+/// Title bar places taken before the projects: Chat, then KNX Ops.
+pub(super) const PROJECTS_AT: usize = 2;
+
 /// Whether Esc Esc opens the rewind menu: the default, unless `keymap.json` moved it.
 static ESC_ESC_REWINDS: AtomicBool = AtomicBool::new(true);
 
@@ -349,20 +352,33 @@ impl KynexApp {
     }
 
     fn tab_count(&self) -> usize {
-        self.saved.projects.len() + 1
+        self.saved.projects.len() + PROJECTS_AT
     }
 
-    /// The active tab's position in the title bar: Chat is 0.
+    /// The active tab's position in the title bar: Chat is 0, KNX Ops 1
+    /// (the chief of staff, shown in the Chat slot of the state), then the projects.
     pub(super) fn tab_pos(&self) -> usize {
         match self.saved.active {
+            Active::Chat if self.saved.chief_view => 1,
             Active::Chat => 0,
-            Active::Project(i) => i + 1,
+            Active::Project(i) => i + PROJECTS_AT,
         }
     }
 
     pub(super) fn jump(&mut self, t: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if t < self.tab_count() {
-            self.select(if t == 0 { Active::Chat } else { Active::Project(t - 1) }, window, cx);
+        if t >= self.tab_count() {
+            return;
+        }
+        if t < PROJECTS_AT {
+            // Chat and KNX Ops are two views of the project-less tab.
+            if self.saved.chief_view != (t == 1) {
+                self.saved.chief_view = t == 1;
+                self.save();
+            }
+            self.select(Active::Chat, window, cx);
+            self.focus_input(window, cx);
+        } else {
+            self.select(Active::Project(t - PROJECTS_AT), window, cx);
         }
     }
 
@@ -494,7 +510,7 @@ impl KynexApp {
             cx.stop_propagation();
             return;
         }
-        // Ctrl+1 is Chat, Ctrl+2 the first project, and so on.
+        // Ctrl+1 is Chat, Ctrl+2 KNX Ops, Ctrl+3 the first project, and so on.
         if k.modifiers.secondary(cx)
             && !k.modifiers.shift
             && !k.modifiers.alt
