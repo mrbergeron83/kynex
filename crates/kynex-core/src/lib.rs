@@ -8,6 +8,7 @@ pub mod awake;
 pub mod browser_server;
 pub mod careful;
 pub mod catalog;
+pub mod chat_api;
 pub mod chief;
 pub mod cli;
 pub mod column;

@@ -599,8 +599,7 @@ impl KynexApp {
                 touched.insert(s.cwd.clone());
             }
             shown_ended |= was_busy && !s.busy && Some(s.uid) == shown;
-            openrouter_turn_ended |=
-                was_busy && !s.busy && s.provider().provider() == kynex_core::provider::Provider::OpenRouter;
+            openrouter_turn_ended |= was_busy && !s.busy && s.provider().provider().is_openrouter();
             for item in s.items.get(seen..).into_iter().flatten() {
                 if let session::Item::Task(n) = item {
                     ended.push((s.uid, n.clone()));

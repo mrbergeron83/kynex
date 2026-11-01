@@ -141,14 +141,14 @@ impl KynexApp {
     }
 
     /// The providers set up: Anthropic while the CLI is signed in, OpenRouter
-    /// once it has a key.
+    /// (in the CLI, and as chat) once it has a key.
     pub(super) fn providers_available(&self) -> Vec<Provider> {
         let mut all = Vec::new();
         if !self.anthropic_signed_out() {
             all.push(Provider::Anthropic);
         }
         if self.openrouter_key.is_some() {
-            all.push(Provider::OpenRouter);
+            all.extend([Provider::OpenRouter, Provider::OpenRouterChat]);
         }
         all
     }
@@ -161,6 +161,10 @@ impl KynexApp {
                 .openrouter_key
                 .clone()
                 .map(|key| Launch::OpenRouter { key, settings: self.saved.openrouter.settings(None) }),
+            Provider::OpenRouterChat => self
+                .openrouter_key
+                .clone()
+                .map(|key| Launch::OpenRouterChat { key, settings: self.saved.openrouter.settings(None) }),
         }
     }
 
@@ -187,7 +191,7 @@ impl KynexApp {
     pub(super) fn folder_model_on(&self, dir: &Path, provider: Provider) -> String {
         match provider {
             Provider::Anthropic => self.dir_model(dir),
-            Provider::OpenRouter => self.folder_openrouter_model(dir),
+            Provider::OpenRouter | Provider::OpenRouterChat => self.folder_openrouter_model(dir),
         }
     }
 
@@ -199,7 +203,14 @@ impl KynexApp {
             Some(id) => self.groups_for(cwd).provider_of(id),
             None => self.folder_provider(cwd),
         };
-        self.launch_for(provider).unwrap_or(Launch::Anthropic)
+        self.launch_in(cwd, provider)
+    }
+
+    /// `provider`'s launch for a session in `cwd`, Anthropic if it isn't set
+    /// up. KNX Ops works through tools, so it never gets the chat-only one.
+    fn launch_in(&self, cwd: &Path, provider: Provider) -> Launch {
+        let launch = self.launch_for(provider).unwrap_or(Launch::Anthropic);
+        if cwd == kynex_core::paths::chief_dir() { launch.for_work() } else { launch }
     }
 
     /// Gives `s` the provider and model it starts on: see [`Self::start_launch`],
@@ -227,7 +238,7 @@ impl KynexApp {
             .filter(|s| s.is_new())
             .map(|s| {
                 let models = [Provider::Anthropic, Provider::OpenRouter].map(|p| self.folder_model_on(&s.cwd, p));
-                let launch = self.launch_for(self.folder_provider(&s.cwd)).unwrap_or(Launch::Anthropic);
+                let launch = self.launch_in(&s.cwd, self.folder_provider(&s.cwd));
                 (s.uid, launch, models)
             })
             .collect();
@@ -346,7 +357,7 @@ pub(super) fn apply_start(s: &mut Session, launch: Launch, models: &[String; 2])
     let _ = if s.is_new() { s.set_provider(launch) } else { s.restore_provider(launch) };
     let folder = match s.provider().provider() {
         Provider::Anthropic => &models[0],
-        Provider::OpenRouter => &models[1],
+        Provider::OpenRouter | Provider::OpenRouterChat => &models[1],
     };
     s.model = s.own_model.clone().unwrap_or_else(|| folder.clone());
 }

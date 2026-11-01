@@ -19,6 +19,11 @@ use gpui::{
 };
 
 fn main() {
+    // Started by a session as its OpenRouter chat harness, not as the app. Its
+    // environment (PATH included) is the app's, so nothing else needs setting up.
+    if let Some(code) = kynex_core::chat_api::main_if_asked() {
+        std::process::exit(code);
+    }
     // Started from Finder or the Dock, macOS gives no shell PATH: find `claude` and friends anyway.
     // SAFETY: first thing in main, before any other thread starts.
     unsafe { kynex_core::env_path::fix() };

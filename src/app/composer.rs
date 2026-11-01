@@ -251,7 +251,7 @@ impl KynexApp {
         // Who answers: a picker on a new session when both are set up, else
         // a label (a session keeps its provider once it starts).
         let provider = self.active_provider();
-        let on_openrouter = provider == kynex_core::provider::Provider::OpenRouter;
+        let on_openrouter = provider.is_openrouter();
         let fresh = session.is_none_or(Session::is_new);
         let can_switch = fresh && self.providers_available().len() > 1;
         let show_provider = can_switch || on_openrouter;
@@ -279,6 +279,8 @@ impl KynexApp {
             "Pick a message to go back to · Esc to cancel"
         } else if self.history_searching() {
             "Search what you've sent…"
+        } else if provider == kynex_core::provider::Provider::OpenRouterChat {
+            "Message the model… (chat only: it can't see or change files)"
         } else if in_project {
             "Ask Claude Code to do something in this project…"
         } else {

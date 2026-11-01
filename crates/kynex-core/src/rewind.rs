@@ -42,7 +42,13 @@ pub struct Point {
 /// newest entry back through its parents. A `/compact` boundary has no parent
 /// but names the entry it follows (`logicalParentUuid`), so it's crossed too.
 pub(crate) fn branch(log: &str) -> Vec<Value> {
+    branch_at(log, None)
+}
+
+/// The branch ending at entry `leaf`, or at the last entry if `None`.
+pub(crate) fn branch_at(log: &str, leaf: Option<&str>) -> Vec<Value> {
     let mut by_uuid: HashMap<String, Value> = HashMap::new();
+    let wanted = leaf;
     let mut leaf = None;
     for line in log.lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
@@ -55,7 +61,10 @@ pub(crate) fn branch(log: &str) -> Vec<Value> {
     }
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    let mut next = leaf;
+    let mut next = match wanted {
+        Some(w) => Some(w.to_string()),
+        None => leaf,
+    };
     while let Some(uuid) = next.filter(|u| seen.insert(u.clone())) {
         let Some(v) = by_uuid.remove(&uuid) else { break };
         next = v["parentUuid"].as_str().or(v["logicalParentUuid"].as_str()).map(str::to_string);

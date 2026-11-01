@@ -720,6 +720,13 @@ impl Session {
     }
 
     fn spawn(&mut self) -> Result<(), String> {
+        // OpenRouter chat: Kynex's own harness in the CLI's place, same protocol.
+        if let crate::provider::Launch::OpenRouterChat { key, settings } = self.provider.with_model(&self.model) {
+            let resume = self.resume_id().map(str::to_string);
+            let at = self.resume_at.take();
+            let cmd = crate::chat_api::command(&self.cwd, &key, &settings, resume.as_deref(), at.as_deref())?;
+            return self.start(cmd, None, "the chat");
+        }
         let mut cmd = claude_command(&self.cwd, &self.provider.with_model(&self.model));
         // Checkpoints of the files Claude edits, so a rewind can restore them.
         cmd.env(crate::rewind::CHECKPOINTS_ENV, "1");
@@ -797,10 +804,15 @@ impl Session {
                 cmd.args(["--resume-session-at", &at]);
             }
         }
+        self.start(cmd, launched, "`claude`")
+    }
+
+    /// Starts `cmd` (`what`, for an error) as this session's process.
+    fn start(&mut self, mut cmd: Command, launched: Option<project::Launched>, what: &str) -> Result<(), String> {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let mut child =
-            crate::process::dies_with_parent(&mut cmd).spawn().map_err(|e| format!("failed to start `claude`: {e}"))?;
+            crate::process::dies_with_parent(&mut cmd).spawn().map_err(|e| format!("failed to start {what}: {e}"))?;
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let stdin = child.stdin.take().unwrap();
@@ -912,7 +924,7 @@ impl Session {
     /// an idle one stops too: the next message resumes it on the new model.
     pub fn use_model(&mut self, model: String) {
         if self.child.is_some() {
-            let openrouter = self.provider.provider() == crate::provider::Provider::OpenRouter;
+            let openrouter = self.provider.provider().is_openrouter();
             if model == self.model || (self.talked && !(openrouter && !self.busy)) {
                 return;
             }
@@ -1640,10 +1652,25 @@ fn projects_dir() -> Option<PathBuf> {
     Some(home.join(".claude").join("projects"))
 }
 
+/// The name of `cwd`'s folder in `~/.claude/projects`.
+fn transcripts_name(cwd: &Path) -> String {
+    cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
+}
+
+/// Where session `id` of `cwd` is logged: its log if there is one, else
+/// where Claude Code would put it. `None` without a home folder.
+pub(crate) fn transcript_path(cwd: &Path, id: &str) -> Option<PathBuf> {
+    if let Some(found) = find_transcript(cwd, id) {
+        return Some(found);
+    }
+    let dir = transcripts_dir(cwd).or_else(|| Some(projects_dir()?.join(transcripts_name(cwd))))?;
+    Some(dir.join(format!("{id}.jsonl")))
+}
+
 /// Claude Code keeps a directory's sessions in `~/.claude/projects/<cwd>`, with
 /// every character that isn't a letter or digit replaced by `-`.
 fn transcripts_dir(cwd: &Path) -> Option<PathBuf> {
-    let name: String = cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let name = transcripts_name(cwd);
     // Looked up once per folder: `~/.claude/projects` can hold hundreds.
     static FOUND: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();
     let found = FOUND.get_or_init(Default::default);
@@ -1673,7 +1700,7 @@ pub(crate) fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
 /// A user-role log entry the CLI wrote itself, like the `<task-notification>`
 /// it sends Claude when a background command ends: Claude reads it, but it
 /// isn't something the user said.
-fn written_by_cli(v: &Value) -> bool {
+pub(crate) fn written_by_cli(v: &Value) -> bool {
     let text = v["message"]["content"].as_str().unwrap_or("");
     v["promptSource"] == "system" || v["origin"]["kind"].is_string() || text.starts_with("<task-notification>")
 }

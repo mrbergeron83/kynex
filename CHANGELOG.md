@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- OpenRouter chat, a second OpenRouter provider: chat with any OpenRouter model, including ones
+  without tool calling that Claude Code can't use. Replies stream in, and conversations list,
+  reopen and rewind like other sessions, with OpenRouter's real cost. Chat only: no tools and
+  no files (#243).
+
 ## [0.0.14] - 2026-11-01
 
 ### Added

@@ -134,7 +134,9 @@ impl KynexApp {
         let m = self.active_model();
         let m = if m.is_empty() { self.folder_model() } else { m };
         match self.active_provider() {
-            kynex_core::provider::Provider::OpenRouter => super::models::openrouter_label(&m),
+            kynex_core::provider::Provider::OpenRouter | kynex_core::provider::Provider::OpenRouterChat => {
+                super::models::openrouter_label(&m)
+            }
             kynex_core::provider::Provider::Anthropic => super::models::model_label(&m),
         }
     }
@@ -158,7 +160,7 @@ impl KynexApp {
     pub(super) fn set_model(&mut self, id: String, cx: &mut Context<Self>) {
         if self.session_model().is_some() {
             self.set_session_model(Some(id), cx);
-        } else if self.active_provider() == kynex_core::provider::Provider::OpenRouter {
+        } else if self.active_provider().is_openrouter() {
             self.set_project_openrouter_model(self.active_dir(), id, cx);
         } else {
             self.set_project_model(self.active_dir(), id, cx);
