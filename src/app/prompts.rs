@@ -70,24 +70,27 @@ impl KynexApp {
     /// answered), else the active session's.
     pub(super) fn sync_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let stacked = if self.in_chief() { self.chief_focus() } else { None };
-        let pending = if let Some(ask) = stacked {
+        // The request to show, its session (a stacked question has the worker's), how many wait
+        // behind it, and the question's number when it's a stacked one.
+        let (pending, ops) = if let Some(ask) = stacked {
             let queued = self.question_stack().len().saturating_sub(1);
-            self.code
-                .get(&ask.path)
-                .and_then(|l| l.sessions.iter().find(|s| s.uid == ask.key))
-                .and_then(|s| {
-                    s.items.iter().find_map(|i| match i {
-                        Item::Permission { request_id, .. } if *request_id == ask.id => request_for(s, i),
-                        _ => None,
-                    })
-                })
-                .map(|req| (ask.key, req, queued))
+            let key = self.chief.workers.get(&ask.path).copied().unwrap_or_default();
+            let req = Request {
+                id: format!("ops-{}", ask.id),
+                tool: "AskUserQuestion".into(),
+                input: ask.input,
+                suggestions: serde_json::Value::Null,
+                description: String::new(),
+                kind: session::Kind::Chat,
+            };
+            (Some((key, req, queued)), Some(ask.id))
         } else {
-            self.active_session().and_then(|s| {
+            let pending = self.active_session().and_then(|s| {
                 let mut it = s.items.iter().filter_map(|i| request_for(s, i));
                 let first = it.next()?;
                 Some((s.uid, first, it.count()))
-            })
+            });
+            (pending, None)
         };
         let Some((key, req, queued)) = pending else {
             self.prompt = None;
@@ -98,8 +101,15 @@ impl KynexApp {
             let view = cx.new(|cx| PromptView::new(req, window, cx));
             let sub = cx.subscribe_in(&view, window, {
                 let id = id.clone();
-                move |this, _, PromptAnswer(answer, comment), window, cx| {
-                    this.answer(key, id.clone(), answer.clone(), comment, window, cx)
+                move |this, _, PromptAnswer(answer, comment), window, cx| match ops {
+                    // A worker's question waits on Kynex, not on a session's prompt.
+                    Some(n) => {
+                        this.answer_ask(n, answer);
+                        this.prompt = None;
+                        this.composer.read(cx).focus_handle(cx).focus(window, cx);
+                        cx.notify();
+                    }
+                    None => this.answer(key, id.clone(), answer.clone(), comment, window, cx),
                 }
             });
             self.prompt = Some(ActivePrompt { key, id, view, _sub: sub });

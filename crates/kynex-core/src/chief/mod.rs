@@ -18,7 +18,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 pub use contract::{BRANCH, Report, Status, create_project, existing_project, parse_report, risky, worker_args};
-pub use server::{Request, Server, launch_args_for, set_launch_args};
+pub use server::{Request, Server, launch_args_for, set_launch_args, worker_launch_args};
 
 use crate::fmt::tokens;
 use crate::session::Item;
@@ -60,10 +60,10 @@ means. Workers end every turn with a report (STATUS: done | blocked | failed, SU
 and QUESTION when blocked), and Kynex sends it to you in a message starting with \"[Kynex]\". \
 Then tell the user briefly what happened and dispatch follow-ups if the goal needs them.
 
-Workers ask the user their multiple-choice questions directly: Kynex stacks them for the user, \
-who answers them there, and sends you a message when one is asked and when it's answered. Don't \
-answer those yourself or ask them again; the worker carries on by itself. A worker that can't ask \
-ends its turn blocked with a QUESTION instead: answer it with dispatch when the user's goal \
+Workers ask the user their multiple-choice questions directly, with a tool Kynex gives them: Kynex \
+stacks them for the user, who answers them there, and sends you a message when one is asked and \
+when it's answered. Don't answer those yourself or ask them again; the worker carries on by \
+itself. A worker that can't ask ends its turn blocked with a QUESTION instead: answer it with dispatch when the user's goal \
 already decides it; otherwise ask the user, then pass their answer on with dispatch. Kynex also \
 tells you when a worker runs a risky command (a push, a force push, deleting branches or files, \
 publishing): mention those to the user.
@@ -75,11 +75,27 @@ Don't call status in a loop; wait for Kynex's messages. Keep your replies short.
 pub enum Call {
     Projects,
     Status,
-    Dispatch { project: String, prompt: String },
-    Result { project: String },
-    Stop { project: String },
-    OpenProject { path: String },
-    CreateProject { path: String },
+    Dispatch {
+        project: String,
+        prompt: String,
+    },
+    Result {
+        project: String,
+    },
+    Stop {
+        project: String,
+    },
+    OpenProject {
+        path: String,
+    },
+    CreateProject {
+        path: String,
+    },
+    /// A worker's question for the user (sk_user), in AskUserQuestion's shape.
+    Ask {
+        project: PathBuf,
+        input: Value,
+    },
 }
 
 impl Call {
@@ -106,6 +122,72 @@ impl Call {
     }
 }
 
+impl Call {
+    /// The call a worker in `project` makes: only `ask_user`, which waits for the user.
+    pub fn parse_worker(name: &str, args: &Value, project: PathBuf) -> Result<Self, String> {
+        if name != "ask_user" {
+            return Err(format!("no tool called {name}"));
+        }
+        let question =
+            args["question"].as_str().map(str::trim).filter(|s| !s.is_empty()).ok_or("`question` is missing")?;
+        // Options as plain labels or as { label, description }.
+        let options: Vec<Value> = args["options"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|o| match o {
+                Value::String(s) if !s.trim().is_empty() => Some(json!({ "label": s.trim(), "description": "" })),
+                Value::Object(_) if o["label"].as_str().is_some_and(|l| !l.trim().is_empty()) => Some(json!({
+                    "label": o["label"].as_str().unwrap_or("").trim(),
+                    "description": o["description"].as_str().unwrap_or("").trim(),
+                })),
+                _ => None,
+            })
+            .collect();
+        if !(2..=6).contains(&options.len()) {
+            return Err("`options` needs two to six choices".into());
+        }
+        let header = args["header"].as_str().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("Question");
+        let header: String = header.chars().take(24).collect();
+        let input = json!({ "questions": [{
+            "question": question,
+            "header": header,
+            "options": options,
+            "multiSelect": args["multi"] == true,
+        }] });
+        Ok(Self::Ask { project, input })
+    }
+}
+
+/// The tools a worker gets, as `tools/list` gives them.
+fn worker_tools() -> Value {
+    json!([{
+        "name": "ask_user",
+        "description": "Asks the user a multiple-choice question and waits for their answer, which comes back as \
+                        the result. Use it when you need a decision you can't make from the task. The user \
+                        answers for several projects at once, so ask only when it matters.",
+        "inputSchema": { "type": "object", "required": ["question", "options"], "properties": {
+            "question": { "type": "string", "description": "The question, complete enough to answer without context" },
+            "header": { "type": "string", "description": "A short tag for it, like \"Database\"" },
+            "options": { "type": "array", "minItems": 2, "maxItems": 6,
+                "description": "The choices, the one you'd pick first; each a label or { label, description }",
+                "items": { "oneOf": [
+                    { "type": "string" },
+                    { "type": "object", "required": ["label"], "properties": {
+                        "label": { "type": "string" }, "description": { "type": "string" } } } ] } },
+            "multi": { "type": "boolean", "description": "Let the user pick more than one" } } }
+    }])
+}
+
+/// The tool result for the user's answers (`question → choice`), or for their
+/// not answering.
+pub fn answer_text(answers: &serde_json::Map<String, Value>) -> String {
+    if answers.is_empty() {
+        return "The user didn't answer. Carry on with your best judgment, or stop and say what you need.".into();
+    }
+    let lines: Vec<String> = answers.iter().map(|(q, a)| format!("{q} → {}", a.as_str().unwrap_or(""))).collect();
+    format!("The user answered:\n{}", lines.join("\n"))
+}
 /// The tools, as `tools/list` gives them.
 fn tools() -> Value {
     let project = json!({ "type": "string", "description": "The project's folder name (or full path), as list_projects gives it" });

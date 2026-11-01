@@ -11,7 +11,7 @@ use gpui::{AppContext as _, Context};
 use kynex_core::chief::{self, Call, Request, State, Worker};
 use kynex_core::live::{Key, Live};
 use kynex_core::paths::{chief_dir, project_name};
-use kynex_core::session::{Item, Kind, PermState, Session};
+use kynex_core::session::{Item, Kind, Session};
 use kynex_core::toasts::{Action, Toast};
 
 use super::KynexApp;
@@ -37,26 +37,36 @@ pub(super) struct Chief {
     warnings: HashMap<Key, Vec<String>>,
     /// Workers a restart cut short have been reported.
     resumed: bool,
-    /// The questions workers have asked (worker, request) and are unanswered,
-    /// with when each came and what it asked: the stack's order, and what the
-    /// chief hears when it's answered.
-    asked: HashMap<(Key, String), (Instant, String)>,
+    /// The questions workers have asked with `ask_user` and you haven't answered,
+    /// oldest first. Each holds the worker's tool call, which waits for the answer.
+    pub(super) pending: Vec<PendingAsk>,
     /// The question picked in the stack to answer first, over the oldest.
-    pub(super) focus: Option<(Key, String)>,
+    pub(super) focus: Option<u64>,
+    next_ask: u64,
 }
 
-/// One question on the stack: a worker's `AskUserQuestion` waiting for you.
+/// A worker's question, and the tool call waiting for its answer.
+pub(super) struct PendingAsk {
+    id: u64,
+    path: PathBuf,
+    /// In `AskUserQuestion`'s shape, which the question prompt draws.
+    input: serde_json::Value,
+    headline: String,
+    since: Instant,
+    request: Request,
+}
+
+/// One question on the stack, as the views see it.
 #[derive(Clone)]
 pub(super) struct Ask {
-    pub(super) key: Key,
-    pub(super) id: String,
+    pub(super) id: u64,
     pub(super) path: PathBuf,
     pub(super) name: String,
     /// What it asks, in a line.
     pub(super) headline: String,
-    pub(super) since: Option<Instant>,
+    pub(super) since: Instant,
+    pub(super) input: serde_json::Value,
 }
-
 impl KynexApp {
     /// The Chat tab is showing the chief.
     pub(super) fn in_chief(&self) -> bool {
@@ -134,6 +144,10 @@ impl KynexApp {
                 self.stop_worker(key);
                 Ok(format!("Stopped the {} worker's turn.", project_name(&path)))
             }),
+            Call::Ask { project, input } => {
+                self.stack_question(project.clone(), input.clone(), r);
+                return;
+            }
             Call::OpenProject { path } => chief::existing_project(path).map(|p| self.add_project_quietly(p)),
             Call::CreateProject { path } => {
                 // `git init` runs off the UI thread; the call waits for it.
@@ -228,6 +242,9 @@ impl KynexApp {
 
     /// Stops a worker's turn, and what it had queued.
     pub(super) fn stop_worker(&mut self, key: Key) {
+        if let Some(path) = self.chief.workers.iter().find(|(_, k)| **k == key).map(|(p, _)| p.clone()) {
+            self.drop_asks(&path);
+        }
         if let Some(s) = self.session_for(key) {
             s.queue.take_all();
             if s.busy {
@@ -250,12 +267,18 @@ impl KynexApp {
 
     /// A worker's session as the chief and the reporter see it.
     fn worker_view(&self, path: &Path, s: &Session) -> Worker {
-        worker_of(
+        let mut w = worker_of(
             path,
             s,
             self.chief.started.get(&s.uid).copied(),
             self.chief.warnings.get(&s.uid).cloned().unwrap_or_default(),
-        )
+        );
+        // Waiting on a question of yours.
+        if let Some(a) = self.chief.pending.iter().find(|a| a.path == path) {
+            w.state = State::NeedsYou;
+            w.question = Some(a.headline.clone());
+        }
+        w
     }
 
     /// Every chief worker: the open ones, then the ones asleep.
@@ -278,47 +301,92 @@ impl KynexApp {
         workers
     }
 
-    /// The workers' unanswered questions, oldest first. Read from the
-    /// sessions themselves, so an answer given anywhere clears it.
+    /// The workers' unanswered questions, oldest first.
     pub(super) fn question_stack(&self) -> Vec<Ask> {
-        let mut stack = Vec::new();
-        for (path, key) in &self.chief.workers {
-            let Some(s) = self.code.get(path).and_then(|l| l.sessions.iter().find(|s| s.uid == *key)) else {
-                continue;
-            };
-            for item in &s.items {
-                if let Item::Permission { request_id, tool, input, state: PermState::Pending, .. } = item
-                    && tool == "AskUserQuestion"
-                {
-                    stack.push(Ask {
-                        key: *key,
-                        id: request_id.clone(),
-                        path: path.clone(),
-                        name: project_name(path),
-                        headline: chief::question_headline(input),
-                        since: self.chief.asked.get(&(*key, request_id.clone())).map(|a| a.0),
-                    });
-                }
-            }
-        }
-        // Questions not yet seen by a poll go last.
-        stack.sort_by_key(|a| (a.since.is_none(), a.since));
-        stack
+        self.chief
+            .pending
+            .iter()
+            .map(|a| Ask {
+                id: a.id,
+                path: a.path.clone(),
+                name: project_name(&a.path),
+                headline: a.headline.clone(),
+                since: a.since,
+                input: a.input.clone(),
+            })
+            .collect()
     }
 
     /// The question to answer now: the one picked in the stack, else the oldest.
     pub(super) fn chief_focus(&self) -> Option<Ask> {
         let stack = self.question_stack();
-        let picked = self.chief.focus.as_ref().and_then(|(k, id)| stack.iter().find(|a| a.key == *k && a.id == *id));
+        let picked = self.chief.focus.and_then(|id| stack.iter().find(|a| a.id == id));
         picked.or(stack.first()).cloned()
     }
 
+    /// A worker's `ask_user`: onto the stack, holding its call until you answer.
+    /// The chief hears of it, and you do too if you're not in KNX Ops.
+    fn stack_question(&mut self, path: PathBuf, input: serde_json::Value, request: Request) {
+        let Some(key) = self.chief.workers.get(&path).copied() else {
+            request.answer(Err("Kynex has no chief worker open for this project.".into()));
+            return;
+        };
+        let (name, headline) = (project_name(&path), chief::question_headline(&input));
+        let notice = self.open_worker(&path).map(|s| chief::question_notice(&self.worker_view(&path, s), &headline));
+        let id = self.chief.next_ask;
+        self.chief.next_ask += 1;
+        self.chief.pending.push(PendingAsk {
+            id,
+            path,
+            input,
+            headline: headline.clone(),
+            since: Instant::now(),
+            request,
+        });
+        if let Some(n) = notice {
+            self.tell_chief(vec![n]);
+        }
+        if !self.in_chief() {
+            self.toast(
+                Toast::warning(format!("The {name} worker has a question"))
+                    .detail(headline)
+                    .session(key)
+                    .action(Action::GoToSession(key)),
+            );
+        }
+    }
+
+    /// Answers a stacked question: the worker's call returns what you chose,
+    /// and the chief is told. Returns whether there was such a question.
+    pub(super) fn answer_ask(&mut self, id: u64, answer: &kynex_core::session::Answer) -> bool {
+        let Some(i) = self.chief.pending.iter().position(|a| a.id == id) else { return false };
+        let ask = self.chief.pending.remove(i);
+        let answers = match answer {
+            kynex_core::session::Answer::Questions(map) => map.clone(),
+            _ => serde_json::Map::new(),
+        };
+        ask.request.answer(Ok(chief::answer_text(&answers)));
+        if self.chief.focus == Some(id) {
+            self.chief.focus = None;
+        }
+        if !answers.is_empty()
+            && let Some(s) = self.open_worker(&ask.path)
+        {
+            let n = chief::answered_notice(&self.worker_view(&ask.path, s), &ask.headline);
+            self.tell_chief(vec![n]);
+        }
+        true
+    }
+
+    /// Withdraws a worker's questions, as when it stops: its calls end with an error.
+    fn drop_asks(&mut self, path: &Path) {
+        self.chief.pending.retain(|a| a.path != path);
+    }
     /// Tells the chief when a worker ends a turn or asks something, and you
     /// when a worker runs something risky.
     fn report_workers(&mut self) {
         let mut notices = Vec::new();
         let mut toasts = Vec::new();
-        let in_chief = self.in_chief();
         let mut working = Vec::new();
         let workers: Vec<(PathBuf, Key)> = self.chief.workers.iter().map(|(p, k)| (p.clone(), *k)).collect();
         for (path, key) in workers {
@@ -326,6 +394,7 @@ impl KynexApp {
             let Some(s) = self.code.get_mut(&path).and_then(|l| l.sessions.iter_mut().find(|s| s.uid == key)) else {
                 // Its session closed; the next dispatch resumes it.
                 self.chief.workers.remove(&path);
+                self.chief.pending.retain(|a| a.path != path);
                 self.chief.was_busy.remove(&key);
                 self.chief.was_waiting.remove(&key);
                 self.chief.seen.remove(&key);
@@ -382,51 +451,12 @@ impl KynexApp {
                     self.chief.started.remove(&key);
                 }
             }
-            // Its multiple-choice questions: each is news once, to the chief and, when
-            // you're not looking at them, to you; answered ones are news too.
-            let asks: Vec<(String, String)> = s
-                .items
-                .iter()
-                .filter_map(|i| match i {
-                    Item::Permission { request_id, tool, input, state: PermState::Pending, .. }
-                        if tool == "AskUserQuestion" =>
-                    {
-                        Some((request_id.clone(), chief::question_headline(input)))
-                    }
-                    _ => None,
-                })
-                .collect();
+            // A worker that isn't working has no call waiting: its questions are void.
+            if !busy {
+                self.chief.pending.retain(|a| a.path != path);
+            }
             let w = worker_of(&path, s, started, Vec::new());
-            for (id, headline) in &asks {
-                if let std::collections::hash_map::Entry::Vacant(e) = self.chief.asked.entry((key, id.clone())) {
-                    e.insert((Instant::now(), headline.clone()));
-                    notices.push(chief::question_notice(&w, headline));
-                    if !in_chief {
-                        toasts.push(
-                            Toast::warning(format!("The {name} worker has a question"))
-                                .detail(headline.clone())
-                                .session(key)
-                                .action(Action::GoToSession(key)),
-                        );
-                    }
-                }
-            }
-            let answered: Vec<(Key, String)> = self
-                .chief
-                .asked
-                .keys()
-                .filter(|(k, id)| *k == key && !asks.iter().any(|(a, _)| a == id))
-                .cloned()
-                .collect();
-            for gone in answered {
-                if let Some((_, headline)) = self.chief.asked.remove(&gone) {
-                    notices.push(chief::answered_notice(&w, &headline));
-                }
-                if self.chief.focus.as_ref() == Some(&gone) {
-                    self.chief.focus = None;
-                }
-            }
-            if waiting && !was_waiting && asks.is_empty() {
+            if waiting && !was_waiting {
                 notices.push(chief::waiting_notice(&w));
             }
             set(&mut self.chief.was_busy, key, busy);
@@ -444,7 +474,7 @@ impl KynexApp {
     }
 
     /// Sends the chief Kynex's messages, or queues them while it's busy.
-    fn tell_chief(&mut self, notices: Vec<String>) {
+    pub(super) fn tell_chief(&mut self, notices: Vec<String>) {
         if notices.is_empty() {
             return;
         }

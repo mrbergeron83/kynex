@@ -135,7 +135,7 @@ impl KynexApp {
             });
         // The workers' questions waiting for you, oldest first; the box below
         // answers the picked one (the oldest unless you pick another).
-        let focus = self.chief_focus().map(|a| (a.key, a.id));
+        let focus = self.chief_focus().map(|a| a.id);
         let stack = self.question_stack();
         let hover = t.hover;
         let stack_view = (!stack.is_empty()).then(|| {
@@ -150,9 +150,9 @@ impl KynexApp {
                     if n == 1 { "" } else { "s" }
                 )))
                 .children(stack.into_iter().enumerate().map(|(i, a)| {
-                    let current = focus.as_ref() == Some(&(a.key, a.id.clone()));
-                    let (key, id) = (a.key, a.id.clone());
-                    let age = a.since.map(|s| fmt::elapsed(s.elapsed())).unwrap_or_default();
+                    let current = focus == Some(a.id);
+                    let id = a.id;
+                    let age = fmt::elapsed(a.since.elapsed());
                     div()
                         .id(("ops-question", i))
                         .flex()
@@ -169,7 +169,7 @@ impl KynexApp {
                         .child(div().flex_1().min_w_0().truncate().text_color(t.text_muted).child(a.headline))
                         .child(div().flex_none().text_color(t.text_placeholder).child(age))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.chief.focus = Some((key, id.clone()));
+                            this.chief.focus = Some(id);
                             cx.notify();
                         }))
                 }))
