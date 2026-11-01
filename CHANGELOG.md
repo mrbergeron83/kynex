@@ -5,32 +5,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-
-- Kynex asks to trust a project folder Claude Code hasn't trusted yet, instead of the CLI
-  quietly ignoring its `.claude/settings.json` and `.mcp.json`.
-
-### Fixed
-
-- A new session no longer gets stuck on "No conversation found with session ID" when its
-  process restarts before the first message (#224).
-- Drag-selecting chat text no longer misses the first or last letter (#226).
-
-### Changed
-
-- The composer's model and effort pickers are two separate chips instead of one.
-
-## [0.0.12] - 2026-10-31
+## [0.0.13] - 2026-10-31
 
 ### Added
-
-- A chief of staff in the Chat tab (Chat → Chief): give it a goal and it sends the work to a
-  chief worker in each project, relays their questions, and reports back as each one finishes.
-  The chief runs on Haiku and can open or create projects. Workers run on their project's model
-  with no permission prompts (a warning says so before it turns on), each in its own git worktree
-  (branch `chief-worker`), and can use subagents; pushes, deletions and publishing are flagged.
-  A reporter above the conversation shows every worker, what it's doing, its question and the
-  tokens it has used, with Stop and Stop all.
 
 - Settings → Providers: your Anthropic sign-in (sign in or out), and OpenRouter: a key kept in the
   OS keychain and checked against OpenRouter (credit left, or what's wrong: a bad key, no credits,
@@ -45,9 +22,37 @@ and versions follow [Semantic Versioning](https://semver.org/).
   follows it (Claude's models, or My models), effort hides on OpenRouter, and the project remembers
   the pick. A session keeps its provider once it starts and reopens on it; OpenRouter sessions
   carry an OR mark in the sessions panel (whose menu can group sessions by provider) and are named
-  from their first words. The footer shows
-  what's left on the OpenRouter key beside the usage limits; OpenRouter sessions show no
-  Claude-priced cost.
+  from their first words. The footer shows what's left on the OpenRouter key beside the usage
+  limits; OpenRouter sessions show no Claude-priced cost.
+- Kynex asks to trust a project folder Claude Code hasn't trusted yet, instead of the CLI
+  quietly ignoring its `.claude/settings.json` and `.mcp.json`.
+
+### Fixed
+
+- A new session no longer gets stuck on "No conversation found with session ID" when its
+  process restarts before the first message (#224).
+- Drag-selecting chat text no longer misses the first or last letter (#226).
+
+### Changed
+
+- The composer's model and effort pickers are two separate chips instead of one.
+
+### Removed
+
+- Projects inside WSL (`\\wsl.localhost\…`) no longer run Claude, git or editors inside the
+  distro; WSL isn't supported.
+
+## [0.0.12] - 2026-10-31
+
+### Added
+
+- A chief of staff in the Chat tab (Chat → Chief): give it a goal and it sends the work to a
+  chief worker in each project, relays their questions, and reports back as each one finishes.
+  The chief runs on Haiku and can open or create projects. Workers run on their project's model
+  with no permission prompts (a warning says so before it turns on), each in its own git worktree
+  (branch `chief-worker`), and can use subagents; pushes, deletions and publishing are flagged.
+  A reporter above the conversation shows every worker, what it's doing, its question and the
+  tokens it has used, with Stop and Stop all.
 
 ### Changed
 
@@ -55,11 +60,6 @@ and versions follow [Semantic Versioning](https://semver.org/).
   "This session" at the top of the composer's model menu pins a model to the open session
   instead, which the chip shows with a bubble; the pin is kept with the session, so it still
   applies when the session is resumed.
-
-### Removed
-
-- Projects inside WSL (`\\wsl.localhost\…`) no longer run Claude, git or editors inside the
-  distro; WSL isn't supported.
 
 ## [0.0.11] - 2026-10-30
 
@@ -589,7 +589,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.12...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.13...HEAD
+[0.0.13]: https://github.com/mrbergeron83/kynex/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/mrbergeron83/kynex/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/mrbergeron83/kynex/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/mrbergeron83/kynex/compare/v0.0.9...v0.0.10
