@@ -36,6 +36,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - The chief of staff is now **KNX Ops**, a tab of its own in the title bar after Chat (it was a
   switch inside Chat). Ctrl+1 is Chat, Ctrl+2 KNX Ops, and the projects start at Ctrl+3 (#230).
+- The reporter splits a worker's cost by model when more than one took part, for example
+  "$0.16 (Opus $0.14 · Haiku $0.02)", instead of only how much was Opus.
 
 ## [0.0.13] - 2026-10-31
 

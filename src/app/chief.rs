@@ -563,7 +563,7 @@ fn worker_of(path: &Path, s: &Session, started: Option<Instant>, warnings: Vec<S
         spent: if s.provider().provider() == kynex_core::provider::Provider::Anthropic {
             s.spent
         } else {
-            kynex_core::spent::Spent { cost: 0.0, opus_cost: 0.0, ..s.spent }
+            kynex_core::spent::Spent { cost: 0.0, opus_cost: 0.0, sonnet_cost: 0.0, haiku_cost: 0.0, ..s.spent }
         },
         agents: subagents.len(),
         subagents,
