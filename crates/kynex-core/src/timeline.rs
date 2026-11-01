@@ -279,6 +279,7 @@ mod tests {
                 input: Value::Null,
                 suggestions: Value::Null,
                 description: String::new(),
+                why: String::new(),
                 state: PermState::Denied("no".into()),
             },
             Item::Error("Request failed".into()),
@@ -317,6 +318,7 @@ mod tests {
             input: Value::Null,
             suggestions: Value::Null,
             description: String::new(),
+            why: String::new(),
             state,
         }
     }

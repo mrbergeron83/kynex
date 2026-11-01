@@ -69,16 +69,23 @@ impl KynexApp {
     pub(super) fn sync_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pending = self.active_session().and_then(|s| {
             let mut it = s.items.iter().filter_map(|i| match i {
-                Item::Permission { request_id, tool, input, suggestions, description, state: PermState::Pending } => {
-                    Some(Request {
-                        id: request_id.clone(),
-                        tool: tool.clone(),
-                        input: input.clone(),
-                        suggestions: suggestions.clone(),
-                        description: description.clone(),
-                        kind: s.kind,
-                    })
-                }
+                Item::Permission {
+                    request_id,
+                    tool,
+                    input,
+                    suggestions,
+                    description,
+                    why,
+                    state: PermState::Pending,
+                } => Some(Request {
+                    id: request_id.clone(),
+                    tool: tool.clone(),
+                    input: input.clone(),
+                    suggestions: suggestions.clone(),
+                    description: description.clone(),
+                    why: why.clone(),
+                    kind: s.kind,
+                }),
                 _ => None,
             });
             let first = it.next()?;

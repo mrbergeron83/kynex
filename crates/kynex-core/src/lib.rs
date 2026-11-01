@@ -67,6 +67,7 @@ pub mod trust;
 pub mod update;
 pub mod usage;
 pub mod watch;
+pub mod why;
 #[cfg(windows)]
 pub mod win_shell;
 pub mod zoom;

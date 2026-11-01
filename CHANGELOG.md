@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A permission prompt says why it appeared under its title: which settings file holds the ask
+  rule that matched, or that Auto mode's safety check, a hook or the permission mode asked (#233).
+
 ## [0.0.13] - 2026-10-31
 
 ### Added
