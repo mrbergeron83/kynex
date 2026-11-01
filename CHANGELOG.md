@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-11-01
+
 ### Added
 
 - OpenRouter sessions pick Work or Chat in the composer. Work is Claude Code, as before; Chat only
@@ -633,7 +635,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.14...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.15...HEAD
+[0.0.15]: https://github.com/mrbergeron83/kynex/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/mrbergeron83/kynex/compare/v0.0.13...v0.0.14
 [0.0.13]: https://github.com/mrbergeron83/kynex/compare/v0.0.12...v0.0.13
 [0.0.12]: https://github.com/mrbergeron83/kynex/compare/v0.0.11...v0.0.12
