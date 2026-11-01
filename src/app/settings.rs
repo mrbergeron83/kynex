@@ -62,6 +62,13 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// Opens the Setup checklist of a project opened for the first time, whichever way.
+    pub(super) fn open_pending_setup(&mut self, cx: &mut Context<Self>) {
+        if let Some(path) = self.setup_for.take() {
+            self.open_project_settings_on(path, SETUP_SECTION, cx);
+        }
+    }
+
     /// Applies an edit in the settings modal. Edits save immediately and reach
     /// the project's running sessions ([`Self::apply_project_settings`]).
     pub(super) fn edit_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut SettingsView)) {
@@ -498,10 +505,39 @@ impl KynexApp {
                     )
                     .child(div().pt_3().child(heading(
                         "KNX Ops workers",
-                        "KNX Ops workers run on Haiku: in our tests it did clear tasks as correctly as Opus at a thirtieth of the cost. Careful mode adds a read-only Opus planner and reviewer for larger or riskier tasks. It applies from a worker's next start.",
+                        "The model KNX Ops workers run on, and careful mode, which adds a read-only Opus planner and reviewer for larger or riskier tasks. They apply from a worker's next start.",
                         &t,
                     )))
-                    .child({
+                    .children([("", "Haiku", "The default and the cheapest: as correct as Opus on clear, checkable tasks in our tests."),
+                        ("sonnet", "Sonnet", "A step up for work Haiku fumbles, about ten times Haiku's cost."),
+                        ("opus", "Opus", "The strongest, 10 to 30 times Haiku's cost: for hard, ambiguous work.")]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(n, (id, name, help))| {
+                            let selected = view.claude.worker_model == id;
+                            let hover = t.hover;
+                            div()
+                                .id(("worker-model", n))
+                                .flex()
+                                .items_start()
+                                .gap_2()
+                                .px_2()
+                                .py_1()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .hover(move |s| s.bg(hover))
+                                .child(radio(selected, &t))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .child(div().text_sm().child(name))
+                                        .child(div().text_xs().text_color(t.text_muted).child(help)),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.edit_settings(cx, |v| v.claude.worker_model = id.to_string())
+                                }))
+                        }))                    .child({
                         let on = view.claude.careful;
                         let hover = t.hover;
                         div()

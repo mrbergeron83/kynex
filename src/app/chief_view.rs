@@ -32,7 +32,7 @@ impl KynexApp {
                  doesn't touch the copy you work in. You review and merge its branch.",
             ),
             point(
-                "Every worker uses your Claude quota, on Haiku, cheap by design. The reporter shows what each has used.",
+                "Every worker uses your Claude quota, on Haiku unless the project picks another model. The reporter shows what each has used.",
             ),
         ];
         if kynex_core::terminal::elevated() {
@@ -60,7 +60,7 @@ impl KynexApp {
                     .child(div().text_color(t.text_muted).child(
                         "Your chief of staff. Give it a goal and it sends the work to one worker per project, \
                          follows it, answers their questions or brings them to you, and reports back. It runs \
-                         on Haiku; each worker runs on Haiku (a project can turn on careful mode, with Opus planning and review) and can use subagents.",
+                         on Haiku; each worker runs on Haiku (a project can pick another model, or turn on careful mode with Opus planning and review) and can use subagents.",
                     ))
                     .child(div().font_weight(FontWeight::MEDIUM).child("Before you turn it on"))
                     .child(div().flex().flex_col().gap_2().text_color(t.text_muted).children(points))
@@ -254,6 +254,21 @@ impl KynexApp {
                             div().pl(px(15.)).pb_0p5().text_color(colour).line_clamp(2).child(text)
                         }),
                     )
+                    .children(w.subagents.iter().take(4).map(|a| {
+                        div()
+                            .pl(px(15.))
+                            .text_color(t.text_placeholder)
+                            .truncate()
+                            .child(format!("↳ {} · {}", a.kind, a.what))
+                    }))
+                    .when(w.subagents.len() > 4, |d| {
+                        d.child(
+                            div()
+                                .pl(px(15.))
+                                .text_color(t.text_placeholder)
+                                .child(format!("↳ +{} more", w.subagents.len() - 4)),
+                        )
+                    })
                     .into_any_element()
             })
             .collect();

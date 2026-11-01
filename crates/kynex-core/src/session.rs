@@ -762,7 +762,11 @@ impl Session {
                     // Haiku, with careful mode's Opus planner and reviewer when the project turned it on.
                     let anthropic = self.provider.provider() == crate::provider::Provider::Anthropic;
                     if anthropic {
-                        self.model = crate::careful::WORKER_MODEL.into();
+                        self.model = if claude.worker_model.is_empty() {
+                            crate::careful::WORKER_MODEL.into()
+                        } else {
+                            claude.worker_model.clone()
+                        };
                     }
                     cmd.args(crate::chief::worker_args(&self.cwd, claude.careful && anthropic)?);
                 } else {

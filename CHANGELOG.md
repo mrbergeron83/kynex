@@ -13,7 +13,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   user settings, the repo's `.claude/settings.json` and `settings.local.json` and Kynex's own, with
   a box to try a command (allowed, asks or denied, and by which rule, judged part by part of a `&&`
   chain) and a note where an ask or deny rule cuts into an allow (#233).
-- Claude settings → Setup, which a folder opens on the first time you open it: whether Claude Code
+- Claude settings → Setup, which a folder opens on the first time you open it (from Open project, the
+  Git view or the sessions list; not a worktree): whether Claude Code
   trusts the folder (with a Trust button), the mode new sessions start in, the ask rules that will
   prompt even in Auto mode, and starter rules for what's in the folder (git, Cargo, npm, Python,
   Go, .NET) to allow in one click, for both Bash and PowerShell. Never a push (#233).
@@ -24,8 +25,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   chief hears when a question is asked and answered, and isn't blocked otherwise (#235).
 - KNX Ops workers run on Haiku (Anthropic) instead of their project's model: in benchmarks it did
   clear tasks as correctly as Opus at a thirtieth of the cost. Claude settings → Model has a Careful
-  mode switch per project that adds a read-only Opus planner and reviewer for larger or riskier tasks.
-  The reporter shows each worker's cost, and how much of it Opus took (#237).
+  mode switch per project that adds a read-only Opus planner and reviewer for larger or riskier tasks,
+  and a choice of Haiku, Sonnet or Opus for the project's workers. The reporter shows each worker's
+  cost, and how much of it Opus took, and lists the subagents running under it (#237).
 
 ### Changed
 

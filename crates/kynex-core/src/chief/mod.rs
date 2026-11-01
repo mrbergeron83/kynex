@@ -271,6 +271,15 @@ impl State {
     }
 }
 
+/// A subagent or background task running under a worker.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Subagent {
+    /// Its kind: the subagent's type ("planner", "Explore"), or the task's.
+    pub kind: String,
+    /// What it was asked to do, in a few words.
+    pub what: String,
+}
+
 /// A chief worker as the chief and the reporter see it.
 #[derive(Debug, Clone, Default)]
 pub struct Worker {
@@ -282,6 +291,8 @@ pub struct Worker {
     pub spent: Spent,
     /// Subagents and background tasks running under it.
     pub agents: usize,
+    /// What each is, for the reporter.
+    pub subagents: Vec<Subagent>,
     /// Messages waiting for its turn to end.
     pub queued: usize,
     /// What it asks, when blocked.

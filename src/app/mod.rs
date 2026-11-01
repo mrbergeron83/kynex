@@ -204,6 +204,8 @@ pub struct KynexApp {
     /// When Esc last went to a draft, for Esc Esc.
     last_esc: Option<std::time::Instant>,
     composer: Entity<TextInput>,
+    /// A project opened for the first time, whose setup checklist is yet to open.
+    setup_for: Option<PathBuf>,
     new_rule: Entity<TextInput>,
     /// The command typed in the settings' "Rules in effect" to try the rules on.
     rule_test: Entity<TextInput>,
@@ -485,6 +487,7 @@ impl KynexApp {
             rewind: None,
             last_esc: None,
             composer,
+            setup_for: None,
             new_rule,
             rule_test,
             attachments: Vec::new(),
@@ -649,6 +652,7 @@ impl KynexApp {
             });
         }
         self.poll_chief(cx);
+        self.open_pending_setup(cx);
         self.restart_idle();
         self.sync_session_ids();
         self.sync_attention(cx);

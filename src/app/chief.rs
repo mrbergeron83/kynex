@@ -539,12 +539,21 @@ fn worker_of(path: &Path, s: &Session, started: Option<Instant>, warnings: Vec<S
     };
     // Subagents in the foreground are tool calls still running; background ones are tasks.
     let turn = s.items.iter().rposition(|i| matches!(i, Item::User { .. })).unwrap_or(0);
-    let foreground = s.items[turn..]
+    let mut subagents: Vec<chief::Subagent> = s.items[turn..]
         .iter()
-        .filter(|i| {
-            matches!(i, Item::ToolUse { name, timing, .. } if (name == "Agent" || name == "Task") && timing.is_running())
+        .filter_map(|i| match i {
+            Item::ToolUse { name, input, timing, .. } if (name == "Agent" || name == "Task") && timing.is_running() => {
+                let v: serde_json::Value = serde_json::from_str(input).unwrap_or_default();
+                Some(chief::Subagent {
+                    kind: v["subagent_type"].as_str().unwrap_or("agent").into(),
+                    what: v["description"].as_str().unwrap_or("").into(),
+                })
+            }
+            _ => None,
         })
-        .count();
+        .collect();
+    subagents
+        .extend(s.tasks.running.iter().map(|t| chief::Subagent { kind: t.kind.clone(), what: t.description.clone() }));
     Worker {
         path: path.to_path_buf(),
         model: if s.model.is_empty() { "default".into() } else { s.model.clone() },
@@ -556,7 +565,8 @@ fn worker_of(path: &Path, s: &Session, started: Option<Instant>, warnings: Vec<S
         } else {
             kynex_core::spent::Spent { cost: 0.0, opus_cost: 0.0, ..s.spent }
         },
-        agents: foreground + s.tasks.running.len(),
+        agents: subagents.len(),
+        subagents,
         queued: s.queue.items().len(),
         question: report.and_then(|r| r.question).filter(|_| blocked),
         warnings,

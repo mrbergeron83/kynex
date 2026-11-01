@@ -200,6 +200,10 @@ pub struct ClaudeSettings {
     /// default. A session can pin its own over it ([`crate::groups::SessionGroups`]).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub model: String,
+    /// The model this project's chief workers run on (on Anthropic); empty is Haiku,
+    /// see [`crate::careful::WORKER_MODEL`].
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub worker_model: String,
     /// Careful mode for this project's chief workers: a read-only Opus planner and
     /// reviewer for larger or riskier tasks, Haiku executing (see [`crate::careful`]).
     /// Off by default: workers are plain Haiku.
