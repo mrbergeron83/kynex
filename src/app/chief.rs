@@ -550,7 +550,12 @@ fn worker_of(path: &Path, s: &Session, started: Option<Instant>, warnings: Vec<S
         model: if s.model.is_empty() { "default".into() } else { s.model.clone() },
         state,
         turn: started.filter(|_| s.busy).map(|t| t.elapsed()),
-        spent: s.spent,
+        // The CLI prices at Anthropic's list; that means nothing on another provider.
+        spent: if s.provider().provider() == kynex_core::provider::Provider::Anthropic {
+            s.spent
+        } else {
+            kynex_core::spent::Spent { cost: 0.0, opus_cost: 0.0, ..s.spent }
+        },
         agents: foreground + s.tasks.running.len(),
         queued: s.queue.items().len(),
         question: report.and_then(|r| r.question).filter(|_| blocked),

@@ -12,6 +12,7 @@ pub mod cli;
 pub mod column;
 pub mod commands;
 pub mod dates;
+pub mod economy;
 pub mod edit_lines;
 pub mod env_path;
 pub mod extensions;

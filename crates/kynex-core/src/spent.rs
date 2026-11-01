@@ -13,6 +13,8 @@ pub struct Spent {
     pub cache_write: u64,
     /// The CLI's estimate in USD, at list prices.
     pub cost: f64,
+    /// The part of `cost` that went to Opus models: with the economy flow, the planning and review.
+    pub opus_cost: f64,
 }
 
 impl Spent {
@@ -25,13 +27,17 @@ impl Spent {
     /// model the turn used, subagents included), else its main-thread `usage`.
     pub fn add_turn(&mut self, result: &Value) {
         if let Some(models) = result["model_usage_since_last_result"].as_object() {
-            for u in models.values() {
+            for (model, u) in models {
                 let n = |k: &str| u[k].as_u64().unwrap_or(0);
                 self.input += n("inputTokens");
                 self.output += n("outputTokens");
                 self.cache_read += n("cacheReadInputTokens");
                 self.cache_write += n("cacheCreationInputTokens");
-                self.cost += u["costUSD"].as_f64().unwrap_or(0.0);
+                let cost = u["costUSD"].as_f64().unwrap_or(0.0);
+                self.cost += cost;
+                if model.to_lowercase().contains("opus") {
+                    self.opus_cost += cost;
+                }
             }
             return;
         }
@@ -50,6 +56,7 @@ impl Spent {
             cache_read: self.cache_read + other.cache_read,
             cache_write: self.cache_write + other.cache_write,
             cost: self.cost + other.cost,
+            opus_cost: self.opus_cost + other.opus_cost,
         }
     }
 }

@@ -758,8 +758,14 @@ impl Session {
                     settings.extend(rules);
                 }
                 if self.worker {
-                    // No prompts, its own worktree, and the chief's contract.
-                    cmd.args(crate::chief::worker_args(&self.cwd)?);
+                    // No prompts, its own worktree, and the chief's contract; on Anthropic, the economy
+                    // flow too (Haiku coordinates, Opus plans, Haiku executes), unless the project turned it off.
+                    let economy =
+                        !claude.economy_off && self.provider.provider() == crate::provider::Provider::Anthropic;
+                    if economy {
+                        self.model = crate::economy::COORDINATOR_MODEL.into();
+                    }
+                    cmd.args(crate::chief::worker_args(&self.cwd, economy)?);
                 } else {
                     cmd.args(["--permission-mode", self.mode.cli()]);
                 }

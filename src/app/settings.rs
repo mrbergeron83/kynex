@@ -496,6 +496,40 @@ impl KynexApp {
                                 "The model and effort are also in the composer, where a session can pin a model of its own over the project's.",
                             ),
                     )
+                    .child(div().pt_3().child(heading(
+                        "KNX Ops workers",
+                        "This project's worker runs the economy flow: a Haiku coordinator, Opus planning and reviewing larger tasks, Haiku executing. It starts on a worker's next start.",
+                        &t,
+                    )))
+                    .child({
+                        let on = !view.claude.economy_off;
+                        let hover = t.hover;
+                        div()
+                            .id("economy")
+                            .flex()
+                            .items_start()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(hover))
+                            .child(radio(on, &t))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(div().text_sm().child("Opus plans, Haiku executes"))
+                                    .child(
+                                        div().text_xs().text_color(t.text_muted).child(
+                                            "Cheaper and faster on bigger tasks, and the reporter shows what Opus took. Anthropic only.",
+                                        ),
+                                    ),
+                            )
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.edit_settings(cx, |v| v.claude.economy_off = !v.claude.economy_off)),
+                            )
+                    })
             }
             _ => self.render_colour_picker(&path, &t, cx),
         };

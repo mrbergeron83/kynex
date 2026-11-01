@@ -245,12 +245,7 @@ impl KynexApp {
                             .child(
                                 div().flex_1().min_w_0().truncate().text_color(t.text_muted).child(detail.join(" · ")),
                             )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_color(t.text_placeholder)
-                                    .child(format!("{} tokens", fmt::tokens(w.spent.tokens()))),
-                            )
+                            .child(div().flex_none().text_color(t.text_placeholder).child(spent_line(&w.spent)))
                             .children(open)
                             .children(stop),
                     )
@@ -310,5 +305,16 @@ impl KynexApp {
                     }),
             )
             .into_any_element()
+    }
+}
+
+/// A worker's use in a line: its tokens, and what they cost, with how much went to
+/// Opus (the economy flow's planning and review) when any did.
+fn spent_line(s: &kynex_core::spent::Spent) -> String {
+    let tokens = format!("{} tokens", fmt::tokens(s.tokens()));
+    match (s.cost > 0.0, s.opus_cost > 0.0) {
+        (false, _) => tokens,
+        (true, false) => format!("{tokens} · ${:.2}", s.cost),
+        (true, true) => format!("{tokens} · ${:.2} (Opus ${:.2})", s.cost, s.opus_cost),
     }
 }

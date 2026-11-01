@@ -200,6 +200,10 @@ pub struct ClaudeSettings {
     /// default. A session can pin its own over it ([`crate::groups::SessionGroups`]).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub model: String,
+    /// Turns off the economy flow of this project's chief workers (Opus plans,
+    /// Haiku executes; see [`crate::economy`]), which is on unless this is set.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub economy_off: bool,
     /// Who this project's new sessions start on; a new session can pick the other.
     #[serde(skip_serializing_if = "crate::provider::Provider::is_anthropic_ref")]
     pub provider: crate::provider::Provider,
