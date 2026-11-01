@@ -178,7 +178,7 @@ impl KynexApp {
             let on_openrouter = self.active_provider() == kynex_core::provider::Provider::OpenRouter;
             let msg = match self.saved.active {
                 Active::Chat if self.saved.chief_view => {
-                    "Give the chief a goal. It sends the work to your projects' chief workers and reports back."
+                    "Give KNX Ops a goal. It sends the work to a worker in each of your projects and reports back."
                         .to_string()
                 }
                 Active::Chat if on_openrouter => {

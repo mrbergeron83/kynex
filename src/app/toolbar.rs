@@ -60,28 +60,8 @@ impl KynexApp {
                 .child(label)
         };
         let Some((path, view)) = project else {
-            // The Chat tab: plain chat, or the chief of staff.
-            let chief = self.saved.chief_view;
-            let pick = |on: bool| {
-                cx.listener(move |this, _, window, cx| {
-                    this.saved.chief_view = on;
-                    this.save();
-                    this.focus_input(window, cx);
-                    cx.notify();
-                })
-            };
-            return bar
-                .child(tab("view-chat", "Chat", Icon::Message, !chief).on_click(pick(false)))
-                .child(
-                    tab("view-chief", "Chief", Icon::Timeline, chief)
-                        .tooltip(Tooltip::with_meta(
-                            "Chief of staff",
-                            "dispatches your goals to a worker in each project and reports back",
-                        ))
-                        .on_click(pick(true)),
-                )
-                .child(div().flex_1())
-                .child(timeline);
+            // Chat and KNX Ops are tabs in the title bar; here only the timeline.
+            return bar.child(div().flex_1()).child(timeline);
         };
         let segment = |id: &'static str, label: &'static str, which: Icon, v: View, cx: &mut Context<Self>| {
             tab(id, label, which, view == v).on_click(cx.listener(move |this, _, _, cx| {

@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The chief of staff is now **KNX Ops**, a tab of its own in the title bar after Chat (it was a
+  switch inside Chat). Ctrl+1 is Chat, Ctrl+2 KNX Ops, and the projects start at Ctrl+3 (#230).
+
 ## [0.0.13] - 2026-10-31
 
 ### Added

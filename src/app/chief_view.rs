@@ -12,7 +12,7 @@ use crate::theme::theme;
 use crate::ui::{Icon, Lamp, Tooltip, ghost_button, icon, lamp, outline_button, primary_button, px};
 
 impl KynexApp {
-    /// The Chat tab's Chief view before it's turned on: what it does and what it risks.
+    /// The KNX Ops tab before it's turned on: what it does and what it risks.
     pub(super) fn render_chief_consent(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let point = |text: &'static str| {
@@ -56,11 +56,11 @@ impl KynexApp {
                     .border_color(t.border)
                     .bg(t.panel)
                     .text_sm()
-                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Chief of staff"))
+                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("KNX Ops"))
                     .child(div().text_color(t.text_muted).child(
-                        "Give the chief a goal. It sends the work to one chief worker per project, follows it, \
-                         answers their questions or brings them to you, and reports back. The chief runs on \
-                         Haiku; each worker runs on its project's model and can use subagents.",
+                        "Your chief of staff. Give it a goal and it sends the work to one worker per project, \
+                         follows it, answers their questions or brings them to you, and reports back. It runs \
+                         on Haiku; each worker runs on its project's model and can use subagents.",
                     ))
                     .child(div().font_weight(FontWeight::MEDIUM).child("Before you turn it on"))
                     .child(div().flex().flex_col().gap_2().text_color(t.text_muted).children(points))
@@ -69,7 +69,7 @@ impl KynexApp {
                             .flex()
                             .gap_2()
                             .pt_2()
-                            .child(primary_button("chief-on", "Turn on the chief", cx).on_click(cx.listener(
+                            .child(primary_button("chief-on", "Turn on KNX Ops", cx).on_click(cx.listener(
                                 |this, _, window, cx| {
                                     this.saved.chief_consented = true;
                                     this.save();
@@ -107,7 +107,7 @@ impl KynexApp {
             .gap_2()
             .h(px(24.))
             .text_xs()
-            .child(div().font_weight(FontWeight::MEDIUM).child("Chief"))
+            .child(div().font_weight(FontWeight::MEDIUM).child("KNX Ops"))
             .child(div().text_color(t.text_placeholder).child(format!(
                     "{} · {} tokens · all {} tokens",
                     self.chief
@@ -126,7 +126,7 @@ impl KynexApp {
                         .text_color(t.text_muted)
                         .child(icon(Icon::Stop, t.text_muted).size_3())
                         .child("Stop all")
-                        .tooltip(Tooltip::text("Stop the chief and every worker, and drop what they had queued"))
+                        .tooltip(Tooltip::text("Stop KNX Ops and every worker, and drop what they had queued"))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.stop_everything();
                             cx.notify();
