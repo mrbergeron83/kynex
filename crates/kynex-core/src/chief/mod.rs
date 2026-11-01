@@ -60,10 +60,13 @@ means. Workers end every turn with a report (STATUS: done | blocked | failed, SU
 and QUESTION when blocked), and Kynex sends it to you in a message starting with \"[Kynex]\". \
 Then tell the user briefly what happened and dispatch follow-ups if the goal needs them.
 
-Workers can't ask the user anything: a blocked worker's question comes to you. Answer it with \
-dispatch when the user's goal already decides it; otherwise ask the user, then pass their answer \
-on with dispatch. Kynex also tells you when a worker runs a risky command (a push, a force push, \
-deleting branches or files, publishing): mention those to the user.
+Workers ask the user their multiple-choice questions directly: Kynex stacks them for the user, \
+who answers them there, and sends you a message when one is asked and when it's answered. Don't \
+answer those yourself or ask them again; the worker carries on by itself. A worker that can't ask \
+ends its turn blocked with a QUESTION instead: answer it with dispatch when the user's goal \
+already decides it; otherwise ask the user, then pass their answer on with dispatch. Kynex also \
+tells you when a worker runs a risky command (a push, a force push, deleting branches or files, \
+publishing): mention those to the user.
 
 Don't call status in a loop; wait for Kynex's messages. Keep your replies short.";
 
@@ -349,6 +352,30 @@ pub fn turn_notice(w: &Worker, t: &TurnEnd) -> String {
     }
 }
 
+/// A worker's `AskUserQuestion` in a line: the first question, and how many more.
+pub fn question_headline(input: &Value) -> String {
+    let questions = input["questions"].as_array();
+    let first = questions.and_then(|q| q.first()).and_then(|q| q["question"].as_str()).unwrap_or("a question");
+    match questions.map_or(0, Vec::len) {
+        0 | 1 => first.to_string(),
+        n => format!("{first} (+{} more)", n - 1),
+    }
+}
+
+/// The message the chief gets when a worker asks the user a question.
+pub fn question_notice(w: &Worker, headline: &str) -> String {
+    format!(
+        "{NOTICE} The {} worker asked the user: {headline}\nKynex put it on the user's question stack. \
+         Don't answer it; the worker carries on once they do.",
+        w.name()
+    )
+}
+
+/// The message the chief gets when the user has answered it.
+pub fn answered_notice(w: &Worker, headline: &str) -> String {
+    format!("{NOTICE} The user answered the {} worker's question ({headline}); it's carrying on.", w.name())
+}
+
 /// The message the chief gets when a prompt in worker `w`'s session waits on the user.
 pub fn waiting_notice(w: &Worker) -> String {
     format!("{NOTICE} The {} worker is waiting for the user to answer a prompt in its session.", w.name())
@@ -429,6 +456,20 @@ mod tests {
         assert_eq!(w.line(), "kynex: working 3m 12s, opus, 2 subagents, 1 queued, 1.2M tokens");
         assert!(status_text(&[w.clone(), w]).ends_with("All workers: 2.4M tokens"));
         assert!(status_text(&[]).contains("No chief workers"));
+    }
+
+    #[test]
+    fn a_workers_question_is_one_line_and_the_chief_is_told_not_to_answer() {
+        let one = json!({ "questions": [{ "question": "Postgres or SQLite?", "options": [] }] });
+        assert_eq!(question_headline(&one), "Postgres or SQLite?");
+        let two = json!({ "questions": [{ "question": "Which DB?" }, { "question": "Which ORM?" }] });
+        assert_eq!(question_headline(&two), "Which DB? (+1 more)");
+        assert_eq!(question_headline(&json!({})), "a question");
+        let w = worker(State::NeedsYou);
+        let asked = question_notice(&w, "Which DB?");
+        assert!(asked.starts_with("[Kynex] The kynex worker asked the user: Which DB?"));
+        assert!(asked.contains("Don't answer it"));
+        assert!(answered_notice(&w, "Which DB?").contains("The user answered the kynex worker's question"));
     }
 
     #[test]

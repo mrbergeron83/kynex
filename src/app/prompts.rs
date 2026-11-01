@@ -65,25 +65,30 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Keeps the prompt view in step with the active session's oldest pending request.
+    /// Keeps the prompt view in step with the oldest pending request: in KNX Ops
+    /// the stack's question (a worker's, which blocks the chief's composer until
+    /// answered), else the active session's.
     pub(super) fn sync_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let pending = self.active_session().and_then(|s| {
-            let mut it = s.items.iter().filter_map(|i| match i {
-                Item::Permission { request_id, tool, input, suggestions, description, state: PermState::Pending } => {
-                    Some(Request {
-                        id: request_id.clone(),
-                        tool: tool.clone(),
-                        input: input.clone(),
-                        suggestions: suggestions.clone(),
-                        description: description.clone(),
-                        kind: s.kind,
+        let stacked = if self.in_chief() { self.chief_focus() } else { None };
+        let pending = if let Some(ask) = stacked {
+            let queued = self.question_stack().len().saturating_sub(1);
+            self.code
+                .get(&ask.path)
+                .and_then(|l| l.sessions.iter().find(|s| s.uid == ask.key))
+                .and_then(|s| {
+                    s.items.iter().find_map(|i| match i {
+                        Item::Permission { request_id, .. } if *request_id == ask.id => request_for(s, i),
+                        _ => None,
                     })
-                }
-                _ => None,
-            });
-            let first = it.next()?;
-            Some((s.uid, first, it.count()))
-        });
+                })
+                .map(|req| (ask.key, req, queued))
+        } else {
+            self.active_session().and_then(|s| {
+                let mut it = s.items.iter().filter_map(|i| request_for(s, i));
+                let first = it.next()?;
+                Some((s.uid, first, it.count()))
+            })
+        };
         let Some((key, req, queued)) = pending else {
             self.prompt = None;
             return;
@@ -102,5 +107,22 @@ impl KynexApp {
         if let Some(p) = &self.prompt {
             p.view.update(cx, |v, _| v.queued = queued);
         }
+    }
+}
+
+/// The prompt for a pending permission or question in `s`, if `item` is one.
+fn request_for(s: &session::Session, item: &Item) -> Option<Request> {
+    match item {
+        Item::Permission { request_id, tool, input, suggestions, description, state: PermState::Pending } => {
+            Some(Request {
+                id: request_id.clone(),
+                tool: tool.clone(),
+                input: input.clone(),
+                suggestions: suggestions.clone(),
+                description: description.clone(),
+                kind: s.kind,
+            })
+        }
+        _ => None,
     }
 }

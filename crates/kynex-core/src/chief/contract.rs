@@ -27,12 +27,12 @@ pub fn worktree(project: &Path) -> Result<Option<PathBuf>, String> {
 }
 
 /// The `claude` arguments that make a session in `project` a chief worker:
-/// no permission prompts, no questions to the user, its worktree and its
+/// no permission prompts, its worktree and its
 /// instructions. Blocks on git the first time (see [`worktree`]).
 pub fn worker_args(project: &Path) -> Result<Vec<String>, String> {
     let tree = worktree(project)?;
-    let mut args: Vec<String> =
-        ["--dangerously-skip-permissions", "--disallowedTools", "AskUserQuestion"].map(String::from).to_vec();
+    // Questions are allowed: they reach the user on KNX Ops's stack (`AskUserQuestion`).
+    let mut args: Vec<String> = vec!["--dangerously-skip-permissions".into()];
     if let Some(t) = &tree {
         args.extend(["--add-dir".into(), t.display().to_string()]);
     }
@@ -59,8 +59,11 @@ fn worker_prompt(project: &Path, tree: Option<&Path>) -> String {
 
 {place}
 
-You can't ask the user anything. When you need a decision you can't make from the task, stop and ask \
-it in your report.
+When you need a decision you can't make from the task, ask it with the AskUserQuestion tool: one \
+question with two to four clear options, the one you'd pick first. Then carry on with the answer. \
+Ask only when it matters, and don't guess at anything that can't be undone: the user is answering for \
+several projects at once, and their answers stack up in Kynex. If that tool isn't available, stop and \
+put the question in your report instead (STATUS: blocked).
 
 End every turn with this report, as the last thing you write:
 

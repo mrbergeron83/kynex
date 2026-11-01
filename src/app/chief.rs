@@ -11,7 +11,7 @@ use gpui::{AppContext as _, Context};
 use kynex_core::chief::{self, Call, Request, State, Worker};
 use kynex_core::live::{Key, Live};
 use kynex_core::paths::{chief_dir, project_name};
-use kynex_core::session::{Item, Kind, Session};
+use kynex_core::session::{Item, Kind, PermState, Session};
 use kynex_core::toasts::{Action, Toast};
 
 use super::KynexApp;
@@ -37,6 +37,24 @@ pub(super) struct Chief {
     warnings: HashMap<Key, Vec<String>>,
     /// Workers a restart cut short have been reported.
     resumed: bool,
+    /// The questions workers have asked (worker, request) and are unanswered,
+    /// with when each came and what it asked: the stack's order, and what the
+    /// chief hears when it's answered.
+    asked: HashMap<(Key, String), (Instant, String)>,
+    /// The question picked in the stack to answer first, over the oldest.
+    pub(super) focus: Option<(Key, String)>,
+}
+
+/// One question on the stack: a worker's `AskUserQuestion` waiting for you.
+#[derive(Clone)]
+pub(super) struct Ask {
+    pub(super) key: Key,
+    pub(super) id: String,
+    pub(super) path: PathBuf,
+    pub(super) name: String,
+    /// What it asks, in a line.
+    pub(super) headline: String,
+    pub(super) since: Option<Instant>,
 }
 
 impl KynexApp {
@@ -260,11 +278,47 @@ impl KynexApp {
         workers
     }
 
-    /// Tells the chief when a worker ends a turn or waits on the user, and
-    /// you when a worker runs something risky.
+    /// The workers' unanswered questions, oldest first. Read from the
+    /// sessions themselves, so an answer given anywhere clears it.
+    pub(super) fn question_stack(&self) -> Vec<Ask> {
+        let mut stack = Vec::new();
+        for (path, key) in &self.chief.workers {
+            let Some(s) = self.code.get(path).and_then(|l| l.sessions.iter().find(|s| s.uid == *key)) else {
+                continue;
+            };
+            for item in &s.items {
+                if let Item::Permission { request_id, tool, input, state: PermState::Pending, .. } = item
+                    && tool == "AskUserQuestion"
+                {
+                    stack.push(Ask {
+                        key: *key,
+                        id: request_id.clone(),
+                        path: path.clone(),
+                        name: project_name(path),
+                        headline: chief::question_headline(input),
+                        since: self.chief.asked.get(&(*key, request_id.clone())).map(|a| a.0),
+                    });
+                }
+            }
+        }
+        // Questions not yet seen by a poll go last.
+        stack.sort_by_key(|a| (a.since.is_none(), a.since));
+        stack
+    }
+
+    /// The question to answer now: the one picked in the stack, else the oldest.
+    pub(super) fn chief_focus(&self) -> Option<Ask> {
+        let stack = self.question_stack();
+        let picked = self.chief.focus.as_ref().and_then(|(k, id)| stack.iter().find(|a| a.key == *k && a.id == *id));
+        picked.or(stack.first()).cloned()
+    }
+
+    /// Tells the chief when a worker ends a turn or asks something, and you
+    /// when a worker runs something risky.
     fn report_workers(&mut self) {
         let mut notices = Vec::new();
         let mut toasts = Vec::new();
+        let in_chief = self.in_chief();
         let mut working = Vec::new();
         let workers: Vec<(PathBuf, Key)> = self.chief.workers.iter().map(|(p, k)| (p.clone(), *k)).collect();
         for (path, key) in workers {
@@ -328,8 +382,52 @@ impl KynexApp {
                     self.chief.started.remove(&key);
                 }
             }
-            if waiting && !was_waiting {
-                notices.push(chief::waiting_notice(&worker_of(&path, s, started, Vec::new())));
+            // Its multiple-choice questions: each is news once, to the chief and, when
+            // you're not looking at them, to you; answered ones are news too.
+            let asks: Vec<(String, String)> = s
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    Item::Permission { request_id, tool, input, state: PermState::Pending, .. }
+                        if tool == "AskUserQuestion" =>
+                    {
+                        Some((request_id.clone(), chief::question_headline(input)))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let w = worker_of(&path, s, started, Vec::new());
+            for (id, headline) in &asks {
+                if let std::collections::hash_map::Entry::Vacant(e) = self.chief.asked.entry((key, id.clone())) {
+                    e.insert((Instant::now(), headline.clone()));
+                    notices.push(chief::question_notice(&w, headline));
+                    if !in_chief {
+                        toasts.push(
+                            Toast::warning(format!("The {name} worker has a question"))
+                                .detail(headline.clone())
+                                .session(key)
+                                .action(Action::GoToSession(key)),
+                        );
+                    }
+                }
+            }
+            let answered: Vec<(Key, String)> = self
+                .chief
+                .asked
+                .keys()
+                .filter(|(k, id)| *k == key && !asks.iter().any(|(a, _)| a == id))
+                .cloned()
+                .collect();
+            for gone in answered {
+                if let Some((_, headline)) = self.chief.asked.remove(&gone) {
+                    notices.push(chief::answered_notice(&w, &headline));
+                }
+                if self.chief.focus.as_ref() == Some(&gone) {
+                    self.chief.focus = None;
+                }
+            }
+            if waiting && !was_waiting && asks.is_empty() {
+                notices.push(chief::waiting_notice(&w));
             }
             set(&mut self.chief.was_busy, key, busy);
             set(&mut self.chief.was_waiting, key, waiting);

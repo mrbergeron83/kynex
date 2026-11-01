@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- KNX Ops workers can ask you multiple-choice questions. They stack up (oldest first, each with
+  its project), the box under the conversation answers the first one, and you can pick another
+  from the list above it. Your answer goes straight back to the worker, which carries on; the
+  chief hears when a question is asked and answered, and isn't blocked otherwise (#235).
+
 ## [0.0.13] - 2026-10-31
 
 ### Added
