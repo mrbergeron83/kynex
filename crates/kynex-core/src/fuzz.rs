@@ -141,6 +141,16 @@ pub fn openrouter(text: &str) {
         }
     }
     let _ = crate::openrouter::valid_model_id(text);
+    // The chat harness's streamed replies, and logs read back as its history.
+    for line in text.lines() {
+        let _ = crate::chat_api::stream::event(line);
+    }
+    let _ = crate::chat_api::stream::failure(Some(400), text);
+    if let Ok(v) = serde_json::from_str::<Value>(text) {
+        let _ = crate::chat_api::stream::user_content(&v);
+        let _ = crate::chat_api::stream::assistant_text(&v);
+    }
+    let _ = crate::chat_api::history(text);
     let _ = crate::openrouter::import::find(|_| None, Some(text));
     let _ = crate::openrouter::import::reg_value(text, "OPENROUTER_API_KEY");
     if let Some(config) = crate::openrouter::curl_config(text, "https://openrouter.ai/api/v1/key", None) {

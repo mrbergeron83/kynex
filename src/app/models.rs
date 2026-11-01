@@ -213,6 +213,11 @@ impl KynexApp {
         let current = self.active_model();
         let current = if current.is_empty() { self.folder_model() } else { current };
         let default = self.saved.openrouter.default_model().to_string();
+        // On Work, a model without tool calls can't run Claude Code: picking
+        // one on a new session switches it to Chat; a started one can't take it.
+        let work = self.active_provider() == kynex_core::provider::Provider::OpenRouter;
+        let fresh = self.active_session().is_none_or(kynex_core::session::Session::is_new);
+        let no_tools: Vec<String> = self.saved.openrouter.no_tools.clone();
         let mut items: Vec<AnyElement> = self
             .saved
             .openrouter
@@ -222,12 +227,17 @@ impl KynexApp {
             .enumerate()
             .map(|(n, id)| {
                 let selected = id == current;
-                let note = match (id.ends_with(":free"), id == default) {
-                    (true, true) => "Free · default",
-                    (true, false) => "Free",
-                    (false, true) => "Default",
-                    (false, false) => "",
-                };
+                let chat_only = no_tools.contains(&id);
+                let blocked = work && chat_only && !fresh;
+                let note = [
+                    (id.ends_with(":free"), "Free"),
+                    (id == default, "Default"),
+                    (chat_only, if work { "No tools: switches to Chat" } else { "No tools" }),
+                ]
+                .into_iter()
+                .filter_map(|(on, n)| on.then_some(n))
+                .collect::<Vec<_>>()
+                .join(" · ");
                 div()
                     .id(("openrouter-pick", n))
                     .flex()
@@ -236,8 +246,8 @@ impl KynexApp {
                     .px_2()
                     .py_1()
                     .rounded_md()
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(t.hover))
+                    .when(!blocked, |d| d.cursor_pointer().hover(move |s| s.bg(t.hover)))
+                    .when(blocked, |d| d.opacity(0.5))
                     .when(selected, |d| d.bg(t.active))
                     .child(
                         div()
@@ -253,7 +263,15 @@ impl KynexApp {
                             })),
                     )
                     .when(selected, |d| d.child(icon(Icon::Check, t.text_muted)))
-                    .on_click(pick(id, cx))
+                    .when(work && chat_only && !blocked, |d| {
+                        let id = id.clone();
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = None;
+                            this.set_project_openrouter_chat_model(this.active_dir(), id.clone(), cx);
+                            this.set_provider(kynex_core::provider::Provider::OpenRouterChat, cx);
+                        }))
+                    })
+                    .when(!chat_only || !work, |d| d.on_click(pick(id, cx)))
                     .into_any_element()
             })
             .collect();

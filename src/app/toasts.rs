@@ -67,6 +67,7 @@ impl KynexApp {
         match action {
             Action::GoToSession(key) => self.go_to_session(key, window, cx),
             Action::ViewUpdate => self.open_about(cx),
+            Action::ContinueInChat(key) => self.continue_in_chat(key, cx),
         }
         cx.notify();
     }

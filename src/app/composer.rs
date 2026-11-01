@@ -246,13 +246,19 @@ impl KynexApp {
         let busy = session.is_some_and(|s| s.busy);
         // A chief worker runs without prompts; its mode doesn't apply.
         let worker = session.is_some_and(|s| s.worker);
-        let mode = session.filter(|s| s.kind == Kind::Code && !s.worker).map(|s| s.mode);
         models::fetch_models(cx);
         // Who answers: a picker on a new session when both are set up, else
         // a label (a session keeps its provider once it starts).
         let provider = self.active_provider();
-        let on_openrouter = provider == kynex_core::provider::Provider::OpenRouter;
+        let on_openrouter = provider.is_openrouter();
+        let chat_only = provider == kynex_core::provider::Provider::OpenRouterChat;
+        // Chat has no tools, so no permission mode either.
+        let mode = session.filter(|s| s.kind == Kind::Code && !s.worker && !chat_only).map(|s| s.mode);
         let fresh = session.is_none_or(Session::is_new);
+        // On OpenRouter: Work (Claude Code) or Chat, picked on a new session.
+        // Work is off when the Work model takes no tools.
+        let work_ok = self.saved.openrouter.takes_tools(&self.folder_openrouter_model(&self.active_dir()));
+        let work_mode = on_openrouter.then(|| self.render_work_toggle(chat_only, fresh, work_ok, cx));
         let can_switch = fresh && self.providers_available().len() > 1;
         let show_provider = can_switch || on_openrouter;
         let model_label = self.active_model_name();
@@ -279,6 +285,8 @@ impl KynexApp {
             "Pick a message to go back to · Esc to cancel"
         } else if self.history_searching() {
             "Search what you've sent…"
+        } else if provider == kynex_core::provider::Provider::OpenRouterChat {
+            "Message the model… (chat only: it can't see or change files)"
         } else if in_project {
             "Ask Claude Code to do something in this project…"
         } else {
@@ -513,7 +521,7 @@ impl KynexApp {
                             ghost_button("provider", cx)
                                 .text_color(t.text_muted)
                                 .gap_1()
-                                .child(provider.label())
+                                .child(provider.picker().label())
                                 .when(can_switch, |b| b.child(icon(Icon::ChevronDown, t.text_placeholder).size_3()))
                                 .tooltip(Tooltip::text(if can_switch {
                                     "Who answers this session; it's fixed once it starts"
@@ -529,6 +537,7 @@ impl KynexApp {
                                 }),
                         )
                     })
+                    .children(work_mode)
                     .child(
                         ghost_button("model", cx)
                             .text_color(t.text_muted)
@@ -582,5 +591,52 @@ impl KynexApp {
                     .child(send),
             );
         shell(body.into_any_element(), focused, false)
+    }
+
+    /// OpenRouter's Chat / Work switch (`chat`: on Chat): Work runs Claude Code
+    /// with its tools, Chat only talks. Switchable on a new session (`fresh`);
+    /// Work only if the Work model takes tool calls (`work_ok`).
+    fn render_work_toggle(&self, chat: bool, fresh: bool, work_ok: bool, cx: &mut Context<Self>) -> AnyElement {
+        use kynex_core::provider::Provider;
+        let t = theme(cx).clone();
+        let work_model = models::openrouter_label(&self.folder_openrouter_model(&self.active_dir()));
+        let segments =
+            [(Provider::OpenRouter, "Work", !chat, fresh && work_ok), (Provider::OpenRouterChat, "Chat", chat, fresh)];
+        let mut toggle = div().flex().gap_0p5().p_0p5().rounded_md().border_1().border_color(t.border_variant);
+        for (n, (provider, label, on, can)) in segments.into_iter().enumerate() {
+            let tip: SharedString = match (provider, on, fresh) {
+                (_, _, false) => "Fixed for this session: start a new session to switch".into(),
+                (Provider::OpenRouter, _, _) if !work_ok => {
+                    format!("{work_model} takes no tool calls, so it can only chat. Pick a Work model that does.")
+                        .into()
+                }
+                (Provider::OpenRouter, _, _) => "Work: Claude Code on your model, with its tools and your files".into(),
+                _ => "Chat: just a conversation; the model can't see, run or change anything".into(),
+            };
+            let hover = t.hover;
+            toggle = toggle.child(
+                div()
+                    .id(("work-mode", n))
+                    .px_1p5()
+                    .rounded_sm()
+                    .text_xs()
+                    .text_color(if on {
+                        t.text
+                    } else if can {
+                        t.text_muted
+                    } else {
+                        t.text_placeholder
+                    })
+                    .when(on, |d| d.bg(t.active))
+                    .when(can && !on, |d| {
+                        d.cursor_pointer()
+                            .hover(move |s| s.bg(hover))
+                            .on_click(cx.listener(move |this, _, _, cx| this.set_provider(provider, cx)))
+                    })
+                    .tooltip(Tooltip::text(tip))
+                    .child(label),
+            );
+        }
+        toggle.into_any_element()
     }
 }

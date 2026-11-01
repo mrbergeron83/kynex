@@ -354,6 +354,9 @@ pub struct Session {
     applying: Vec<String>,
     /// The model that wrote the last reply, whose window `context` is measured against.
     reply_model: String,
+    /// An OpenRouter model that turned out to take no tool calls (its request
+    /// failed for it), until the app takes it.
+    no_tools: Option<String>,
     /// What the process reported when it started, until the app takes it.
     init: Option<Init>,
     /// The account's usage limits from the last `rate_limit_event`, until the app takes them.
@@ -503,6 +506,7 @@ impl Session {
             launched: None,
             applying: Vec::new(),
             reply_model: String::new(),
+            no_tools: None,
             init: None,
             limits: None,
             resume_at: None,
@@ -720,6 +724,13 @@ impl Session {
     }
 
     fn spawn(&mut self) -> Result<(), String> {
+        // OpenRouter chat: Kynex's own harness in the CLI's place, same protocol.
+        if let crate::provider::Launch::OpenRouterChat { key, settings } = self.provider.with_model(&self.model) {
+            let resume = self.resume_id().map(str::to_string);
+            let at = self.resume_at.take();
+            let cmd = crate::chat_api::command(&self.cwd, &key, &settings, resume.as_deref(), at.as_deref())?;
+            return self.start(cmd, None, "the chat");
+        }
         let mut cmd = claude_command(&self.cwd, &self.provider.with_model(&self.model));
         // Checkpoints of the files Claude edits, so a rewind can restore them.
         cmd.env(crate::rewind::CHECKPOINTS_ENV, "1");
@@ -797,10 +808,15 @@ impl Session {
                 cmd.args(["--resume-session-at", &at]);
             }
         }
+        self.start(cmd, launched, "`claude`")
+    }
+
+    /// Starts `cmd` (`what`, for an error) as this session's process.
+    fn start(&mut self, mut cmd: Command, launched: Option<project::Launched>, what: &str) -> Result<(), String> {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
         let mut child =
-            crate::process::dies_with_parent(&mut cmd).spawn().map_err(|e| format!("failed to start `claude`: {e}"))?;
+            crate::process::dies_with_parent(&mut cmd).spawn().map_err(|e| format!("failed to start {what}: {e}"))?;
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         let stdin = child.stdin.take().unwrap();
@@ -819,6 +835,29 @@ impl Session {
         // answer comes before any reply, and nothing else about the session changes.
         self.write(json!({ "type": "control_request", "request_id": INIT_ID, "request": { "subtype": "initialize" } }));
         Ok(())
+    }
+
+    /// The OpenRouter model a request just failed for because it takes no
+    /// tool calls, once.
+    pub fn take_no_tools(&mut self) -> Option<String> {
+        self.no_tools.take()
+    }
+
+    /// Moves an OpenRouter session to Chat (the harness), same model and
+    /// conversation, and sends its last message again there. For a Work
+    /// session whose model turned out to take no tools. Returns whether it moved.
+    pub fn move_to_chat(&mut self) -> bool {
+        let crate::provider::Launch::OpenRouter { key, settings } = self.provider.clone() else { return false };
+        self.kill();
+        self.provider = crate::provider::Launch::OpenRouterChat { key, settings };
+        let last = self.items.iter().rev().find_map(|i| match i {
+            Item::User { text, .. } => Some(text.clone()),
+            _ => None,
+        });
+        if let Some(text) = last.filter(|t| !t.trim().is_empty()) {
+            self.send(text, Vec::new());
+        }
+        true
     }
 
     /// The commands and models the process reported when it started, once.
@@ -912,7 +951,7 @@ impl Session {
     /// an idle one stops too: the next message resumes it on the new model.
     pub fn use_model(&mut self, model: String) {
         if self.child.is_some() {
-            let openrouter = self.provider.provider() == crate::provider::Provider::OpenRouter;
+            let openrouter = self.provider.provider().is_openrouter();
             if model == self.model || (self.talked && !(openrouter && !self.busy)) {
                 return;
             }
@@ -1314,6 +1353,17 @@ impl Session {
                         window: known_window(&self.reply_model).or(self.context.window),
                     };
                 }
+                // OpenRouter refused the request: the model takes no tool calls.
+                if v["message"]["model"] == "<synthetic>"
+                    && self.child.is_some()
+                    && self.provider.provider().is_openrouter()
+                {
+                    let said =
+                        v["message"]["content"].as_array().into_iter().flatten().filter_map(|b| b["text"].as_str());
+                    if said.into_iter().any(crate::openrouter::says_no_tools) {
+                        self.no_tools = self.provider.with_model(&self.model).model().map(str::to_string);
+                    }
+                }
                 for block in v["message"]["content"].as_array().into_iter().flatten() {
                     match block["type"].as_str() {
                         // Already rendered live from the stream deltas.
@@ -1640,10 +1690,25 @@ fn projects_dir() -> Option<PathBuf> {
     Some(home.join(".claude").join("projects"))
 }
 
+/// The name of `cwd`'s folder in `~/.claude/projects`.
+fn transcripts_name(cwd: &Path) -> String {
+    cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
+}
+
+/// Where session `id` of `cwd` is logged: its log if there is one, else
+/// where Claude Code would put it. `None` without a home folder.
+pub(crate) fn transcript_path(cwd: &Path, id: &str) -> Option<PathBuf> {
+    if let Some(found) = find_transcript(cwd, id) {
+        return Some(found);
+    }
+    let dir = transcripts_dir(cwd).or_else(|| Some(projects_dir()?.join(transcripts_name(cwd))))?;
+    Some(dir.join(format!("{id}.jsonl")))
+}
+
 /// Claude Code keeps a directory's sessions in `~/.claude/projects/<cwd>`, with
 /// every character that isn't a letter or digit replaced by `-`.
 fn transcripts_dir(cwd: &Path) -> Option<PathBuf> {
-    let name: String = cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let name = transcripts_name(cwd);
     // Looked up once per folder: `~/.claude/projects` can hold hundreds.
     static FOUND: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();
     let found = FOUND.get_or_init(Default::default);
@@ -1673,7 +1738,7 @@ pub(crate) fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
 /// A user-role log entry the CLI wrote itself, like the `<task-notification>`
 /// it sends Claude when a background command ends: Claude reads it, but it
 /// isn't something the user said.
-fn written_by_cli(v: &Value) -> bool {
+pub(crate) fn written_by_cli(v: &Value) -> bool {
     let text = v["message"]["content"].as_str().unwrap_or("");
     v["promptSource"] == "system" || v["origin"]["kind"].is_string() || text.starts_with("<task-notification>")
 }

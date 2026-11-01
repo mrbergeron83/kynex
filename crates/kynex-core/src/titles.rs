@@ -44,7 +44,7 @@ pub fn remember(id: &str, title: &str) {
 /// nothing saved as a session; it blocks for a few seconds. OpenRouter sessions
 /// spend nothing on it and take the message's first words.
 pub fn generate(first_message: &str, provider: crate::provider::Provider) -> Result<String, String> {
-    if provider == crate::provider::Provider::OpenRouter {
+    if provider.is_openrouter() {
         return Some(crate::fmt::first_words(first_message, FIRST_WORDS))
             .filter(|t| !t.is_empty())
             .ok_or_else(|| "the first message has no words".into());

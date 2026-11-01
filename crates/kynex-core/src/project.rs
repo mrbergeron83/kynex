@@ -216,6 +216,10 @@ pub struct ClaudeSettings {
     /// the default of My models.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub openrouter_model: String,
+    /// The OpenRouter model its new Chat sessions start on (OpenRouter chat,
+    /// [`crate::chat_api`]), its own pick apart from Work's; empty is the default of My models.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub openrouter_chat_model: String,
 }
 
 impl ClaudeSettings {

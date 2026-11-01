@@ -5,6 +5,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- OpenRouter sessions pick Work or Chat in the composer. Work is Claude Code, as before; Chat only
+  talks, so any OpenRouter model works, including ones without tool calling that Claude Code can't
+  use. Those are marked "No tools" and switch a new session to Chat; a Work session that hits one
+  offers to continue in Chat. Chat has its own model per project; replies stream in, sessions list,
+  reopen and rewind like the rest, and show OpenRouter's real cost (#243).
+
 ## [0.0.14] - 2026-11-01
 
 ### Added

@@ -46,10 +46,18 @@ const NOT_FOR_OPENROUTER: [&str; 5] = [
 pub enum Provider {
     #[default]
     Anthropic,
+    /// OpenRouter's models in the `claude` CLI: Claude Code's tools and all.
     OpenRouter,
+    /// OpenRouter's chat API through Kynex's own harness ([`crate::chat_api`]):
+    /// a conversation only, no tools, so any model works, tools or not.
+    #[serde(rename = "openrouter-chat")]
+    OpenRouterChat,
 }
 
 impl Provider {
+    /// Every provider, in the order pickers list them.
+    pub const ALL: [Provider; 3] = [Provider::Anthropic, Provider::OpenRouter, Provider::OpenRouterChat];
+
     /// Whether its models take Claude's `--effort` levels. OpenRouter's
     /// mostly don't, so OpenRouter sessions get none and the picker hides.
     pub fn takes_effort(self) -> bool {
@@ -61,10 +69,25 @@ impl Provider {
         *self == Provider::Anthropic
     }
 
-    /// Whether the CLI's cost figures mean anything here. It prices every
-    /// turn as a Claude model; OpenRouter's models cost something else.
+    /// The provider as the provider picker lists it: OpenRouter chat is
+    /// OpenRouter there, its Chat mode picked beside it in the composer.
+    pub fn picker(self) -> Provider {
+        match self {
+            Provider::OpenRouterChat => Provider::OpenRouter,
+            other => other,
+        }
+    }
+
+    /// Whether it answers with OpenRouter's models (and key, and model list).
+    pub fn is_openrouter(self) -> bool {
+        matches!(self, Provider::OpenRouter | Provider::OpenRouterChat)
+    }
+
+    /// Whether the cost figures mean anything here. The CLI prices every turn
+    /// as a Claude model, wrong for OpenRouter's; the chat harness reports
+    /// what OpenRouter charged.
     pub fn knows_cost(self) -> bool {
-        self == Provider::Anthropic
+        matches!(self, Provider::Anthropic | Provider::OpenRouterChat)
     }
 
     /// The CLI's stderr lines a session on this provider shows; the rest is
@@ -83,6 +106,16 @@ impl Provider {
         match self {
             Provider::Anthropic => "Anthropic",
             Provider::OpenRouter => "OpenRouter",
+            Provider::OpenRouterChat => "OpenRouter chat",
+        }
+    }
+
+    /// What it is, in a few words, for the provider picker.
+    pub fn help(self) -> &'static str {
+        match self {
+            Provider::Anthropic => "Your Claude plan or Console account",
+            Provider::OpenRouter => "Your models, with your OpenRouter key: work, or just chat",
+            Provider::OpenRouterChat => "Any of your OpenRouter models, chat only: no tools, no files",
         }
     }
 }
@@ -114,6 +147,11 @@ pub enum Launch {
         key: String,
         settings: OpenRouterSettings,
     },
+    /// Kynex's chat harness instead of `claude`; the same key and settings.
+    OpenRouterChat {
+        key: String,
+        settings: OpenRouterSettings,
+    },
 }
 
 /// Never prints the key.
@@ -123,6 +161,9 @@ impl std::fmt::Debug for Launch {
             Launch::Anthropic => f.write_str("Anthropic"),
             Launch::OpenRouter { settings, .. } => {
                 f.debug_struct("OpenRouter").field("key", &"<hidden>").field("settings", settings).finish()
+            }
+            Launch::OpenRouterChat { settings, .. } => {
+                f.debug_struct("OpenRouterChat").field("key", &"<hidden>").field("settings", settings).finish()
             }
         }
     }
@@ -150,12 +191,35 @@ impl Launch {
     /// models all become it, so a switch reaches every call; empty keeps its
     /// own. Anthropic is unchanged (its model goes as `--model`).
     pub fn with_model(&self, model: &str) -> Launch {
+        let model = model.trim();
+        let settings = |s: &OpenRouterSettings| OpenRouterSettings { model: model.to_string(), ..s.clone() };
         match self {
-            Launch::OpenRouter { key, settings } if !model.trim().is_empty() => Launch::OpenRouter {
-                key: key.clone(),
-                settings: OpenRouterSettings { model: model.trim().to_string(), ..settings.clone() },
-            },
+            Launch::OpenRouter { key, settings: s } if !model.is_empty() => {
+                Launch::OpenRouter { key: key.clone(), settings: settings(s) }
+            }
+            Launch::OpenRouterChat { key, settings: s } if !model.is_empty() => {
+                Launch::OpenRouterChat { key: key.clone(), settings: settings(s) }
+            }
             _ => self.clone(),
+        }
+    }
+
+    /// This provider for a session that has to use tools (KNX Ops and its
+    /// workers): OpenRouter chat becomes OpenRouter in the CLI, same model.
+    pub fn for_work(self) -> Launch {
+        match self {
+            Launch::OpenRouterChat { key, settings } => Launch::OpenRouter { key, settings },
+            other => other,
+        }
+    }
+
+    /// The OpenRouter model it runs on; `None` on Anthropic.
+    pub fn model(&self) -> Option<&str> {
+        match self {
+            Launch::Anthropic => None,
+            Launch::OpenRouter { settings, .. } | Launch::OpenRouterChat { settings, .. } => {
+                Some(settings.model.as_str()).filter(|m| !m.trim().is_empty())
+            }
         }
     }
 
@@ -163,6 +227,7 @@ impl Launch {
         match self {
             Launch::Anthropic => Provider::Anthropic,
             Launch::OpenRouter { .. } => Provider::OpenRouter,
+            Launch::OpenRouterChat { .. } => Provider::OpenRouterChat,
         }
     }
 
@@ -211,6 +276,8 @@ impl Launch {
                 set.push((MAX_OUTPUT_TOKENS, cap.to_string()));
                 (set, NOT_FOR_OPENROUTER.to_vec())
             }
+            // The harness gets its key and model itself (`chat_api::command`).
+            Launch::OpenRouterChat { .. } => (Vec::new(), Vec::new()),
         };
         let remove = inherited
             .into_iter()

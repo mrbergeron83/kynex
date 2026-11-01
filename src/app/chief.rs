@@ -206,6 +206,8 @@ impl KynexApp {
         let key = self.chief.workers.get(path).copied();
         let wake = self.wake.clone();
         let (launch, models) = self.start_parts(path, resume.as_deref());
+        // A worker does work: never on the chat-only provider.
+        let launch = launch.for_work();
         let live = self.code.entry(path.to_path_buf()).or_default();
         let open = live
             .sessions

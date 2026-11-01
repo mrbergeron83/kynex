@@ -164,7 +164,7 @@ impl KynexApp {
                     _ => None,
                 }),
                 busy: s.busy,
-                openrouter: s.provider().provider() == kynex_core::provider::Provider::OpenRouter,
+                openrouter: s.provider().provider().is_openrouter(),
                 waiting: s.waiting(),
                 finished: s.finished,
             })
@@ -377,7 +377,7 @@ impl KynexApp {
                     .into_any_element(),
                 false => title,
             };
-            let on_openrouter = self.groups_for(&cwd).provider_of(&id) == kynex_core::provider::Provider::OpenRouter;
+            let on_openrouter = self.groups_for(&cwd).provider_of(&id).is_openrouter();
             let row = session_row_with(("session", n), title, is_current || picked, &t)
                 .when(on_openrouter, |r| r.child(openrouter_mark(("session-provider", n), &t)))
                 .group("session-row")

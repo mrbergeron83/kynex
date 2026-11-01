@@ -21,6 +21,13 @@ const MESSAGES_URL: &str = "https://openrouter.ai/api/v1/messages";
 /// What the test request may produce: enough for a word, so it costs next to nothing.
 const PROBE_MAX_TOKENS: u32 = 16;
 
+/// Whether an API error says the model takes no tool calls, as OpenRouter
+/// words it ("No endpoints found that support tool use").
+pub fn says_no_tools(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("no endpoints found") && text.contains("tool use")
+}
+
 /// What `/api/v1/key` says about a key.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct KeyInfo {
@@ -250,6 +257,14 @@ pub(crate) fn key_info(body: &str) -> Option<KeyInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn knows_a_model_without_tools_from_its_error() {
+        let said = "API Error: 400 No endpoints found that support tool use. Try disabling \"Agent\". To learn more…";
+        assert!(says_no_tools(said));
+        assert!(!says_no_tools("API Error: 404 No endpoints found for model x"));
+        assert!(!says_no_tools("API Error: 402 Insufficient credits"));
+    }
 
     #[test]
     fn the_key_goes_in_the_config_quoted() {

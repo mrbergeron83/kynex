@@ -37,6 +37,9 @@ pub enum Action {
     GoToSession(Key),
     /// "View": the About modal, where a new version installs.
     ViewUpdate,
+    /// "Continue in Chat": moves an OpenRouter session whose model takes no
+    /// tool calls to Chat, and sends its last message again there.
+    ContinueInChat(Key),
 }
 
 impl Action {
@@ -44,6 +47,7 @@ impl Action {
         match self {
             Action::GoToSession(_) => "Go to session",
             Action::ViewUpdate => "View",
+            Action::ContinueInChat(_) => "Continue in Chat",
         }
     }
 }

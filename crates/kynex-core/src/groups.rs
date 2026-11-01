@@ -219,7 +219,7 @@ impl SessionGroups {
     /// their order; providers with none are left out.
     pub fn by_provider(&self, ids: &[String]) -> Vec<(crate::provider::Provider, Vec<String>)> {
         use crate::provider::Provider;
-        [Provider::Anthropic, Provider::OpenRouter]
+        Provider::ALL
             .into_iter()
             .map(|p| (p, ids.iter().filter(|id| self.provider_of(id) == p).cloned().collect::<Vec<_>>()))
             .filter(|(_, ids)| !ids.is_empty())

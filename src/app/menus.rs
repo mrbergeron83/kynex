@@ -222,25 +222,25 @@ impl KynexApp {
                             .into_any_element(),
                     );
                 }
-                if self.active_provider() == kynex_core::provider::Provider::OpenRouter {
+                if self.active_provider().is_openrouter() {
                     items.extend(self.openrouter_model_items(cx));
                 } else {
                     items.extend(self.model_items(cx));
                 }
             }
             Menu::Provider => {
-                let current = self.active_provider();
+                let current = self.active_provider().picker();
                 for (n, p) in self.providers_available().into_iter().enumerate() {
-                    let help = match p {
-                        kynex_core::provider::Provider::Anthropic => "Your Claude plan or Console account",
-                        kynex_core::provider::Provider::OpenRouter => "Your models, with your OpenRouter key",
-                    };
+                    let help = p.help();
                     items.push(
                         menu_item(("provider", n), p.label(), current == p, cx)
                             .child(div().flex_none().text_xs().text_color(t.text_placeholder).child(help))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.menu = None;
-                                this.set_provider(p, cx);
+                                // The one it's on already keeps its Chat / Work mode.
+                                if this.active_provider().picker() != p {
+                                    this.set_provider(p, cx);
+                                }
                             }))
                             .into_any_element(),
                     );
