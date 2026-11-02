@@ -76,6 +76,13 @@ pub fn fetch_models(cx: &mut Context<KynexApp>) {
     cx.spawn(async move |this, cx| {
         let result = cx
             .background_spawn(async {
+                // Grok's saved list too, unless a Grok session has reported one already.
+                let grok = kynex_core::grok::saved_models();
+                if !grok.is_empty()
+                    && let Ok(mut known) = GROK_MODEL_LIST.lock()
+                {
+                    known.get_or_insert(grok);
+                }
                 let saved = session::saved_models();
                 if saved.is_empty() { session::list_models() } else { Ok(saved) }
             })
@@ -206,7 +213,83 @@ impl KynexApp {
     }
 }
 
+/// How the composer and menu name "no `--model`" on Grok.
+pub(super) const GROK_DEFAULT_LABEL: &str = "Grok default";
+
+/// Grok's models, as a Grok session last reported them (saved across restarts).
+static GROK_MODEL_LIST: Mutex<Option<Vec<ModelInfo>>> = Mutex::new(None);
+
+fn grok_known() -> Vec<ModelInfo> {
+    GROK_MODEL_LIST.lock().ok().and_then(|l| l.clone()).unwrap_or_default()
+}
+
+/// The Grok model `id`, if Grok has said which it has; `""` is the first, Grok's default.
+pub fn grok_model(id: &str) -> Option<ModelInfo> {
+    let list = grok_known();
+    if id.is_empty() { list.into_iter().next() } else { list.into_iter().find(|m| m.value == id) }
+}
+
+/// A Grok session's model list came: kept for the picker, and saved.
+pub fn grok_reported(list: Vec<ModelInfo>, cx: &mut Context<KynexApp>) {
+    if list.is_empty() || grok_known() == list {
+        return;
+    }
+    if let Ok(mut known) = GROK_MODEL_LIST.lock() {
+        *known = Some(list.clone());
+    }
+    cx.background_spawn(async move {
+        if let Err(e) = kynex_core::grok::save_models(&list) {
+            eprintln!("kynex: {e}");
+        }
+    })
+    .detach();
+}
+
 impl KynexApp {
+    /// The model menu on Grok: its default, then the models Grok offers (once a
+    /// Grok session has said), or the id this folder already uses until then.
+    pub(super) fn grok_model_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let t = theme(cx).clone();
+        let current = self.active_model();
+        // "default" is no `--model`: whatever the installed `grok` picks.
+        let mut rows = vec![("default".to_string(), GROK_DEFAULT_LABEL.to_string(), String::new())];
+        rows.extend(grok_known().into_iter().map(|m| (m.value, m.name, m.description)));
+        if !current.is_empty() && !rows.iter().any(|r| r.0 == current) {
+            rows.push((current.clone(), current.clone(), String::new()));
+        }
+        rows.into_iter()
+            .enumerate()
+            .map(|(n, (id, name, description))| {
+                let selected = if current.is_empty() { id == "default" } else { id == current };
+                div()
+                    .id(("grok-pick", n))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(t.hover))
+                    .when(selected, |d| d.bg(t.active))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().text_sm().text_color(t.text).child(name))
+                            .when(!description.is_empty(), |d| {
+                                d.child(div().text_xs().text_color(t.text_muted).child(description))
+                            }),
+                    )
+                    .when(selected, |d| d.child(icon(Icon::Check, t.text_muted)))
+                    .on_click(pick(id, cx))
+                    .into_any_element()
+            })
+            .collect()
+    }
+
     /// The model menu on OpenRouter: My models, and a way to change them.
     pub(super) fn openrouter_model_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let t = theme(cx).clone();

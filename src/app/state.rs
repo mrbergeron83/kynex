@@ -121,6 +121,8 @@ pub struct Saved {
     pub openrouter: kynex_core::openrouter::OpenRouterConfig,
     /// The sessions panel splits ungrouped sessions by provider, under a header each.
     pub sessions_by_provider: bool,
+    /// Grok is offered as a provider (Settings → Providers); off until opted in.
+    pub grok: bool,
 }
 
 impl Default for Saved {
@@ -161,6 +163,7 @@ impl Default for Saved {
             chief_working: Vec::new(),
             openrouter: Default::default(),
             sessions_by_provider: false,
+            grok: false,
         }
     }
 }

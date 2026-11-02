@@ -37,6 +37,8 @@ pub struct ProvidersView {
     /// Provider variables in `~/.claude/settings.json`'s env block, which may
     /// override what Kynex sets, in words; read when Settings opens.
     overrides: Option<String>,
+    /// Grok: opted in or not, installed, signed in (`grok_setup.rs`).
+    pub(super) grok: super::grok_setup::GrokView,
 }
 
 #[derive(Clone)]
@@ -89,7 +91,11 @@ impl KynexApp {
         self.load_account(cx);
         self.load_openrouter_key(cx);
         self.load_settings_overrides(cx);
+        if self.saved.grok {
+            self.load_grok_status(cx);
+        }
         ProvidersView {
+            grok: Default::default(),
             account: None,
             key: KeyState::Loading,
             replacing: false,
@@ -386,6 +392,7 @@ impl KynexApp {
             .child(self.render_openrouter_key(p, t, cx))
             .child(self.render_output_cap(p, t, cx))
             .child(self.render_my_models(p, t, cx))
+            .child(self.render_grok(t, cx))
     }
 
     fn render_anthropic(&self, p: &ProvidersView, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {

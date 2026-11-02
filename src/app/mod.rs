@@ -49,6 +49,7 @@
 //! | `rules_view.rs`     | its "Rules in effect": every rule, a command tester  |
 //! | `app_settings.rs`   | the app's Settings modal: CLI, shell, appearance     |
 //! | `providers.rs`      | Settings → Providers: Anthropic sign-in, OpenRouter key, cap, My models |
+//! | `grok_setup.rs`     | Settings → Providers → Grok: opt in, install, sign in / out |
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
 //! | `provider_setup.rs` | OpenRouter key on launch, new sessions' provider, OpenRouter on the setup screen |
 //! | `app_update.rs`     | Kynex updating itself: checks, the update toast      |
@@ -82,6 +83,7 @@ mod extensions_servers;
 mod find;
 mod footer;
 mod git_modal;
+mod grok_setup;
 mod handoff;
 mod history;
 mod keys;
@@ -571,6 +573,7 @@ impl KynexApp {
         // in the background flashes the taskbar / bounces the Dock icon.
         let mut called = false;
         let mut reports = Vec::new();
+        let mut grok_lists = Vec::new();
         let mut without_tools = Vec::new();
         let mut limits: Option<kynex_core::usage::Limits> = None;
         // Folders whose files may have just changed: a turn ended or a tool call finished.
@@ -609,6 +612,9 @@ impl KynexApp {
             if let Some(init) = s.take_init() {
                 reports.push((s.cwd.clone(), init, s.provider().provider()));
             }
+            if let Some(list) = s.take_grok_models() {
+                grok_lists.push(list);
+            }
             if let Some(model) = s.take_no_tools() {
                 without_tools.push((s.uid, model));
             }
@@ -633,6 +639,9 @@ impl KynexApp {
         // What a session reported as it started: its folder's commands, the models.
         for (key, model) in without_tools {
             self.model_without_tools(key, &model);
+        }
+        for list in grok_lists {
+            models::grok_reported(list, cx);
         }
         for (cwd, init, provider) in reports {
             self.commands_reported(cwd, init.commands, cx);

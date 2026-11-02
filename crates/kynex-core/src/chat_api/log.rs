@@ -21,7 +21,7 @@ pub struct Log {
 impl Log {
     /// The log of a conversation in `cwd`: session `resume`'s, continued from
     /// its entry `at` if given, or a new one. Returns it with the messages so
-    /// far, as the API takes them. Blocks on reading the log.
+    /// far, as the chat API takes them (tool calls left out). Blocks on reading the log.
     pub fn open(cwd: &Path, resume: Option<&str>, at: Option<&str>) -> (Log, Vec<Value>) {
         let session_id = resume.map_or_else(new_id, str::to_string);
         let path = crate::session::transcript_path(cwd, &session_id);

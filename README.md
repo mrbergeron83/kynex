@@ -184,6 +184,19 @@ Good to know:
 - Costs: the footer shows what's left on your key. Kynex doesn't show a per-turn price for
   OpenRouter sessions, because Claude Code can only price Claude models.
 
+### Grok
+
+Grok is opt-in: turn it on under **Settings → Providers → Grok**, which can also install
+xAI's Grok Build CLI and sign you in to it in the browser. Then pick **Grok** on a new session.
+
+Kynex runs Grok Build in the project folder over the Agent Client Protocol: one process per
+session that stays up between messages and sleeps when idle. It uses Grok's own tools, login and
+models; the model and effort menus list what Grok offers, and switch a running session. Grok
+asks before edits and commands in Kynex's permission prompts, and Accept edits and Auto let
+edits through. The context meter and each turn's cost come from what Grok reports. Grok
+sessions started in Kynex stay in the sessions list and reopen where they left off. A session
+keeps its provider once you've sent something.
+
 ## Links
 
 - [Changelog](CHANGELOG.md)

@@ -62,6 +62,8 @@ struct OpenSession {
     finished: bool,
     /// It runs on OpenRouter (the row shows so).
     openrouter: bool,
+    /// It runs on Grok.
+    grok: bool,
 }
 
 impl KynexApp {
@@ -165,6 +167,7 @@ impl KynexApp {
                 }),
                 busy: s.busy,
                 openrouter: s.provider().provider().is_openrouter(),
+                grok: s.provider().provider() == kynex_core::provider::Provider::Grok,
                 waiting: s.waiting(),
                 finished: s.finished,
             })
@@ -270,6 +273,7 @@ impl KynexApp {
             to.push(
                 session_row(("open", uid as usize), title.into(), is_current, &t)
                     .when(o.openrouter, |r| r.child(openrouter_mark(("open-provider", uid as usize), &t)))
+                    .when(o.grok, |r| r.child(grok_mark(("open-grok", uid as usize), &t)))
                     .children(news_lamp(("open-status", uid as usize), o.busy, o.waiting, o.finished, cx))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.confirm_delete = None;
@@ -377,9 +381,10 @@ impl KynexApp {
                     .into_any_element(),
                 false => title,
             };
-            let on_openrouter = self.groups_for(&cwd).provider_of(&id).is_openrouter();
+            let provider = self.groups_for(&cwd).provider_of(&id);
             let row = session_row_with(("session", n), title, is_current || picked, &t)
-                .when(on_openrouter, |r| r.child(openrouter_mark(("session-provider", n), &t)))
+                .when(provider.is_openrouter(), |r| r.child(openrouter_mark(("session-provider", n), &t)))
+                .when(provider == kynex_core::provider::Provider::Grok, |r| r.child(grok_mark(("session-grok", n), &t)))
                 .group("session-row")
                 .tooltip(Tooltip::with_meta(
                     info.title.clone(),
@@ -697,6 +702,22 @@ fn openrouter_mark(id: impl Into<gpui::ElementId>, t: &Palette) -> gpui::Statefu
         .text_color(t.text_placeholder)
         .child("OR")
         .tooltip(Tooltip::text("Runs on OpenRouter"))
+}
+
+/// A small mark on the row of a session that runs on Grok.
+fn grok_mark(id: impl Into<gpui::ElementId>, t: &Palette) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .px_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(t.border_variant)
+        .font_family(mono())
+        .text_xs()
+        .text_color(t.text_placeholder)
+        .child("Grok")
+        .tooltip(Tooltip::text("Runs on Grok"))
 }
 
 /// A row's name as text, brighter on the shown session.

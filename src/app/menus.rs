@@ -58,7 +58,12 @@ impl KynexApp {
             (None, Some(p)) => self.claude_settings(p).effort,
             _ => String::new(),
         };
-        let allowed = models::current_model(&self.active_model()).map(|m| m.efforts);
+        // Only the levels the model takes, once its provider has said which.
+        let allowed = if self.active_provider() == kynex_core::provider::Provider::Grok {
+            models::grok_model(&self.active_model()).map(|m| m.efforts).filter(|e| !e.is_empty())
+        } else {
+            models::current_model(&self.active_model()).map(|m| m.efforts)
+        };
         let levels = project::EFFORTS
             .iter()
             .filter(|(id, _)| id.is_empty() || allowed.as_ref().is_none_or(|a| a.iter().any(|e| e == id)));
@@ -224,6 +229,8 @@ impl KynexApp {
                 }
                 if self.active_provider().is_openrouter() {
                     items.extend(self.openrouter_model_items(cx));
+                } else if self.active_provider() == kynex_core::provider::Provider::Grok {
+                    items.extend(self.grok_model_items(cx));
                 } else {
                     items.extend(self.model_items(cx));
                 }

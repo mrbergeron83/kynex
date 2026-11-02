@@ -25,15 +25,16 @@ pub struct Pulse {
 }
 
 impl Pulse {
-    /// "Starting Claude…", "Waiting for Claude… 3s", "Working… 1m 4s".
-    pub fn label(&self) -> String {
+    /// "Starting Claude…", "Waiting for Grok… 3s", "Working… 1m 4s". `who` is
+    /// the process this session starts.
+    pub fn label(&self, who: &str) -> String {
         let what = match self.activity {
-            Activity::Starting => "Starting Claude…",
-            Activity::Waiting => "Waiting for Claude…",
-            Activity::Working => "Working…",
+            Activity::Starting => format!("Starting {who}…"),
+            Activity::Waiting => format!("Waiting for {who}…"),
+            Activity::Working => "Working…".to_string(),
         };
         let took = self.since.elapsed();
-        if took.as_secs() == 0 { what.into() } else { format!("{what} {}", crate::fmt::elapsed(took)) }
+        if took.as_secs() == 0 { what } else { format!("{what} {}", crate::fmt::elapsed(took)) }
     }
 }
 
@@ -86,10 +87,10 @@ mod tests {
     #[test]
     fn labels_count_up_after_a_second() {
         let now = Pulse { activity: Activity::Starting, since: Instant::now() };
-        assert_eq!(now.label(), "Starting Claude…");
+        assert_eq!(now.label("Claude"), "Starting Claude…");
         let since = Instant::now() - Duration::from_secs(3);
-        assert_eq!(Pulse { activity: Activity::Waiting, since }.label(), "Waiting for Claude… 3s");
-        assert_eq!(Pulse { activity: Activity::Working, since }.label(), "Working… 3s");
+        assert_eq!(Pulse { activity: Activity::Waiting, since }.label("Grok"), "Waiting for Grok… 3s");
+        assert_eq!(Pulse { activity: Activity::Working, since }.label("Claude"), "Working… 3s");
     }
 
     #[test]

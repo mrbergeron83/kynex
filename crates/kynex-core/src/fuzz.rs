@@ -9,6 +9,53 @@ use serde_json::Value;
 use crate::session::{Kind, Session};
 use crate::{cli, commands, extensions, git, markdown, mcp_config, rewind, session, tasks, update};
 
+/// Grok's `chat_history.jsonl` (a summary on the first line), as the sessions
+/// list and a reopened Grok session read them.
+pub fn grok_history(text: &str) {
+    let mut lines = text.splitn(2, '\n');
+    if let Ok(v) = serde_json::from_str::<Value>(lines.next().unwrap_or("")) {
+        let _ = crate::grok::log::info_from("x", &v, || std::time::SystemTime::UNIX_EPOCH);
+    }
+    let mut s = Session::new(Kind::Code, PathBuf::new());
+    for v in crate::grok::log::entries(lines.next().unwrap_or("")) {
+        s.replay_entry(v);
+    }
+    let _ = crate::transcript::rows(&s.items);
+}
+
+/// What `grok agent stdio` writes (ACP, one JSON-RPC message per line), through
+/// the adapter and into a session, with the session's answers going back.
+pub fn grok_acp(text: &str) {
+    use crate::grok::acp::{Acp, Out};
+    let mut acp = Acp::new(PathBuf::new(), "m", crate::project::Mode::Manual, false, None);
+    let _ = acp.start();
+    let _ = acp.outgoing(serde_json::json!({ "type": "user", "message": { "content": "hi" } }));
+    let mut s = Session::new(Kind::Code, PathBuf::new());
+    for line in text.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+        for out in acp.incoming(v) {
+            if let Out::Handle(v) = out {
+                s.handle(v);
+            }
+        }
+        // Answer whatever it asked, as a user would.
+        let asked: Vec<String> = s
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                session::Item::Permission { request_id, .. } => Some(request_id.clone()),
+                _ => None,
+            })
+            .collect();
+        for id in asked {
+            let answer = serde_json::json!({ "type": "control_response", "response": {
+                "request_id": id, "response": { "behavior": "allow" } } });
+            let _ = acp.outgoing(answer);
+        }
+    }
+    let _ = crate::transcript::rows(&s.items);
+}
+
 /// The CLI's stream-json output, one event per line, as a live session reads it.
 pub fn stream_json(text: &str) {
     let mut s = Session::new(Kind::Chat, PathBuf::new());
@@ -16,7 +63,7 @@ pub fn stream_json(text: &str) {
         if let Ok(v) = serde_json::from_str::<Value>(line) {
             s.handle(v);
         }
-        let _ = s.pulse().map(|p| p.label());
+        let _ = s.pulse().map(|p| p.label("Claude"));
     }
     let _ = crate::mcp::handoff(&s.items);
     let _ = crate::mcp::health(&s.mcp);

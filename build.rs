@@ -14,8 +14,12 @@ fn main() {
         .map_or_else(|| "dev".to_string(), |c| c.chars().take(7).collect());
     println!("cargo:rustc-env=KYNEX_COMMIT={commit}");
 
+    // Under `dx serve --hot-patch` (the `hotpatch` feature) dx embeds its own icon and
+    // version resource, and linking ours too fails with "duplicate resource".
     #[cfg(windows)]
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var_os("CARGO_FEATURE_HOTPATCH").is_none()
+    {
         let mut res = winresource::WindowsResource::new();
         res.set_icon("assets/icons/kynex.ico");
         res.compile().expect("failed to embed the Windows icon");
