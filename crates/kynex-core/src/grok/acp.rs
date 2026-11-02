@@ -176,15 +176,7 @@ impl Acp {
     pub fn start(&mut self) -> Vec<Value> {
         let id = self.id();
         self.init = Some(id);
-        vec![request(
-            id,
-            "initialize",
-            json!({
-                "protocolVersion": 1,
-                "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false },
-                "_meta": { "clientIdentifier": "kynex" },
-            }),
-        )]
+        vec![request(id, "initialize", initialize_params())]
     }
 
     /// Whether a turn is running.
@@ -603,6 +595,15 @@ fn prompt_blocks(content: &Value) -> Value {
         _ => Vec::new(),
     };
     Value::Array(blocks)
+}
+
+/// What Kynex tells Grok about itself in `initialize`.
+pub(crate) fn initialize_params() -> Value {
+    json!({
+        "protocolVersion": 1,
+        "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false },
+        "_meta": { "clientIdentifier": "kynex" },
+    })
 }
 
 #[cfg(test)]

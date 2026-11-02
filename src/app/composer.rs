@@ -247,6 +247,9 @@ impl KynexApp {
         // A chief worker runs without prompts; its mode doesn't apply.
         let worker = session.is_some_and(|s| s.worker);
         models::fetch_models(cx);
+        if self.saved.grok && kynex_core::grok::installed() {
+            models::fetch_grok_models(cx);
+        }
         // Who answers: a picker on a new session when both are set up, else
         // a label (a session keeps its provider once it starts).
         let provider = self.active_provider();
