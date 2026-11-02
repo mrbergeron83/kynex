@@ -52,16 +52,21 @@ pub enum Provider {
     /// a conversation only, no tools, so any model works, tools or not.
     #[serde(rename = "openrouter-chat")]
     OpenRouterChat,
+    /// xAI's Grok through the installed `grok` CLI ([`crate::grok`]). Grok Build
+    /// owns the tools and the login. The `claude` process is not involved.
+    Grok,
 }
 
 impl Provider {
     /// Every provider, in the order pickers list them.
-    pub const ALL: [Provider; 3] = [Provider::Anthropic, Provider::OpenRouter, Provider::OpenRouterChat];
+    pub const ALL: [Provider; 4] =
+        [Provider::Anthropic, Provider::OpenRouter, Provider::OpenRouterChat, Provider::Grok];
 
-    /// Whether its models take Claude's `--effort` levels. OpenRouter's
-    /// mostly don't, so OpenRouter sessions get none and the picker hides.
+    /// Whether its models take effort levels: Claude's `--effort`, Grok's
+    /// reasoning effort. OpenRouter's mostly don't, so OpenRouter sessions get
+    /// none and the picker hides.
     pub fn takes_effort(self) -> bool {
-        self == Provider::Anthropic
+        matches!(self, Provider::Anthropic | Provider::Grok)
     }
 
     /// For `skip_serializing_if`: Anthropic, the default, isn't written.
@@ -87,7 +92,8 @@ impl Provider {
     /// as a Claude model, wrong for OpenRouter's; the chat harness reports
     /// what OpenRouter charged.
     pub fn knows_cost(self) -> bool {
-        matches!(self, Provider::Anthropic | Provider::OpenRouterChat)
+        // Grok prices each turn itself (`costUsdTicks`), so its cost is real too.
+        matches!(self, Provider::Anthropic | Provider::OpenRouterChat | Provider::Grok)
     }
 
     /// The CLI's stderr lines a session on this provider shows; the rest is
@@ -96,9 +102,17 @@ impl Provider {
     /// know the model's name, on every start.
     pub fn shows_stderr(self, line: &str) -> bool {
         let line = line.trim();
-        let noise = self == Provider::OpenRouter
-            && (line.contains("claude.ai connectors are disabled")
-                || line.starts_with("[claude-code:unrecognized_model]"));
+        let noise = match self {
+            Provider::OpenRouter => {
+                line.contains("claude.ai connectors are disabled")
+                    || line.starts_with("[claude-code:unrecognized_model]")
+            }
+            // `grok agent` logs on stderr, errors of its own included (an MCP server
+            // that needs signing in), and says what matters over ACP. Only a
+            // failure to start (a bad argument, a crash) is shown.
+            Provider::Grok => !(line.starts_with("error:") || line.contains("panicked")),
+            _ => false,
+        };
         !line.is_empty() && !noise
     }
 
@@ -107,6 +121,7 @@ impl Provider {
             Provider::Anthropic => "Anthropic",
             Provider::OpenRouter => "OpenRouter",
             Provider::OpenRouterChat => "OpenRouter chat",
+            Provider::Grok => "Grok",
         }
     }
 
@@ -116,6 +131,7 @@ impl Provider {
             Provider::Anthropic => "Your Claude plan or Console account",
             Provider::OpenRouter => "Your models, with your OpenRouter key: work, or just chat",
             Provider::OpenRouterChat => "Any of your OpenRouter models, chat only: no tools, no files",
+            Provider::Grok => "Grok Build in this folder, with its own login",
         }
     }
 }
@@ -152,6 +168,10 @@ pub enum Launch {
         key: String,
         settings: OpenRouterSettings,
     },
+    /// The installed `grok` CLI. The model is a Grok model id; empty is the default.
+    Grok {
+        model: String,
+    },
 }
 
 /// Never prints the key.
@@ -165,6 +185,7 @@ impl std::fmt::Debug for Launch {
             Launch::OpenRouterChat { settings, .. } => {
                 f.debug_struct("OpenRouterChat").field("key", &"<hidden>").field("settings", settings).finish()
             }
+            Launch::Grok { model } => f.debug_struct("Grok").field("model", model).finish(),
         }
     }
 }
@@ -200,6 +221,7 @@ impl Launch {
             Launch::OpenRouterChat { key, settings: s } if !model.is_empty() => {
                 Launch::OpenRouterChat { key: key.clone(), settings: settings(s) }
             }
+            Launch::Grok { .. } if !model.is_empty() => Launch::Grok { model: model.to_string() },
             _ => self.clone(),
         }
     }
@@ -213,13 +235,14 @@ impl Launch {
         }
     }
 
-    /// The OpenRouter model it runs on; `None` on Anthropic.
+    /// The model it runs on; `None` on Anthropic (that one goes as `--model`).
     pub fn model(&self) -> Option<&str> {
         match self {
             Launch::Anthropic => None,
             Launch::OpenRouter { settings, .. } | Launch::OpenRouterChat { settings, .. } => {
                 Some(settings.model.as_str()).filter(|m| !m.trim().is_empty())
             }
+            Launch::Grok { model, .. } => Some(model.as_str()).filter(|m| !m.trim().is_empty()),
         }
     }
 
@@ -228,6 +251,7 @@ impl Launch {
             Launch::Anthropic => Provider::Anthropic,
             Launch::OpenRouter { .. } => Provider::OpenRouter,
             Launch::OpenRouterChat { .. } => Provider::OpenRouterChat,
+            Launch::Grok { .. } => Provider::Grok,
         }
     }
 
@@ -276,8 +300,8 @@ impl Launch {
                 set.push((MAX_OUTPUT_TOKENS, cap.to_string()));
                 (set, NOT_FOR_OPENROUTER.to_vec())
             }
-            // The harness gets its key and model itself (`chat_api::command`).
-            Launch::OpenRouterChat { .. } => (Vec::new(), Vec::new()),
+            // The chat harness and `grok` take their own login. Nothing of it goes in the environment.
+            Launch::OpenRouterChat { .. } | Launch::Grok { .. } => (Vec::new(), Vec::new()),
         };
         let remove = inherited
             .into_iter()
@@ -556,6 +580,21 @@ mod tests {
     #[test]
     fn provider_serializes_lowercase() {
         assert_eq!(serde_json::to_string(&Provider::OpenRouter).unwrap(), "\"openrouter\"");
+        assert_eq!(serde_json::to_string(&Provider::Grok).unwrap(), "\"grok\"");
         assert_eq!(serde_json::from_str::<Provider>("\"anthropic\"").unwrap(), Provider::Anthropic);
+        assert_eq!(serde_json::from_str::<Provider>("\"grok\"").unwrap(), Provider::Grok);
+    }
+
+    #[test]
+    fn grok_keeps_its_login_off_the_command() {
+        let launch = Launch::Grok { model: "grok-4.7".into() };
+        assert!(launch.env(NONE).set.is_empty());
+        assert!(launch.settings_env().is_none());
+        assert_eq!(launch.with_model("grok-4.6").model(), Some("grok-4.6"));
+        assert_eq!(launch.provider(), Provider::Grok);
+        assert!(Provider::Grok.takes_effort());
+        assert!(Provider::Grok.knows_cost());
+        assert_eq!(format!("{launch:?}"), "Grok { model: \"grok-4.7\" }");
+        assert_eq!(launch.for_work().provider(), Provider::Grok);
     }
 }

@@ -95,6 +95,9 @@ A cargo workspace with two crates:
     their file checkpoints, restoring files (`--rewind-files`); the session resumes with
     `--resume-session-at`
   - `groups.rs` — session groups and the archive in the sessions panel (`sessions.json` per project)
+  - `grok/` — the Grok provider: `grok agent stdio` over ACP (`acp.rs` maps it to and from
+    stream-json, so sessions draw it like `claude`), usage and models (`usage.rs`), Grok's own
+    session records for the list and reopening (`log.rs`), install / sign-in (`setup.rs`)
   - `timeline.rs` — a session's turns and their notable steps, for the timeline panel;
     `transcript.rs` lays items out as transcript rows (tool runs folded) and maps between them
   - `markdown.rs` — markdown (pulldown-cmark) parsed into plain blocks the app draws

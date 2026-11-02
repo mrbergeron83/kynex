@@ -260,7 +260,7 @@ impl KynexApp {
         let work_ok = self.saved.openrouter.takes_tools(&self.folder_openrouter_model(&self.active_dir()));
         let work_mode = on_openrouter.then(|| self.render_work_toggle(chat_only, fresh, work_ok, cx));
         let can_switch = fresh && self.providers_available().len() > 1;
-        let show_provider = can_switch || on_openrouter;
+        let show_provider = can_switch || on_openrouter || provider == kynex_core::provider::Provider::Grok;
         let model_label = self.active_model_name();
         // A session with a model of its own marks the chip with a message bubble.
         let own_model = self.session_model().is_some();

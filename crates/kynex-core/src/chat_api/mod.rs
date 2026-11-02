@@ -8,7 +8,7 @@
 //! HTTP goes through `curl`, like the rest of Kynex; the key reaches it on
 //! stdin (`--config -`), never on a command line.
 
-mod log;
+pub(crate) mod log;
 pub mod stream;
 
 use std::collections::VecDeque;

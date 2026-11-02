@@ -220,6 +220,9 @@ pub struct ClaudeSettings {
     /// [`crate::chat_api`]), its own pick apart from Work's; empty is the default of My models.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub openrouter_chat_model: String,
+    /// The model its new Grok sessions start on; empty is Grok's default.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub grok_model: String,
 }
 
 impl ClaudeSettings {

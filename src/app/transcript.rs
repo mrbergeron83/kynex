@@ -176,6 +176,7 @@ impl KynexApp {
         }
         if count == 0 {
             let on_openrouter = self.active_provider().is_openrouter();
+            let on_grok = self.active_provider() == kynex_core::provider::Provider::Grok;
             let chat_only = self.active_provider() == kynex_core::provider::Provider::OpenRouterChat;
             let msg = match self.saved.active {
                 Active::Chat if self.saved.chief_view => {
@@ -189,12 +190,16 @@ impl KynexApp {
                 Active::Chat if on_openrouter => {
                     format!("Start a conversation. Runs on {} through OpenRouter.", self.active_model_name())
                 }
+                Active::Chat if on_grok => format!("Start a conversation with {}.", self.active_model_name()),
                 Active::Chat => "Start a conversation. Uses your Claude Code login, no API key needed.".to_string(),
                 Active::Project(_) if on_openrouter => {
                     format!(
                         "Ask Claude Code to work on this project, on {} through OpenRouter.",
                         self.active_model_name()
                     )
+                }
+                Active::Project(_) if on_grok => {
+                    format!("Ask Grok to work on this project, on {}.", self.active_model_name())
                 }
                 Active::Project(_) => "Ask Claude Code to work on this project.".to_string(),
             };
@@ -333,7 +338,13 @@ impl KynexApp {
     /// Its room stays for the whole turn, so the transcript doesn't hop as
     /// steps start and end.
     fn render_pulse(&self, t: &Palette) -> impl IntoElement + use<> {
-        let label = self.active_session().and_then(|s| s.pulse()).map(|p| p.label());
+        let label = self.active_session().and_then(|s| {
+            let who = match s.provider().provider() {
+                kynex_core::provider::Provider::Grok => "Grok",
+                _ => "Claude",
+            };
+            s.pulse().map(|p| p.label(who))
+        });
         let available = self.active_key().and_then(|k| self.threads.get(&k)).map_or(0., |th| th.width.get());
         // Measured in pixels; the columns are in sizes at 100%, which `px` scales back.
         let available = available / self.saved.zoom;

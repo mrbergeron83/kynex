@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::ui::px;
 use gpui::{AnyElement, Context, div, prelude::*};
 use kynex_core::cli::UpdateState;
+use kynex_core::openrouter;
 use kynex_core::usage::{self, Level, Limits, Window};
 
 use super::KynexApp;
@@ -58,12 +59,36 @@ impl KynexApp {
         let (info, at) = self.openrouter_credit.as_ref().filter(|_| self.openrouter_key.is_some())?;
         let low = info.limit_remaining.is_some_and(|left| left < 1.0);
         let checked = kynex_core::fmt::ago(std::time::SystemTime::now() - at.elapsed());
+        // Today's free requests, beside the credit while the session is on a
+        // `:free` model; their daily cap is the limit that bites there.
+        let on_free = self
+            .active_session()
+            .and_then(|s| s.provider().with_model(&s.model).model().map(|m| m.ends_with(":free")))
+            .unwrap_or(false);
+        let free = info.free.filter(|_| on_free);
+        let resets = info
+            .free
+            .map(|_| format!(" · free count resets in {}", openrouter::free_reset_in(usage::now())))
+            .unwrap_or_default();
         Some(
             ghost_button("openrouter-credit", cx)
                 .gap_1p5()
                 .child(div().text_color(t.text_placeholder).child("OpenRouter"))
                 .child(div().text_color(if low { t.warning } else { t.text_muted }).child(info.short()))
-                .tooltip(Tooltip::with_meta("OpenRouter credit", format!("{} · checked {checked}", info.credit())))
+                .children(free.map(|f| {
+                    let color = if f.spent() {
+                        t.error
+                    } else if f.low() {
+                        t.warning
+                    } else {
+                        t.text_muted
+                    };
+                    div().text_color(color).child(f.short())
+                }))
+                .tooltip(Tooltip::with_meta(
+                    "OpenRouter credit",
+                    format!("{}{resets} · checked {checked}", info.credit()),
+                ))
                 .on_click(
                     cx.listener(|this, _, _, cx| this.open_settings_on(super::app_settings::PROVIDERS_SECTION, cx)),
                 )

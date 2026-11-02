@@ -363,6 +363,11 @@ pub struct Session {
     limits: Option<crate::usage::Limits>,
     /// The log entry a rewind went back to, which the next process continues from.
     resume_at: Option<String>,
+    /// A Grok process's protocol state ([`crate::grok::acp`]): what it writes and reads goes through it.
+    acp: Option<crate::grok::acp::Acp>,
+    /// Counts processes started, so [`Self::poll`] drops what an old one sent
+    /// once a new one has taken its place (a Grok turn starting from the last one's result).
+    runs: u64,
     /// The log being read back, on [`Self::resume`] or a rewind.
     loader: Option<Loader>,
     /// While replaying: the log and line the entry came from, so its images stay there.
@@ -428,7 +433,14 @@ fn read_history(cwd: &Path, id: &str, until: Option<&str>, tx: &Sender<Loaded>, 
         wake();
         sent
     };
-    let Some(path) = find_transcript(cwd, id) else { return };
+    let Some(path) = find_transcript(cwd, id) else {
+        // A Grok session: Grok's own history, all at once (it has no branches to walk).
+        if let Some(entries) = crate::grok::log::history(cwd, id) {
+            let span = crate::session_log::Span { offset: 0, len: 0 };
+            send(Loaded::Recent(Replayed::of(None, entries.into_iter().map(|v| (span, v)))));
+        }
+        return;
+    };
     let Ok(mut file) = std::fs::File::open(&path) else { return };
     let path = Some(Arc::new(path));
     let walked = Branch { recent: RECENT_ENTRIES }.walk(&mut file, until, |mut recent| {
@@ -510,6 +522,8 @@ impl Session {
             init: None,
             limits: None,
             resume_at: None,
+            acp: None,
+            runs: 0,
             loader: None,
             origin: None,
             browser_servers: Vec::new(),
@@ -724,6 +738,24 @@ impl Session {
     }
 
     fn spawn(&mut self) -> Result<(), String> {
+        // Grok: its agent over ACP, continuing the conversation if there is one.
+        if self.provider.provider() == crate::provider::Provider::Grok {
+            let model = self.provider.with_model(&self.model).model().unwrap_or("").to_string();
+            let resume = self.resume_id().map(str::to_string);
+            let effort = match self.kind {
+                Kind::Code => project::ClaudeSettings::load(&self.cwd).effort,
+                Kind::Chat => String::new(),
+            };
+            let mut acp =
+                crate::grok::acp::Acp::new(self.cwd.clone(), &model, self.mode, self.worker, resume.as_deref())
+                    .with_effort(&effort);
+            self.start(crate::grok::command(&self.cwd), None, "`grok`")?;
+            for line in acp.start() {
+                self.write_line(&line);
+            }
+            self.acp = Some(acp);
+            return Ok(());
+        }
         // OpenRouter chat: Kynex's own harness in the CLI's place, same protocol.
         if let crate::provider::Launch::OpenRouterChat { key, settings } = self.provider.with_model(&self.model) {
             let resume = self.resume_id().map(str::to_string);
@@ -829,11 +861,16 @@ impl Session {
         self.rx = Some(rx);
         self.launched = launched;
         self.spawned = Some(Instant::now());
+        self.runs += 1;
         self.ready = false;
         self.talked = false;
-        // Ask for the commands and models first, as the Agent SDK does; the
-        // answer comes before any reply, and nothing else about the session changes.
-        self.write(json!({ "type": "control_request", "request_id": INIT_ID, "request": { "subtype": "initialize" } }));
+        // `grok` is one turn and speaks the message stream on its own. `claude`
+        // is asked for its commands and models first, as the Agent SDK does.
+        if self.provider.provider() != crate::provider::Provider::Grok {
+            self.write(
+                json!({ "type": "control_request", "request_id": INIT_ID, "request": { "subtype": "initialize" } }),
+            );
+        }
         Ok(())
     }
 
@@ -860,6 +897,11 @@ impl Session {
         true
     }
 
+    /// Grok's models with their effort levels, when its process reported a new list; once.
+    pub fn take_grok_models(&mut self) -> Option<Vec<ModelInfo>> {
+        self.acp.as_mut()?.take_models()
+    }
+
     /// The commands and models the process reported when it started, once.
     pub fn take_init(&mut self) -> Option<Init> {
         self.init.take()
@@ -870,13 +912,38 @@ impl Session {
         self.limits.take()
     }
 
+    /// Writes `msg` as `claude` takes it; to Grok, as the ACP lines it stands for.
     fn write(&mut self, msg: Value) {
+        if let Some(acp) = self.acp.as_mut() {
+            for line in acp.outgoing(msg) {
+                self.write_line(&line);
+            }
+            return;
+        }
+        self.write_line(&msg);
+    }
+
+    /// Acts on what [`crate::grok::acp::Acp::incoming`] made of a line from Grok.
+    fn take_acp(&mut self, outs: Vec<crate::grok::acp::Out>) {
+        use crate::grok::acp::Out;
+        for out in outs {
+            match out {
+                Out::Handle(v) => self.handle(v),
+                Out::Error(e) => self.items.push(Item::Error(e)),
+                Out::Write(line) => self.write_line(&line),
+            }
+        }
+    }
+
+    /// Writes one JSON line to the process.
+    fn write_line(&mut self, msg: &Value) {
         let Some(stdin) = &self.stdin else { return };
         let mut line = msg.to_string();
         line.push('\n');
         let ok = stdin.lock().is_ok_and(|mut s| s.write_all(line.as_bytes()).and_then(|_| s.flush()).is_ok());
         if !ok {
-            self.items.push(Item::Error("lost connection to claude process".into()));
+            let who = if self.provider.provider() == crate::provider::Provider::Grok { "grok" } else { "claude" };
+            self.items.push(Item::Error(format!("lost connection to {who} process")));
             self.kill();
         }
     }
@@ -884,7 +951,9 @@ impl Session {
     /// Sends a message, starting the process if it isn't running. While the
     /// log is still loading it waits in the queue, to go after the history.
     pub fn send(&mut self, text: String, attachments: Vec<Attachment>) {
-        if self.loading() {
+        // Grok takes no message mid-turn (`claude` does): it waits for the turn to end.
+        let grok_busy = self.busy && self.provider.provider() == crate::provider::Provider::Grok;
+        if self.loading() || grok_busy {
             self.queue.push(text, attachments);
             return;
         }
@@ -950,6 +1019,14 @@ impl Session {
     /// starts. On OpenRouter, where a model can go away under a conversation,
     /// an idle one stops too: the next message resumes it on the new model.
     pub fn use_model(&mut self, model: String) {
+        // Grok switches a running session live.
+        if let Some(acp) = self.acp.as_mut() {
+            for line in acp.set_model(&model) {
+                self.write_line(&line);
+            }
+            self.model = model;
+            return;
+        }
         if self.child.is_some() {
             let openrouter = self.provider.provider().is_openrouter();
             if model == self.model || (self.talked && !(openrouter && !self.busy)) {
@@ -1015,6 +1092,13 @@ impl Session {
     /// A process that isn't running reads them when it starts.
     pub fn apply_settings(&mut self, perms: &project::Permissions, claude: &project::ClaudeSettings) {
         let claude = &claude.for_provider(self.provider.provider());
+        // Grok takes its effort live; its rules are its own.
+        if let Some(acp) = self.acp.as_mut() {
+            for line in acp.set_effort(&claude.effort) {
+                self.write_line(&line);
+            }
+            return;
+        }
         let Some(launched) = &mut self.launched else { return };
         match launched.update(perms, claude) {
             project::Update::Same => {}
@@ -1180,6 +1264,7 @@ impl Session {
             let _ = child.kill();
             let _ = child.wait();
         }
+        self.acp = None;
         self.stdin = None;
         self.rx = None;
         self.busy = false;
@@ -1235,11 +1320,20 @@ impl Session {
             self.active_at = Instant::now();
         }
         let mut exited = false;
+        let run = self.runs;
         for ev in events {
+            // A new process started while handling these (the next Grok turn):
+            // the rest came from the old one, which is gone.
+            if self.runs != run {
+                return;
+            }
             match ev {
                 Event::Line(v) => {
                     self.process_up();
-                    self.handle(v);
+                    match self.acp.as_mut().map(|acp| acp.incoming(v.clone())) {
+                        Some(outs) => self.take_acp(outs),
+                        None => self.handle(v),
+                    }
                 }
                 Event::Stderr(s) => {
                     let provider = self.provider.provider();
@@ -1257,7 +1351,8 @@ impl Session {
         if exited {
             self.settle_thoughts();
             if self.busy {
-                self.items.push(Item::Error("claude process exited".into()));
+                let who = if self.provider.provider() == crate::provider::Provider::Grok { "grok" } else { "claude" };
+                self.items.push(Item::Error(format!("{who} process exited")));
             }
             self.kill();
         }
@@ -1268,8 +1363,10 @@ impl Session {
             self.session_id = Some(id.to_string());
         }
         // `system` init and status messages report the mode, e.g. after a plan is approved.
+        // Not `grok`'s: it reports `auto` as `default`, and the mode is Kynex's to pass each turn.
         if let Some(mode) = v["permissionMode"].as_str().and_then(project::Mode::from_cli)
             && self.child.is_some()
+            && self.provider.provider() != crate::provider::Provider::Grok
         {
             self.mode = mode;
         }
@@ -1368,7 +1465,20 @@ impl Session {
                     match block["type"].as_str() {
                         // Already rendered live from the stream deltas.
                         Some("text") if self.streaming_text => {}
-                        Some("text") => self.items.push(Item::Assistant(block["text"].as_str().unwrap_or("").into())),
+                        Some("text") => {
+                            let text = block["text"].as_str().unwrap_or("");
+                            // Hit live: say what the daily free cap is and when it resets.
+                            let text = if v["message"]["model"] == "<synthetic>"
+                                && self.child.is_some()
+                                && self.provider.provider().is_openrouter()
+                                && crate::openrouter::says_free_daily_limit(text)
+                            {
+                                format!("{text}\n\n{}", crate::openrouter::free_daily_limit_help(crate::usage::now()))
+                            } else {
+                                text.to_string()
+                            };
+                            self.items.push(Item::Assistant(text));
+                        }
                         // Streamed in already, or the block right before: finish
                         // that one. Otherwise (a log, no partial messages) it's new.
                         Some("thinking") => {
@@ -1497,11 +1607,14 @@ impl Session {
         for item in &self.items[start..] {
             let Item::ToolUse { name, input, .. } = item else { continue };
             tools += 1;
-            if !matches!(name.as_str(), "Edit" | "MultiEdit" | "Write" | "NotebookEdit") {
+            if !matches!(
+                name.as_str(),
+                "Edit" | "MultiEdit" | "Write" | "NotebookEdit" | "search_replace" | "StrReplace" | "write"
+            ) {
                 continue;
             }
             let v: Value = serde_json::from_str(input).unwrap_or_default();
-            let path = v["file_path"].as_str().or(v["notebook_path"].as_str()).unwrap_or("");
+            let path = v["file_path"].as_str().or(v["path"].as_str()).or(v["notebook_path"].as_str()).unwrap_or("");
             if !path.is_empty() && !files.iter().any(|f| f == path) {
                 files.push(path.to_string());
             }
@@ -1850,8 +1963,10 @@ fn models_from_init(v: &Value) -> Vec<ModelInfo> {
 /// Past sessions in `cwd`, newest first. Blocks on reading the ends of every
 /// transcript (tens of milliseconds for a big project); call it off the UI thread.
 pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
-    let Some(entries) = transcripts_dir(cwd).and_then(|d| std::fs::read_dir(d).ok()) else { return Vec::new() };
+    let entries = transcripts_dir(cwd).and_then(|d| std::fs::read_dir(d).ok());
     let mut sessions: Vec<SessionInfo> = entries
+        .into_iter()
+        .flatten()
         .filter_map(Result::ok)
         .filter_map(|e| {
             let path = e.path();
@@ -1876,6 +1991,15 @@ pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
             })
         })
         .collect();
+    // Grok sessions Kynex started here, from Grok's own records.
+    let groups = crate::groups::SessionGroups::load(cwd);
+    for (id, _) in groups.providers.iter().filter(|(_, p)| **p == crate::provider::Provider::Grok) {
+        if !sessions.iter().any(|s| s.id == *id)
+            && let Some(info) = crate::grok::log::info(cwd, id)
+        {
+            sessions.push(info);
+        }
+    }
     sessions.sort_by_key(|s| std::cmp::Reverse(s.modified));
     sessions
 }
@@ -2019,7 +2143,10 @@ pub(crate) fn first_message(line: &str) -> Option<String> {
 
 /// Deletes a session's transcript, and the folder Claude Code keeps beside it if there is one.
 pub fn delete_session(cwd: &Path, id: &str) -> Result<(), String> {
-    let path = find_transcript(cwd, id).ok_or("transcript not found")?;
+    let Some(path) = find_transcript(cwd, id) else {
+        // A Grok session: Grok's own folder for it.
+        return crate::grok::log::delete(cwd, id)?.then_some(()).ok_or_else(|| "transcript not found".into());
+    };
     std::fs::remove_file(&path).map_err(|e| format!("couldn't delete {}: {e}", path.display()))?;
     let _ = std::fs::remove_dir_all(path.with_extension(""));
     Ok(())
@@ -2030,12 +2157,18 @@ pub fn delete_session(cwd: &Path, id: &str) -> Result<(), String> {
 fn tool_summary(name: &str, input: &Value) -> String {
     let field = match name {
         _ if input["description"].as_str().is_some_and(|d| !d.trim().is_empty()) => "description",
-        "Bash" | "PowerShell" => "command",
-        "Read" | "Write" | "Edit" | "NotebookEdit" => "file_path",
-        "Glob" | "Grep" => "pattern",
+        "Bash" | "PowerShell" | "run_terminal_cmd" | "run_terminal_command" | "Shell" => "command",
+        "Read" | "Write" | "Edit" | "NotebookEdit" | "read_file" | "write" | "search_replace" | "StrReplace"
+            if input["file_path"].is_string() =>
+        {
+            "file_path"
+        }
+        "Read" | "Write" | "Edit" | "NotebookEdit" | "read_file" | "write" | "search_replace" | "StrReplace"
+        | "list_dir" => "path",
+        "Glob" | "Grep" | "glob" | "grep" => "pattern",
         "WebFetch" => "url",
         "WebSearch" => "query",
-        "Task" | "Agent" => "description",
+        "Task" | "Agent" | "spawn_subagent" => "description",
         // MCP calls read as what they do: "Click “Sign in”".
         _ => return crate::mcp::describe(name, input).map(|(_, target)| target).unwrap_or_default(),
     };
@@ -2682,6 +2815,22 @@ mod tests {
     }
 
     #[test]
+    fn a_grok_turn_keeps_kynex_mode_and_queues_while_busy() {
+        let mut s = Session::new(Kind::Code, std::env::temp_dir());
+        s.set_provider(crate::provider::Launch::Grok { model: String::new() }).unwrap();
+        s.mode = project::Mode::Auto;
+        let exe = std::env::current_exe().expect("test binary");
+        s.child = Some(Command::new(exe).arg("--list").stdout(Stdio::null()).spawn().expect("spawn"));
+        s.busy = true;
+        // `grok` reports `auto` as `default`; Auto stays Auto for the next turn.
+        s.handle(json!({ "type": "system", "subtype": "init", "permissionMode": "default" }));
+        assert_eq!(s.mode, project::Mode::Auto);
+        s.send("next".into(), Vec::new());
+        assert!(s.queue.take_all().is_some_and(|m| m.text == "next"));
+        s.kill();
+    }
+
+    #[test]
     fn an_openrouter_model_switch_reaches_a_session_in_use() {
         use crate::provider::{Launch, OpenRouterSettings};
         let running = |provider: Launch| {
@@ -2956,6 +3105,49 @@ mod tests {
     /// config, its process is stopped as a restart would, and the next process
     /// still finds the page. Uses your browser, its extension and a little
     /// quota. Run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore = "needs the grok CLI, logged in; uses a little quota"]
+    fn a_grok_session_keeps_its_process_and_asks_before_an_edit() {
+        let root = std::env::temp_dir().join(format!("kynex-grok-live-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("note.txt"), "hello\n").unwrap();
+        let mut s = Session::new(Kind::Code, root.clone());
+        s.set_provider(crate::provider::Launch::Grok { model: String::new() }).unwrap();
+        s.mode = project::Mode::Manual;
+        let mut asked = 0;
+        let mut turn = |s: &mut Session, text: &str| {
+            s.send(text.into(), Vec::new());
+            let start = Instant::now();
+            while s.busy && start.elapsed() < Duration::from_secs(180) {
+                s.poll();
+                if let Some(i) =
+                    s.items.iter().position(|i| matches!(i, Item::Permission { state: PermState::Pending, .. }))
+                {
+                    asked += 1;
+                    s.answer_permission(i, Answer::Once);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            assert!(!s.busy, "the turn didn't end");
+        };
+        turn(&mut s, "Append a line 'kynex' to note.txt with a file edit. Do not use the shell. Reply only DONE.");
+        let pid = s.child.as_ref().map(std::process::Child::id).expect("still running between turns");
+        turn(&mut s, "Reply with only the word: second");
+        let reply = s.items.iter().rev().find_map(|i| if let Item::Assistant(t) = i { Some(t.clone()) } else { None });
+        assert_eq!(s.child.as_ref().map(std::process::Child::id), Some(pid), "one process for both turns");
+        // Grok's usage: the context meter, the window and what the turns cost.
+        assert!(s.context.tokens > 0 && s.context.window.is_some_and(|w| w > s.context.tokens));
+        assert!(s.total_cost > 0.0 && s.spent.cost > 0.0 && s.spent.output > 0);
+        let note = std::fs::read_to_string(root.join("note.txt")).unwrap();
+        let id = s.session_id.clone();
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(asked >= 1, "Ask first should ask before the edit");
+        assert!(note.contains("kynex"), "{note}");
+        assert!(reply.unwrap_or_default().to_lowercase().contains("second"));
+        assert!(id.is_some_and(|id| crate::grok::log::session_dir(&root, &id).is_some()), "Grok keeps the session");
+    }
+
     #[test]
     #[ignore = "needs the claude CLI, npx, and a browser with the Playwright extension; opens example.com in it"]
     fn browser_pairing_outlives_the_process() {

@@ -5,6 +5,23 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Grok as a provider, opt-in under Settings → Providers, which also installs Grok Build and signs
+  in to it in the browser, no terminal needed. A session runs Grok Build in the project
+  folder, on its own login, with its tools, over the Agent Client Protocol: one process per
+  session that stays up between messages and sleeps when idle, like Claude's. Grok asks before
+  edits and commands in Kynex's own permission prompts; Accept edits and Auto let edits through,
+  and the mode switches live. Messages written while Grok works wait for the turn to end. The
+  context meter, each turn's cost and the session's token totals come from what Grok reports. Grok
+  sessions started in Kynex stay in the sessions list and reopen with their transcript, read
+  from Grok's own records.
+
+- OpenRouter's daily cap on free models in sight: on a `:free` model the footer shows today's free
+  requests left beside the credit, the tooltip says when the count resets (midnight UTC), and a
+  session that hits the cap says what it is (50 a day, 1000 once $10 of credits are bought), when
+  it resets, and to switch to a paid model meanwhile.
+
 ## [0.0.15] - 2026-11-01
 
 ### Added

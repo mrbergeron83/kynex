@@ -164,11 +164,17 @@ impl Login {
     /// of a Claude subscription.
     pub fn start(console: bool) -> Result<Self, String> {
         let mut cmd = command(program());
-        cmd.args(["auth", "login"]).stdin(Stdio::piped());
+        cmd.args(["auth", "login"]);
         if console {
             cmd.arg("--console");
         }
-        let mut child = cmd.spawn().map_err(|e| format!("couldn't start `claude auth login`: {e}"))?;
+        Self::run(cmd, "`claude auth login`")
+    }
+
+    /// Watches `cmd`, another CLI's sign-in (`what`, for an error), the same way.
+    pub(crate) fn run(mut cmd: Command, what: &str) -> Result<Self, String> {
+        cmd.stdin(Stdio::piped());
+        let mut child = cmd.spawn().map_err(|e| format!("couldn't start {what}: {e}"))?;
         let output = Arc::new(Mutex::new(Vec::new()));
         let collect = |stream: Box<dyn std::io::Read + Send>| {
             let lines = output.clone();

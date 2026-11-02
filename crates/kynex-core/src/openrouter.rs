@@ -41,6 +41,63 @@ pub struct KeyInfo {
     pub limit_remaining: Option<f64>,
     /// An account that never bought credits: free models only, with low rate limits.
     pub is_free_tier: bool,
+    /// Today's requests to `:free` models, which have a daily cap whatever the credit.
+    pub free: Option<FreeRequests>,
+}
+
+/// Today's requests to `:free` models. OpenRouter allows 50 a day, or 1000 once
+/// $10 of credits have been bought, and resets the count at midnight UTC.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FreeRequests {
+    pub used: u64,
+    pub limit: u64,
+    pub remaining: u64,
+}
+
+impl FreeRequests {
+    /// None left until midnight UTC.
+    pub fn spent(&self) -> bool {
+        self.remaining == 0
+    }
+
+    /// Under a tenth of the day's requests left, or none.
+    pub fn low(&self) -> bool {
+        self.remaining * 10 < self.limit
+    }
+
+    /// For the footer: "988 free left", "No free left".
+    pub fn short(&self) -> String {
+        match self.remaining {
+            0 => "No free left".into(),
+            n => format!("{n} free left"),
+        }
+    }
+
+    /// In words: "988 of 1000 free-model requests left today".
+    pub fn words(&self) -> String {
+        format!("{} of {} free-model requests left today", self.remaining, self.limit)
+    }
+}
+
+/// How long until the free-model count resets (midnight UTC), from Unix seconds `now`: "5h 12m".
+pub fn free_reset_in(now: u64) -> String {
+    crate::usage::until(86_400 - now % 86_400)
+}
+
+/// Whether an API error is OpenRouter's daily cap on free models
+/// ("Rate limit exceeded: free-models-per-day…").
+pub fn says_free_daily_limit(text: &str) -> bool {
+    text.to_ascii_lowercase().contains("free-models-per-day")
+}
+
+/// What to do about the daily free-model cap, with the wait from Unix seconds `now`.
+pub fn free_daily_limit_help(now: u64) -> String {
+    format!(
+        "OpenRouter's daily limit on free models is used up: 50 requests a day, or 1000 once $10 of \
+         credits have been bought, counted across every :free model. It resets at midnight UTC, in {}. \
+         Until then, pick a paid model.",
+        free_reset_in(now)
+    )
 }
 
 impl KeyInfo {
@@ -54,12 +111,17 @@ impl KeyInfo {
     }
 
     /// The credit left, in words: "$4.20 left of $10.00", "$1.50 used, no limit".
+    /// Then today's free-model requests, if OpenRouter said: "… · 988 of 1000 free-model requests left today".
     pub fn credit(&self) -> String {
-        match (self.limit_remaining, self.limit) {
+        let credit = match (self.limit_remaining, self.limit) {
             (Some(left), Some(limit)) => format!("${left:.2} left of ${limit:.2}"),
             (Some(left), None) => format!("${left:.2} left"),
             _ if self.is_free_tier => "free tier: free models only".into(),
             _ => format!("${:.2} used, no limit on this key", self.usage),
+        };
+        match &self.free {
+            Some(free) => format!("{credit} · {}", free.words()),
+            None => credit,
         }
     }
 }
@@ -73,6 +135,8 @@ pub enum Problem {
     NoCredits,
     /// 429: too many requests, common on `:free` models.
     RateLimited,
+    /// 429: the day's requests to `:free` models are used up.
+    FreeDailyLimit,
     /// OpenRouter has no such model.
     ModelNotFound(String),
     /// The key isn't one curl can be given (a line break or control character in it).
@@ -93,8 +157,9 @@ impl Problem {
                  Add credits, pick a free model (one ending in :free), or lower the output cap."
                 .into(),
             Problem::RateLimited => "Rate-limited (429): too many requests right now, which is common on \
-                 :free models. Wait a minute, or pick a paid model."
+                 :free models (20 a minute at most). Wait a minute, or pick a paid model."
                 .into(),
+            Problem::FreeDailyLimit => free_daily_limit_help(crate::usage::now()),
             Problem::ModelNotFound(model) => {
                 format!("OpenRouter has no model \"{model}\". Check the ID at openrouter.ai/models.")
             }
@@ -235,6 +300,7 @@ pub(crate) fn answer(status: u16, body: &str, model: &str) -> Result<(), Problem
     Err(match status {
         401 => Problem::BadKey,
         402 => Problem::NoCredits,
+        429 if says_free_daily_limit(&msg) => Problem::FreeDailyLimit,
         429 => Problem::RateLimited,
         400 | 404 if no_model => Problem::ModelNotFound(model.to_string()),
         _ => Problem::Other(status, msg.chars().take(300).collect()),
@@ -251,6 +317,12 @@ pub(crate) fn key_info(body: &str) -> Option<KeyInfo> {
         limit: d.get("limit").and_then(Value::as_f64),
         limit_remaining: d.get("limit_remaining").and_then(Value::as_f64),
         is_free_tier: d.get("is_free_tier").and_then(Value::as_bool).unwrap_or(false),
+        free: d.get("free_model_daily_requests").and_then(|f| {
+            let n = |k: &str| f.get(k).and_then(Value::as_u64);
+            let (used, limit) = (n("used")?, n("limit")?);
+            let remaining = n("remaining").unwrap_or(limit.saturating_sub(used));
+            Some(FreeRequests { used, limit, remaining })
+        }),
     })
 }
 
@@ -312,6 +384,8 @@ mod tests {
         assert_eq!(err(401, r#"{"error":{"code":401,"message":"User not found."}}"#), Problem::BadKey);
         assert_eq!(err(402, r#"{"error":{"message":"Insufficient credits"}}"#), Problem::NoCredits);
         assert_eq!(err(429, ""), Problem::RateLimited);
+        let daily = r#"{"error":{"code":429,"message":"Rate limit exceeded: free-models-per-day. Add 10 credits"}}"#;
+        assert_eq!(err(429, daily), Problem::FreeDailyLimit);
         assert_eq!(
             err(400, r#"{"error":{"message":"qwen/x is not a valid model ID"}}"#),
             Problem::ModelNotFound("qwen/x".into())
@@ -363,6 +437,39 @@ mod tests {
 
         assert_eq!(key_info("not json"), None);
         assert_eq!(key_info(r#"{"error":{}}"#), None);
+    }
+
+    #[test]
+    fn reads_todays_free_requests() {
+        let body = r#"{"data":{"usage":1.79,"limit":50,"limit_remaining":48.21,
+                       "free_model_daily_requests":{"used":1012,"limit":1000,"remaining":0}}}"#;
+        let info = key_info(body).unwrap();
+        let free = info.free.unwrap();
+        assert_eq!(free, FreeRequests { used: 1012, limit: 1000, remaining: 0 });
+        assert!(free.spent() && free.low());
+        assert_eq!(free.short(), "No free left");
+        assert_eq!(info.credit(), "$48.21 left of $50.00 · 0 of 1000 free-model requests left today");
+
+        let some = FreeRequests { used: 12, limit: 50, remaining: 38 };
+        assert!(!some.spent() && !some.low());
+        assert_eq!(some.short(), "38 free left");
+        assert!(FreeRequests { used: 46, limit: 50, remaining: 4 }.low());
+        // No remaining given: worked out, never below zero.
+        let worked = key_info(r#"{"data":{"free_model_daily_requests":{"used":60,"limit":50}}}"#).unwrap();
+        assert_eq!(worked.free.unwrap().remaining, 0);
+        assert_eq!(key_info(r#"{"data":{"usage":0}}"#).unwrap().free, None);
+    }
+
+    #[test]
+    fn the_daily_free_limit_is_explained() {
+        let said = "API Error: 429 Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day";
+        assert!(says_free_daily_limit(said));
+        assert!(!says_free_daily_limit("API Error: 429 Rate limit exceeded: free-models-per-min."));
+        // 19:00 UTC: five hours to go.
+        assert_eq!(free_reset_in(19 * 3600), "5h");
+        assert_eq!(free_reset_in(86_400 * 3 + 23 * 3600 + 59 * 60), "1m");
+        let help = free_daily_limit_help(19 * 3600);
+        assert!(help.contains("midnight UTC, in 5h") && help.contains("1000") && help.contains("paid model"), "{help}");
     }
 
     #[test]

@@ -148,3 +148,17 @@ path = "fuzz_targets/openrouter.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "grok_history"
+path = "fuzz_targets/grok_history.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "grok_acp"
+path = "fuzz_targets/grok_acp.rs"
+test = false
+doc = false
+bench = false

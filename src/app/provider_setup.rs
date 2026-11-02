@@ -211,6 +211,10 @@ impl KynexApp {
         if self.openrouter_key.is_some() {
             all.push(Provider::OpenRouter);
         }
+        // Opt-in: only once turned on in Settings → Providers, and installed.
+        if self.saved.grok && kynex_core::grok::installed() {
+            all.push(Provider::Grok);
+        }
         all
     }
 
@@ -226,6 +230,7 @@ impl KynexApp {
                 .openrouter_key
                 .clone()
                 .map(|key| Launch::OpenRouterChat { key, settings: self.saved.openrouter.settings(None) }),
+            Provider::Grok => Some(Launch::Grok { model: String::new() }),
         }
     }
 
@@ -277,11 +282,13 @@ impl KynexApp {
             Provider::Anthropic => self.dir_model(dir),
             Provider::OpenRouter => self.folder_openrouter_model(dir),
             Provider::OpenRouterChat => self.folder_openrouter_chat_model(dir),
+            // Empty is no `--model`: the installed `grok` picks.
+            Provider::Grok => self.claude_settings(dir).grok_model,
         }
     }
 
     /// The models `dir`'s sessions start on, one per provider in [`Provider::ALL`]'s order.
-    fn folder_models(&self, dir: &Path) -> [String; 3] {
+    fn folder_models(&self, dir: &Path) -> [String; 4] {
         Provider::ALL.map(|p| self.folder_model_on(dir, p))
     }
 
@@ -312,7 +319,7 @@ impl KynexApp {
     }
 
     /// What [`apply_start`] needs for a session in `cwd` (reopened if `id`).
-    pub(super) fn start_parts(&mut self, cwd: &Path, id: Option<&str>) -> (Launch, [String; 3]) {
+    pub(super) fn start_parts(&mut self, cwd: &Path, id: Option<&str>) -> (Launch, [String; 4]) {
         let models = self.folder_models(cwd);
         (self.start_launch(cwd, id), models)
     }
@@ -352,7 +359,9 @@ impl KynexApp {
     pub(super) fn workspace_ready(&self) -> bool {
         match self.setup {
             Setup::Checking | Setup::Ready => true,
-            Setup::LoggedOut { .. } => self.openrouter_key.is_some(),
+            Setup::LoggedOut { .. } => {
+                self.openrouter_key.is_some() || (self.saved.grok && kynex_core::grok::installed())
+            }
             _ => false,
         }
     }
@@ -374,7 +383,7 @@ impl KynexApp {
                     let check = openrouter::check(&key, &model);
                     // A rate limit still means the key is good.
                     if let Err(p) = &check
-                        && *p != openrouter::Problem::RateLimited
+                        && !matches!(p, openrouter::Problem::RateLimited | openrouter::Problem::FreeDailyLimit)
                     {
                         return Err(p.message());
                     }
@@ -444,7 +453,7 @@ impl KynexApp {
 
 /// Puts `s` on `launch` (restoring it if reopened) and its pinned model, else
 /// `models` (one per provider, in [`Provider::ALL`]'s order) for the provider it ends up on.
-pub(super) fn apply_start(s: &mut Session, launch: Launch, models: &[String; 3]) {
+pub(super) fn apply_start(s: &mut Session, launch: Launch, models: &[String; 4]) {
     let _ = if s.is_new() { s.set_provider(launch) } else { s.restore_provider(launch) };
     let at = Provider::ALL.iter().position(|p| *p == s.provider().provider()).unwrap_or(0);
     s.model = s.own_model.clone().unwrap_or_else(|| models[at].clone());

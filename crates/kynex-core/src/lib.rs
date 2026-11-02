@@ -24,6 +24,7 @@ pub mod fmt;
 pub mod fuzz;
 pub mod fuzzy;
 pub mod git;
+pub mod grok;
 pub mod groups;
 pub mod highlight;
 pub mod history;
