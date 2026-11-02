@@ -453,6 +453,18 @@ impl Lamp {
         }
     }
 
+    /// The one that most wants you, for a tell standing in for several lamps:
+    /// needs you, then working, then done.
+    pub fn most_urgent(lamps: impl IntoIterator<Item = Self>) -> Self {
+        let rank = |l: &Lamp| match l {
+            Lamp::NeedsYou => 3,
+            Lamp::Working => 2,
+            Lamp::Done => 1,
+            Lamp::Idle => 0,
+        };
+        lamps.into_iter().max_by_key(rank).unwrap_or(Lamp::Idle)
+    }
+
     pub fn color(self, cx: &App) -> Option<Hsla> {
         let t = theme(cx);
         match self {
@@ -479,6 +491,30 @@ pub fn lamp(id: impl Into<ElementId>, state: Lamp, cx: &App) -> gpui::AnyElement
             dot.bg(c).with_animation(id, pulse(), |d, a| d.opacity(a)).into_any_element()
         }
         Some(c) => dot.bg(c).into_any_element(),
+    }
+}
+
+/// A lamp standing for `count` sessions: a plain [`lamp`] for one, a pill in
+/// the lamp's colour with the number in it for more.
+pub fn lamp_count(id: impl Into<ElementId>, state: Lamp, count: usize, cx: &App) -> gpui::AnyElement {
+    let Some(c) = state.color(cx).filter(|_| count > 1) else { return lamp(id, state, cx) };
+    let pill = div()
+        .flex_none()
+        .h(px(14.))
+        .min_w(px(14.))
+        .px_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(c)
+        .text_color(theme(cx).on_accent)
+        .text_size(px(9.5))
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(count.to_string());
+    match state {
+        Lamp::Working => pill.with_animation(id, pulse(), |d, a| d.opacity(0.55 + 0.45 * a)).into_any_element(),
+        _ => pill.into_any_element(),
     }
 }
 

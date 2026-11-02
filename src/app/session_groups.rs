@@ -19,7 +19,7 @@ use super::KynexApp;
 use super::menus::Menu;
 use crate::theme::{theme, ui_font};
 use crate::ui::input::TextInput;
-use crate::ui::{divider, menu_item, popover, section_label};
+use crate::ui::{Lamp, divider, lamp_count, menu_item, popover, section_label};
 
 /// What a session menu item does when clicked.
 type MenuAction = Box<dyn Fn(&mut KynexApp, &mut Window, &mut Context<KynexApp>)>;
@@ -336,6 +336,7 @@ impl KynexApp {
         cwd: &Path,
         i: usize,
         rows: Vec<AnyElement>,
+        news: &[Lamp],
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = theme(cx).clone();
@@ -345,10 +346,28 @@ impl KynexApp {
         let (toggle_cwd, drop_cwd) = (cwd.to_path_buf(), cwd.to_path_buf());
         // A section header like the date ones: its name, and its count while folded.
         let label = if group.collapsed { format!("{} · {count}", group.name) } else { group.name.clone() };
+        // Folded, its sessions' lamps can't be seen: one tell on the header
+        // instead, in the most urgent one's colour, with how many have news.
+        let tell = (group.collapsed && !news.is_empty())
+            .then(|| lamp_count(("group-news", i), Lamp::most_urgent(news.iter().copied()), news.len(), cx));
         let text = t.text;
         let header = match editing {
             true => div().pt_3().pb_1().px_1().child(self.rename_field(cx)),
-            false => section_label(&label, cx).pt_3().pb_1().px_2().truncate(),
+            false => div()
+                .flex()
+                .items_center()
+                .gap_1p5()
+                .pt_3()
+                .pb_1()
+                .px_2()
+                .group("group-header")
+                .child(
+                    section_label(&label, cx)
+                        .min_w_0()
+                        .truncate()
+                        .group_hover("group-header", move |s| s.text_color(text)),
+                )
+                .children(tell),
         }
         .id(("group", i))
         .cursor_pointer()

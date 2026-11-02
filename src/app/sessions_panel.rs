@@ -194,7 +194,7 @@ impl KynexApp {
         self.sync_picks(&cwd, &items.iter().map(|i| i.id.clone()).collect::<Vec<_>>());
         let picking = self.organize.selection.on;
         let busy: Vec<String> = open.iter().filter(|o| o.busy).filter_map(|o| o.id.clone()).collect();
-        // Working, waiting for you, or finished and unseen: the Active section.
+        // Working, waiting for you, or finished and unseen: news for a folded group's header.
         let active: Vec<String> =
             open.iter().filter(|o| o.busy || o.waiting || o.finished).filter_map(|o| o.id.clone()).collect();
         let default_branch = self.sessions.as_ref().and_then(|l| l.default_branch.clone());
@@ -260,8 +260,8 @@ impl KynexApp {
 
         let mut rows: Vec<AnyElement> = Vec::new();
         // Open sessions with no transcript listed yet: new ones, before or just
-        // after their first message. Working ones join the Active section.
-        let (mut fresh, mut fresh_active): (Vec<AnyElement>, Vec<AnyElement>) = (Vec::new(), Vec::new());
+        // after their first message.
+        let mut fresh: Vec<AnyElement> = Vec::new();
         let unlisted = open.iter().filter(|o| o.id.as_ref().is_none_or(|id| !all.iter().any(|i| i.id == *id)));
         for o in unlisted {
             let (uid, is_current) = (o.uid, o.uid == current_uid);
@@ -269,8 +269,7 @@ impl KynexApp {
             if !matches(&title) {
                 continue;
             }
-            let to = if o.busy || o.waiting || o.finished { &mut fresh_active } else { &mut fresh };
-            to.push(
+            fresh.push(
                 session_row(("open", uid as usize), title.into(), is_current, &t)
                     .when(o.openrouter, |r| r.child(openrouter_mark(("open-provider", uid as usize), &t)))
                     .when(o.grok, |r| r.child(grok_mark(("open-grok", uid as usize), &t)))
@@ -465,23 +464,16 @@ impl KynexApp {
             past.insert(id, row.into_any_element());
         }
 
-        // Active first, then pinned, the dates, each group, the archive.
-        let arranged = self.groups_for(&cwd).arrange_with(items.iter().map(|i| i.id.as_str()), &active);
+        // Pinned first, then the dates, each group, the archive. Busy sessions
+        // stay in their places; their lamps tell them apart.
+        let arranged = self.groups_for(&cwd).arrange(items.iter().map(|i| i.id.as_str()));
         // Headers only when there's more than one section to tell apart.
-        let headers = arranged.sections() + usize::from(arranged.active.is_empty() && !fresh_active.is_empty()) > 1;
+        let headers = arranged.sections() > 1;
         let mut take = |ids: Vec<String>| ids.iter().filter_map(|id| past.remove(id)).collect::<Vec<_>>();
         // The rows in the order drawn, for Shift+click runs, "All" and the list's keys.
-        let mut order: Vec<String> = arranged.active.clone();
-        order.extend(arranged.pinned.iter().cloned());
+        let mut order: Vec<String> = arranged.pinned.clone();
         // A new session, before its first message: above everything.
         rows.extend(fresh);
-        let active_rows: Vec<AnyElement> = fresh_active.into_iter().chain(take(arranged.active)).collect();
-        if !active_rows.is_empty() {
-            if headers {
-                rows.push(list_header("Active", rows.is_empty(), cx).into_any_element());
-            }
-            rows.extend(active_rows);
-        }
         let pinned = take(arranged.pinned);
         if !pinned.is_empty() {
             if headers {
@@ -543,14 +535,28 @@ impl KynexApp {
             order.extend(arranged.archived.iter().cloned());
         }
         self.organize.shown = order.clone();
+        // Each group's sessions with news, for the tell on a folded group's header.
+        let news: Vec<Vec<Lamp>> = arranged
+            .groups
+            .iter()
+            .map(|ids| {
+                ids.iter()
+                    .filter(|id| active.contains(id))
+                    .map(|id| {
+                        let (b, w, f) = open_state(id);
+                        Lamp::of(b, w, f)
+                    })
+                    .collect()
+            })
+            .collect();
         let groups: Vec<Vec<AnyElement>> = arranged.groups.into_iter().map(&mut take).collect();
         let archived = take(arranged.archived);
-        for (i, group) in groups.into_iter().enumerate() {
+        for ((i, group), news) in groups.into_iter().enumerate().zip(news) {
             // Filtering, groups with nothing that matches step aside.
             if !query.is_empty() && group.is_empty() {
                 continue;
             }
-            rows.push(self.render_group(&cwd, i, group, cx));
+            rows.push(self.render_group(&cwd, i, group, &news, cx));
         }
         if !archived.is_empty() {
             rows.push(self.render_archived(&cwd, archived, cx));

@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The sessions panel has no Active section any more: a working session stays in its place,
+  so one moved into a group shows there right away instead of only once it was done (#263).
+  A folded group shows a lamp on its header for its sessions with news, with how many when
+  there's more than one.
+
 ## [0.0.18] - 2026-11-02
 
 ### Added
