@@ -5,11 +5,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.17] - 2026-11-02
+
 ### Fixed
 
 - Grok's model picker is no longer empty until you've sent a message: Kynex asks Grok for its
   models once it's enabled and installed, and again a minute later if that failed (before
   signing in, say) (#252).
+
+### Security
+
+- pulldown-cmark 0.13.6, for RUSTSEC-2026-0433 (quadratic parsing of nested wikilinks, an option
+  Kynex doesn't enable) (#256).
 
 ## [0.0.16] - 2026-11-02
 
@@ -660,7 +667,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.16...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.17...HEAD
+[0.0.17]: https://github.com/mrbergeron83/kynex/compare/v0.0.16...v0.0.17
 [0.0.16]: https://github.com/mrbergeron83/kynex/compare/v0.0.15...v0.0.16
 [0.0.15]: https://github.com/mrbergeron83/kynex/compare/v0.0.14...v0.0.15
 [0.0.14]: https://github.com/mrbergeron83/kynex/compare/v0.0.13...v0.0.14

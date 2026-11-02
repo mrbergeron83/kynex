@@ -2842,7 +2842,7 @@ dependencies = [
 
 [[package]]
 name = "kynex"
-version = "0.0.16"
+version = "0.0.17"
 dependencies = [
  "async-channel",
  "gpui-pre",
