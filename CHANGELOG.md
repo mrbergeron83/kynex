@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Grok's model picker is no longer empty until you've sent a message: Kynex asks Grok for its
+  models once it's enabled and installed, and again a minute later if that failed (before
+  signing in, say) (#252).
+
 ## [0.0.16] - 2026-11-02
 
 ### Added

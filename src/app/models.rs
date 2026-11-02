@@ -245,6 +245,50 @@ pub fn grok_reported(list: Vec<ModelInfo>, cx: &mut Context<KynexApp>) {
     .detach();
 }
 
+static GROK_FETCHING: AtomicBool = AtomicBool::new(false);
+/// When Grok's list was last asked for, so a failure (not signed in yet) retries a minute on.
+static GROK_ASKED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// Asks Grok for its models when none are known: a session only reports them after its
+/// first message, so without this the picker is empty on a fresh install. Call as often
+/// as you like; it runs once, and again a minute after a failure.
+pub fn fetch_grok_models(cx: &mut Context<KynexApp>) {
+    if !grok_known().is_empty() || GROK_FETCHING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let too_soon =
+        GROK_ASKED.lock().ok().is_some_and(|a| a.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(60)));
+    if too_soon {
+        GROK_FETCHING.store(false, Ordering::SeqCst);
+        return;
+    }
+    if let Ok(mut a) = GROK_ASKED.lock() {
+        *a = Some(std::time::Instant::now());
+    }
+    cx.spawn(async move |this, cx| {
+        // In Kynex's own data folder, which isn't a project: Grok keeps an empty session of it.
+        let cwd = kynex_core::paths::data_dir();
+        let result = cx
+            .background_spawn(async move {
+                std::fs::create_dir_all(&cwd).map_err(|e| e.to_string())?;
+                kynex_core::grok::list_models(&cwd)
+            })
+            .await;
+        match result {
+            Ok(list) => {
+                this.update(cx, |_, cx| {
+                    grok_reported(list, cx);
+                    cx.notify();
+                })
+                .ok();
+            }
+            Err(e) => eprintln!("kynex: couldn't list Grok's models: {e}"),
+        }
+        GROK_FETCHING.store(false, Ordering::SeqCst);
+    })
+    .detach();
+}
+
 impl KynexApp {
     /// The model menu on Grok: its default, then the models Grok offers (once a
     /// Grok session has said), or the id this folder already uses until then.
