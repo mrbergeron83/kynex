@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Fewer browser connections when sessions use your own browser (the Playwright extension): a
+  session that starts before its browser server is ready now waits for it instead of opening a
+  connection of its own, no spare server is kept running, and a server's leftover processes
+  end with it. Each session keeps its own tab group (#258).
+
 ## [0.0.17] - 2026-11-02
 
 ### Fixed

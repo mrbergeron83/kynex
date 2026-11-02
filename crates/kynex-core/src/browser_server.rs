@@ -2,39 +2,47 @@
 //! `claude` processes.
 //!
 //! `@playwright/mcp --extension` drives your own browser through its extension.
-//! Started by `claude` as a stdio server it lives and dies with that process,
-//! so every restart pairs with the browser again: a new connect tab, and the
-//! session's tabs fall out of their group. So for each `--extension` server
-//! configured for a folder, Kynex runs the same command over HTTP on localhost
-//! (`--port`, `--shared-browser-context`) and hands it to each `claude` of the
-//! session under the same name: `--mcp-config` replaces the configured entry.
+//! Each server is one client of the extension, with its own tab group and
+//! colour. Started by `claude` as a stdio server it lives and dies with that
+//! process, so every restart pairs with the browser again: a new connect tab,
+//! and the session's tabs fall out of their group. So for each `--extension`
+//! server configured for a folder, Kynex runs the same command over HTTP on
+//! localhost (`--port`, `--shared-browser-context`) and hands it to each
+//! `claude` of the session under the same name: `--mcp-config` replaces the
+//! configured entry. One per session, so sessions keep to their own groups.
+//!
+//! A process that starts before its server answers still gets it, never the
+//! stdio one, which would be one more client; the session has it reconnect
+//! once the server is up (#258).
 //!
 //! The server lets go of the browser when its last client leaves, which a
 //! restart is. So once the session has used the browser, Kynex connects as a
 //! client of its own and stays ([`BrowserServer::hold`]); the pairing and the
 //! tabs carry over to the next process.
-//!
-//! `npx` takes seconds to start, so a spare server per configuration waits
-//! ready ([`take`]). A process that starts before its server answers gets the
-//! configured stdio server, as without Kynex.
 
-use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{Value, json};
 
 use crate::extensions::{self, Approval, Server, Source, Transport};
+use crate::process::Tree;
 
 /// An `--extension` browser server configured for a folder.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     /// The name sessions know it by, which Kynex's server takes over.
     pub name: String,
+    launch: Launch,
+}
+
+/// What a server runs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct Launch {
     command: String,
     args: Vec<String>,
     env: Vec<(String, String)>,
@@ -65,9 +73,11 @@ fn entries_from(servers: &[Server], global: &Value, mcp_json: &Value, cwd: &Path
             let served = args.iter().any(|a| a.starts_with("--port") || a.starts_with("--host"));
             (playwright && extension && !served).then(|| Entry {
                 name: s.name.clone(),
-                command: command.clone(),
-                args: args.clone(),
-                env: extensions::server_env(global, mcp_json, cwd, s),
+                launch: Launch {
+                    command: command.clone(),
+                    args: args.clone(),
+                    env: extensions::server_env(global, mcp_json, cwd, s),
+                },
             })
         })
         .collect()
@@ -75,25 +85,37 @@ fn entries_from(servers: &[Server], global: &Value, mcp_json: &Value, cwd: &Path
 
 /// The configured command line, serving over HTTP on `port` with one browser
 /// context for every client.
-fn serve_args(entry: &Entry, port: u16) -> Vec<String> {
-    let mut args = entry.args.clone();
+fn serve_args(launch: &Launch, port: u16) -> Vec<String> {
+    let mut args = launch.args.clone();
     args.extend(["--host", "127.0.0.1", "--port", &port.to_string(), "--shared-browser-context"].map(Into::into));
     args
 }
 
 /// `--mcp-config` for `servers`: each under its configured name, over HTTP.
 pub fn mcp_config<'a>(servers: impl IntoIterator<Item = &'a BrowserServer>) -> String {
-    let map: serde_json::Map<String, Value> =
-        servers.into_iter().map(|s| (s.name.clone(), json!({ "type": "http", "url": s.url() }))).collect();
+    config_for(servers.into_iter().map(|s| (s.name.as_str(), s.port)))
+}
+
+fn config_for<'a>(servers: impl IntoIterator<Item = (&'a str, u16)>) -> String {
+    let map: serde_json::Map<String, Value> = servers
+        .into_iter()
+        .map(|(name, port)| (name.to_string(), json!({ "type": "http", "url": url(port) })))
+        .collect();
     json!({ "mcpServers": map }).to_string()
 }
 
-/// A running browser server.
+/// `localhost`, not the address it's bound to: the server turns away any
+/// other `Host`.
+fn url(port: u16) -> String {
+    format!("http://localhost:{port}/mcp")
+}
+
+/// A session's running browser server for one of its entries.
 pub struct BrowserServer {
     pub name: String,
-    entry: Entry,
+    launch: Launch,
     port: u16,
-    child: Child,
+    tree: Tree,
     /// Kynex's own client session on it, once it holds the browser.
     held: Arc<Mutex<Option<String>>>,
     holding: bool,
@@ -104,9 +126,9 @@ impl BrowserServer {
     /// for it to answer; see [`Self::ready`].
     fn start(entry: &Entry) -> Result<Self, String> {
         let port = free_port()?;
-        let mut cmd = Command::new(program(&entry.command));
-        cmd.args(serve_args(entry, port))
-            .envs(entry.env.iter().map(|(k, v)| (k, v)))
+        let mut cmd = Command::new(program(&entry.launch.command));
+        cmd.args(serve_args(&entry.launch, port))
+            .envs(entry.launch.env.iter().map(|(k, v)| (k, v)))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -116,26 +138,21 @@ impl BrowserServer {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
-        crate::process::own_group(&mut cmd);
-        let child = crate::process::dies_with_parent(&mut cmd)
-            .spawn()
-            .map_err(|e| format!("couldn't start the browser server {}: {e}", entry.name))?;
-        Ok(Self { name: entry.name.clone(), entry: entry.clone(), port, child, held: Arc::default(), holding: false })
-    }
-
-    /// `localhost`, not the address it's bound to: the server turns away any
-    /// other `Host`.
-    fn url(&self) -> String {
-        format!("http://localhost:{}/mcp", self.port)
+        let tree =
+            Tree::spawn(&mut cmd).map_err(|e| format!("couldn't start the browser server {}: {e}", entry.name))?;
+        Ok(Self {
+            name: entry.name.clone(),
+            launch: entry.launch.clone(),
+            port,
+            tree,
+            held: Arc::default(),
+            holding: false,
+        })
     }
 
     /// It answers on its port. Doesn't block: a closed port refuses at once.
     pub fn ready(&self) -> bool {
         TcpStream::connect_timeout(&addr(self.port), Duration::from_millis(50)).is_ok()
-    }
-
-    fn alive(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
     }
 
     /// Kynex holds its browser, so it stays paired through restarts.
@@ -163,49 +180,17 @@ impl BrowserServer {
     }
 }
 
-impl Drop for BrowserServer {
-    fn drop(&mut self) {
-        crate::process::kill_tree(&mut self.child);
-    }
-}
-
-/// Spare servers, started ahead so a session's first process can have one.
-fn spares() -> &'static Mutex<HashMap<Entry, BrowserServer>> {
-    static SPARES: OnceLock<Mutex<HashMap<Entry, BrowserServer>>> = OnceLock::new();
-    SPARES.get_or_init(Mutex::default)
-}
-
-/// A server for `entry`: the spare if there is one, else one started now.
-/// Starts the next spare either way.
-pub fn take(entry: &Entry) -> Option<BrowserServer> {
-    let mut spares = spares().lock().ok()?;
-    let spare = spares.remove(entry).and_then(|mut s| s.alive().then_some(s));
-    let server = spare.or_else(|| BrowserServer::start(entry).map_err(|e| eprintln!("kynex: {e}")).ok());
-    // An older configuration of the same server (a new token) is done with.
-    spares.retain(|e, _| e.name != entry.name);
-    if let Ok(next) = BrowserServer::start(entry) {
-        spares.insert(entry.clone(), next);
-    }
-    server
-}
-
-/// Stops the spare servers. Kynex's job object does this when it exits; a
-/// test, which has none, does it itself.
-pub fn stop_spares() {
-    if let Ok(mut spares) = spares().lock() {
-        spares.clear();
-    }
-}
-
-/// Brings `servers` in line with `wanted`: keeps the ones still configured and
-/// running, starts the missing ones, drops the rest.
+/// Brings a session's `servers` in line with `wanted`: keeps the ones still
+/// configured and running, starts the missing ones, drops (and so stops) the
+/// rest.
 pub fn reconcile(servers: &mut Vec<BrowserServer>, wanted: &[Entry]) {
-    servers.retain_mut(|s| wanted.contains(&s.entry) && s.alive());
+    servers.retain(|s| wanted.iter().any(|e| e.name == s.name && e.launch == s.launch) && s.tree.alive());
     for e in wanted {
-        if !servers.iter().any(|s| &s.entry == e)
-            && let Some(s) = take(e)
-        {
-            servers.push(s);
+        if !servers.iter().any(|s| s.name == e.name) {
+            match BrowserServer::start(e) {
+                Ok(s) => servers.push(s),
+                Err(e) => eprintln!("kynex: {e}"),
+            }
         }
     }
 }
@@ -376,9 +361,9 @@ mod tests {
         let got = entries_from(&servers, &global, &Value::Null, cwd);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "playwright-edge");
-        assert_eq!(got[0].env, [("PLAYWRIGHT_MCP_EXTENSION_TOKEN".to_string(), "t".to_string())]);
+        assert_eq!(got[0].launch.env, [("PLAYWRIGHT_MCP_EXTENSION_TOKEN".to_string(), "t".to_string())]);
         assert_eq!(
-            serve_args(&got[0], 4321),
+            serve_args(&got[0].launch, 4321),
             [
                 "@playwright/mcp@latest",
                 "--browser",
@@ -439,25 +424,45 @@ mod tests {
 
     #[test]
     fn config_names_each_server_by_its_own_name() {
-        let entry = Entry { name: "playwright-edge".into(), command: "x".into(), args: vec![], env: vec![] };
-        let server = BrowserServer {
-            name: entry.name.clone(),
-            entry,
-            port: 4321,
-            // Something to own that ends at once; never started as a server.
-            child: Command::new(if cfg!(windows) { "cmd" } else { "true" })
-                .args(if cfg!(windows) { &["/c", "exit"][..] } else { &[][..] })
-                .spawn()
-                .unwrap(),
-            held: Arc::default(),
-            holding: false,
-        };
-        let v: Value = serde_json::from_str(&mcp_config([&server])).unwrap();
+        let v: Value = serde_json::from_str(&config_for([("playwright-edge", 4321), ("chrome", 4322)])).unwrap();
         assert_eq!(
             v,
-            json!({ "mcpServers": { "playwright-edge": { "type": "http", "url": "http://localhost:4321/mcp" } } })
+            json!({ "mcpServers": {
+                "playwright-edge": { "type": "http", "url": "http://localhost:4321/mcp" },
+                "chrome": { "type": "http", "url": "http://localhost:4322/mcp" },
+            } })
         );
-        assert!(!server.held());
+    }
+
+    /// Each session runs its own server, which is its own client of the
+    /// extension and so its own tab group.
+    #[test]
+    fn each_session_runs_its_own_server() {
+        // A stand-in that stays up; never asked anything.
+        let launch = |tag: &str| Launch {
+            command: if cfg!(windows) { "cmd" } else { "sh" }.into(),
+            args: if cfg!(windows) {
+                vec!["/c".into(), format!("ping -n 30 127.0.0.1 >nul & rem {tag}")]
+            } else {
+                vec!["-c".into(), format!("sleep 30; true {tag}")]
+            },
+            env: vec![],
+        };
+        let entry = |name: &str, tag: &str| Entry { name: name.into(), launch: launch(tag) };
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        reconcile(&mut a, &[entry("pw", "one")]);
+        reconcile(&mut b, &[entry("pw", "one")]);
+        assert_ne!(a[0].port, b[0].port, "a server, and so a tab group, per session");
+
+        // The same configuration keeps its server; a new token gets a new one.
+        let port = a[0].port;
+        reconcile(&mut a, &[entry("pw", "one")]);
+        assert_eq!(a[0].port, port);
+        reconcile(&mut a, &[entry("pw", "two")]);
+        assert_eq!(a.len(), 1);
+        assert_ne!(a[0].port, port);
+        reconcile(&mut a, &[]);
+        assert!(a.is_empty());
     }
 
     /// Against a real `@playwright/mcp --extension` and your browser, as a
@@ -480,7 +485,9 @@ mod tests {
             post(port, Some(id), &call, Duration::from_secs(120)).unwrap().message.unwrap().to_string()
         };
         let entry = entries(&std::env::current_dir().unwrap()).into_iter().next().expect("an --extension server");
-        let mut server = BrowserServer::start(&entry).unwrap();
+        let mut servers = Vec::new();
+        reconcile(&mut servers, &[entry]);
+        let mut server = servers.pop().expect("the server started");
         let port = server.port;
         wait("the server", &mut || server.ready());
 
@@ -496,6 +503,8 @@ mod tests {
         let _ = s.read_to_end(&mut Vec::new());
 
         let next = open_session(port).unwrap();
-        assert!(call(port, &next, "browser_tabs", json!({ "action": "list" })).contains("example.com"));
+        let tabs = call(port, &next, "browser_tabs", json!({ "action": "list" }));
+        drop(server);
+        assert!(tabs.contains("example.com"));
     }
 }

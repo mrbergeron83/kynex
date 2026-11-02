@@ -11,6 +11,7 @@
 //! - macOS has no such hook; a child there notices when its stdin closes.
 
 use std::process::{Child, Command};
+use std::sync::Mutex;
 
 /// Ties every child process Kynex starts from now on to Kynex's own lifetime
 /// (on Windows; elsewhere see [`dies_with_parent`]). Call once, at startup.
@@ -45,20 +46,51 @@ pub fn dies_with_parent(cmd: &mut Command) -> &mut Command {
     cmd
 }
 
-/// Starts `cmd`'s process as the head of a group [`kill_tree`] can end whole:
-/// for launchers like `npx`, whose real work runs in a process of its own.
-pub fn own_group(cmd: &mut Command) -> &mut Command {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    cmd
+/// A process and every process it starts, ended together when dropped: for
+/// launchers like `npx`, whose real work runs in a process of its own. On Unix
+/// they share a process group; on Windows a job object of their own, which
+/// also ends the ones whose parents are already gone (a killed `npx`).
+pub struct Tree {
+    child: Mutex<Child>,
+    #[cfg(windows)]
+    _job: Option<windows::Job>,
 }
 
-/// Ends `child` and every process it started, then reaps it. Started with
-/// [`own_group`] on Unix; on Windows `taskkill /T` follows the parent links.
-pub fn kill_tree(child: &mut Child) {
+impl Tree {
+    /// Starts `cmd` as the tree's head, tied to Kynex as [`dies_with_parent`].
+    pub fn spawn(cmd: &mut Command) -> std::io::Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        let child = dies_with_parent(cmd).spawn()?;
+        Ok(Self {
+            // Without a job of its own, `taskkill /T` still ends what it can find.
+            #[cfg(windows)]
+            _job: windows::Job::holding(&child),
+            child: Mutex::new(child),
+        })
+    }
+
+    /// The head process is still running.
+    pub fn alive(&self) -> bool {
+        self.child.lock().is_ok_and(|mut c| matches!(c.try_wait(), Ok(None)))
+    }
+}
+
+impl Drop for Tree {
+    fn drop(&mut self) {
+        if let Ok(child) = self.child.get_mut() {
+            kill_tree(child);
+        }
+        // Then the job's handle closes, ending whatever is left in it.
+    }
+}
+
+/// Ends `child` and every process it started, then reaps it. On Unix it heads
+/// a process group; on Windows `taskkill /T` follows the parent links.
+fn kill_tree(child: &mut Child) {
     // Gone already: its id may belong to someone else by now.
     if !matches!(child.try_wait(), Ok(None)) {
         return;
@@ -139,6 +171,42 @@ mod windows {
         }
         Ok(())
     }
+
+    /// A job that ends its processes when its handle closes, which is when
+    /// this drops.
+    pub struct Job(isize);
+
+    impl Job {
+        /// A job holding `child`, and so whatever it starts from now on: jobs
+        /// nest inside Kynex's own. `None` if Windows refuses.
+        pub fn holding(child: &std::process::Child) -> Option<Self> {
+            use std::os::windows::io::AsRawHandle;
+            // SAFETY: plain Win32 calls; `child`'s handle is open while it's borrowed.
+            unsafe {
+                let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if job.is_null() {
+                    return None;
+                }
+                let job = Self(job as isize);
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let set = SetInformationJobObject(
+                    job.0 as _,
+                    JobObjectExtendedLimitInformation,
+                    (&raw const info).cast(),
+                    size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                );
+                (set != 0 && AssignProcessToJobObject(job.0 as _, child.as_raw_handle()) != 0).then_some(job)
+            }
+        }
+    }
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            // SAFETY: the handle is ours and closed once.
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0 as _) };
+        }
+    }
 }
 
 #[cfg(test)]
@@ -168,10 +236,10 @@ mod tests {
         } else {
             ("sh", &["-c", "sleep 30; true"])
         };
-        let mut child = own_group(Command::new(program).args(args)).spawn().unwrap();
+        let tree = Tree::spawn(Command::new(program).args(args)).unwrap();
+        assert!(tree.alive());
         let start = std::time::Instant::now();
-        kill_tree(&mut child);
-        assert!(child.try_wait().unwrap().is_some());
+        drop(tree);
         assert!(start.elapsed().as_secs() < 10);
     }
 }
