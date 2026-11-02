@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A working session moved into a group shows there right away, instead of staying under
+  Active until it was done (#263). A folded group shows a lamp on its header for its
+  sessions with news, with how many when there's more than one.
+
 ## [0.0.18] - 2026-11-02
 
 ### Added

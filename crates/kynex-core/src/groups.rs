@@ -374,17 +374,20 @@ impl SessionGroups {
 
     /// [`Self::arrange`], with the `active` sessions (working, waiting, or
     /// finished and unseen) taken out of their places into [`Arranged::active`].
+    /// Grouped ones stay in their group: putting a session there is asked for
+    /// by hand, so it shows there at once, busy or not.
     pub fn arrange_with<'a>(&self, ids: impl IntoIterator<Item = &'a str>, active: &[String]) -> Arranged {
         let mut out = Arranged { groups: vec![Vec::new(); self.groups.len()], ..Arranged::default() };
         for id in ids {
-            let list = if active.iter().any(|a| a == id) {
+            let grouped = self.group_of(id).filter(|_| !self.is_pinned(id));
+            let list = if let Some(g) = grouped {
+                &mut out.groups[g]
+            } else if active.iter().any(|a| a == id) {
                 &mut out.active
             } else if self.is_archived(id) {
                 &mut out.archived
             } else if self.is_pinned(id) {
                 &mut out.pinned
-            } else if let Some(g) = self.group_of(id) {
-                &mut out.groups[g]
             } else {
                 &mut out.top
             };
@@ -415,11 +418,12 @@ mod tests {
         // Newest first: p1 is newer, but p2 was pinned first.
         let all = ["busy", "p1", "p2", "grouped", "loose", "old"];
         let a = g.arrange_with(all, &ids(&["busy", "grouped"]));
-        assert_eq!(a.active, ["busy", "grouped"]);
+        assert_eq!(a.active, ["busy"]);
         assert_eq!(a.pinned, ["p2", "p1"]);
-        assert_eq!(a.groups, [Vec::<String>::new()]);
+        // A grouped session shows in its group even while it's working.
+        assert_eq!(a.groups, [ids(&["grouped"])]);
         assert_eq!((a.top.clone(), a.archived.clone()), (ids(&["loose"]), ids(&["old"])));
-        assert_eq!(a.sections(), 4);
+        assert_eq!(a.sections(), 5);
         // Dragging a pin before another reorders them.
         g.move_pin("p1", Some("p2"));
         assert_eq!(g.arrange(all).pinned, ["p1", "p2"]);

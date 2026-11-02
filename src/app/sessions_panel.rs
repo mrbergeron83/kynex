@@ -543,14 +543,28 @@ impl KynexApp {
             order.extend(arranged.archived.iter().cloned());
         }
         self.organize.shown = order.clone();
+        // Each group's sessions with news, for the tell on a folded group's header.
+        let news: Vec<Vec<Lamp>> = arranged
+            .groups
+            .iter()
+            .map(|ids| {
+                ids.iter()
+                    .filter(|id| active.contains(id))
+                    .map(|id| {
+                        let (b, w, f) = open_state(id);
+                        Lamp::of(b, w, f)
+                    })
+                    .collect()
+            })
+            .collect();
         let groups: Vec<Vec<AnyElement>> = arranged.groups.into_iter().map(&mut take).collect();
         let archived = take(arranged.archived);
-        for (i, group) in groups.into_iter().enumerate() {
+        for ((i, group), news) in groups.into_iter().enumerate().zip(news) {
             // Filtering, groups with nothing that matches step aside.
             if !query.is_empty() && group.is_empty() {
                 continue;
             }
-            rows.push(self.render_group(&cwd, i, group, cx));
+            rows.push(self.render_group(&cwd, i, group, &news, cx));
         }
         if !archived.is_empty() {
             rows.push(self.render_archived(&cwd, archived, cx));
