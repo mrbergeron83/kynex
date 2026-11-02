@@ -296,7 +296,7 @@ impl KynexApp {
     /// Brings a project's running sessions up to its changed rules, extra folders
     /// or effort: live where the CLI takes them, else each starts again once
     /// idle (`--resume` keeps the conversation; "this session" rules are dropped).
-    fn apply_project_settings(&mut self, path: &Path, perms: &Permissions, claude: &ClaudeSettings) {
+    pub(super) fn apply_project_settings(&mut self, path: &Path, perms: &Permissions, claude: &ClaudeSettings) {
         for s in self.code.get_mut(path).into_iter().flat_map(|l| l.sessions.iter_mut()) {
             s.apply_settings(perms, claude);
         }

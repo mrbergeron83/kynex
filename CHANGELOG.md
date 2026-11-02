@@ -5,6 +5,23 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `/mcp`, `/plugin`, `/agents`, `/hooks` and `/skills` open the matching Extensions section,
+  `/mcp reconnect <server>` restarts a server, and `/permissions` opens the project's rules.
+  Before, these went to Claude as text and did nothing (#259).
+
+### Fixed
+
+- When auto mode blocks a tool call without asking (a browser click, a command), the call
+  now says so and why, with buttons to allow that action or the whole MCP server in the
+  project. The rule applies to running sessions right away and Claude tries again (#259).
+
+- Fewer browser connections when sessions use your own browser (the Playwright extension): a
+  session that starts before its browser server is ready now waits for it instead of opening a
+  connection of its own, no spare server is kept running, and a server's leftover processes
+  end with it. Each session keeps its own tab group (#258).
+
 ## [0.0.17] - 2026-11-02
 
 ### Fixed

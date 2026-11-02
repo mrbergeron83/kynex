@@ -373,10 +373,11 @@ pub struct Session {
     /// While replaying: the log and line the entry came from, so its images stay there.
     origin: Option<(Arc<PathBuf>, Span)>,
     /// Its `--extension` browser servers, run by Kynex so the pairing outlives
-    /// the process ([`crate::browser_server`]), and the ones the running
-    /// process was given (the others were still starting).
+    /// the process ([`crate::browser_server`]); the ones the running process was given, and
+    /// of those the ones still starting then, which it reconnects to once up.
     browser_servers: Vec<crate::browser_server::BrowserServer>,
     browser_given: Vec<String>,
+    browser_late: Vec<String>,
 }
 
 /// A session log being read back on a thread: its newest turns, then the rest.
@@ -527,6 +528,7 @@ impl Session {
             loader: None,
             origin: None,
             browser_servers: Vec::new(),
+            browser_late: Vec::new(),
             browser_given: Vec::new(),
         }
     }
@@ -817,13 +819,15 @@ impl Session {
                 }
                 cmd.args(claude.cli_args());
                 launched = Some(project::Launched::new(&perms, &claude));
-                // Kynex's own browser servers, under the configured names; one
-                // still starting leaves this process the configured one.
+                // Kynex's own browser servers, under the configured names. One
+                // still starting is given all the same: the configured one would
+                // be another client fighting over the browser.
                 crate::browser_server::reconcile(&mut self.browser_servers, &crate::browser_server::entries(&self.cwd));
-                let ready: Vec<_> = self.browser_servers.iter().filter(|s| s.ready()).collect();
-                self.browser_given = ready.iter().map(|s| s.name.clone()).collect();
-                if !ready.is_empty() {
-                    cmd.args(["--mcp-config", &crate::browser_server::mcp_config(ready)]);
+                self.browser_given = self.browser_servers.iter().map(|s| s.name.clone()).collect();
+                self.browser_late =
+                    self.browser_servers.iter().filter(|s| !s.ready()).map(|s| s.name.clone()).collect();
+                if !self.browser_servers.is_empty() {
+                    cmd.args(["--mcp-config", &crate::browser_server::mcp_config(&self.browser_servers)]);
                 }
             }
         }
@@ -1274,6 +1278,7 @@ impl Session {
         // A browser Kynex holds stays paired for the next process.
         self.browser = self.browser_servers.iter().any(|s| s.held());
         self.browser_given.clear();
+        self.browser_late.clear();
         self.stale = false;
         self.launched = None;
         self.applying.clear();
@@ -1292,6 +1297,24 @@ impl Session {
         }
         for s in self.browser_servers.iter_mut().filter(|s| s.name == server) {
             s.hold();
+        }
+    }
+
+    /// Browser servers that were still starting when the process started, and
+    /// so failed to connect: it reconnects to the ones up now.
+    fn connect_late_browsers(&mut self) {
+        if !self.ready || self.browser_late.is_empty() {
+            return;
+        }
+        let up: Vec<String> = self
+            .browser_servers
+            .iter()
+            .filter(|s| self.browser_late.contains(&s.name) && s.ready())
+            .map(|s| s.name.clone())
+            .collect();
+        self.browser_late.retain(|n| !up.contains(n));
+        for name in up {
+            self.reconnect_mcp(&name);
         }
     }
 
@@ -1314,6 +1337,7 @@ impl Session {
 
     /// Drain pending events from the process. Call when woken.
     pub fn poll(&mut self) {
+        self.connect_late_browsers();
         let Some(rx) = &self.rx else { return };
         let events: Vec<Event> = rx.try_iter().collect();
         if !events.is_empty() {
@@ -3194,7 +3218,6 @@ mod tests {
             &format!("With the {name} browser_tabs tool, list the open tabs. Reply with their URLs only."),
         );
         drop(s);
-        crate::browser_server::stop_spares();
         let _ = std::fs::remove_dir_all(&root);
         assert!(reply.contains("example.com"), "got: {reply:?}");
     }
