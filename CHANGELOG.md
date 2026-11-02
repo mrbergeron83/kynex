@@ -13,6 +13,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   models once it's enabled and installed, and again a minute later if that failed (before
   signing in, say) (#252).
 
+### Security
+
+- pulldown-cmark 0.13.6, for RUSTSEC-2026-0433 (quadratic parsing of nested wikilinks, an option
+  Kynex doesn't enable) (#256).
+
 ## [0.0.16] - 2026-11-02
 
 ### Added
