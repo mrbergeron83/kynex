@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use crate::ui::px;
 use gpui::{Anchor, AnyElement, Bounds, Context, Focusable, Pixels, Window, point, prelude::*};
-use kynex_core::commands::{self, Action, Commands, SlashCommand};
+use kynex_core::commands::{self, Action, Commands, Section, SlashCommand};
 use kynex_core::project;
 use kynex_core::session::{Kind, Session};
 
@@ -112,7 +112,7 @@ impl KynexApp {
                     Ok((list, fresh)) if fresh => this.commands_reported(cwd.clone(), list, cx),
                     Ok((list, _)) => {
                         if let Some(k) = this.slash.commands.get_mut(&cwd).filter(|k| !k.fresh) {
-                            k.commands = Rc::new(Commands::new(list));
+                            k.commands = Rc::new(Commands::new(commands::with_kynex_commands(list)));
                         }
                     }
                     Err(e) => eprintln!("kynex: couldn't list slash commands: {e}"),
@@ -133,7 +133,8 @@ impl KynexApp {
         if list.is_empty() {
             return;
         }
-        let same = self.slash.commands.get(&cwd).is_some_and(|k| k.commands.list == list);
+        let shown = commands::with_kynex_commands(list.clone());
+        let same = self.slash.commands.get(&cwd).is_some_and(|k| k.commands.list == shown);
         if !same {
             let dir = cwd.clone();
             let to_save = list.clone();
@@ -148,7 +149,7 @@ impl KynexApp {
             self.slash.commands.entry(cwd).or_insert(Known { commands: Rc::default(), loading: false, fresh: true });
         k.fresh = true;
         if !same {
-            k.commands = Rc::new(Commands::new(list));
+            k.commands = Rc::new(Commands::new(shown));
         }
     }
 
@@ -273,6 +274,33 @@ impl KynexApp {
                 }
             }
             Action::Rewind => self.open_rewind(cx),
+            Action::Extensions(section) => {
+                let i = match section {
+                    Section::Mcp => 0,
+                    Section::Plugins => 1,
+                    Section::Skills => 2,
+                    Section::Agents => 3,
+                    Section::Hooks => 4,
+                };
+                self.open_extensions(i, cx);
+            }
+            Action::Reconnect(server) => match self.session_mut() {
+                Some(s) if s.is_running() => {
+                    s.reconnect_mcp(&server);
+                    self.toast(Toast::info(format!("Restarting {server}…")));
+                }
+                _ => {
+                    self.toast(Toast::warning("Claude isn't running in this session; its servers start with it."));
+                }
+            },
+            Action::Permissions => {
+                match self.active_session().filter(|s| s.kind == Kind::Code).map(|s| s.cwd.clone()) {
+                    Some(cwd) => self.open_settings(cwd, cx),
+                    None => {
+                        self.toast(Toast::warning("Chat has no permission rules; they're set per project."));
+                    }
+                }
+            }
             Action::Sessions => {
                 self.saved.sessions_collapsed = false;
                 self.save();

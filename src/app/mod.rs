@@ -192,6 +192,9 @@ pub struct KynexApp {
     expanded: HashSet<(Key, usize)>,
     /// Runs of tool calls opened up, by their first call's index.
     open_runs: HashSet<(Key, usize)>,
+    /// Calls auto mode refused that were allowed from their row since, with
+    /// what was allowed ("Edge actions").
+    unblocked: HashMap<(Key, usize), String>,
     /// Ctrl+O: every tool call in the transcript shown open.
     expand_tools: bool,
     /// Each project's sent messages and stash, loaded when first needed.
@@ -481,6 +484,7 @@ impl KynexApp {
             timelines: HashMap::new(),
             expanded: HashSet::new(),
             open_runs: HashSet::new(),
+            unblocked: HashMap::new(),
             expand_tools: false,
             histories: HashMap::new(),
             history_search: None,

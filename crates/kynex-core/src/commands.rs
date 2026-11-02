@@ -131,8 +131,50 @@ pub enum Action {
     Sessions,
     /// `/rewind`: go back to an earlier message (Esc Esc on an empty composer).
     Rewind,
+    /// `/mcp`, `/plugin`, `/agents`, `/hooks`, `/skills`: the Extensions page.
+    Extensions(Section),
+    /// `/mcp reconnect <server>` (or `restart`): restart that MCP server in the session.
+    Reconnect(String),
+    /// `/permissions`, `/allowed-tools`, `/config`: the project's Claude settings.
+    Permissions,
     /// Only does something in the terminal CLI's own UI.
     TerminalOnly,
+}
+
+/// A section of the Extensions page, in its order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Section {
+    Mcp,
+    Plugins,
+    Skills,
+    Agents,
+    Hooks,
+}
+
+/// Commands Kynex runs itself that the CLI doesn't list in stream-json mode,
+/// so the popup offers them too: (name, description, argument hint).
+const KYNEX_ONLY: [(&str, &str, &str); 5] = [
+    ("permissions", "Allow and deny rules for this project", ""),
+    ("plugin", "Plugins and marketplaces", ""),
+    ("agents", "Subagents and where they're defined", ""),
+    ("hooks", "Hooks and where they're defined", ""),
+    ("skills", "Skills and commands", ""),
+];
+
+/// A folder's list as the popup shows it: the CLI's, plus the commands Kynex
+/// runs itself that the CLI left out.
+pub fn with_kynex_commands(mut list: Vec<SlashCommand>) -> Vec<SlashCommand> {
+    for (name, description, hint) in KYNEX_ONLY {
+        if !list.iter().any(|c| c.name == name || c.aliases.iter().any(|a| a == name)) {
+            list.push(SlashCommand {
+                name: name.into(),
+                description: description.into(),
+                argument_hint: hint.into(),
+                aliases: Vec::new(),
+            });
+        }
+    }
+    list
 }
 
 /// What sending `/name args` does. Aliases count: `/new` is `/clear`.
@@ -143,6 +185,15 @@ pub fn action(name: &str, args: &str) -> Action {
         "effort" => Action::Effort(args.to_string()),
         "resume" | "continue" => Action::Sessions,
         "rewind" | "checkpoint" => Action::Rewind,
+        "mcp" => match args.split_once(char::is_whitespace).map(|(verb, server)| (verb, server.trim())) {
+            Some(("reconnect" | "restart", server)) if !server.is_empty() => Action::Reconnect(server.to_string()),
+            _ => Action::Extensions(Section::Mcp),
+        },
+        "plugin" | "plugins" | "marketplace" => Action::Extensions(Section::Plugins),
+        "skills" => Action::Extensions(Section::Skills),
+        "agents" => Action::Extensions(Section::Agents),
+        "hooks" => Action::Extensions(Section::Hooks),
+        "permissions" | "allowed-tools" | "config" | "settings" => Action::Permissions,
         "color" | "focus" | "theme" | "vim" | "terminal-setup" | "statusline" | "keybindings" | "ide" | "exit"
         | "quit" | "heapdump" => Action::TerminalOnly,
         _ => Action::Send,
@@ -241,6 +292,25 @@ mod tests {
         assert_eq!(action("vim", ""), Action::TerminalOnly);
         assert_eq!(action("compact", ""), Action::Send);
         assert_eq!(action("my-skill", "x"), Action::Send);
+    }
+
+    #[test]
+    fn runs_menu_commands_in_kynex() {
+        assert_eq!(action("mcp", ""), Action::Extensions(Section::Mcp));
+        assert_eq!(action("mcp", "reconnect playwright-edge"), Action::Reconnect("playwright-edge".into()));
+        assert_eq!(action("mcp", "restart  edge "), Action::Reconnect("edge".into()));
+        assert_eq!(action("mcp", "reconnect"), Action::Extensions(Section::Mcp));
+        assert_eq!(action("plugin", "install x"), Action::Extensions(Section::Plugins));
+        assert_eq!(action("hooks", ""), Action::Extensions(Section::Hooks));
+        assert_eq!(action("permissions", ""), Action::Permissions);
+        assert_eq!(action("allowed-tools", ""), Action::Permissions);
+    }
+
+    #[test]
+    fn lists_kynex_commands_the_cli_left_out() {
+        let names = |l: Vec<SlashCommand>| l.into_iter().map(|c| c.name).collect::<Vec<_>>();
+        let list = with_kynex_commands(vec![cmd("mcp", &[]), cmd("plugins", &["plugin"])]);
+        assert_eq!(names(list), ["mcp", "plugins", "permissions", "agents", "hooks", "skills"]);
     }
 
     #[test]
