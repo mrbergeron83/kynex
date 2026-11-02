@@ -46,9 +46,6 @@ pub struct Group {
 /// the order it was given (newest first).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Arranged {
-    /// Working, waiting for you, or finished and unseen: above everything,
-    /// instead of where they'd be otherwise.
-    pub active: Vec<String>,
     /// Above the rest, whatever group they're in, in the order they were pinned
     /// (or dragged into).
     pub pinned: Vec<String>,
@@ -59,10 +56,10 @@ pub struct Arranged {
 }
 
 impl Arranged {
-    /// How many sections have rows: Active, Pinned, each group, the top level
-    /// and Archived. With one, the panel draws no headers.
+    /// How many sections have rows: Pinned, each group, the top level and
+    /// Archived. With one, the panel draws no headers.
     pub fn sections(&self) -> usize {
-        [&self.active, &self.pinned, &self.top, &self.archived].iter().filter(|l| !l.is_empty()).count()
+        [&self.pinned, &self.top, &self.archived].iter().filter(|l| !l.is_empty()).count()
             + self.groups.iter().filter(|g| !g.is_empty()).count()
     }
 }
@@ -368,26 +365,16 @@ impl SessionGroups {
 
     /// Sorts session ids (newest first) into the pinned ones, the top level,
     /// groups and archive. Ids saved here that aren't in `ids` are left out.
+    /// Busy sessions stay in their places like the rest.
     pub fn arrange<'a>(&self, ids: impl IntoIterator<Item = &'a str>) -> Arranged {
-        self.arrange_with(ids, &[])
-    }
-
-    /// [`Self::arrange`], with the `active` sessions (working, waiting, or
-    /// finished and unseen) taken out of their places into [`Arranged::active`].
-    /// Grouped ones stay in their group: putting a session there is asked for
-    /// by hand, so it shows there at once, busy or not.
-    pub fn arrange_with<'a>(&self, ids: impl IntoIterator<Item = &'a str>, active: &[String]) -> Arranged {
         let mut out = Arranged { groups: vec![Vec::new(); self.groups.len()], ..Arranged::default() };
         for id in ids {
-            let grouped = self.group_of(id).filter(|_| !self.is_pinned(id));
-            let list = if let Some(g) = grouped {
-                &mut out.groups[g]
-            } else if active.iter().any(|a| a == id) {
-                &mut out.active
-            } else if self.is_archived(id) {
+            let list = if self.is_archived(id) {
                 &mut out.archived
             } else if self.is_pinned(id) {
                 &mut out.pinned
+            } else if let Some(g) = self.group_of(id) {
+                &mut out.groups[g]
             } else {
                 &mut out.top
             };
@@ -408,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn active_sessions_leave_their_places_and_pins_keep_their_order() {
+    fn sessions_sort_into_their_places_and_pins_keep_their_order() {
         let mut g = SessionGroups::default();
         let i = g.add_group("Release");
         g.move_to("grouped", Some(i));
@@ -416,14 +403,12 @@ mod tests {
         g.toggle_pin("p1");
         g.archive("old");
         // Newest first: p1 is newer, but p2 was pinned first.
-        let all = ["busy", "p1", "p2", "grouped", "loose", "old"];
-        let a = g.arrange_with(all, &ids(&["busy", "grouped"]));
-        assert_eq!(a.active, ["busy"]);
+        let all = ["p1", "p2", "grouped", "loose", "old"];
+        let a = g.arrange(all);
         assert_eq!(a.pinned, ["p2", "p1"]);
-        // A grouped session shows in its group even while it's working.
         assert_eq!(a.groups, [ids(&["grouped"])]);
         assert_eq!((a.top.clone(), a.archived.clone()), (ids(&["loose"]), ids(&["old"])));
-        assert_eq!(a.sections(), 5);
+        assert_eq!(a.sections(), 4);
         // Dragging a pin before another reorders them.
         g.move_pin("p1", Some("p2"));
         assert_eq!(g.arrange(all).pinned, ["p1", "p2"]);
