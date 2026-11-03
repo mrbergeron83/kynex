@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The browser (Playwright extension) stays connected: a browser server that dies starts
+  again on its port and the session reconnects to it (#267), and while a session uses the
+  browser Kynex keeps the connection busy so the extension doesn't drop it when idle (#268).
+  Chats and title helpers no longer start your MCP servers.
+
 ## [0.0.19] - 2026-11-02
 
 ### Changed
