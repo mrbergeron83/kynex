@@ -19,18 +19,38 @@
 //! restart is. So once the session has used the browser, Kynex connects as a
 //! client of its own and stays ([`BrowserServer::hold`]); the pairing and the
 //! tabs carry over to the next process.
+//!
+//! A watcher thread keeps it that way (#267, #268): a server that dies or stops
+//! answering starts again on the same port, which the running `claude` still
+//! has, and the session has it reconnect. While the session is using the
+//! browser, Kynex's client lists the tabs every [`KEEPALIVE`]: that reads each
+//! tab's title through the extension, and the traffic keeps Edge from stopping
+//! the extension's idle service worker, which drops every connection.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
 use crate::extensions::{self, Approval, Server, Source, Transport};
 use crate::process::Tree;
+use crate::session::Wake;
+
+/// How often a held browser is touched; under the ~30 s an extension's service
+/// worker may sit idle.
+const KEEPALIVE: Duration = Duration::from_secs(20);
+/// How long after the session last used the browser the keepalive goes on.
+/// After that the connection may drop; the next use connects again.
+const KEEP_FOR: Duration = Duration::from_secs(15 * 60);
+/// Checks in a row a started server may refuse its port before it counts as hung.
+const HUNG_AFTER: u32 = 5;
+/// The longest wait between restarts of a server that keeps failing.
+const MAX_BACKOFF: Duration = Duration::from_secs(60);
 
 /// An `--extension` browser server configured for a folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,84 +135,269 @@ pub struct BrowserServer {
     pub name: String,
     launch: Launch,
     port: u16,
-    tree: Tree,
+    shared: Arc<Shared>,
+}
+
+/// What the session and the watcher share.
+#[derive(Default)]
+struct Shared {
+    state: Mutex<State>,
+    /// The server was dropped: the watcher ends.
+    stop: AtomicBool,
+}
+
+#[derive(Default)]
+struct State {
+    tree: Option<Tree>,
+    /// Counts starts, so a hold or keepalive that outlived its server is ignored.
+    generation: u64,
     /// Kynex's own client session on it, once it holds the browser.
-    held: Arc<Mutex<Option<String>>>,
+    held: Option<String>,
+    /// A hold is under way or done.
     holding: bool,
+    /// The keepalive is under way.
+    pinging: bool,
+    /// When the session last drove the browser.
+    used_at: Option<Instant>,
+    /// It started again and the session hasn't had its process reconnect yet.
+    restarted: bool,
+}
+
+impl Shared {
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
 }
 
 impl BrowserServer {
-    /// Starts `entry`'s command as an HTTP server on a free port. Doesn't wait
-    /// for it to answer; see [`Self::ready`].
-    fn start(entry: &Entry) -> Result<Self, String> {
+    /// Starts `entry`'s command as an HTTP server on a free port, and its
+    /// watcher, which rings `wake` when it starts it again. Doesn't wait for it
+    /// to answer; see [`Self::ready`].
+    fn start(entry: &Entry, wake: Wake) -> Result<Self, String> {
         let port = free_port()?;
-        let mut cmd = Command::new(program(&entry.launch.command));
-        cmd.args(serve_args(&entry.launch, port))
-            .envs(entry.launch.env.iter().map(|(k, v)| (k, v)))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        let tree =
-            Tree::spawn(&mut cmd).map_err(|e| format!("couldn't start the browser server {}: {e}", entry.name))?;
-        Ok(Self {
-            name: entry.name.clone(),
-            launch: entry.launch.clone(),
-            port,
-            tree,
-            held: Arc::default(),
-            holding: false,
-        })
+        let tree = spawn(&entry.launch, port, &entry.name)?;
+        let shared = Arc::new(Shared::default());
+        shared.state().tree = Some(tree);
+        let server = Self { name: entry.name.clone(), launch: entry.launch.clone(), port, shared };
+        let (shared, launch, name) = (server.shared.clone(), server.launch.clone(), server.name.clone());
+        std::thread::spawn(move || watch(&shared, &launch, port, &name, &wake));
+        Ok(server)
     }
 
     /// It answers on its port. Doesn't block: a closed port refuses at once.
     pub fn ready(&self) -> bool {
-        TcpStream::connect_timeout(&addr(self.port), Duration::from_millis(50)).is_ok()
+        answers(self.port)
     }
 
     /// Kynex holds its browser, so it stays paired through restarts.
     pub fn held(&self) -> bool {
-        self.held.lock().is_ok_and(|h| h.is_some())
+        self.shared.state().held.is_some()
     }
 
-    /// Connects Kynex as a client that stays, and has it look at the tabs:
-    /// the browser connection opens on a client's first tool call and closes
-    /// with its last client. In the background; once per server.
+    /// The session drove the browser: keeps the connection up for a while
+    /// ([`KEEP_FOR`]), and connects Kynex as a client that stays and has it
+    /// look at the tabs: the browser connection opens on a client's first tool
+    /// call and closes with its last client. In the background; again only if
+    /// the last hold failed or its server started again.
     pub fn hold(&mut self) {
-        if self.holding {
+        let mut st = self.shared.state();
+        st.used_at = Some(Instant::now());
+        if st.holding {
             return;
         }
-        self.holding = true;
-        let (port, held, name) = (self.port, self.held.clone(), self.name.clone());
-        std::thread::spawn(move || match open_session(port) {
-            Ok(id) => {
-                if let Ok(mut h) = held.lock() {
-                    *h = Some(id);
+        st.holding = true;
+        let generation = st.generation;
+        drop(st);
+        let (port, shared, name) = (self.port, self.shared.clone(), self.name.clone());
+        std::thread::spawn(move || {
+            let got = open_session(port);
+            let mut st = shared.state();
+            if st.generation != generation {
+                return;
+            }
+            match got {
+                Ok(id) => st.held = Some(id),
+                Err(e) => {
+                    st.holding = false;
+                    eprintln!("kynex: couldn't hold the browser of {name}: {e}");
                 }
             }
-            Err(e) => eprintln!("kynex: couldn't hold the browser of {name}: {e}"),
         });
+    }
+
+    /// It started again and answers now: once, so the session's process
+    /// reconnects to it.
+    pub fn take_restarted(&self) -> bool {
+        if !self.shared.state().restarted || !self.ready() {
+            return false;
+        }
+        self.shared.state().restarted = false;
+        true
+    }
+}
+
+impl Drop for BrowserServer {
+    fn drop(&mut self) {
+        self.shared.stop.store(true, Ordering::Relaxed);
+        // Dropping the tree stops the server.
+        let tree = self.shared.state().tree.take();
+        drop(tree);
+    }
+}
+
+/// Starts `launch` serving on `port`.
+fn spawn(launch: &Launch, port: u16, name: &str) -> Result<Tree, String> {
+    let mut cmd = Command::new(program(&launch.command));
+    cmd.args(serve_args(launch, port))
+        .envs(launch.env.iter().map(|(k, v)| (k, v)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    Tree::spawn(&mut cmd).map_err(|e| format!("couldn't start the browser server {name}: {e}"))
+}
+
+/// What the watcher does about a server it just looked at.
+#[derive(Debug, PartialEq, Eq)]
+enum Step {
+    Fine,
+    /// Gone, or started and then stopped answering: start it again.
+    Restart,
+}
+
+/// The watcher's memory between looks at one server.
+#[derive(Debug)]
+struct Health {
+    answered: bool,
+    refused: u32,
+    backoff: Duration,
+    next_start: Instant,
+}
+
+impl Health {
+    fn new(now: Instant) -> Self {
+        Self { answered: false, refused: 0, backoff: Duration::from_secs(2), next_start: now }
+    }
+
+    /// One look: whether the process runs and whether its port answers.
+    fn look(&mut self, now: Instant, alive: bool, answering: bool) -> Step {
+        if alive && answering {
+            // Up: the next failure restarts it soon again.
+            (self.answered, self.refused, self.backoff) = (true, 0, Duration::from_secs(2));
+            return Step::Fine;
+        }
+        if alive {
+            // Still starting, or hung once it had answered.
+            if !self.answered {
+                return Step::Fine;
+            }
+            self.refused += 1;
+            if self.refused < HUNG_AFTER {
+                return Step::Fine;
+            }
+        }
+        if now < self.next_start {
+            return Step::Fine;
+        }
+        // Starts that fail at once back off, up to a minute apart.
+        self.next_start = now + self.backoff;
+        self.backoff = (self.backoff * 2).min(MAX_BACKOFF);
+        (self.answered, self.refused) = (false, 0);
+        Step::Restart
+    }
+}
+
+/// The watcher: restarts the server when it's gone and keeps a held browser
+/// busy. Ends when the server is dropped.
+fn watch(shared: &Arc<Shared>, launch: &Launch, port: u16, name: &str, wake: &Wake) {
+    let mut health = Health::new(Instant::now());
+    let mut last_ping = Instant::now();
+    // The start the session was last told about.
+    let mut rung = 0;
+    while !shared.stop.load(Ordering::Relaxed) {
+        std::thread::sleep(Duration::from_secs(1));
+        if shared.stop.load(Ordering::Relaxed) {
+            return;
+        }
+        let alive = shared.state().tree.as_ref().is_some_and(Tree::alive);
+        let answering = alive && answers(port);
+        if health.look(Instant::now(), alive, answering) == Step::Restart {
+            // The old one goes first: it may still hold the port.
+            let old = shared.state().tree.take();
+            drop(old);
+            let tree = spawn(launch, port, name).map_err(|e| eprintln!("kynex: {e}")).ok();
+            let mut st = shared.state();
+            if shared.stop.load(Ordering::Relaxed) {
+                return;
+            }
+            st.tree = tree;
+            st.generation += 1;
+            (st.held, st.holding, st.pinging, st.restarted) = (None, false, false, true);
+            continue;
+        }
+        let mut st = shared.state();
+        if answering && st.restarted && rung != st.generation {
+            // Up again: the session has its process reconnect.
+            rung = st.generation;
+            drop(st);
+            wake();
+            continue;
+        }
+        let in_use = st.used_at.is_some_and(|t| t.elapsed() < KEEP_FOR);
+        if answering
+            && in_use
+            && !st.pinging
+            && last_ping.elapsed() >= KEEPALIVE
+            && let Some(id) = st.held.clone()
+        {
+            st.pinging = true;
+            last_ping = Instant::now();
+            let (shared, generation) = (shared.clone(), st.generation);
+            std::thread::spawn(move || keepalive(&shared, generation, port, &id));
+        }
+    }
+}
+
+/// Lists the tabs as Kynex's client, which reads each one's title through the
+/// extension. A session the server no longer knows is let go, so the next
+/// use holds the browser again.
+fn keepalive(shared: &Shared, generation: u64, port: u16, id: &str) {
+    let got = call_tool(port, id, "browser_tabs", json!({ "action": "list" }), Duration::from_secs(30));
+    let mut st = shared.state();
+    if st.generation != generation {
+        return;
+    }
+    st.pinging = false;
+    if let Err(e) = got
+        && e.contains("answered 4")
+    {
+        (st.held, st.holding) = (None, false);
     }
 }
 
 /// Brings a session's `servers` in line with `wanted`: keeps the ones still
-/// configured and running, starts the missing ones, drops (and so stops) the
-/// rest.
-pub fn reconcile(servers: &mut Vec<BrowserServer>, wanted: &[Entry]) {
-    servers.retain(|s| wanted.iter().any(|e| e.name == s.name && e.launch == s.launch) && s.tree.alive());
+/// configured (their watchers restart them), starts the missing ones, drops
+/// (and so stops) the rest. Each watcher rings `wake` when it restarts one.
+pub fn reconcile(servers: &mut Vec<BrowserServer>, wanted: &[Entry], wake: &Wake) {
+    servers.retain(|s| wanted.iter().any(|e| e.name == s.name && e.launch == s.launch));
     for e in wanted {
         if !servers.iter().any(|s| s.name == e.name) {
-            match BrowserServer::start(e) {
+            match BrowserServer::start(e, wake.clone()) {
                 Ok(s) => servers.push(s),
                 Err(e) => eprintln!("kynex: {e}"),
             }
         }
     }
+}
+
+/// Something answers on `port`. Doesn't block: a closed port refuses at once.
+fn answers(port: u16) -> bool {
+    TcpStream::connect_timeout(&addr(port), Duration::from_millis(50)).is_ok()
 }
 
 /// `npx` as Windows needs it spelled to start it: `npx.cmd`. (Node also puts
@@ -233,15 +438,21 @@ fn open_session(port: u16) -> Result<String, String> {
         &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
         Duration::from_secs(10),
     )?;
+    // Waits on the browser, which waits on you if the extension asks first.
+    call_tool(port, &id, "browser_tabs", json!({ "action": "list" }), Duration::from_secs(600))?;
+    Ok(id)
+}
+
+/// Calls `tool` in MCP session `id` on the server at `port`. Blocks up to `wait`.
+fn call_tool(port: u16, id: &str, tool: &str, args: Value, wait: Duration) -> Result<Option<Value>, String> {
     let call = json!({
         "jsonrpc": "2.0", "id": 2, "method": "tools/call",
-        "params": { "name": "browser_tabs", "arguments": { "action": "list" } },
+        "params": { "name": tool, "arguments": args },
     });
-    // Waits on the browser, which waits on you if the extension asks first.
-    let reply = post(port, Some(&id), &call, Duration::from_secs(600))?;
+    let reply = post(port, Some(id), &call, wait)?;
     match reply.message {
         Some(m) if m.get("error").is_some() => Err(format!("the browser server refused: {}", m["error"])),
-        _ => Ok(id),
+        m => Ok(m),
     }
 }
 
@@ -449,20 +660,126 @@ mod tests {
             env: vec![],
         };
         let entry = |name: &str, tag: &str| Entry { name: name.into(), launch: launch(tag) };
+        let wake: Wake = Arc::new(|| {});
         let (mut a, mut b) = (Vec::new(), Vec::new());
-        reconcile(&mut a, &[entry("pw", "one")]);
-        reconcile(&mut b, &[entry("pw", "one")]);
+        reconcile(&mut a, &[entry("pw", "one")], &wake);
+        reconcile(&mut b, &[entry("pw", "one")], &wake);
         assert_ne!(a[0].port, b[0].port, "a server, and so a tab group, per session");
 
         // The same configuration keeps its server; a new token gets a new one.
         let port = a[0].port;
-        reconcile(&mut a, &[entry("pw", "one")]);
+        reconcile(&mut a, &[entry("pw", "one")], &wake);
         assert_eq!(a[0].port, port);
-        reconcile(&mut a, &[entry("pw", "two")]);
+        reconcile(&mut a, &[entry("pw", "two")], &wake);
         assert_eq!(a.len(), 1);
         assert_ne!(a[0].port, port);
-        reconcile(&mut a, &[]);
+        reconcile(&mut a, &[], &wake);
         assert!(a.is_empty());
+    }
+
+    #[test]
+    fn a_server_that_dies_starts_again_on_its_port() {
+        // A stand-in that ends at once, as a stopped server does.
+        let launch = Launch {
+            command: if cfg!(windows) { "cmd" } else { "sh" }.into(),
+            args: if cfg!(windows) { vec!["/c".into(), "exit".into()] } else { vec!["-c".into(), "exit".into()] },
+            env: vec![],
+        };
+        let rang = Arc::new(AtomicBool::new(false));
+        let r = rang.clone();
+        let wake: Wake = Arc::new(move || r.store(true, Ordering::Relaxed));
+        let mut servers = Vec::new();
+        reconcile(&mut servers, &[Entry { name: "pw".into(), launch }], &wake);
+        let (port, shared) = (servers[0].port, servers[0].shared.clone());
+        let start = Instant::now();
+        while shared.state().generation < 2 && start.elapsed() < Duration::from_secs(20) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(shared.state().generation >= 2, "started again, twice");
+        assert_eq!(servers[0].port, port, "the running claude still has the old URL");
+        assert!(shared.state().restarted);
+        // It never answers, so the session isn't told to reconnect yet.
+        assert!(!servers[0].take_restarted());
+        assert!(!rang.load(Ordering::Relaxed));
+        drop(servers);
+        assert!(shared.stop.load(Ordering::Relaxed));
+        assert!(shared.state().tree.is_none(), "dropping the server stops it");
+    }
+
+    #[test]
+    fn health_restarts_the_dead_and_the_hung_with_backoff() {
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+        let mut h = Health::new(t0);
+        // Starting: alive but not answering yet is fine, however long.
+        for i in 0..20 {
+            assert_eq!(h.look(t0 + s(i), true, false), Step::Fine);
+        }
+        assert_eq!(h.look(t0 + s(20), true, true), Step::Fine);
+        // Hung once it had answered: restarted after HUNG_AFTER refusals.
+        for i in 1..HUNG_AFTER {
+            assert_eq!(h.look(t0 + s(20 + u64::from(i)), true, false), Step::Fine);
+        }
+        assert_eq!(h.look(t0 + s(30), true, false), Step::Restart);
+        // Dying at once backs off: 2 s, then 4 s, …
+        assert_eq!(h.look(t0 + s(31), false, false), Step::Fine);
+        assert_eq!(h.look(t0 + s(32), false, false), Step::Restart);
+        assert_eq!(h.look(t0 + s(35), false, false), Step::Fine);
+        assert_eq!(h.look(t0 + s(36), false, false), Step::Restart);
+        for _ in 0..10 {
+            h.look(t0 + s(10_000), false, false);
+            h.next_start = t0;
+        }
+        assert_eq!(h.backoff, MAX_BACKOFF);
+        // Up again: the backoff starts over.
+        h.look(t0 + s(10_001), true, true);
+        assert_eq!(h.backoff, s(2));
+    }
+
+    /// Against a real `@playwright/mcp --extension` and your browser: the
+    /// server is killed under a held browser, starts again on its port, and
+    /// drives the browser again.
+    #[test]
+    #[ignore = "needs npx, a browser with the Playwright extension, and its token; opens example.com in it"]
+    fn the_browser_comes_back_after_its_server_dies() {
+        let wait = |what: &str, done: &mut dyn FnMut() -> bool| {
+            let start = Instant::now();
+            while !done() {
+                assert!(start.elapsed() < Duration::from_secs(120), "timed out waiting for {what}");
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        };
+        let entry = entries(&std::env::current_dir().unwrap()).into_iter().next().expect("an --extension server");
+        let mut servers = Vec::new();
+        reconcile(&mut servers, &[entry], &(Arc::new(|| {}) as Wake));
+        let mut server = servers.pop().expect("the server started");
+        let port = server.port;
+        wait("the server", &mut || server.ready());
+        let first = open_session(port).unwrap();
+        call_tool(port, &first, "browser_navigate", json!({ "url": "https://example.com" }), Duration::from_secs(120))
+            .unwrap();
+        server.hold();
+        wait("Kynex to hold the browser", &mut || server.held());
+
+        // Killed, as `Stop-Process` on every Playwright process did.
+        let tree = server.shared.state().tree.take();
+        drop(tree);
+        wait("the server to start again", &mut || server.take_restarted());
+        assert_eq!(server.port, port);
+        assert!(!server.held(), "the old hold went with the old server");
+
+        let next = open_session(port).unwrap();
+        let got = call_tool(
+            port,
+            &next,
+            "browser_navigate",
+            json!({ "url": "https://example.com" }),
+            Duration::from_secs(120),
+        )
+        .unwrap()
+        .unwrap()
+        .to_string();
+        assert!(got.contains("example.com"), "{got}");
     }
 
     /// Against a real `@playwright/mcp --extension` and your browser, as a
@@ -486,7 +803,7 @@ mod tests {
         };
         let entry = entries(&std::env::current_dir().unwrap()).into_iter().next().expect("an --extension server");
         let mut servers = Vec::new();
-        reconcile(&mut servers, &[entry]);
+        reconcile(&mut servers, &[entry], &(Arc::new(|| {}) as Wake));
         let mut server = servers.pop().expect("the server started");
         let port = server.port;
         wait("the server", &mut || server.ready());

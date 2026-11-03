@@ -791,7 +791,14 @@ impl Session {
             Kind::Chat => {
                 cmd.args(["--tools", ""]);
                 // The chief of staff, in its folder: its role and Kynex's tools.
-                cmd.args(crate::chief::launch_args_for(&self.cwd));
+                let chief = crate::chief::launch_args_for(&self.cwd);
+                if chief.is_empty() {
+                    // A plain chat has no tools, so none of the configured MCP
+                    // servers either: each would start for nothing, and a
+                    // browser one is one more client of the extension (#267).
+                    cmd.arg("--strict-mcp-config");
+                }
+                cmd.args(chief);
             }
             // Read fresh on every start, so edits in Claude settings apply to the next process.
             Kind::Code => {
@@ -822,7 +829,11 @@ impl Session {
                 // Kynex's own browser servers, under the configured names. One
                 // still starting is given all the same: the configured one would
                 // be another client fighting over the browser.
-                crate::browser_server::reconcile(&mut self.browser_servers, &crate::browser_server::entries(&self.cwd));
+                crate::browser_server::reconcile(
+                    &mut self.browser_servers,
+                    &crate::browser_server::entries(&self.cwd),
+                    &self.wake,
+                );
                 self.browser_given = self.browser_servers.iter().map(|s| s.name.clone()).collect();
                 self.browser_late =
                     self.browser_servers.iter().filter(|s| !s.ready()).map(|s| s.name.clone()).collect();
@@ -1303,6 +1314,19 @@ impl Session {
     /// Browser servers that were still starting when the process started, and
     /// so failed to connect: it reconnects to the ones up now.
     fn connect_late_browsers(&mut self) {
+        // Servers that died and started again on their port (#267): the
+        // process gave up on them, or will; it connects again now.
+        let back: Vec<String> = self
+            .browser_servers
+            .iter()
+            .filter(|s| s.take_restarted() && self.browser_given.contains(&s.name))
+            .map(|s| s.name.clone())
+            .collect();
+        if self.ready {
+            for name in back {
+                self.reconnect_mcp(&name);
+            }
+        }
         if !self.ready || self.browser_late.is_empty() {
             return;
         }
@@ -3181,7 +3205,7 @@ mod tests {
         s.model = "haiku".into();
         let entries = crate::browser_server::entries(&root);
         let name = entries.first().expect("an --extension Playwright server in your config").name.clone();
-        crate::browser_server::reconcile(&mut s.browser_servers, &entries);
+        crate::browser_server::reconcile(&mut s.browser_servers, &entries, &s.wake.clone());
         let start = Instant::now();
         while !s.browser_servers.iter().all(|b| b.ready()) && start.elapsed() < Duration::from_secs(60) {
             std::thread::sleep(Duration::from_millis(100));

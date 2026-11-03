@@ -168,7 +168,8 @@ pub fn points(cwd: &Path, id: &str) -> Result<Vec<Point>, String> {
 /// own process should be stopped first. `provider` is the session's.
 pub fn restore_files(cwd: &Path, id: &str, point: &Point, provider: &crate::provider::Launch) -> Result<(), String> {
     let mut cmd = crate::session::claude_command(cwd, provider);
-    cmd.args(["-p", "--resume", id, "--rewind-files", &point.uuid])
+    // No MCP servers: they'd start for nothing.
+    cmd.args(["-p", "--resume", id, "--rewind-files", &point.uuid, "--strict-mcp-config"])
         .env(CHECKPOINTS_ENV, "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

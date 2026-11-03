@@ -56,7 +56,9 @@ pub fn generate(first_message: &str, provider: crate::provider::Provider) -> Res
          The conversation opened with:\n{excerpt}"
     );
     let mut cmd = crate::session::claude_command(&std::env::temp_dir(), &crate::provider::Launch::Anthropic);
-    cmd.args(["-p", "--model", "haiku", "--no-session-persistence", "--tools", "", "--output-format", "text"])
+    // No MCP servers: each configured one would start for nothing (#267).
+    cmd.args(["-p", "--model", "haiku", "--no-session-persistence", "--tools", "", "--strict-mcp-config"])
+        .args(["--output-format", "text"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
