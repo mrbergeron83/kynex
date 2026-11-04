@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.21] - 2026-11-04
+
 ### Added
 
 - Delegating to subagents: sessions on Sonnet or Opus get cheaper subagents (a Haiku worker
@@ -717,7 +719,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.20...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.21...HEAD
+[0.0.21]: https://github.com/mrbergeron83/kynex/compare/v0.0.20...v0.0.21
 [0.0.20]: https://github.com/mrbergeron83/kynex/compare/v0.0.19...v0.0.20
 [0.0.19]: https://github.com/mrbergeron83/kynex/compare/v0.0.18...v0.0.19
 [0.0.18]: https://github.com/mrbergeron83/kynex/compare/v0.0.17...v0.0.18
