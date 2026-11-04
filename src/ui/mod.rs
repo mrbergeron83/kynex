@@ -63,6 +63,7 @@ pub enum Icon {
     GitCommit,
     Play,
     Shield,
+    Bot,
     Timeline,
     Search,
     File,
@@ -106,6 +107,7 @@ impl Icon {
             Icon::GitCommit => "icons/git-commit.svg",
             Icon::Play => "icons/play.svg",
             Icon::Shield => "icons/shield.svg",
+            Icon::Bot => "icons/bot.svg",
             Icon::Timeline => "icons/timeline.svg",
             Icon::Search => "icons/search.svg",
             Icon::File => "icons/file.svg",
@@ -116,7 +118,7 @@ impl Icon {
 }
 
 /// Line icons drawn on a 24px grid, Lucide style.
-const ICONS: [(&str, &str); 37] = [
+const ICONS: [(&str, &str); 38] = [
     // Steps on a line, for the session timeline.
     (
         "timeline",
@@ -175,6 +177,10 @@ const ICONS: [(&str, &str); 37] = [
         r#"<path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z" fill="black"/>"#,
     ),
     ("shield", r#"<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>"#),
+    (
+        "bot",
+        r#"<path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/>"#,
+    ),
     ("search", r#"<circle cx="11" cy="11" r="7"/><path d="m20 20-4.35-4.35"/>"#),
     ("file", r#"<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>"#),
     (

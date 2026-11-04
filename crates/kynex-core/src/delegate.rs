@@ -175,6 +175,11 @@ Hand work to the agents named above, not general-purpose: that one runs on your 
 Keep for yourself: design, debugging a cause you haven't found, concurrency, security, data changes, vague \
 requirements, and anything quicker to do than to explain. If a subagent's checks fail, fix it or sharpen the \
 instruction; don't resend the same task.";
+/// Added after every rule, the made one or a project's own, so Claude points
+/// the user at the setting rather than an internal field name.
+const WHERE: &str = "You're running in Kynex. If the user wants to change what you delegate, point them to the \
+Agents button in the project's toolbar, where they can turn it off, pick agents or write this project's own rule in \
+place of this one; the agents themselves are in Settings (Ctrl+,) → Agents.";
 
 fn family(model: &str) -> &'static str {
     let m = model.to_ascii_lowercase();
@@ -206,6 +211,45 @@ pub fn rule(agents: &[&Agent]) -> String {
     s
 }
 
+/// A message asking Claude to write a project's own rule for `agents`, for the
+/// user to send and paste the answer into the project's Agents settings.
+pub fn rule_request(agents: &[&Agent]) -> String {
+    let mut s = String::from(
+        "Write a delegation rule for this project, for Kynex's project settings → Agents → \"This project's own \
+         rule\". It replaces the default rule below, so keep what still applies. Look at how this project builds, \
+         tests and lints, its layout, and any plan or task files, then say concretely what goes to each agent: \
+         the exact commands for the checker, which kinds of edits or which files suit each worker, and what I \
+         should keep for myself. Plain sentences, under 12 lines. Answer with only the rule, in a single \
+         ```text code block so I can copy it.\n\n\
+         The agents:",
+    );
+    for a in agents {
+        s.push_str(&format!("\n- {}: {}", a.name, a.description.trim()));
+    }
+    s.push_str("\n\nThe default rule:\n");
+    s.push_str(&rule(agents));
+    s
+}
+
+/// A message asking Claude to suggest new agents for this project, in the
+/// fields Settings → Agents asks for.
+pub fn agents_request(agents: &[&Agent]) -> String {
+    let mut s = String::from(
+        "Suggest up to three subagents that would save tokens on this project, beyond the ones I have. Look at \
+         its build, test and lint commands, its layout and the work that repeats. For each give the fields of \
+         Kynex's Settings → Agents → Add agent, ready to paste: Name (lowercase-with-dashes), When to use it \
+         (one or two sentences; the main model picks agents by this), Instructions, Model (haiku, sonnet or \
+         opus; haiku unless it needs judgement) and Tools (blank for all, or a list like Bash, Read, Grep; \
+         leave out Edit and Write for one that only checks or reads). Head each agent with its name, then put \
+         each field under its label in its own ```text code block, so I can copy them one by one.\n\n\
+         The agents I have:",
+    );
+    for a in agents {
+        s.push_str(&format!("\n- {}: {}", a.name, a.description.trim()));
+    }
+    s
+}
+
 /// `agents` as `claude --agents` takes them, each with the report cap.
 pub fn agents_json(agents: &[&Agent]) -> String {
     let mut map = Map::new();
@@ -233,8 +277,8 @@ pub fn cli_args(agents: &[Agent], off: &[String], model: &str, own_rule: &str) -
     if mine.is_empty() {
         return Vec::new();
     }
-    let rule = if own_rule.trim().is_empty() { rule(&mine) } else { own_rule.to_string() };
-    vec!["--agents".into(), agents_json(&mine), "--append-system-prompt".into(), rule]
+    let rule = if own_rule.trim().is_empty() { rule(&mine) } else { own_rule.trim().to_string() };
+    vec!["--agents".into(), agents_json(&mine), "--append-system-prompt".into(), format!("{rule}\n{WHERE}")]
 }
 
 #[cfg(test)]
@@ -300,8 +344,21 @@ mod tests {
         for a in &all {
             assert!(args[3].contains(&format!("- {}: ", a.name)), "{}", a.name);
         }
-        // A project's own rule replaces the made one.
-        assert_eq!(cli_args(&all, &[], "opus", "Give it all tests.")[3], "Give it all tests.");
+        // A project's own rule replaces the made one; both say where to change it.
+        assert!(args[3].ends_with(WHERE));
+        assert_eq!(cli_args(&all, &[], "opus", "Give it all tests.")[3], format!("Give it all tests.\n{WHERE}"));
+    }
+
+    #[test]
+    fn the_requests_name_every_agent() {
+        let all = defaults();
+        let mine: Vec<&Agent> = all.iter().collect();
+        let (rule_ask, agents_ask) = (rule_request(&mine), agents_request(&mine));
+        for a in &all {
+            assert!(rule_ask.contains(&format!("- {}: ", a.name)), "{}", a.name);
+            assert!(agents_ask.contains(&format!("- {}: ", a.name)), "{}", a.name);
+        }
+        assert!(rule_ask.ends_with(RULE_END));
     }
 
     #[test]

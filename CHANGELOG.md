@@ -5,6 +5,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- An Agents button (the robot) in each project's toolbar opens the project's delegation
+  settings, now their own section, with what each part does and an example rule. **Ask Claude
+  for a rule** and **Ask Claude for new agents** put a request in the message box; Claude
+  answers in code blocks to paste back. Claude knows where these settings are and points you
+  there (#278).
+- The README has a short "Set up a project" checklist.
+
 ## [0.0.21] - 2026-11-04
 
 ### Added

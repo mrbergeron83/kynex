@@ -90,6 +90,23 @@ code-signed yet.
    gets its own tab and colour.
 3. Start a session (Ctrl+N) and type what you want done.
 
+### Set up a project
+
+A new project opens on its **Setup** checklist. A few minutes there saves many prompts later:
+
+1. **Trust the folder** if it has its own `.claude` settings or MCP servers. Claude Code
+   ignores them until you do.
+2. **Pick a permission mode** (Permissions): how much Claude does without asking.
+3. **Allow the starter rules** for what's in the folder (git, Cargo, npm…): everyday commands
+   Claude would otherwise ask about. Never a push, a publish or a delete.
+4. **Tell Claude how the project works:** send `/init` and Claude writes a `CLAUDE.md` (build,
+   test, layout) that every session reads.
+5. **Set what gets delegated** (the robot in the toolbar): click **Ask Claude for a rule**,
+   send it, and paste the answer back. Builds, tests and routine edits then go to cheaper
+   subagents.
+
+Come back any time: the shield in the toolbar has the project's settings, the robot its agents.
+
 ### Talking to Claude
 
 - **Enter** sends, and **Ctrl+J** adds a new line. Type `/` for slash commands and `@` to
@@ -147,8 +164,20 @@ Keyboard).
 
 The gear in the title bar (Ctrl+,) has Kynex's own settings: which `claude` to use, the
 default shell, Providers (your Anthropic sign-in and OpenRouter), theme, fonts, zoom,
-notifications, keep-awake, and Storage for cleaning up old sessions. Each project's Claude settings (the shield in the toolbar) hold its permission
-mode, effort, extra folders and rules.
+notifications, keep-awake, and Storage for cleaning up old sessions. Each project's Claude
+settings (the shield in the toolbar) hold its permission mode, effort, extra folders and rules.
+
+### Delegating to subagents
+
+Sessions on Anthropic models hand routine work (contained edits, build and test runs, web
+lookups) to cheaper subagents, mostly Haiku, and keep design and debugging.
+
+- **Agents** (the robot in the project's toolbar): on or off for this project, which agents it
+  uses, and its own rule for what goes to them. **Ask Claude for a rule** drafts the rule, and
+  **Ask Claude for new agents** suggests agents to add.
+- **Settings → Agents** (Ctrl+,): the agents themselves, and whether delegating is on by default.
+
+Changes apply from a session's next start.
 
 ### Other models through OpenRouter
 

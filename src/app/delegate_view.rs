@@ -1,15 +1,22 @@
-//! The project settings' "Delegate to subagents": on, off or as in App
-//! settings; which of Kynex's agents this project uses; and its own rule for
-//! what goes to them. See `kynex_core::delegate`; the agents themselves are
-//! edited in Settings → Agents (`agents_settings.rs`).
+//! The project settings' Agents section (the toolbar's Agents button):
+//! delegating on, off or as in App settings; which of Kynex's agents this
+//! project uses; its own rule for what goes to them; and requests that have
+//! Claude write the rule or new agents. See `kynex_core::delegate`; the agents
+//! themselves are edited in Settings → Agents (`agents_settings.rs`).
 
-use gpui::{Context, div, prelude::*};
+use gpui::{ClipboardItem, Context, Window, div, prelude::*};
 use kynex_core::delegate;
+use kynex_core::toasts::Toast;
 
 use super::KynexApp;
 use super::settings::{SettingsView, heading, radio};
 use crate::theme::{Palette, mono};
 use crate::ui::outline_button;
+
+/// A project rule, shown as an example of the kind of thing that helps.
+const EXAMPLE: &str = "Every cargo build, test and clippy run goes to checker. Renames and the same edit across \
+files go to haiku-worker, several at once when they're independent; steps marked [sonnet] in PLAN.md go to \
+sonnet-worker. Keep for yourself: design, debugging, and anything touching the database migrations.";
 
 impl KynexApp {
     pub(super) fn render_delegate_settings(
@@ -36,17 +43,19 @@ impl KynexApp {
                 .cursor_pointer()
                 .hover(move |s| s.bg(hover))
         };
+        let note = |text: &'static str| div().text_xs().text_color(t.text_muted).child(text);
         // The rule this project's sessions get when it has none of its own.
         let used: Vec<&delegate::Agent> =
             view.agents.iter().filter(|a| a.on && !view.claude.agents_off.contains(&a.name)).collect();
         let made_rule = (!used.is_empty()).then(|| delegate::rule(&used));
+        let (rule_ask, agents_ask) = (delegate::rule_request(&used), delegate::agents_request(&used));
         div()
             .flex()
             .flex_col()
             .gap_1()
             .child(heading(
                 "Delegate to subagents",
-                "Whether sessions hand contained work, build and test runs and web lookups to cheaper subagents and keep design and debugging. From a session's next start; Anthropic only.",
+                "Claude hands routine work to cheaper subagents and keeps design and debugging. Each subagent starts fresh, does one task and reports back in a few lines, so the main model's context stays small and your quota lasts longer. From a session's next start; Anthropic only.",
                 t,
             ))
             .children(choices.into_iter().enumerate().map(|(n, (choice, label))| {
@@ -62,9 +71,11 @@ impl KynexApp {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(div().flex_1().text_xs().text_color(t.text_muted).child(
-                            "Agents this project uses. Ones turned off in Settings → Agents aren't listed.",
-                        ))
+                        .child(div().flex_1().child(heading(
+                            "Agents",
+                            "The ones this project uses. Claude picks one by its description. Agents turned off in Settings → Agents aren't listed; add or change them there.",
+                            t,
+                        )))
                         .child(outline_button("edit-agents", "Edit agents…", cx).on_click(cx.listener(
                             |this, _, _, cx| this.open_settings_on(super::app_settings::AGENTS_SECTION, cx),
                         ))),
@@ -103,9 +114,11 @@ impl KynexApp {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .child(div().flex_1().text_xs().text_color(t.text_muted).child(
-                            "This project's own rule, instead of the one made from the agents (Shift+Enter for a new line):",
-                        ))
+                        .child(div().flex_1().child(heading(
+                            "This project's own rule",
+                            "Optional. Replaces the rule made from the agents' descriptions, so Claude knows this project's commands, files and habits. Name the commands and the kinds of work for each agent, and what Claude keeps. Shift+Enter for a new line.",
+                            t,
+                        )))
                         .when(own_rule, |d| {
                             d.child(outline_button("delegate-reset", "Clear", cx).on_click(cx.listener(
                                 |this, _, _, cx| {
@@ -125,13 +138,36 @@ impl KynexApp {
                         .text_xs()
                         .child(self.delegate_rule.clone()),
                 )
+                .when(!own_rule, |d| {
+                    d.child(note("For example:")).child(
+                        div().px_2().text_xs().text_color(t.text_placeholder).child(EXAMPLE),
+                    )
+                })
+                .child(
+                    div().pt_3().child(heading(
+                        "Let Claude write it",
+                        "Claude can look around this project and draft the rule, or suggest new agents. The button puts the request in the message box (and copies it); send it, then paste the rule above, or each agent into Settings → Agents → Add agent.",
+                        t,
+                    )),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(outline_button("ask-rule", "Ask Claude for a rule", cx).on_click(cx.listener(
+                            move |this, _, window, cx| this.ask_claude(rule_ask.clone(), window, cx),
+                        )))
+                        .child(outline_button("ask-agents", "Ask Claude for new agents", cx).on_click(cx.listener(
+                            move |this, _, window, cx| this.ask_claude(agents_ask.clone(), window, cx),
+                        ))),
+                )
                 .children(made_rule.filter(|_| !own_rule).map(|rule| {
                     div()
                         .flex()
                         .flex_col()
                         .gap_1()
-                        .pt_1()
-                        .child(div().text_xs().text_color(t.text_muted).child("What Claude is told:"))
+                        .pt_3()
+                        .child(note("What Claude is told now:"))
                         .child(
                             div()
                                 .px_2()
@@ -145,5 +181,20 @@ impl KynexApp {
                         )
                 }))
             })
+    }
+
+    /// Copies `text` and, when the message box is empty, puts it there and
+    /// closes the settings, ready to send; a draft already there is kept.
+    fn ask_claude(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+        if self.composer.read(cx).text().trim().is_empty() {
+            self.composer.update(cx, |c, cx| c.set_text(text, cx));
+            self.settings = None;
+            self.focus_input(window, cx);
+            self.toast(Toast::info("The request is in the message box: send it, then paste the answer back here"));
+        } else {
+            self.toast(Toast::info("Copied the request: paste it into a session (the message box has a draft)"));
+        }
+        cx.notify();
     }
 }
