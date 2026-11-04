@@ -823,6 +823,18 @@ impl Session {
                     cmd.args(crate::chief::worker_args(&self.cwd, claude.careful && anthropic)?);
                 } else {
                     cmd.args(["--permission-mode", self.mode.cli()]);
+                    // Routine work to Kynex's subagents, unless the project or app turned it off.
+                    if self.provider.provider() == crate::provider::Provider::Anthropic
+                        && crate::delegate::enabled(claude.delegate, crate::delegate::default_on())
+                    {
+                        let agents = crate::delegate::load();
+                        cmd.args(crate::delegate::cli_args(
+                            &agents,
+                            &claude.agents_off,
+                            &self.model,
+                            &claude.delegate_rule,
+                        ));
+                    }
                 }
                 cmd.args(claude.cli_args());
                 launched = Some(project::Launched::new(&perms, &claude));

@@ -31,6 +31,8 @@ pub struct SettingsView {
     pub file_errors: Vec<String>,
     /// Starter rules for what's in the folder, found when the modal opened.
     pub starters: Vec<kynex_core::starters::Starter>,
+    /// Kynex's subagents (Settings → Agents), for turning them off here.
+    pub agents: Vec<kynex_core::delegate::Agent>,
     section: usize,
 }
 
@@ -50,12 +52,16 @@ impl KynexApp {
         self.app_settings = None;
         self.extensions = None;
         let (files, file_errors) = kynex_core::rules::load_files(&path);
+        let claude = self.claude_settings(&path);
+        let rule = claude.delegate_rule.clone();
+        self.delegate_rule.update(cx, |i, cx| i.set_text(rule, cx));
         self.settings = Some(SettingsView {
             perms: Permissions::load(&path),
-            claude: self.claude_settings(&path),
+            claude,
             files,
             file_errors,
             starters: kynex_core::starters::detect(&path),
+            agents: kynex_core::delegate::load(),
             path,
             section,
         });
@@ -544,6 +550,7 @@ impl KynexApp {
                                 "The model and effort are also in the composer, where a session can pin a model of its own over the project's.",
                             ),
                     )
+                    .child(div().pt_3().child(self.render_delegate_settings(view, &t, cx)))
                     .child(div().pt_3().child(heading(
                         "KNX Ops workers",
                         "The model KNX Ops workers run on, and careful mode, which adds a read-only Opus planner and reviewer for larger or riskier tasks. They apply from a worker's next start.",

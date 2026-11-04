@@ -47,7 +47,9 @@
 //! | `settings.rs`       | the project's Claude settings modal                  |
 //! | `project_setup.rs`  | its "Setup": trust, mode, ask rules, starter rules   |
 //! | `rules_view.rs`     | its "Rules in effect": every rule, a command tester  |
+//! | `delegate_view.rs`  | its "Delegate to Haiku": on / off, the rule told      |
 //! | `app_settings.rs`   | the app's Settings modal: CLI, shell, appearance     |
+//! | `agents_settings.rs` | its Agents: delegating, Kynex's subagents to edit       |
 //! | `providers.rs`      | Settings → Providers: Anthropic sign-in, OpenRouter key, cap, My models |
 //! | `grok_setup.rs`     | Settings → Providers → Grok: opt in, install, sign in / out |
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
@@ -66,6 +68,7 @@
 //! | `viewer.rs`         | images opened over the window, thumbnails            |
 
 mod about;
+mod agents_settings;
 mod app_settings;
 mod app_update;
 mod appearance;
@@ -74,6 +77,7 @@ mod background;
 mod chief;
 mod chief_view;
 mod composer;
+mod delegate_view;
 mod drafts;
 mod extensions;
 mod extensions_add;
@@ -214,6 +218,8 @@ pub struct KynexApp {
     new_rule: Entity<TextInput>,
     /// The command typed in the settings' "Rules in effect" to try the rules on.
     rule_test: Entity<TextInput>,
+    /// The project's own rule for what goes to its subagents (`delegate_view.rs`).
+    delegate_rule: Entity<TextInput>,
     attachments: Vec<Attachment>,
     /// Unsent messages of the sessions not shown, by draft key; and the shown
     /// session's uid and draft key, whose message is in the composer.
@@ -426,6 +432,15 @@ impl KynexApp {
             }
         })
         .detach();
+        let delegate_rule = cx
+            .new(|cx| TextInput::new(cx).multiline().placeholder("Empty: the rule made from the agents, shown below"));
+        cx.subscribe(&delegate_rule, |this, input, ev, cx| {
+            if let InputEvent::Changed = ev {
+                let rule = input.read(cx).text().trim().to_string();
+                this.edit_settings(cx, |v| v.claude.delegate_rule = rule);
+            }
+        })
+        .detach();
 
         cx.observe_window_bounds(window, |this, window, _| {
             let bounds = window.window_bounds();
@@ -496,6 +511,7 @@ impl KynexApp {
             setup_for: None,
             new_rule,
             rule_test,
+            delegate_rule,
             attachments: Vec::new(),
             drafts: HashMap::new(),
             draft_for: None,

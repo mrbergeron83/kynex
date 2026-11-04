@@ -26,6 +26,7 @@ impl KynexApp {
             _ => None,
         });
         let turns = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
+        let handed = kynex_core::subagents::count(&s.items);
         let (cost, kind, cwd, context, busy) = (s.total_cost, s.kind, s.cwd.clone(), s.context, s.busy);
         let knows_cost = s.provider().provider().knows_cost();
         let id = s.session_id.clone();
@@ -187,6 +188,10 @@ impl KynexApp {
         let mut stats = Vec::new();
         if turns > 0 {
             stats.push(format!("{turns} turn{}", if turns == 1 { "" } else { "s" }));
+        }
+        // Work the session handed to subagents.
+        if handed > 0 {
+            stats.push(format!("{handed} subagent{}", if handed == 1 { "" } else { "s" }));
         }
         // The CLI prices every turn as Claude; on another provider that's wrong.
         if cost > 0.0 && knows_cost {

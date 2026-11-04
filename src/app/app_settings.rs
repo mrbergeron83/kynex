@@ -32,6 +32,7 @@ pub struct AppSettingsView {
     /// The `claude` in use and what it says its version is, once asked.
     cli: Option<CliInfo>,
     pub(super) providers: super::providers::ProvidersView,
+    pub(super) agents: super::agents_settings::AgentsView,
 }
 
 /// Found off the UI thread when the modal opens, so no frame searches PATH.
@@ -43,10 +44,11 @@ struct CliInfo {
     version: Result<String, String>,
 }
 
-const SECTIONS: [&str; 5] = ["General", "Providers", "Appearance", "Keyboard", "Storage"];
-/// Where Providers and Storage are in [`SECTIONS`], for opening Settings on them.
+const SECTIONS: [&str; 6] = ["General", "Providers", "Agents", "Appearance", "Keyboard", "Storage"];
+/// Where Providers, Agents and Storage are in [`SECTIONS`], for opening Settings on them.
 pub(super) const PROVIDERS_SECTION: usize = 1;
-pub(super) const STORAGE_SECTION: usize = 4;
+pub(super) const AGENTS_SECTION: usize = 2;
+pub(super) const STORAGE_SECTION: usize = 5;
 
 impl KynexApp {
     pub(super) fn open_app_settings(&mut self, cx: &mut Context<Self>) {
@@ -56,7 +58,8 @@ impl KynexApp {
         self.settings = None;
         self.extensions = None;
         let providers = self.new_providers_view(cx);
-        self.app_settings = Some(AppSettingsView { section: 0, cli: None, providers });
+        let agents = self.new_agents_view(cx);
+        self.app_settings = Some(AppSettingsView { section: 0, cli: None, providers, agents });
         // Storage is measured again each time Settings opens; the last stays up meanwhile.
         if let Some(s) = &mut self.storage {
             s.stale = true;
@@ -185,8 +188,9 @@ impl KynexApp {
         let content = match section {
             0 => self.render_general(&t, cx),
             1 => self.render_providers(&t, cx),
-            2 => self.render_appearance(&t, cx),
-            3 => self.render_keyboard(&t, cx),
+            2 => self.render_agents_settings(&t, cx),
+            3 => self.render_appearance(&t, cx),
+            4 => self.render_keyboard(&t, cx),
             _ => self.render_storage(&t, cx),
         };
         let footer = format!("Stored in {}", data_dir().join("state.json").display());
@@ -560,7 +564,12 @@ impl KynexApp {
 }
 
 /// A radio row: a label with a dot when it's the current choice.
-fn choice(id: impl Into<gpui::ElementId>, selected: bool, label: String, t: &Palette) -> gpui::Stateful<gpui::Div> {
+pub(super) fn choice(
+    id: impl Into<gpui::ElementId>,
+    selected: bool,
+    label: String,
+    t: &Palette,
+) -> gpui::Stateful<gpui::Div> {
     let hover = t.hover;
     div()
         .id(id)
