@@ -14,6 +14,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   there (#278).
 - The README has a short "Set up a project" checklist.
 
+### Fixed
+
+- A long message in the composer scrolls to the end: the box follows the cursor as you paste,
+  type or move through it (#276).
+
 ## [0.0.21] - 2026-11-04
 
 ### Added
@@ -28,11 +33,6 @@ and versions follow [Semantic Versioning](https://semver.org/).
   session header counts the subagents a session used (#272).
 - While a turn runs, a strip over the composer lists its subagents, each Working, Done or
   Failed, with the agent, its task and how long it has run.
-
-### Fixed
-
-- A long message in the composer scrolls to the end: the box follows the cursor as you paste,
-  type or move through it (#276).
 
 ## [0.0.20] - 2026-11-03
 
