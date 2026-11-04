@@ -1,4 +1,4 @@
-//! Background tasks (`run_in_background` commands, background agents,
+//! The subagents of the turn in progress, and background tasks (`run_in_background` commands, background agents,
 //! Monitors): the strip of running ones over the composer, where Watch
 //! streams a task's output into the terminal panel and Stop ends it; the row in the transcript
 //! when one ends; and a toast when that happens in a session that isn't shown.
@@ -6,17 +6,21 @@
 use std::path::{Path, PathBuf};
 
 use crate::ui::px;
-use gpui::{AnyElement, Context, FontWeight, Window, div, prelude::*};
+use gpui::{AnyElement, Context, ElementId, FontWeight, Window, div, prelude::*};
 use kynex_core::fmt;
 use kynex_core::live::Key;
 use kynex_core::session::Item;
+use kynex_core::subagents::{self, State};
 use kynex_core::tasks::{self, Notice, Status};
 use kynex_core::toasts::{Action, Toast};
 
 use super::KynexApp;
 use super::state::{Active, View};
 use crate::theme::{Palette, theme};
-use crate::ui::{Icon, Tooltip, ghost_button, icon};
+use crate::ui::{Icon, Tooltip, ghost_button, icon, spinner};
+
+/// The most subagent rows the strip shows; the rest are counted.
+const AGENT_ROWS: usize = 6;
 
 impl KynexApp {
     /// Shows a task's output in the project's terminal; `follow` keeps streaming it.
@@ -137,7 +141,12 @@ impl KynexApp {
                     .border_color(t.border_variant)
                     .bg(t.panel)
                     .text_xs()
-                    .child(icon(Icon::Loader, t.accent).size_3().flex_none())
+                    // Keyed by the task, so it keeps turning as other rows come and go.
+                    .child(div().flex_none().child(spinner(
+                        ElementId::Name(format!("task-spin-{}", task.id).into()),
+                        t.accent,
+                        px(12.),
+                    )))
                     .child(div().flex_none().text_color(t.text_placeholder).child(what))
                     .child(div().flex_1().min_w_0().truncate().text_color(t.text_muted).child(task.description.clone()))
                     .child(div().flex_none().text_color(t.text_placeholder).child(detail))
@@ -146,6 +155,83 @@ impl KynexApp {
             })
             .collect();
         Some(div().flex().flex_col().gap_1().children(rows).into_any_element())
+    }
+
+    /// The subagents of the turn in progress: a line counting them, then one row
+    /// each (working ones first, at most [`AGENT_ROWS`]) with its state, agent,
+    /// task and time. Gone when the turn ends; the transcript keeps them.
+    pub(super) fn render_turn_agents(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let session = self.active_session()?;
+        if !session.busy {
+            return None;
+        }
+        let mut subs = subagents::of_turn(&session.items);
+        if subs.is_empty() {
+            return None;
+        }
+        let t = theme(cx).clone();
+        let working = subs.iter().filter(|s| s.state == State::Working).count();
+        let failed = subs.iter().filter(|s| s.state == State::Failed).count();
+        let done = subs.len() - working - failed;
+        let mut counts = vec![format!("{working} working"), format!("{done} done")];
+        if failed > 0 {
+            counts.push(format!("{failed} failed"));
+        }
+        // Working first, then the latest to finish.
+        subs.sort_by_key(|s| s.state != State::Working);
+        let hidden = subs.len().saturating_sub(AGENT_ROWS);
+        let rows = subs.into_iter().take(AGENT_ROWS).map(|s| {
+            // A working one spins, keyed by its call so it keeps turning as rows re-sort.
+            let mark = match s.state {
+                State::Working => spinner(ElementId::Name(format!("agent-spin-{}", s.id).into()), t.accent, px(12.))
+                    .into_any_element(),
+                State::Done => icon(Icon::Check, t.text_placeholder).size_3().into_any_element(),
+                State::Failed => icon(Icon::Close, t.error).size_3().into_any_element(),
+            };
+            let label = match s.state {
+                State::Working => "Working",
+                State::Done => "Done",
+                State::Failed => "Failed",
+            };
+            let time = s.elapsed.map(|d| fmt::duration(d.as_millis() as u64)).unwrap_or_default();
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .h(px(22.))
+                .text_xs()
+                .child(div().flex_none().child(mark))
+                .child(div().flex_none().w(px(52.)).text_color(t.text_placeholder).child(label))
+                .child(div().flex_none().text_color(t.text_muted).child(s.agent))
+                .child(div().flex_1().min_w_0().truncate().text_color(t.text_placeholder).child(s.description))
+                .child(div().flex_none().text_color(t.text_placeholder).child(time))
+        });
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(t.border_variant)
+                .bg(t.panel)
+                .child(
+                    div()
+                        .px_2()
+                        .pb_0p5()
+                        .text_xs()
+                        .text_color(t.text_muted)
+                        .child(format!("Subagents · {}", counts.join(" · "))),
+                )
+                .children(rows)
+                .when(hidden > 0, |d| {
+                    d.child(
+                        div().px_2().text_xs().text_color(t.text_placeholder).child(format!("and {hidden} more done")),
+                    )
+                })
+                .into_any_element(),
+        )
     }
 
     /// A task that ended, where its notice reached Claude: status, what it was,

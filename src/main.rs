@@ -54,6 +54,7 @@ fn main() {
         theme::set_fonts(&saved.ui_font, &saved.code_font);
         ui::motion::apply(saved.motion, cx);
         kynex_core::cli::set_program(saved.cli_path.clone());
+        kynex_core::delegate::set_default(saved.delegate);
         kynex_core::terminal::ShellKind::set_default(saved.shell);
         ui::input::bind_keys(cx);
         prompt::bind_keys(cx);

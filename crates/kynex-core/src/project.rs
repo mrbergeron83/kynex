@@ -209,6 +209,17 @@ pub struct ClaudeSettings {
     /// Off by default: workers are plain Haiku.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub careful: bool,
+    /// Whether this project's sessions hand routine work to Kynex's subagents;
+    /// `None` follows the app-wide default (see [`crate::delegate`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delegate: Option<bool>,
+    /// Kynex's subagents this project doesn't use, by name.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub agents_off: Vec<String>,
+    /// This project's own rule for what goes to the subagents; empty is the
+    /// one made from their descriptions ([`crate::delegate::rule`]).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub delegate_rule: String,
     /// Who this project's new sessions start on; a new session can pick the other.
     #[serde(skip_serializing_if = "crate::provider::Provider::is_anthropic_ref")]
     pub provider: crate::provider::Provider,

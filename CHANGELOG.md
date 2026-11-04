@@ -5,6 +5,19 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Delegating to subagents: sessions on Sonnet or Opus get cheaper subagents (a Haiku worker
+  for contained, clear work, a checker that runs builds and tests and reports only failures,
+  a web researcher, and a Sonnet worker for the middle ground), each with a short report, and
+  keep design and debugging to themselves, so the expensive model spends fewer tokens on
+  routine work. On by default. Settings → Agents turns it off, and adds, edits or removes
+  agents; they're Kynex's own and never written to your `.claude` folders. A project can
+  turn delegating or single agents off and write its own rule in its Claude settings. The
+  session header counts the subagents a session used (#272).
+- While a turn runs, a strip over the composer lists its subagents, each Working, Done or
+  Failed, with the agent, its task and how long it has run.
+
 ## [0.0.20] - 2026-11-03
 
 ### Fixed
