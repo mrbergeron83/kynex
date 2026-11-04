@@ -29,6 +29,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - While a turn runs, a strip over the composer lists its subagents, each Working, Done or
   Failed, with the agent, its task and how long it has run.
 
+### Fixed
+
+- A long message in the composer scrolls to the end: the box follows the cursor as you paste,
+  type or move through it (#276).
+
 ## [0.0.20] - 2026-11-03
 
 ### Fixed

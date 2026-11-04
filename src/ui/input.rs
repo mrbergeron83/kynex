@@ -8,8 +8,9 @@ use std::ops::Range;
 use gpui::{
     App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, Image, KeyBinding, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, SharedString, Style, TextRun,
-    UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, point, prelude::*, px, relative, size,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollHandle, SharedString,
+    Style, TextRun, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, point, prelude::*, px,
+    relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -116,6 +117,11 @@ pub struct TextInput {
     last_layout: Option<Layout>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    /// The scroll area the field sits in, if any, kept scrolled to the cursor.
+    scroll: ScrollHandle,
+    /// The cursor and text length last scrolled into view; the view follows
+    /// the cursor only when one of them changes, so the wheel stays free.
+    revealed: Option<(usize, usize)>,
 }
 
 /// The shaped text: one wrapped line per `\n`-separated line, with the byte
@@ -175,7 +181,15 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            scroll: ScrollHandle::new(),
+            revealed: None,
         }
+    }
+
+    /// For the scroll area around a multi-line field (`track_scroll`), which
+    /// then follows the cursor as it moves or text comes in.
+    pub fn scroll_handle(&self) -> ScrollHandle {
+        self.scroll.clone()
     }
 
     pub fn multiline(mut self) -> Self {
@@ -758,10 +772,20 @@ fn display_runs(input: &TextInput, window: &Window, cx: &App) -> (SharedString, 
     (text, runs)
 }
 
-fn shape(text: SharedString, runs: &[TextRun], width: Option<Pixels>, window: &Window) -> Layout {
-    let style = window.text_style();
-    let font_size = style.font_size.to_pixels(window.rem_size());
-    let line_height = window.line_height();
+/// The font size and line height in effect, read where the field's text
+/// style applies (not inside a layout measure, which runs outside it).
+fn metrics(window: &Window) -> (Pixels, Pixels) {
+    (window.text_style().font_size.to_pixels(window.rem_size()), window.line_height())
+}
+
+fn shape(
+    text: SharedString,
+    runs: &[TextRun],
+    width: Option<Pixels>,
+    metrics: (Pixels, Pixels),
+    window: &Window,
+) -> Layout {
+    let (font_size, line_height) = metrics;
     let lines: Vec<WrappedLine> = window
         .text_system()
         .shape_text(text.clone(), font_size, runs, width, None)
@@ -806,12 +830,13 @@ impl Element for TextElement {
             return (window.request_layout(style, [], cx), ());
         }
         let (text, runs) = display_runs(input, window, cx);
+        let metrics = metrics(window);
         let layout_id = window.request_measured_layout(style, move |known, available, window, _cx| {
             let width = known.width.or(match available.width {
                 gpui::AvailableSpace::Definite(w) => Some(w),
                 _ => None,
             });
-            let layout = shape(text.clone(), &runs, width, window);
+            let layout = shape(text.clone(), &runs, width, metrics, window);
             let height = layout.line_top(layout.lines.len()).max(layout.line_height);
             size(width.unwrap_or_default(), height)
         });
@@ -830,7 +855,7 @@ impl Element for TextElement {
         let input = self.input.read(cx);
         let (text, runs) = display_runs(input, window, cx);
         let wrap = input.multiline.then_some(bounds.size.width);
-        let layout = shape(text, &runs, wrap, window);
+        let layout = shape(text, &runs, wrap, metrics(window), window);
         let lh = layout.line_height;
         let selection_color = theme(cx).selection;
         let range = input.selected_range.clone();
@@ -897,9 +922,39 @@ impl Element for TextElement {
             window.paint_quad(cursor);
         }
         self.input.update(cx, |input, _cx| {
+            input.reveal_cursor(&layout, bounds, window);
             input.last_layout = Some(layout);
             input.last_bounds = Some(bounds);
         });
+    }
+}
+
+impl TextInput {
+    /// Scrolls the area around the field just enough to show the cursor,
+    /// when it or the text changed since the last frame.
+    fn reveal_cursor(&mut self, layout: &Layout, bounds: Bounds<Pixels>, window: &mut Window) {
+        let key = (self.cursor_offset(), self.content.len());
+        if self.revealed == Some(key) {
+            return;
+        }
+        self.revealed = Some(key);
+        let view = self.scroll.bounds();
+        if view.size.height <= px(0.) {
+            return;
+        }
+        let top = bounds.origin.y + layout.position_for_offset(key.0).y;
+        let bottom = top + layout.line_height;
+        let mut offset = self.scroll.offset();
+        let y = if bottom > view.bottom() {
+            offset.y - (bottom - view.bottom())
+        } else if top < view.top() {
+            offset.y + (view.top() - top)
+        } else {
+            return;
+        };
+        offset.y = y.clamp(-self.scroll.max_offset().y, px(0.));
+        self.scroll.set_offset(offset);
+        window.refresh();
     }
 }
 
