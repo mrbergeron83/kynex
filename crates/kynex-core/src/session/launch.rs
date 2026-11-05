@@ -1,0 +1,242 @@
+//! Starting a session's process off the UI thread.
+//!
+//! Everything a start does can block: reading settings, finding the CLI on
+//! `PATH`, a worker's `git worktree add`, starting browser MCP servers
+//! (`npx`), and the process itself (long on a first launch, or under an
+//! antivirus scan). [`begin`] does all of it on a thread and hands back a
+//! [`Started`]; the session takes it in on its next poll, and what it wrote
+//! meanwhile goes out then.
+
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread;
+
+use serde_json::Value;
+
+use super::{Event, Kind, Wake, claude_command, spawn_readers};
+use crate::browser_server::BrowserServer;
+use crate::project;
+use crate::provider::{Launch, Provider};
+
+/// What a start needs from its session, taken so it can run on a thread.
+pub(super) struct Spec {
+    pub kind: Kind,
+    pub cwd: PathBuf,
+    pub model: String,
+    pub provider: Launch,
+    pub worker: bool,
+    pub mode: project::Mode,
+    pub resume: Option<String>,
+    pub resume_at: Option<String>,
+    pub wake: Wake,
+    /// The session's browser servers, which a start brings up to its settings
+    /// and hands back.
+    pub browser_servers: Vec<BrowserServer>,
+}
+
+/// A finished start: the process, or why there is none. A process that is
+/// never taken (the session stopped it meanwhile) is killed when this drops.
+pub(super) struct Started {
+    pub child: Option<Child>,
+    /// Lines for its stdin ([`spawn_writer`]).
+    pub stdin: Option<Sender<String>>,
+    pub error: Option<String>,
+    pub launched: Option<project::Launched>,
+    /// The model it runs on (a worker's is picked here).
+    pub model: String,
+    /// The session's browser servers, back from [`Spec::browser_servers`].
+    pub browser_servers: Vec<BrowserServer>,
+    /// The ones it was given, and of those the ones still starting when it did.
+    pub browser_given: Vec<String>,
+    pub browser_late: Vec<String>,
+}
+
+impl Drop for Started {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+/// Starts `spec` on a thread. Its events go to `events`; the result comes on
+/// the returned receiver, and `spec.wake` rings once it's there.
+pub(super) fn begin(spec: Spec, events: Sender<Event>) -> Receiver<Started> {
+    let (tx, rx) = channel();
+    thread::spawn(move || {
+        let wake = spec.wake.clone();
+        // A send fails if the session stopped meanwhile; the process drops with it.
+        let _ = tx.send(run(spec, events));
+        wake();
+    });
+    rx
+}
+
+/// Builds the command and starts it. Blocks.
+fn run(mut spec: Spec, events: Sender<Event>) -> Started {
+    let mut started = Started {
+        child: None,
+        stdin: None,
+        error: None,
+        launched: None,
+        model: spec.model.clone(),
+        browser_servers: Vec::new(),
+        browser_given: Vec::new(),
+        browser_late: Vec::new(),
+    };
+    let built = command(&mut spec, &mut started);
+    started.model = spec.model;
+    started.browser_servers = spec.browser_servers;
+    let (mut cmd, what) = match built {
+        Ok(c) => c,
+        Err(e) => {
+            started.error = Some(e);
+            return started;
+        }
+    };
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    match crate::process::dies_with_parent(&mut cmd).spawn() {
+        Ok(mut child) => {
+            let (stdout, stderr) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
+            let stdin = child.stdin.take().unwrap();
+            started.stdin = Some(spawn_writer(stdin, events.clone(), spec.wake.clone()));
+            spawn_readers(stdout, stderr, events, spec.wake);
+            started.child = Some(child);
+        }
+        Err(e) => started.error = Some(format!("failed to start {what}: {e}")),
+    }
+    started
+}
+
+/// Writes the lines sent on the returned sender to `stdin`, on a thread: one
+/// the process isn't reading yet blocks there, not the caller. Stops when the
+/// sender drops (closing `stdin`), or, saying [`Event::Lost`], when a write fails.
+fn spawn_writer(mut stdin: ChildStdin, events: Sender<Event>, wake: Wake) -> Sender<String> {
+    let (tx, rx) = channel::<String>();
+    thread::spawn(move || {
+        for line in rx {
+            if stdin.write_all(line.as_bytes()).and_then(|_| stdin.flush()).is_err() {
+                let _ = events.send(Event::Lost);
+                wake();
+                return;
+            }
+        }
+    });
+    tx
+}
+
+/// The command for `spec` and what it starts (for an error). Fills in what
+/// `started` reports besides the process.
+fn command(spec: &mut Spec, started: &mut Started) -> Result<(Command, &'static str), String> {
+    // Grok: its agent over ACP; the session speaks the protocol.
+    if spec.provider.provider() == Provider::Grok {
+        return Ok((crate::grok::command(&spec.cwd), "`grok`"));
+    }
+    // OpenRouter chat: Kynex's own harness in the CLI's place, same protocol.
+    if let Launch::OpenRouterChat { key, settings } = spec.provider.with_model(&spec.model) {
+        let at = spec.resume_at.take();
+        let cmd = crate::chat_api::command(&spec.cwd, &key, &settings, spec.resume.as_deref(), at.as_deref())?;
+        return Ok((cmd, "the chat"));
+    }
+    let mut cmd = claude_command(&spec.cwd, &spec.provider.with_model(&spec.model));
+    // Checkpoints of the files Claude edits, so a rewind can restore them.
+    cmd.env(crate::rewind::CHECKPOINTS_ENV, "1");
+    cmd.args([
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+        "--permission-prompt-tool",
+        "stdio",
+    ]);
+    // One `--settings`: the project's rules, and the provider's variables,
+    // which outrank an env block in the user's own settings.
+    let launch = spec.provider.with_model(&spec.model);
+    let mut settings = serde_json::Map::new();
+    if let Some(env) = launch.settings_env() {
+        settings.insert("env".into(), env.into());
+    }
+    match spec.kind {
+        Kind::Chat => {
+            cmd.args(["--tools", ""]);
+            // The chief of staff, in its folder: its role and Kynex's tools.
+            let chief = crate::chief::launch_args_for(&spec.cwd);
+            if chief.is_empty() {
+                // A plain chat has no tools, so none of the configured MCP
+                // servers either: each would start for nothing, and a
+                // browser one is one more client of the extension (#267).
+                cmd.arg("--strict-mcp-config");
+            }
+            cmd.args(chief);
+        }
+        // Read fresh on every start, so edits in Claude settings apply to the next process.
+        Kind::Code => {
+            let perms = project::Permissions::load(&spec.cwd);
+            let claude = project::ClaudeSettings::load(&spec.cwd).for_provider(spec.provider.provider());
+            if let Some(Value::Object(rules)) =
+                perms.as_cli_settings().and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            {
+                settings.extend(rules);
+            }
+            if spec.worker {
+                // No prompts, its own worktree, and the chief's contract. On Anthropic a worker runs on
+                // Haiku, with careful mode's Opus planner and reviewer when the project turned it on.
+                let anthropic = spec.provider.provider() == Provider::Anthropic;
+                if anthropic {
+                    spec.model = if claude.worker_model.is_empty() {
+                        crate::careful::WORKER_MODEL.into()
+                    } else {
+                        claude.worker_model.clone()
+                    };
+                }
+                cmd.args(crate::chief::worker_args(&spec.cwd, claude.careful && anthropic)?);
+            } else {
+                cmd.args(["--permission-mode", spec.mode.cli()]);
+                // Routine work to Kynex's subagents, unless the project or app turned it off.
+                if spec.provider.provider() == Provider::Anthropic
+                    && crate::delegate::enabled(claude.delegate, crate::delegate::default_on())
+                {
+                    let agents = crate::delegate::load();
+                    cmd.args(crate::delegate::cli_args(
+                        &agents,
+                        &claude.agents_off,
+                        &spec.model,
+                        &claude.delegate_rule,
+                    ));
+                }
+            }
+            cmd.args(claude.cli_args());
+            started.launched = Some(project::Launched::new(&perms, &claude));
+            // Kynex's own browser servers, under the configured names. One
+            // still starting is given all the same: the configured one would
+            // be another client fighting over the browser.
+            let servers = &mut spec.browser_servers;
+            crate::browser_server::reconcile(servers, &crate::browser_server::entries(&spec.cwd), &spec.wake);
+            started.browser_given = servers.iter().map(|s| s.name.clone()).collect();
+            started.browser_late = servers.iter().filter(|s| !s.ready()).map(|s| s.name.clone()).collect();
+            if !servers.is_empty() {
+                cmd.args(["--mcp-config", &crate::browser_server::mcp_config(&*servers)]);
+            }
+        }
+    }
+    if !settings.is_empty() {
+        cmd.args(["--settings", &Value::Object(settings).to_string()]);
+    }
+    if !spec.model.is_empty() {
+        cmd.args(["--model", &spec.model]);
+    }
+    if let Some(id) = &spec.resume {
+        cmd.args(["--resume", id]);
+        // After a rewind: continue from there, branching off what came after.
+        if let Some(at) = spec.resume_at.take() {
+            cmd.args(["--resume-session-at", &at]);
+        }
+    }
+    Ok((cmd, "`claude`"))
+}

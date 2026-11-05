@@ -92,7 +92,7 @@ impl KynexApp {
             self.forget_past_session(kind, &cwd, id);
         }
         self.stop_picking();
-        self.sessions = None;
+        self.relist_sessions(&ids);
         cx.spawn(async move |this, cx| {
             let n = ids.len();
             let errors: Vec<String> = cx
@@ -109,7 +109,7 @@ impl KynexApp {
                     Some(e) => this.toast(Toast::error(format!("{done}. Couldn't delete {}: {e}", errors.len()))),
                     None => this.toast(Toast::success(done)),
                 };
-                this.sessions = None;
+                this.reread_sessions();
                 cx.notify();
             })
             .ok();

@@ -64,19 +64,27 @@ impl GitView {
                            op: Sync,
                            highlight: bool,
                            cx: &mut Context<Self>| {
-            ghost_button(id, cx)
+            let button = ghost_button(id, cx)
                 .text_color(if highlight { t.text } else { t.text_muted })
-                .when(busy, |d| d.opacity(0.5))
                 .child(icon(which, if highlight { t.accent } else { t.text_muted }).size_3p5())
-                .child(label)
-                .tooltip(Tooltip::text(tip))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    // After a fetch, pull requests and gone remotes may have changed.
-                    if op == Sync::Fetch {
-                        this.branch_tab.forget_github();
-                    }
-                    this.run(op.label(), cx, move |root| git::sync(root, op), |_, _| {});
-                }))
+                .child(label);
+            // One operation at a time: the others wait, and say so.
+            if busy {
+                return button.opacity(0.5).cursor_default().tooltip(Tooltip::text("Wait for the current operation"));
+            }
+            button.tooltip(Tooltip::text(tip)).on_click(cx.listener(move |this, _, _, cx| {
+                // After a fetch, pull requests and gone remotes may have changed.
+                if op == Sync::Fetch {
+                    this.branch_tab.forget_github();
+                }
+                let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let flag = cancel.clone();
+                this.run(op.label(), cx, move |root| git::sync(root, op, &flag), |_, _| {});
+                // A pull stopped halfway could leave a merge behind; fetch and push stop cleanly.
+                if op != Sync::Pull {
+                    this.cancel = Some(cancel);
+                }
+            }))
         };
 
         div()
@@ -101,7 +109,18 @@ impl GitView {
                         .text_xs()
                         .text_color(t.text_muted)
                         .child(spinner("git-busy", t.accent, px(12.)))
-                        .child(format!("{label}…")),
+                        .child(format!("{label}…"))
+                        .when_some(self.cancel.clone(), |d, cancel| {
+                            d.child(
+                                ghost_button("git-cancel", cx)
+                                    .text_xs()
+                                    .child("Cancel")
+                                    .tooltip(Tooltip::text("Stop talking to the remote"))
+                                    .on_click(move |_, _, _| {
+                                        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    }),
+                            )
+                        }),
                 )
             })
             .child(sync_button(

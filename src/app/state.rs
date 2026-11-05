@@ -126,6 +126,9 @@ pub struct Saved {
     pub sessions_by_provider: bool,
     /// Grok is offered as a provider (Settings → Providers); off until opted in.
     pub grok: bool,
+    /// A setup check has passed here before, so the next launch shows the
+    /// workspace while it checks again, rather than "Checking Claude Code…".
+    pub setup_checked: bool,
 }
 
 impl Default for Saved {
@@ -168,6 +171,7 @@ impl Default for Saved {
             openrouter: Default::default(),
             sessions_by_provider: false,
             grok: false,
+            setup_checked: false,
         }
     }
 }

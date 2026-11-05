@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -20,6 +20,11 @@ use crate::project;
 use crate::queue::Queue;
 use crate::session_log::{LoggedImage, Span};
 use crate::tasks::{self, Tasks};
+
+mod launch;
+
+/// How long after a failed start warming up leaves it alone; a message still tries.
+const START_BACKOFF: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -245,6 +250,8 @@ enum Event {
     Line(Value),
     Stderr(String),
     Exited,
+    /// Writing to its stdin failed.
+    Lost,
 }
 
 /// How full a session's context window is, as of Claude's last reply.
@@ -323,8 +330,16 @@ pub struct Session {
     /// Set by the UI so it hears about new events; a no-op until then.
     pub wake: Wake,
     child: Option<Child>,
-    stdin: Option<Arc<Mutex<ChildStdin>>>,
+    /// Lines for its stdin, which a thread writes ([`launch`]): a big message
+    /// to a process that isn't reading yet would block the UI otherwise.
+    stdin: Option<Sender<String>>,
     rx: Option<Receiver<Event>>,
+    /// A start running on a thread ([`launch::begin`]), and the lines written
+    /// to the process until it's up.
+    starting: Option<Receiver<launch::Started>>,
+    outbox: Vec<String>,
+    /// When a start last failed, so warming up doesn't retry it on every keystroke.
+    failed_at: Option<Instant>,
     streaming_text: bool,
     /// When the process started, whether it has said anything yet, and whether
     /// it has been sent a message (or was only warmed up).
@@ -503,6 +518,9 @@ impl Session {
             child: None,
             stdin: None,
             rx: None,
+            starting: None,
+            outbox: Vec::new(),
+            failed_at: None,
             streaming_text: false,
             spawned: None,
             ready: false,
@@ -554,7 +572,7 @@ impl Session {
         }
         // A process started early, before anything was sent, starts again on it;
         // the id it reported names no conversation, so it goes too.
-        if self.child.is_some() {
+        if self.is_running() {
             self.kill();
         }
         self.session_id = None;
@@ -573,7 +591,7 @@ impl Session {
     /// process of this run starts. Its conversation is the same; only a session
     /// already running here, or one that has started, keeps what it has.
     pub fn restore_provider(&mut self, provider: crate::provider::Launch) -> Result<(), String> {
-        if self.child.is_some() || self.talked {
+        if self.is_running() || self.talked {
             return Err(format!("This session already runs on {}.", self.provider.provider().label()));
         }
         self.provider = provider;
@@ -720,8 +738,15 @@ impl Session {
         self.items.push(Item::User { text, images });
     }
 
+    /// Its process is running, or starting ([`Self::starting`]).
     pub fn is_running(&self) -> bool {
-        self.child.is_some()
+        self.child.is_some() || self.starting.is_some()
+    }
+
+    /// Its process is being started, off the UI thread; what's written to it
+    /// meanwhile goes out once it's up.
+    pub fn starting(&self) -> bool {
+        self.starting.is_some()
     }
 
     /// Whether a permission prompt or question is waiting on the user.
@@ -739,9 +764,34 @@ impl Session {
         self.session_id.as_deref().filter(|_| self.conversation)
     }
 
-    fn spawn(&mut self) -> Result<(), String> {
-        // Grok: its agent over ACP, continuing the conversation if there is one.
-        if self.provider.provider() == crate::provider::Provider::Grok {
+    /// Starts its process on a thread ([`launch::begin`]) and returns at once.
+    /// Until it's up, [`Self::pulse`] says it's starting and what's written to
+    /// it waits; [`Self::poll`] takes it in, or reports why it didn't start.
+    fn spawn(&mut self) {
+        let grok = self.provider.provider() == crate::provider::Provider::Grok;
+        let (tx, rx) = channel();
+        let spec = launch::Spec {
+            kind: self.kind,
+            cwd: self.cwd.clone(),
+            model: self.model.clone(),
+            provider: self.provider.clone(),
+            worker: self.worker,
+            mode: self.mode,
+            resume: self.resume_id().map(str::to_string),
+            resume_at: if grok { None } else { self.resume_at.take() },
+            wake: self.wake.clone(),
+            browser_servers: std::mem::take(&mut self.browser_servers),
+        };
+        self.starting = Some(launch::begin(spec, tx));
+        self.outbox.clear();
+        self.rx = Some(rx);
+        self.launched = None;
+        self.spawned = Some(Instant::now());
+        self.runs += 1;
+        self.ready = false;
+        self.talked = false;
+        if grok {
+            // Grok: its agent over ACP, continuing the conversation if there is one.
             let model = self.provider.with_model(&self.model).model().unwrap_or("").to_string();
             let resume = self.resume_id().map(str::to_string);
             let effort = match self.kind {
@@ -751,154 +801,58 @@ impl Session {
             let mut acp =
                 crate::grok::acp::Acp::new(self.cwd.clone(), &model, self.mode, self.worker, resume.as_deref())
                     .with_effort(&effort);
-            self.start(crate::grok::command(&self.cwd), None, "`grok`")?;
             for line in acp.start() {
                 self.write_line(&line);
             }
             self.acp = Some(acp);
-            return Ok(());
-        }
-        // OpenRouter chat: Kynex's own harness in the CLI's place, same protocol.
-        if let crate::provider::Launch::OpenRouterChat { key, settings } = self.provider.with_model(&self.model) {
-            let resume = self.resume_id().map(str::to_string);
-            let at = self.resume_at.take();
-            let cmd = crate::chat_api::command(&self.cwd, &key, &settings, resume.as_deref(), at.as_deref())?;
-            return self.start(cmd, None, "the chat");
-        }
-        let mut cmd = claude_command(&self.cwd, &self.provider.with_model(&self.model));
-        // Checkpoints of the files Claude edits, so a rewind can restore them.
-        cmd.env(crate::rewind::CHECKPOINTS_ENV, "1");
-        cmd.args([
-            "-p",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-            "--permission-prompt-tool",
-            "stdio",
-        ]);
-        let mut launched = None;
-        // One `--settings`: the project's rules, and the provider's variables,
-        // which outrank an env block in the user's own settings.
-        let launch = self.provider.with_model(&self.model);
-        let mut settings = serde_json::Map::new();
-        if let Some(env) = launch.settings_env() {
-            settings.insert("env".into(), env.into());
-        }
-        match self.kind {
-            Kind::Chat => {
-                cmd.args(["--tools", ""]);
-                // The chief of staff, in its folder: its role and Kynex's tools.
-                let chief = crate::chief::launch_args_for(&self.cwd);
-                if chief.is_empty() {
-                    // A plain chat has no tools, so none of the configured MCP
-                    // servers either: each would start for nothing, and a
-                    // browser one is one more client of the extension (#267).
-                    cmd.arg("--strict-mcp-config");
-                }
-                cmd.args(chief);
-            }
-            // Read fresh on every start, so edits in Claude settings apply to the next process.
-            Kind::Code => {
-                let perms = project::Permissions::load(&self.cwd);
-                let claude = project::ClaudeSettings::load(&self.cwd).for_provider(self.provider.provider());
-                if let Some(Value::Object(rules)) =
-                    perms.as_cli_settings().and_then(|s| serde_json::from_str::<Value>(&s).ok())
-                {
-                    settings.extend(rules);
-                }
-                if self.worker {
-                    // No prompts, its own worktree, and the chief's contract. On Anthropic a worker runs on
-                    // Haiku, with careful mode's Opus planner and reviewer when the project turned it on.
-                    let anthropic = self.provider.provider() == crate::provider::Provider::Anthropic;
-                    if anthropic {
-                        self.model = if claude.worker_model.is_empty() {
-                            crate::careful::WORKER_MODEL.into()
-                        } else {
-                            claude.worker_model.clone()
-                        };
-                    }
-                    cmd.args(crate::chief::worker_args(&self.cwd, claude.careful && anthropic)?);
-                } else {
-                    cmd.args(["--permission-mode", self.mode.cli()]);
-                    // Routine work to Kynex's subagents, unless the project or app turned it off.
-                    if self.provider.provider() == crate::provider::Provider::Anthropic
-                        && crate::delegate::enabled(claude.delegate, crate::delegate::default_on())
-                    {
-                        let agents = crate::delegate::load();
-                        cmd.args(crate::delegate::cli_args(
-                            &agents,
-                            &claude.agents_off,
-                            &self.model,
-                            &claude.delegate_rule,
-                        ));
-                    }
-                }
-                cmd.args(claude.cli_args());
-                launched = Some(project::Launched::new(&perms, &claude));
-                // Kynex's own browser servers, under the configured names. One
-                // still starting is given all the same: the configured one would
-                // be another client fighting over the browser.
-                crate::browser_server::reconcile(
-                    &mut self.browser_servers,
-                    &crate::browser_server::entries(&self.cwd),
-                    &self.wake,
-                );
-                self.browser_given = self.browser_servers.iter().map(|s| s.name.clone()).collect();
-                self.browser_late =
-                    self.browser_servers.iter().filter(|s| !s.ready()).map(|s| s.name.clone()).collect();
-                if !self.browser_servers.is_empty() {
-                    cmd.args(["--mcp-config", &crate::browser_server::mcp_config(&self.browser_servers)]);
-                }
-            }
-        }
-        if !settings.is_empty() {
-            cmd.args(["--settings", &Value::Object(settings).to_string()]);
-        }
-        if !self.model.is_empty() {
-            cmd.args(["--model", &self.model]);
-        }
-        if let Some(id) = self.resume_id() {
-            cmd.args(["--resume", id]);
-            // After a rewind: continue from there, branching off what came after.
-            if let Some(at) = self.resume_at.take() {
-                cmd.args(["--resume-session-at", &at]);
-            }
-        }
-        self.start(cmd, launched, "`claude`")
-    }
-
-    /// Starts `cmd` (`what`, for an error) as this session's process.
-    fn start(&mut self, mut cmd: Command, launched: Option<project::Launched>, what: &str) -> Result<(), String> {
-        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-
-        let mut child =
-            crate::process::dies_with_parent(&mut cmd).spawn().map_err(|e| format!("failed to start {what}: {e}"))?;
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
-        let stdin = child.stdin.take().unwrap();
-        let (tx, rx) = channel();
-
-        spawn_readers(stdout, stderr, tx, self.wake.clone());
-
-        self.child = Some(child);
-        self.stdin = Some(Arc::new(Mutex::new(stdin)));
-        self.rx = Some(rx);
-        self.launched = launched;
-        self.spawned = Some(Instant::now());
-        self.runs += 1;
-        self.ready = false;
-        self.talked = false;
-        // `grok` is one turn and speaks the message stream on its own. `claude`
-        // is asked for its commands and models first, as the Agent SDK does.
-        if self.provider.provider() != crate::provider::Provider::Grok {
+        } else {
+            // `claude` is asked for its commands and models first, as the Agent SDK does.
             self.write(
                 json!({ "type": "control_request", "request_id": INIT_ID, "request": { "subtype": "initialize" } }),
             );
         }
-        Ok(())
+    }
+
+    /// Takes in a start that has finished: the process, and what was written
+    /// to it meanwhile goes out; or, if it failed, why (when a message waits on it).
+    fn take_started(&mut self) {
+        let Some(rx) = &self.starting else { return };
+        let mut started = match rx.try_recv() {
+            Ok(s) => s,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.start_failed("failed to start the process".into());
+                return;
+            }
+        };
+        self.starting = None;
+        self.browser_servers = std::mem::take(&mut started.browser_servers);
+        self.browser_given = std::mem::take(&mut started.browser_given);
+        self.browser_late = std::mem::take(&mut started.browser_late);
+        self.model = std::mem::take(&mut started.model);
+        let (Some(child), Some(stdin)) = (started.child.take(), started.stdin.take()) else {
+            let e = started.error.take().unwrap_or_else(|| "failed to start the process".into());
+            self.start_failed(e);
+            return;
+        };
+        self.child = Some(child);
+        self.stdin = Some(stdin);
+        self.launched = started.launched.take();
+        self.failed_at = None;
+        for line in std::mem::take(&mut self.outbox) {
+            self.write_raw(line);
+        }
+    }
+
+    /// A start failed with `e`: shown if a message was waiting on it (a warm-up's
+    /// is left for the next message to report), and warming up backs off.
+    fn start_failed(&mut self, e: String) {
+        self.starting = None;
+        self.failed_at = Some(Instant::now());
+        if self.busy {
+            self.items.push(Item::Error(e));
+        }
+        self.kill();
     }
 
     /// The OpenRouter model a request just failed for because it takes no
@@ -964,14 +918,20 @@ impl Session {
 
     /// Writes one JSON line to the process.
     fn write_line(&mut self, msg: &Value) {
-        let Some(stdin) = &self.stdin else { return };
         let mut line = msg.to_string();
         line.push('\n');
-        let ok = stdin.lock().is_ok_and(|mut s| s.write_all(line.as_bytes()).and_then(|_| s.flush()).is_ok());
-        if !ok {
-            let who = if self.provider.provider() == crate::provider::Provider::Grok { "grok" } else { "claude" };
-            self.items.push(Item::Error(format!("lost connection to {who} process")));
-            self.kill();
+        self.write_raw(line);
+    }
+
+    /// Writes `line` to the process, or keeps it for when it's up if it's
+    /// starting. A write that fails comes back as [`Event::Lost`].
+    fn write_raw(&mut self, line: String) {
+        match &self.stdin {
+            Some(stdin) => {
+                let _ = stdin.send(line);
+            }
+            None if self.starting.is_some() => self.outbox.push(line),
+            None => {}
         }
     }
 
@@ -984,11 +944,8 @@ impl Session {
             self.queue.push(text, attachments);
             return;
         }
-        if self.child.is_none()
-            && let Err(e) = self.spawn()
-        {
-            self.items.push(Item::Error(e));
-            return;
+        if !self.is_running() {
+            self.spawn();
         }
         let mut content = Vec::new();
         let mut images = Vec::new();
@@ -1015,12 +972,14 @@ impl Session {
     /// Starts the process ahead of the first message, so sending doesn't wait
     /// for it (about half a second to well over one). Call when a message is
     /// likely: the composer focused, typing, the session shown. Does nothing if
-    /// it's running; a failure to start is left for [`Self::send`] to report.
-    /// Either way it counts as activity, so it doesn't fall asleep under you.
+    /// it's running or starting; a failure to start is left for [`Self::send`]
+    /// to report, and isn't retried here for a while. Either way it counts as
+    /// activity, so it doesn't fall asleep under you.
     pub fn warm(&mut self) {
         self.active_at = Instant::now();
-        if self.child.is_none() {
-            let _ = self.spawn();
+        let backing_off = self.failed_at.is_some_and(|t| t.elapsed() < START_BACKOFF);
+        if !self.is_running() && !backing_off {
+            self.spawn();
         }
     }
 
@@ -1054,7 +1013,7 @@ impl Session {
             self.model = model;
             return;
         }
-        if self.child.is_some() {
+        if self.is_running() {
             let openrouter = self.provider.provider().is_openrouter();
             if model == self.model || (self.talked && !(openrouter && !self.busy)) {
                 return;
@@ -1108,7 +1067,7 @@ impl Session {
     /// Shift+Tab in the CLI), otherwise from the next start.
     pub fn set_mode(&mut self, mode: project::Mode) {
         self.mode = mode;
-        if self.child.is_some() {
+        if self.is_running() {
             self.control(json!({ "subtype": "set_permission_mode", "mode": mode.cli() }));
         }
     }
@@ -1150,7 +1109,7 @@ impl Session {
     /// server is doing, which updates [`Self::mcp`]. A refusal (no such server,
     /// no process) shows in the transcript.
     pub fn reconnect_mcp(&mut self, name: &str) {
-        if self.child.is_none() {
+        if !self.is_running() {
             return;
         }
         let reconnect = self.control(json!({ "subtype": "mcp_reconnect", "serverName": name }));
@@ -1291,6 +1250,11 @@ impl Session {
             let _ = child.kill();
             let _ = child.wait();
         }
+        // A start still running finishes on a thread; what it started is stopped there.
+        if let Some(rx) = self.starting.take() {
+            thread::spawn(move || drop(rx.recv()));
+        }
+        self.outbox.clear();
         self.acp = None;
         self.stdin = None;
         self.rx = None;
@@ -1373,13 +1337,14 @@ impl Session {
 
     /// Drain pending events from the process. Call when woken.
     pub fn poll(&mut self) {
+        self.take_started();
         self.connect_late_browsers();
         let Some(rx) = &self.rx else { return };
         let events: Vec<Event> = rx.try_iter().collect();
         if !events.is_empty() {
             self.active_at = Instant::now();
         }
-        let mut exited = false;
+        let (mut exited, mut lost) = (false, false);
         let run = self.runs;
         for ev in events {
             // A new process started while handling these (the next Grok turn):
@@ -1406,12 +1371,15 @@ impl Session {
                     }
                 }
                 Event::Exited => exited = true,
+                Event::Lost => lost = true,
             }
         }
-        if exited {
+        if exited || lost {
             self.settle_thoughts();
-            if self.busy {
-                let who = if self.provider.provider() == crate::provider::Provider::Grok { "grok" } else { "claude" };
+            let who = if self.provider.provider() == crate::provider::Provider::Grok { "grok" } else { "claude" };
+            if lost {
+                self.items.push(Item::Error(format!("lost connection to {who} process")));
+            } else if self.busy {
                 self.items.push(Item::Error(format!("{who} process exited")));
             }
             self.kill();
@@ -1425,7 +1393,7 @@ impl Session {
         // `system` init and status messages report the mode, e.g. after a plan is approved.
         // Not `grok`'s: it reports `auto` as `default`, and the mode is Kynex's to pass each turn.
         if let Some(mode) = v["permissionMode"].as_str().and_then(project::Mode::from_cli)
-            && self.child.is_some()
+            && self.is_running()
             && self.provider.provider() != crate::provider::Provider::Grok
         {
             self.mode = mode;
@@ -1512,7 +1480,7 @@ impl Session {
                 }
                 // OpenRouter refused the request: the model takes no tool calls.
                 if v["message"]["model"] == "<synthetic>"
-                    && self.child.is_some()
+                    && self.is_running()
                     && self.provider.provider().is_openrouter()
                 {
                     let said =
@@ -1529,7 +1497,7 @@ impl Session {
                             let text = block["text"].as_str().unwrap_or("");
                             // Hit live: say what the daily free cap is and when it resets.
                             let text = if v["message"]["model"] == "<synthetic>"
-                                && self.child.is_some()
+                                && self.is_running()
                                 && self.provider.provider().is_openrouter()
                                 && crate::openrouter::says_free_daily_limit(text)
                             {
@@ -1553,7 +1521,7 @@ impl Session {
                             let summary = tool_summary(&name, &block["input"]);
                             let input = serde_json::to_string_pretty(&block["input"]).unwrap_or_default();
                             let id = block["id"].as_str().unwrap_or("").to_string();
-                            if self.child.is_some()
+                            if self.is_running()
                                 && let Some((server, tool)) = crate::mcp::split(&name)
                                 && crate::mcp::is_browser(tool)
                             {
@@ -1567,7 +1535,7 @@ impl Session {
                                 continue;
                             }
                             // Only a call watched live has a start; a log's are long done.
-                            let started = self.child.is_some().then(Instant::now);
+                            let started = self.is_running().then(Instant::now);
                             let timing = Timing { started, took: None };
                             self.items.push(Item::ToolUse { id, name, summary, input, timing });
                         }
@@ -1785,6 +1753,11 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.kill();
+        // Stopping a browser server waits on `taskkill`; not on the UI thread.
+        let servers = std::mem::take(&mut self.browser_servers);
+        if !servers.is_empty() {
+            thread::spawn(move || drop(servers));
+        }
     }
 }
 
@@ -2872,6 +2845,30 @@ mod tests {
         std::fs::write(&path, "not json\n{\"cwd\":\"\"}\n").unwrap();
         assert_eq!(cwd_of(&path), None);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_failed_start_shows_once_a_message_waits_and_warming_backs_off() {
+        let finish = |s: &mut Session| {
+            let until = Instant::now() + Duration::from_secs(30);
+            while s.starting() && Instant::now() < until {
+                s.poll();
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+        // No such folder: the process can't start there.
+        let mut s = Session::new(Kind::Chat, std::env::temp_dir().join("kynex-no-such-folder").join("x"));
+        s.warm();
+        assert!(s.starting() && s.is_running(), "warming returns at once");
+        finish(&mut s);
+        assert!(!s.is_running() && s.items.is_empty(), "a warm-up's failure waits for a message");
+        s.warm();
+        assert!(!s.starting(), "and isn't retried on every keystroke");
+        s.send("hi".into(), Vec::new());
+        assert!(s.starting() && s.busy);
+        finish(&mut s);
+        assert!(matches!(s.items.last(), Some(Item::Error(_))), "a message's start reports its failure");
+        assert!(!s.busy && !s.is_running());
     }
 
     #[test]

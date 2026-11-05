@@ -73,6 +73,8 @@ pub struct ScratchView {
     extras: Option<SessionExtras>,
     /// Edited files git still has changes for, once asked.
     changed: HashSet<PathBuf>,
+    /// When each background task's output last changed, once read (`None`: gone).
+    output_times: HashMap<PathBuf, Option<std::time::SystemTime>>,
     /// Folders read so far, by path.
     listed: HashMap<PathBuf, Vec<Entry>>,
     /// Folders open in the tree.
@@ -92,6 +94,7 @@ impl ScratchView {
             root: root.clone(),
             extras,
             changed: HashSet::new(),
+            output_times: HashMap::new(),
             listed: HashMap::new(),
             expanded: HashSet::from([root.clone()]),
             pane: Pane::Folder(root.clone()),
@@ -139,9 +142,30 @@ impl ScratchView {
         .detach();
     }
 
-    /// Asks git which edited files still have changes, off the UI thread.
+    /// Asks git which edited files still have changes, and when the task
+    /// outputs last changed, off the UI thread.
     fn read_changes(&mut self, cx: &mut Context<Self>) {
         let Some(extras) = &self.extras else { return };
+        let outputs = extras.files.outputs.clone();
+        cx.spawn(async move |this, cx| {
+            let times = cx
+                .background_spawn(async move {
+                    outputs
+                        .into_iter()
+                        .map(|p| {
+                            let t = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
+                            (p, t)
+                        })
+                        .collect::<HashMap<_, _>>()
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.output_times = times;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         let (cwd, edited) = (extras.cwd.clone(), extras.files.edited.clone());
         cx.spawn(async move |this, cx| {
             let changed = cx

@@ -8,13 +8,22 @@ use kynex_core::git::{Commit, Ref, RefKind};
 use super::{GitView, Selection};
 use crate::theme::{Palette, mono, theme};
 use crate::ui::wash::row_wash;
-use crate::ui::{Tooltip, scrollbar};
+use crate::ui::{Tooltip, scrollbar, spinner};
 
 impl GitView {
     pub(super) fn render_history(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         if self.commits.is_empty() {
-            return div().p_3().text_sm().text_color(t.text_placeholder).child("No commits yet").into_any_element();
+            return div()
+                .p_3()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_sm()
+                .text_color(t.text_placeholder)
+                .when(!self.history_read, |d| d.child(spinner("history-loading", t.text_placeholder, px(12.))))
+                .child(if self.history_read { "No commits yet" } else { "Reading history…" })
+                .into_any_element();
         }
         let commits = self.commits.clone();
         let selected = match &self.selected {

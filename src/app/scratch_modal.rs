@@ -103,16 +103,21 @@ impl KynexApp {
     pub(super) fn scratch_badge(&mut self, cx: &mut Context<Self>) -> Option<usize> {
         let s = self.active_session().filter(|s| s.kind == Kind::Code)?;
         let (id, cwd) = (s.session_id.clone()?, s.cwd.clone());
-        let stamp = (id.clone(), s.items.len());
+        // Counted again when a turn starts or ends, not on every streamed item.
+        let stamp = (id.clone(), s.busy);
         if self.scratch_counted.as_ref() != Some(&stamp) {
             self.scratch_counted = Some(stamp);
             let since = self.scratch_seen.get(&id).copied().unwrap_or(SystemTime::UNIX_EPOCH);
-            let root = Roots::local().and_then(|r| storage::session_scratch(&r, &cwd, &id));
+            let session = id.clone();
             cx.spawn(async move |this, cx| {
-                let n = match root {
-                    Some(root) => cx.background_spawn(async move { session_files::count_newer(&root, since) }).await,
-                    None => 0,
-                };
+                // Finding the folder lists the scratch root: off the UI thread too.
+                let n = cx
+                    .background_spawn(async move {
+                        Roots::local()
+                            .and_then(|r| storage::session_scratch(&r, &cwd, &session))
+                            .map_or(0, |root| session_files::count_newer(&root, since))
+                    })
+                    .await;
                 this.update(cx, |this, cx| {
                     this.scratch_new.insert(id, n);
                     cx.notify();

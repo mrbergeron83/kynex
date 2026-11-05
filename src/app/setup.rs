@@ -133,7 +133,14 @@ impl KynexApp {
     /// screen if it isn't.
     pub(super) fn check_setup(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let status = cx.background_spawn(async { cli::status() }).await;
+            let status = cx
+                .background_spawn(async {
+                    // Looked up once and kept; renders ask for them, so here, off the UI thread, first.
+                    kynex_core::grok::installed();
+                    kynex_core::terminal::elevated();
+                    cli::status()
+                })
+                .await;
             this.update(cx, |this, cx| {
                 this.setup = match status {
                     cli::Status::Ready => {
@@ -143,6 +150,10 @@ impl KynexApp {
                     cli::Status::Missing => Setup::Missing { error: None },
                     cli::Status::LoggedOut => Setup::LoggedOut { error: None },
                 };
+                if this.workspace_ready() && !this.saved.setup_checked {
+                    this.saved.setup_checked = true;
+                    this.save();
+                }
                 this.refresh_new_sessions();
                 cx.notify();
             })
@@ -233,7 +244,13 @@ impl KynexApp {
         let error = |e: &Option<String>| e.clone().map(|e| div().text_xs().text_color(t.error).child(e));
         let (title, body, content): (&str, &str, AnyElement) = match &self.setup {
             _ if self.workspace_ready() => return None,
-            Setup::Checking | Setup::Ready => return None,
+            // Only until a first check has passed: after that the workspace shows right away.
+            Setup::Checking => (
+                "Getting ready",
+                "Kynex is looking for Claude Code on this computer.",
+                busy("Checking Claude Code…").into_any_element(),
+            ),
+            Setup::Ready => return None,
             Setup::Missing { error: e } => (
                 "Set up Claude Code",
                 "Kynex runs on Claude Code, which isn't installed on this computer yet. Kynex can install it for you; it takes about a minute.",

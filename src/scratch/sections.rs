@@ -89,10 +89,14 @@ impl ScratchView {
         }
         let rows = extras.files.outputs.iter().enumerate().map(|(i, path)| {
             let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into());
-            let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+            let when = match self.output_times.get(path) {
+                Some(Some(modified)) => ago(*modified),
+                Some(None) => "gone".into(),
+                None => String::new(),
+            };
             let p = path.clone();
             entry_row(("output", i), Icon::Terminal, name, t)
-                .child(meta(modified.map(ago).unwrap_or_else(|| "gone".into()), 84., t))
+                .child(meta(when, 84., t))
                 .on_click(cx.listener(move |this, _, _, cx| this.open_file(p.clone(), false, cx)))
                 .into_any_element()
         });

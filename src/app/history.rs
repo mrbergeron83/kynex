@@ -133,15 +133,34 @@ impl KynexApp {
 
     /// Ctrl+G: the draft opens in your editor and comes back when it closes.
     pub(super) fn edit_in_editor(&mut self, cx: &mut Context<Self>) {
+        // Already open there.
+        if self.editing_outside.is_some() {
+            return;
+        }
         let text = self.composer.read(cx).text().to_string();
+        let sent = text.clone();
+        let progress = self.toast(Toast::progress("Editing in your editor; close it to bring the message back")).id;
+        self.editing_outside = Some(progress);
+        cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx.background_spawn(async move { kynex_core::open::edit_text(&text) }).await;
-            this.update(cx, |this, cx| match result {
-                Ok(text) => this.set_composer(text, cx),
-                Err(e) => {
-                    this.toast(Toast::error(e));
-                    cx.notify();
+            this.update(cx, |this, cx| {
+                this.editing_outside = None;
+                match result {
+                    Ok(text) => {
+                        this.toasts.finish(progress, None);
+                        // Typed here meanwhile: kept, after the editor's text.
+                        let now = this.composer.read(cx).text().to_string();
+                        let text = match now.strip_prefix(sent.as_str()) {
+                            _ if now == sent => text,
+                            Some(added) => format!("{text}{added}"),
+                            None => format!("{text}\n\n{now}"),
+                        };
+                        this.set_composer(text, cx);
+                    }
+                    Err(e) => this.toasts.finish(progress, Some(Toast::error(e))),
                 }
+                cx.notify();
             })
             .ok();
         })

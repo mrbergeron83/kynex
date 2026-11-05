@@ -358,7 +358,9 @@ impl KynexApp {
     /// only signed out of Anthropic and OpenRouter has a key.
     pub(super) fn workspace_ready(&self) -> bool {
         match self.setup {
-            Setup::Checking | Setup::Ready => true,
+            // The first check shows that it's checking; later ones run under the workspace.
+            Setup::Checking => self.saved.setup_checked,
+            Setup::Ready => true,
             Setup::LoggedOut { .. } => {
                 self.openrouter_key.is_some() || (self.saved.grok && kynex_core::grok::installed())
             }

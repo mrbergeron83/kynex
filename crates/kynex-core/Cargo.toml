@@ -30,6 +30,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphic
 # The same as gpui's, for the shell's COM interfaces: the taskbar badge and shortcut app IDs (attention.rs).
 windows = { version = "0.62", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
     "Win32_Storage_EnhancedStorage",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",

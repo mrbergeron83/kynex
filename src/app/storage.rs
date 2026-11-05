@@ -21,7 +21,7 @@ use super::KynexApp;
 use super::settings::heading;
 use crate::theme::{Palette, mono};
 use crate::ui::input::TextInput;
-use crate::ui::{ghost_button, outline_button};
+use crate::ui::{ghost_button, outline_button, spinner};
 
 pub(super) struct StorageView {
     /// `None` while the folders are walked.
@@ -183,7 +183,11 @@ impl KynexApp {
     /// Does the deletion waiting for Yes, then walks the folders again.
     fn confirm_storage(&mut self, cx: &mut Context<Self>) {
         let Some(view) = &mut self.storage else { return };
-        let Some(p) = view.pending.take().filter(|p| !p.targets.is_empty()) else { return };
+        // The question stays up, saying it's deleting, until it's done.
+        let Some(p) = view.pending.clone().filter(|p| !p.targets.is_empty()) else { return };
+        if view.deleting {
+            return;
+        }
         view.deleting = true;
         // Deleted logs leave the sessions panel and their groups.
         if p.parts.contains(&Part::Log) {
@@ -209,6 +213,7 @@ impl KynexApp {
             this.update(cx, |this, cx| {
                 if let Some(v) = &mut this.storage {
                     v.deleting = false;
+                    v.pending = None;
                 }
                 match result {
                     Ok(freed) => this.toast(Toast::success(format!("Freed {}", bytes(freed)))),
@@ -274,7 +279,16 @@ impl KynexApp {
             t,
         ));
         let Some(usage) = self.storage.as_ref().and_then(|v| v.usage.clone()) else {
-            return head.child(div().text_sm().text_color(t.text_placeholder).child("Measuring…"));
+            return head.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_sm()
+                    .text_color(t.text_placeholder)
+                    .child(spinner("storage-measuring", t.text_placeholder, px(12.)))
+                    .child("Measuring…"),
+            );
         };
         let total = usage.total();
         let summary = div()
@@ -382,6 +396,18 @@ impl KynexApp {
             .rounded_md()
             .bg(t.error.opacity(0.08))
             .child(div().flex_1().text_xs().text_color(t.text).child(p.question.clone()))
+            .when(deleting, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1p5()
+                        .text_xs()
+                        .text_color(t.text_muted)
+                        .child(spinner("storage-deleting", t.text_muted, px(12.)))
+                        .child("Deleting…"),
+                )
+            })
             .when(!p.targets.is_empty() && !deleting, |d| {
                 d.child(
                     outline_button("storage-yes", "Yes, delete", cx)
@@ -389,12 +415,14 @@ impl KynexApp {
                         .on_click(cx.listener(|this, _, _, cx| this.confirm_storage(cx))),
                 )
             })
-            .child(outline_button("storage-no", "Cancel", cx).on_click(cx.listener(|this, _, _, cx| {
-                if let Some(v) = &mut this.storage {
-                    v.pending = None;
-                }
-                cx.notify();
-            })))
+            .when(!deleting, |d| {
+                d.child(outline_button("storage-no", "Cancel", cx).on_click(cx.listener(|this, _, _, cx| {
+                    if let Some(v) = &mut this.storage {
+                        v.pending = None;
+                    }
+                    cx.notify();
+                })))
+            })
             .into_any_element()
     }
 }
