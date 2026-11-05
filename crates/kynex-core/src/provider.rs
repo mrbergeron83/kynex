@@ -328,7 +328,13 @@ impl Launch {
 
     /// Gives `cmd` this provider's environment, on top of Kynex's own.
     pub fn apply(&self, cmd: &mut Command) {
-        let env = self.env(std::env::vars_os());
+        self.apply_over(cmd, &[]);
+    }
+
+    /// [`Self::apply`] for a command given `extra` variables besides Kynex's
+    /// own, so the provider overrides or removes those too.
+    pub fn apply_over(&self, cmd: &mut Command, extra: &[(OsString, OsString)]) {
+        let env = self.env(std::env::vars_os().chain(extra.iter().cloned()));
         for name in &env.remove {
             cmd.env_remove(name);
         }

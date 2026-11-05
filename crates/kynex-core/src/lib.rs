@@ -21,6 +21,7 @@ pub mod extensions;
 pub mod files;
 pub mod find;
 pub mod fmt;
+pub mod fresh_env;
 #[doc(hidden)]
 pub mod fuzz;
 pub mod fuzzy;

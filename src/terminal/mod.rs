@@ -390,6 +390,13 @@ impl Render for TerminalPanel {
                 d.child(div().min_w_0().truncate().text_xs().text_color(t.error).child(SharedString::from(e)))
             })
             .children(admin)
+            .when(!self.tabs.is_empty(), |d| {
+                d.child(
+                    icon_button("restart-terminal", Icon::Refresh, cx)
+                        .tooltip(Tooltip::with_meta("Restart the shell", "picks up tools installed since it started"))
+                        .on_click(cx.listener(|this, _, window, cx| this.restart_active(window, cx))),
+                )
+            })
             .child(
                 icon_button("hide-terminal", Icon::ChevronDown, cx)
                     .tooltip(Tooltip::for_action(
