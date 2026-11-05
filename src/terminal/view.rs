@@ -169,7 +169,8 @@ impl TerminalView {
         !self.starting && self.terminal.as_ref().is_none_or(Terminal::exited)
     }
 
-    /// Starts the shell again after it exited.
+    /// Starts the shell again, ending the running one, with the environment as
+    /// it is now (tools installed since).
     pub fn restart(&mut self, cx: &mut Context<Self>) {
         self.start(cx);
     }

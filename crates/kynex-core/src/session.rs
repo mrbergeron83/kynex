@@ -1889,7 +1889,9 @@ pub(crate) fn written_by_cli(v: &Value) -> bool {
     v["promptSource"] == "system" || v["origin"]["kind"].is_string() || text.starts_with("<task-notification>")
 }
 
-/// `claude`, to be run in `cwd` without a console window, with `provider`'s environment.
+/// `claude`, to be run in `cwd` without a console window, with the environment
+/// as it is now (tools installed since Kynex started) and `provider`'s on top.
+/// Blocking: reads the registry on Windows.
 pub(crate) fn claude_command(cwd: &Path, provider: &crate::provider::Launch) -> Command {
     let mut cmd = Command::new(crate::cli::program());
     cmd.current_dir(cwd);
@@ -1899,7 +1901,9 @@ pub(crate) fn claude_command(cwd: &Path, provider: &crate::provider::Launch) -> 
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    provider.apply(&mut cmd);
+    let fresh = crate::fresh_env::vars();
+    cmd.envs(fresh.iter().map(|(n, v)| (n, v)));
+    provider.apply_over(&mut cmd, &fresh);
     cmd
 }
 

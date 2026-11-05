@@ -138,6 +138,7 @@ fn models_of(opened: &serde_json::Value) -> Vec<crate::session::ModelInfo> {
 pub fn command(cwd: &Path) -> Command {
     let mut cmd = crate::cli::command(program());
     cmd.current_dir(cwd);
+    cmd.envs(crate::fresh_env::vars());
     // Updates are the user's to run (`grok update`), not something to do under a session.
     cmd.env("GROK_DISABLE_AUTOUPDATER", "1");
     cmd.args(["agent", "stdio"]);

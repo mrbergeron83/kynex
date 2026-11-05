@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Tools you install while Kynex runs are usable without restarting it (#290). On Windows, new
+  terminals and Claude sessions read the PATH and new variables from the registry when they
+  start, and the terminal's new Restart button starts the shell over to pick them up.
+
 ## [0.0.23] - 2026-11-05
 
 ### Changed

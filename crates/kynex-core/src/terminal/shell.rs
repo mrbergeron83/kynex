@@ -104,10 +104,13 @@ fn git_bash() -> Option<PathBuf> {
     })
 }
 
-/// A program on PATH (`.exe` added on Windows).
+/// A program on PATH as it is now (`.exe` added on Windows), so a shell
+/// installed since Kynex started is found.
 fn which(name: &str) -> Option<PathBuf> {
     let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
-    std::env::split_paths(&std::env::var_os("PATH")?).map(|dir| dir.join(&file)).find(|p| p.is_file())
+    let fresh = crate::fresh_env::vars().into_iter().find(|(n, _)| n.eq_ignore_ascii_case("PATH")).map(|(_, v)| v);
+    let path = fresh.or_else(|| std::env::var_os("PATH"))?;
+    std::env::split_paths(&path).map(|dir| dir.join(&file)).find(|p| p.is_file())
 }
 
 /// Whether Kynex runs with administrator (Windows) or root (elsewhere) rights.

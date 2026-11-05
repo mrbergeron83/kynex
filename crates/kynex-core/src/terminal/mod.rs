@@ -120,7 +120,12 @@ impl Terminal {
             &size,
             listener.clone(),
         )));
-        let env = HashMap::from([
+        // Tools installed since Kynex started, then the terminal's own variables.
+        let mut env: HashMap<String, String> = crate::fresh_env::vars()
+            .into_iter()
+            .filter_map(|(n, v)| Some((n.into_string().ok()?, v.into_string().ok()?)))
+            .collect();
+        env.extend([
             ("TERM".to_string(), "xterm-256color".to_string()),
             ("COLORTERM".to_string(), "truecolor".to_string()),
             ("TERM_PROGRAM".to_string(), "kynex".to_string()),
