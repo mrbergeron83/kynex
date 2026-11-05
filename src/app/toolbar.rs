@@ -105,6 +105,15 @@ impl KynexApp {
                     .tooltip(Tooltip::with_meta("Claude settings", "permissions, mode and effort for this project"))
                     .on_click(cx.listener(move |this, _, _, cx| this.open_settings(path.clone(), cx)))
             })
+            .child({
+                // The project's subagents: which it uses and its own rule for them.
+                let path = path.clone();
+                icon_button("project-agents", Icon::Bot, cx)
+                    .tooltip(Tooltip::with_meta("Agents", "the subagents this project hands work to"))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_project_settings_on(path.clone(), super::settings::AGENTS_SECTION, cx)
+                    }))
+            })
             .child(
                 icon_button("open-scratch", Icon::Files, cx)
                     .tooltip(Tooltip::with_meta("Scratch files", "Claude's temporary files, for every session here"))

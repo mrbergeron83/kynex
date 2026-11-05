@@ -302,6 +302,7 @@ impl KynexApp {
         let has_message = !self.composer.read(cx).text().trim().is_empty() || !self.attachments.is_empty();
         let can_send = !busy && has_message;
         let max_h = window.viewport_size().height * 0.4;
+        let composer_scroll = self.composer.read(cx).scroll_handle();
 
         let attachments =
             div().flex().flex_wrap().gap_2().children(self.attachments.iter().enumerate().map(|(i, a)| {
@@ -478,7 +479,15 @@ impl KynexApp {
                 }
             }))
             .when(!self.attachments.is_empty(), |d| d.child(attachments))
-            .child(div().id("composer-scroll").max_h(max_h).overflow_y_scroll().text_sm().child(self.composer.clone()))
+            .child(
+                div()
+                    .id("composer-scroll")
+                    .max_h(max_h)
+                    .overflow_y_scroll()
+                    .track_scroll(&composer_scroll)
+                    .text_sm()
+                    .child(self.composer.clone()),
+            )
             .child(
                 div()
                     .flex()

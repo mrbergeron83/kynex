@@ -40,6 +40,8 @@ pub struct SettingsView {
 pub(super) const SETUP_SECTION: usize = 0;
 /// Permissions, where they open otherwise.
 const PERMISSIONS_SECTION: usize = 1;
+/// Agents: delegating to subagents, from the toolbar's Agents button.
+pub(super) const AGENTS_SECTION: usize = 4;
 
 impl KynexApp {
     pub(super) fn open_settings(&mut self, path: PathBuf, cx: &mut Context<Self>) {
@@ -355,7 +357,7 @@ impl KynexApp {
     ) -> Option<AnyElement> {
         let view = self.settings.as_ref()?;
         let t = theme(cx).clone();
-        const SECTIONS: [&str; 5] = ["Setup", "Permissions", "Rules in effect", "Model", "Appearance"];
+        const SECTIONS: [&str; 6] = ["Setup", "Permissions", "Rules in effect", "Model", "Agents", "Appearance"];
         let section = view.section.min(SECTIONS.len() - 1);
         let path = view.path.clone();
         let vp = window.viewport_size();
@@ -550,7 +552,6 @@ impl KynexApp {
                                 "The model and effort are also in the composer, where a session can pin a model of its own over the project's.",
                             ),
                     )
-                    .child(div().pt_3().child(self.render_delegate_settings(view, &t, cx)))
                     .child(div().pt_3().child(heading(
                         "KNX Ops workers",
                         "The model KNX Ops workers run on, and careful mode, which adds a read-only Opus planner and reviewer for larger or riskier tasks. They apply from a worker's next start.",
@@ -617,6 +618,7 @@ impl KynexApp {
                             )
                     })
             }
+            AGENTS_SECTION => self.render_delegate_settings(view, &t, cx),
             _ => self.render_colour_picker(&path, &t, cx),
         };
 
