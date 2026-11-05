@@ -1,5 +1,6 @@
 //! Whether Kynex animates: your pick (Appearance menu), or the operating
-//! system's "reduce motion" setting when you leave it to the system.
+//! system's "reduce motion" setting when you leave it to the system (and
+//! none when there's no GPU, so frames don't burn CPU).
 
 use serde::{Deserialize, Serialize};
 
@@ -183,6 +184,48 @@ pub fn os_reduces_motion() -> bool {
     }
 }
 
+/// Whether the system asks for less motion: the OS setting, or no GPU to draw
+/// with. Without one (Cloud PCs, VMs, remote desktops) Windows draws through
+/// WARP, its CPU rasterizer, and every animated frame costs real CPU across
+/// every core. Blocks (see [`os_reduces_motion`] and [`software_rendering`]).
+pub fn system_reduces_motion() -> bool {
+    os_reduces_motion() || software_rendering()
+}
+
+/// Whether there's no hardware GPU to draw with, so frames are rasterized on
+/// the CPU. Anything unreadable counts as no. Blocks briefly (asks DXGI).
+pub fn software_rendering() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
+        // SAFETY: plain DXGI calls; the factory and adapters are released on drop.
+        unsafe {
+            let Ok(factory) = CreateDXGIFactory1::<IDXGIFactory1>() else { return false };
+            let mut adapters = Vec::new();
+            while let Ok(adapter) = factory.EnumAdapters1(adapters.len() as u32) {
+                let Ok(desc) = adapter.GetDesc1() else { return false };
+                adapters.push((desc.VendorId, desc.Flags));
+            }
+            !adapters.is_empty() && !adapters.iter().any(|&(vendor, flags)| hardware_adapter(vendor, flags))
+        }
+    }
+    // gpui's Vulkan / Metal backends: not detected; a software Vulkan driver is rare.
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Whether a DXGI adapter is a real GPU: not flagged software, and not one of
+/// Microsoft's (vendor 0x1414: the Basic Render Driver, Hyper-V's and Remote
+/// Desktop's display adapters), none of which render 3D in hardware.
+#[cfg(any(windows, test))]
+fn hardware_adapter(vendor: u32, flags: u32) -> bool {
+    const MICROSOFT: u32 = 0x1414;
+    const SOFTWARE: u32 = 2; // DXGI_ADAPTER_FLAG_SOFTWARE
+    vendor != MICROSOFT && flags & SOFTWARE == 0
+}
+
 /// A command's trimmed output, if it ran and succeeded.
 #[cfg(not(windows))]
 fn read(program: &str, args: &[&str]) -> Option<String> {
@@ -293,6 +336,16 @@ mod tests {
     fn reads_the_system_setting() {
         // Whatever the machine says; it just mustn't fail or hang.
         let _ = os_reduces_motion();
+        let _ = software_rendering();
+    }
+
+    #[test]
+    fn only_a_real_gpu_counts_as_hardware() {
+        assert!(hardware_adapter(0x10de, 0)); // NVIDIA
+        assert!(hardware_adapter(0x8086, 1)); // Intel, flagged remote
+        assert!(!hardware_adapter(0x1414, 2)); // Basic Render Driver (WARP)
+        assert!(!hardware_adapter(0x1414, 0)); // Hyper-V / Remote Display
+        assert!(!hardware_adapter(0x10de, 2));
     }
 
     #[test]
