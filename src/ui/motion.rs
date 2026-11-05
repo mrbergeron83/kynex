@@ -18,7 +18,7 @@ use gpui::{
     Animation, AnimationElement, AnimationExt, AnyElement, App, AppContext, Bounds, ContentMask, Element, ElementId,
     GlobalElementId, IntoElement, LayoutId, Pixels, Styled, Window, px,
 };
-use kynex_core::motion::{Motion, os_reduces_motion};
+use kynex_core::motion::{Motion, system_reduces_motion};
 
 /// Hovers, tooltips, small popups.
 pub const QUICK: Duration = Duration::from_millis(110);
@@ -217,7 +217,7 @@ pub fn apply(motion: Motion, cx: &mut App) {
     cx.set_reduce_motion(motion == Motion::Off);
     if motion == Motion::System {
         cx.spawn(async move |cx| {
-            let os = cx.background_spawn(async { os_reduces_motion() }).await;
+            let os = cx.background_spawn(async { system_reduces_motion() }).await;
             cx.update(|cx| cx.set_reduce_motion(motion.reduce(os)));
         })
         .detach();
