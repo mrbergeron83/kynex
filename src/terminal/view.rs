@@ -55,6 +55,13 @@ pub struct TerminalView {
     /// the text input path, which must not send it twice.
     swallow: Option<String>,
     was_exited: bool,
+    /// The shell is being started, off the UI thread; commands to run wait for it.
+    starting: bool,
+    pending: Vec<String>,
+    /// Nothing printed yet: it says it's starting until the prompt shows.
+    quiet: bool,
+    /// Counts starts, so a restart's shell wins over an older one still starting.
+    starts: u64,
 }
 
 impl TerminalView {
@@ -71,6 +78,10 @@ impl TerminalView {
             scroll_rest: 0.,
             swallow: None,
             was_exited: false,
+            starting: false,
+            pending: Vec::new(),
+            quiet: true,
+            starts: 0,
         };
         view.start(cx);
         view
@@ -92,22 +103,46 @@ impl TerminalView {
         })
         .detach();
         let size = self.terminal.as_ref().map_or(Size { columns: 100, lines: 20 }, Terminal::size);
-        match Terminal::spawn(self.shell.clone(), &self.cwd, size, wake) {
-            Ok(t) => {
-                self.terminal = Some(t);
-                self.error = None;
-            }
-            Err(e) => {
-                self.terminal = None;
-                self.error = Some(e);
-            }
-        }
-        self.was_exited = false;
+        let (shell, cwd) = (self.shell.clone(), self.cwd.clone());
+        self.starts += 1;
+        let start = self.starts;
+        self.starting = true;
+        self.quiet = true;
+        self.error = None;
+        cx.spawn(async move |this, cx| {
+            // Starting a shell can take a while (ConPTY, a profile, an antivirus scan).
+            let result = cx.background_spawn(async move { Terminal::spawn(shell, &cwd, size, wake) }).await;
+            this.update(cx, |this, cx| {
+                if this.starts != start {
+                    return;
+                }
+                this.starting = false;
+                match result {
+                    Ok(t) => {
+                        for command in this.pending.drain(..) {
+                            t.run(&command);
+                        }
+                        this.terminal = Some(t);
+                    }
+                    Err(e) => {
+                        this.terminal = None;
+                        this.pending.clear();
+                        this.error = Some(e);
+                    }
+                }
+                this.was_exited = false;
+                cx.emit(TerminalEvent::Changed);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         cx.emit(TerminalEvent::Changed);
         cx.notify();
     }
 
     fn on_output(&mut self, cx: &mut Context<Self>) {
+        self.quiet = false;
         if let Some(t) = &self.terminal {
             if let Some(text) = t.take_clipboard() {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -131,7 +166,7 @@ impl TerminalView {
     }
 
     pub fn exited(&self) -> bool {
-        self.terminal.as_ref().is_none_or(Terminal::exited)
+        !self.starting && self.terminal.as_ref().is_none_or(Terminal::exited)
     }
 
     /// Starts the shell again after it exited.
@@ -144,7 +179,9 @@ impl TerminalView {
         if self.exited() {
             self.start(cx);
         }
-        if let Some(t) = &self.terminal {
+        if self.starting {
+            self.pending.push(command.to_string());
+        } else if let Some(t) = &self.terminal {
             t.run(command);
         }
     }
@@ -392,7 +429,8 @@ impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
         let focused = self.focus.is_focused(window);
-        let exited = self.terminal.as_ref().is_some_and(Terminal::exited);
+        let exited = !self.starting && self.terminal.as_ref().is_some_and(Terminal::exited);
+        let starting = self.starting || (self.quiet && self.terminal.is_some());
         div()
             .id("terminal")
             .key_context(CONTEXT)
@@ -411,6 +449,17 @@ impl Render for TerminalView {
             .child(TerminalElement::new(cx.entity(), self.focus.clone(), focused))
             .when_some(self.error.clone(), |d, e| {
                 d.child(div().absolute().top_3().left_3().right_3().text_sm().text_color(t.error).child(e))
+            })
+            .when(starting, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top_2()
+                        .left_3()
+                        .text_sm()
+                        .text_color(t.text_muted)
+                        .child(format!("Starting {}…", self.label())),
+                )
             })
             .when(exited, |d| {
                 d.child(

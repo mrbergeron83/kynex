@@ -17,6 +17,7 @@ pub(crate) mod worktree;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use branch::{
     Branch, branches, create_branch, create_branch_at, default_branch, delete_branch, delete_remote_branch,
@@ -55,6 +56,46 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
         Err(failure(&out.stderr, &out.stdout))
     }
 }
+
+/// [`git`] that stops when `cancel` is set, with "Cancelled" as the error.
+/// Its output is read on threads meanwhile, so a chatty git never stalls on a full pipe.
+fn git_until(root: &Path, args: &[&str], cancel: &AtomicBool) -> Result<String, String> {
+    use std::io::Read;
+    let mut child = command(root)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Couldn't run git: {e}"))?;
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let out = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let err = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let status = loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(CANCELLED.into());
+        }
+        match child.try_wait().map_err(|e| format!("git: {e}"))? {
+            Some(status) => break status,
+            None => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    };
+    let (out, err) = (out.join().unwrap_or_default(), err.join().unwrap_or_default());
+    if status.success() { Ok(String::from_utf8_lossy(&out).into_owned()) } else { Err(failure(&err, &out)) }
+}
+
+/// The error of an operation stopped with its cancel flag.
+pub const CANCELLED: &str = "Cancelled";
 
 /// The repository's files under `root`, relative to it with `/` separators:
 /// tracked ones plus untracked ones `.gitignore` doesn't exclude. Blocks.

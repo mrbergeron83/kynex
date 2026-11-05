@@ -234,7 +234,7 @@ pub struct KynexApp {
     /// and how many scratch files changed since; what that count was taken at.
     scratch_seen: HashMap<String, std::time::SystemTime>,
     scratch_new: HashMap<String, usize>,
-    scratch_counted: Option<(String, usize)>,
+    scratch_counted: Option<(String, bool)>,
     /// Settings → Storage's measurements, while that page has been opened.
     storage: Option<StorageView>,
     /// Actions last run from the palette, newest first.
@@ -287,6 +287,8 @@ pub struct KynexApp {
     /// The toasts in the corner, whether the pointer is on them, and whether
     /// their clock is paused (that, or the window is in the background) or running.
     toasts: kynex_core::toasts::Toasts,
+    /// Ctrl+G: the message is open in the user's editor; the id of the toast saying so.
+    editing_outside: Option<u64>,
     toast_hover: bool,
     toasts_paused: bool,
     toasts_ticking: bool,
@@ -552,6 +554,7 @@ impl KynexApp {
             update_checking: false,
             usage: kynex_core::usage::Limits::load(),
             toasts: Default::default(),
+            editing_outside: None,
             toast_hover: false,
             toasts_paused: false,
             toasts_ticking: false,

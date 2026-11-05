@@ -17,6 +17,9 @@ pub enum Kind {
     Success,
     Warning,
     Error,
+    /// Something running ("Restoring files…"), drawn with a spinner; it stays
+    /// until [`Toasts::finish`] puts the outcome in its place.
+    Progress,
 }
 
 impl Kind {
@@ -25,7 +28,7 @@ impl Kind {
         match self {
             Kind::Info | Kind::Success => Some(Duration::from_secs(5)),
             Kind::Warning => Some(Duration::from_secs(8)),
-            Kind::Error => None,
+            Kind::Error | Kind::Progress => None,
         }
     }
 }
@@ -103,6 +106,10 @@ impl Toast {
 
     pub fn error(title: impl Into<String>) -> Self {
         Self::new(Kind::Error, title)
+    }
+
+    pub fn progress(title: impl Into<String>) -> Self {
+        Self::new(Kind::Progress, title)
     }
 
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
@@ -205,6 +212,15 @@ impl Toasts {
     pub fn dismiss(&mut self, id: u64) {
         if let Some(t) = self.list.iter_mut().find(|t| t.id == id && t.leaving.is_none()) {
             t.leaving = Some(Duration::ZERO);
+        }
+    }
+
+    /// A [`Kind::Progress`] toast's work is done: it closes, and `outcome`
+    /// (if any) goes up instead.
+    pub fn finish(&mut self, id: u64, outcome: Option<Toast>) {
+        self.dismiss(id);
+        if let Some(t) = outcome {
+            self.push(t);
         }
     }
 
@@ -325,6 +341,18 @@ mod tests {
     }
 
     const EXIT: Duration = Duration::from_millis(150);
+
+    #[test]
+    fn a_progress_toast_stays_until_its_outcome_takes_its_place() {
+        let mut toasts = Toasts::default();
+        let id = toasts.push(Toast::progress("Restoring files…")).id;
+        run(&mut toasts, 60., false);
+        assert_eq!(toasts.visible().0.len(), 1, "still running after a minute");
+        toasts.finish(id, Some(Toast::success("Restored 2 files")));
+        run(&mut toasts, 1., false);
+        let (shown, _) = toasts.visible();
+        assert_eq!(shown.iter().map(|t| t.kind).collect::<Vec<_>>(), vec![Kind::Success]);
+    }
 
     fn secs(s: f32) -> Duration {
         Duration::from_secs_f32(s)

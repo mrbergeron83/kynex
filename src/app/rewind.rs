@@ -22,6 +22,8 @@ pub(super) struct RewindMenu {
     selected: usize,
     /// The message picked, while choosing what to restore.
     picked: Option<usize>,
+    /// Its messages are still being read.
+    loading: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -82,23 +84,34 @@ impl KynexApp {
             return cx.notify();
         };
         let (key, cwd) = (s.uid, s.cwd.clone());
+        // Already reading them.
+        if self.rewind.as_ref().is_some_and(|r| r.key == key && r.loading) {
+            return;
+        }
+        // Up at once, saying it's reading, until the messages are in.
+        self.rewind = Some(RewindMenu { key, points: Vec::new(), selected: 0, picked: None, loading: true });
+        cx.notify();
         cx.spawn(async move |this, cx| {
             let points = cx.background_spawn(async move { rewind::points(&cwd, &id) }).await;
             this.update(cx, |this, cx| {
+                // Closed meanwhile, or another session is shown.
+                if !this.rewind.as_ref().is_some_and(|r| r.key == key && r.loading) {
+                    return;
+                }
+                this.rewind = None;
                 match points {
                     Ok(p) if p.is_empty() => {
                         this.toast(Toast::info("Nothing to rewind to yet."));
                     }
-                    Ok(points) if this.active_key() == Some(key) => {
+                    Ok(points) => {
                         // Newest first, so a message sent twice finds its latest copy.
                         let picked =
                             message.as_deref().and_then(|m| points.iter().position(|p| p.text.trim() == m.trim()));
                         if message.is_some() && picked.is_none() {
                             this.toast(Toast::warning("Can't rewind to that message; pick it from the list."));
                         }
-                        this.rewind = Some(RewindMenu { key, points, selected: 0, picked });
+                        this.rewind = Some(RewindMenu { key, points, selected: 0, picked, loading: false });
                     }
-                    Ok(_) => {}
                     Err(e) => {
                         this.toast(Toast::error(e));
                     }
@@ -131,6 +144,9 @@ impl KynexApp {
     /// Enter / Tab: picks the message, then the choice. False if it isn't open.
     pub(super) fn rewind_accept(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(r) = &mut self.rewind else { return false };
+        if r.points.is_empty() {
+            return true;
+        }
         match r.picked {
             None => {
                 r.picked = Some(r.selected);
@@ -167,24 +183,20 @@ impl KynexApp {
         if !restore.code() {
             return self.rewind_conversation(key, &point, cx);
         }
-        self.toast(Toast::info("Restoring files…"));
+        let progress = self.toast(Toast::progress("Restoring files…")).id;
         cx.spawn(async move |this, cx| {
             let p = point.clone();
             let done = cx.background_spawn(async move { rewind::restore_files(&cwd, &id, &p, &provider) }).await;
             this.update(cx, |this, cx| {
                 match done {
                     Ok(()) => {
-                        this.toast(Toast::success(format!(
-                            "Restored {} to before that message.",
-                            files(point.changed.len())
-                        )));
+                        let done = format!("Restored {} to before that message.", files(point.changed.len()));
+                        this.toasts.finish(progress, Some(Toast::success(done)));
                         if restore.conversation() {
                             this.rewind_conversation(key, &point, cx);
                         }
                     }
-                    Err(e) => {
-                        this.toast(Toast::error(e));
-                    }
+                    Err(e) => this.toasts.finish(progress, Some(Toast::error(e))),
                 }
                 cx.notify();
             })
@@ -230,7 +242,7 @@ impl KynexApp {
                         }
                     })
                     .collect(),
-                "No earlier message",
+                if r.loading { "Reading messages…" } else { "No earlier message" },
             ),
             Some(i) => {
                 let p = &r.points[i];

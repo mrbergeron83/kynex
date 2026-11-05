@@ -71,6 +71,8 @@ pub struct GitView {
     /// `None` until the first read finishes.
     status: Option<Status>,
     commits: Vec<Commit>,
+    /// The history has been read once, so an empty one is really empty.
+    history_read: bool,
     branches: Vec<Branch>,
     tab: Tab,
     selected: Option<Selection>,
@@ -78,6 +80,8 @@ pub struct GitView {
     detail: Option<CommitDetail>,
     /// An operation in flight ("Committing", "Pushing"…); the rest wait for it.
     busy: Option<SharedString>,
+    /// Stops the operation in flight, for those that can be stopped (fetch / pull / push).
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// The last thing that went wrong, until dismissed.
     error: Option<String>,
     /// A status read is running.
@@ -135,12 +139,14 @@ impl GitView {
             root,
             status: None,
             commits: Vec::new(),
+            history_read: false,
             branches: Vec::new(),
             tab: Tab::Changes,
             selected: None,
             diff: DiffState::default(),
             detail: None,
             busy: None,
+            cancel: None,
             error: None,
             polling: false,
             message,
@@ -178,6 +184,7 @@ impl GitView {
                 if let Ok(c) = commits {
                     this.commits = c;
                 }
+                this.history_read = true;
                 if let Ok(b) = branches {
                     this.branches = b;
                 }
@@ -343,8 +350,11 @@ impl GitView {
             let result = cx.background_spawn(async move { op(&root) }).await;
             this.update(cx, |this, cx| {
                 this.busy = None;
+                this.cancel = None;
                 match result {
                     Ok(()) => then(this, cx),
+                    // Stopped on purpose: nothing went wrong.
+                    Err(e) if e == git::CANCELLED => {}
                     Err(e) => this.error = Some(e),
                 }
                 this.refresh(cx);

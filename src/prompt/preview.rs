@@ -168,31 +168,51 @@ fn diff_at(old: &str, new: &str) -> (usize, Vec<(char, String)>) {
 
 /// The line `path`'s edit from `old` to `new` starts on, read from the file
 /// once per edit and kept: the Edit tool doesn't say. `None` if the file
-/// can't be read or the text isn't found exactly once.
+/// can't be read or the text isn't found exactly once. A small file is read
+/// right here; a big one on a thread, its numbers showing from the next frame.
 fn start_line(path: &str, old: &str, new: &str) -> Option<u32> {
     use std::collections::HashMap;
     use std::hash::{Hash, Hasher};
-    thread_local! {
-        static FOUND: std::cell::RefCell<HashMap<u64, Option<u32>>> = Default::default();
-    }
+    use std::sync::{Arc, Mutex};
+    /// Read here; bigger files are read on a thread.
+    const SMALL: u64 = 256 << 10;
+    /// Not read at all.
+    const MAX: u64 = 4 << 20;
+    /// By edit: the line found, or `None` while a thread reads.
+    type Found = Arc<Mutex<HashMap<u64, Option<Option<u32>>>>>;
+    static FOUND: std::sync::OnceLock<Found> = std::sync::OnceLock::new();
+    let found = FOUND.get_or_init(Default::default);
     let mut h = std::collections::hash_map::DefaultHasher::new();
     (path, old, new).hash(&mut h);
     let key = h.finish();
-    if let Some(found) = FOUND.with_borrow(|f| f.get(&key).copied()) {
-        return found;
+    if let Some(known) = found.lock().ok()?.get(&key).copied() {
+        return known.flatten();
     }
-    let found = std::fs::metadata(path)
-        .ok()
-        .filter(|m| m.len() <= 4 << 20)
-        .and_then(|_| std::fs::read_to_string(path).ok())
-        .and_then(|file| kynex_core::edit_lines::start_line(&file, old, new));
-    FOUND.with_borrow_mut(|f| {
-        if f.len() > 2048 {
-            f.clear();
+    let read = |path: &str, old: &str, new: &str| {
+        std::fs::read_to_string(path).ok().and_then(|file| kynex_core::edit_lines::start_line(&file, old, new))
+    };
+    fn keep(found: &Found, key: u64, line: Option<Option<u32>>) {
+        if let Ok(mut f) = found.lock() {
+            if f.len() > 2048 {
+                f.clear();
+            }
+            f.insert(key, line);
         }
-        f.insert(key, found);
-    });
-    found
+    }
+    let len = std::fs::metadata(path).map_or(u64::MAX, |m| m.len());
+    if len <= SMALL {
+        let line = read(path, old, new);
+        keep(found, key, Some(line));
+        return line;
+    }
+    if len > MAX {
+        keep(found, key, Some(None));
+        return None;
+    }
+    keep(found, key, None);
+    let (found, path, old, new) = (found.clone(), path.to_string(), old.to_string(), new.to_string());
+    std::thread::spawn(move || keep(&found, key, Some(read(&path, &old, &new))));
+    None
 }
 
 /// The edit as diff lines, highlighted for `path`'s language, on the add / remove colours.

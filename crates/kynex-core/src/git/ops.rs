@@ -1,9 +1,10 @@
 //! Changing things: staging, discarding, committing, and syncing with the remote.
 
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 use super::status::{Change, FileStatus};
-use super::{git, git_stdin};
+use super::{git, git_stdin, git_until};
 
 pub fn stage(root: &Path, paths: &[String]) -> Result<(), String> {
     let mut args = vec!["add", "-A", "--"];
@@ -89,15 +90,16 @@ impl Sync {
 }
 
 /// Talks to the remote. Pushing a branch with no upstream publishes it to
-/// `origin` (or the only remote) and sets the upstream. Can take a while.
-pub fn sync(root: &Path, op: Sync) -> Result<(), String> {
+/// `origin` (or the only remote) and sets the upstream. Can take a while:
+/// setting `cancel` stops it, with [`super::CANCELLED`] as the error. Blocks.
+pub fn sync(root: &Path, op: Sync, cancel: &AtomicBool) -> Result<(), String> {
     match op {
-        Sync::Fetch => git(root, &["fetch", "--all", "--prune"]).map(drop),
-        Sync::Pull => git(root, &["pull"]).map(drop),
+        Sync::Fetch => git_until(root, &["fetch", "--all", "--prune"], cancel).map(drop),
+        Sync::Pull => git_until(root, &["pull"], cancel).map(drop),
         Sync::Push => {
             let has_upstream = git(root, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).is_ok();
             if has_upstream {
-                return git(root, &["push"]).map(drop);
+                return git_until(root, &["push"], cancel).map(drop);
             }
             let remotes = git(root, &["remote"])?;
             let remotes: Vec<&str> = remotes.lines().collect();
@@ -106,7 +108,7 @@ pub fn sync(root: &Path, op: Sync) -> Result<(), String> {
                 [only] => *only,
                 many => many.iter().copied().find(|r| *r == "origin").unwrap_or(many[0]),
             };
-            git(root, &["push", "--set-upstream", remote, "HEAD"]).map(drop)
+            git_until(root, &["push", "--set-upstream", remote, "HEAD"], cancel).map(drop)
         }
     }
 }
@@ -192,6 +194,14 @@ mod tests {
         repo.write("a.txt", "x");
         stage_all(&repo.0).unwrap();
         commit(&repo.0, "x", false).unwrap();
-        assert_eq!(sync(&repo.0, Sync::Push).unwrap_err(), "This repository has no remote to push to");
+        let go = AtomicBool::new(false);
+        assert_eq!(sync(&repo.0, Sync::Push, &go).unwrap_err(), "This repository has no remote to push to");
+    }
+
+    #[test]
+    fn a_sync_stops_when_cancelled() {
+        let repo = Repo::new("cancel");
+        assert_eq!(sync(&repo.0, Sync::Fetch, &AtomicBool::new(false)), Ok(()), "nothing to fetch from");
+        assert_eq!(sync(&repo.0, Sync::Fetch, &AtomicBool::new(true)).unwrap_err(), super::super::CANCELLED);
     }
 }

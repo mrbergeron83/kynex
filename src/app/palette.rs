@@ -26,7 +26,7 @@ use crate::theme::{THEMES, Theme, mono, theme};
 use crate::ui::input::{self, TextInput};
 use crate::ui::motion::{self, fade, pop};
 use crate::ui::wash::wash;
-use crate::ui::{Icon, icon, section_label};
+use crate::ui::{Icon, icon, section_label, spinner};
 
 /// Results listed at most; the list scrolls through them.
 const LISTED: usize = 60;
@@ -412,6 +412,8 @@ impl KynexApp {
         }
         let more = found.len().saturating_sub(start + ROWS);
         let empty = found.is_empty();
+        // Projects whose sessions are still being listed.
+        let listing = view.sessions.len() < self.saved.projects.len();
 
         let card = div()
             .id("palette")
@@ -466,7 +468,18 @@ impl KynexApp {
                     .p_1()
                     .children(rows)
                     .when(empty, |d| {
-                        d.child(div().px_2().py_2().text_sm().text_color(t.text_muted).child("Nothing matches"))
+                        d.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .px_2()
+                                .py_2()
+                                .text_sm()
+                                .text_color(t.text_muted)
+                                .when(listing, |d| d.child(spinner("palette-listing", t.text_muted, px(12.))))
+                                .child(if listing { "Looking through sessions…" } else { "Nothing matches" }),
+                        )
                     })
                     .when(more > 0, |d| {
                         d.child(

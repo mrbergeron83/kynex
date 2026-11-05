@@ -15,7 +15,7 @@ use super::footer::FOOTER_HEIGHT;
 use crate::chrome::TITLE_BAR_HEIGHT;
 use crate::theme::{Palette, theme};
 use crate::ui::motion::{self, pop};
-use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button};
+use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, spinner};
 
 /// How often the stack's time moves: smooth enough for a toast fading out.
 const TICK: Duration = Duration::from_millis(16);
@@ -169,6 +169,7 @@ fn toast_row(toast: &Toast, exit: Duration, t: &Palette, cx: &mut Context<KynexA
         Kind::Success => (Icon::Check, t.success),
         Kind::Warning => (Icon::Dot, t.warning),
         Kind::Error => (Icon::Close, t.error),
+        Kind::Progress => (Icon::Loader, t.text_muted),
     };
     let has_detail = !toast.detail.is_empty();
     let full = if has_detail { format!("{}\n{}", toast.title, toast.detail) } else { toast.title.clone() };
@@ -193,7 +194,10 @@ fn toast_row(toast: &Toast, exit: Duration, t: &Palette, cx: &mut Context<KynexA
         .bg(t.elevated)
         .shadow_lg()
         .text_sm()
-        .child(icon(which, colour).size_3p5().flex_none())
+        .map(|d| match toast.kind {
+            Kind::Progress => d.child(spinner(("toast-spin", id as usize), colour, px(14.))),
+            _ => d.child(icon(which, colour).size_3p5().flex_none()),
+        })
         .child(title)
         .when(has_detail, |d| {
             d.child(div().flex_1().min_w_0().truncate().text_color(t.text_muted).child(toast.detail.clone()))

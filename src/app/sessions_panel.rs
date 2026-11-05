@@ -23,7 +23,7 @@ use super::session_groups::DraggedSession;
 use crate::theme::{Palette, mono, theme};
 use crate::ui::motion::grow;
 use crate::ui::wash::row_wash;
-use crate::ui::{Icon, Lamp, Tooltip, icon_button, lamp, scrollbar, section_label};
+use crate::ui::{Icon, Lamp, Tooltip, icon_button, lamp, scrollbar, section_label, spinner};
 
 /// Past sessions for the active conversation's folder, re-read when the folder
 /// or the current session changes, or a reply starts or finishes.
@@ -67,6 +67,15 @@ struct OpenSession {
 }
 
 impl KynexApp {
+    /// Sessions were deleted: they leave the list now, and it's read again
+    /// ([`Self::reread_sessions`]), showing the rest meanwhile.
+    pub(super) fn relist_sessions(&mut self, gone: &[String]) {
+        if let Some(l) = &mut self.sessions {
+            l.items.retain(|i| !gone.contains(&i.id));
+        }
+        self.reread_sessions();
+    }
+
     /// Reads the folder's past sessions off the UI thread (each transcript's
     /// ends); the panel keeps showing the last list until they're in.
     fn read_sessions(&mut self, read: ListRead, cx: &mut Context<Self>) {
@@ -179,7 +188,8 @@ impl KynexApp {
         if !fresh && self.sessions_reading.as_ref() != Some(&read) {
             self.read_sessions(read, cx);
         }
-        // Until the first read for this folder is in, the list is empty.
+        // Until the first read for this folder is in, the list is empty and says it's loading.
+        let loading = self.sessions.as_ref().is_none_or(|l| l.read.cwd != cwd);
         let all = self.sessions.as_ref().filter(|l| l.read.cwd == cwd).map(|l| l.items.clone()).unwrap_or_default();
         self.name_sessions(&all, cx);
         // The title filter, while it's open.
@@ -291,9 +301,17 @@ impl KynexApp {
                 div()
                     .px_3()
                     .py_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
                     .text_sm()
                     .text_color(t.text_placeholder)
-                    .child(if query.is_empty() { "No past sessions yet" } else { "No sessions match" })
+                    .when(loading, |d| d.child(spinner("sessions-loading", t.text_placeholder, px(12.))))
+                    .child(match (loading, query.is_empty()) {
+                        (true, _) => "Loading sessions…",
+                        (false, true) => "No past sessions yet",
+                        (false, false) => "No sessions match",
+                    })
                     .into_any_element(),
             );
         }
@@ -439,7 +457,7 @@ impl KynexApp {
                                 if let Err(e) = session::delete_session(&cwd3, &del_id) {
                                     this.toast(Toast::error(e));
                                 }
-                                this.sessions = None;
+                                this.relist_sessions(std::slice::from_ref(&del_id));
                                 cx.notify();
                             })),
                     )

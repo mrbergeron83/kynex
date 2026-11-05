@@ -11,7 +11,7 @@ use kynex_core::session::{self, ModelInfo};
 
 use super::KynexApp;
 use crate::theme::theme;
-use crate::ui::{Icon, Tooltip, divider, icon, px};
+use crate::ui::{Icon, Tooltip, divider, icon, px, spinner};
 
 /// Until the CLI's own list arrives (or if it can't be had).
 const MODELS: [(&str, &str); 5] =
@@ -246,6 +246,8 @@ pub fn grok_reported(list: Vec<ModelInfo>, cx: &mut Context<KynexApp>) {
 }
 
 static GROK_FETCHING: AtomicBool = AtomicBool::new(false);
+/// Why the last ask for Grok's list failed, for the picker.
+static GROK_FETCH_ERROR: Mutex<Option<String>> = Mutex::new(None);
 /// When Grok's list was last asked for, so a failure (not signed in yet) retries a minute on.
 static GROK_ASKED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 
@@ -274,17 +276,18 @@ pub fn fetch_grok_models(cx: &mut Context<KynexApp>) {
                 kynex_core::grok::list_models(&cwd)
             })
             .await;
-        match result {
-            Ok(list) => {
-                this.update(cx, |_, cx| {
-                    grok_reported(list, cx);
-                    cx.notify();
-                })
-                .ok();
-            }
-            Err(e) => eprintln!("kynex: couldn't list Grok's models: {e}"),
+        if let Ok(mut error) = GROK_FETCH_ERROR.lock() {
+            *error = result.as_ref().err().cloned();
         }
         GROK_FETCHING.store(false, Ordering::SeqCst);
+        this.update(cx, |_, cx| {
+            match result {
+                Ok(list) => grok_reported(list, cx),
+                Err(e) => eprintln!("kynex: couldn't list Grok's models: {e}"),
+            }
+            cx.notify();
+        })
+        .ok();
     })
     .detach();
 }
@@ -301,7 +304,36 @@ impl KynexApp {
         if !current.is_empty() && !rows.iter().any(|r| r.0 == current) {
             rows.push((current.clone(), current.clone(), String::new()));
         }
-        rows.into_iter()
+        // While Grok's list is asked for, or why it couldn't be.
+        let status = if !grok_known().is_empty() {
+            None
+        } else if GROK_FETCHING.load(Ordering::SeqCst) {
+            Some(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(t.text_muted)
+                    .child(spinner("grok-models-loading", t.text_muted, px(12.)))
+                    .child("Loading Grok's models…")
+                    .into_any_element(),
+            )
+        } else {
+            GROK_FETCH_ERROR.lock().ok().and_then(|e| e.clone()).map(|e| {
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(t.text_muted)
+                    .child(format!("Couldn't list Grok's models: {e}"))
+                    .into_any_element()
+            })
+        };
+        let mut items: Vec<AnyElement> = rows
+            .into_iter()
             .enumerate()
             .map(|(n, (id, name, description))| {
                 let selected = if current.is_empty() { id == "default" } else { id == current };
@@ -331,7 +363,9 @@ impl KynexApp {
                     .on_click(pick(id, cx))
                     .into_any_element()
             })
-            .collect()
+            .collect();
+        items.extend(status);
+        items
     }
 
     /// The model menu on OpenRouter: My models, and a way to change them.

@@ -47,7 +47,7 @@ impl KynexApp {
                     Ok((id, title)) => {
                         titles::remember(&id, &title);
                         // Re-read the list so the name shows (and the next one starts).
-                        this.sessions = None;
+                        this.reread_sessions();
                     }
                     Err(e) => eprintln!("kynex: couldn't name a session: {e}"),
                 }

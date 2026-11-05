@@ -5,6 +5,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Long waits no longer look like a frozen app (#282). Starting Claude, a worker's worktree,
+  browser servers, a terminal's shell and big first messages all happen off the UI thread, and
+  "Starting Claude…" / "Starting PowerShell…" show meanwhile; a `claude` that won't start is no
+  longer retried on every keystroke. A first launch says "Checking Claude Code…" instead of
+  showing the workspace and then the setup screen. The sessions panel, command palette, Git
+  History, rewind, Storage and the Grok model picker say they're loading instead of "empty";
+  restoring files and Ctrl+G editing show a spinner toast until they're done, and text typed
+  while the editor is open is kept. Fetch and push can be cancelled, and Git's buttons say
+  when another operation is running.
+
 ## [0.0.22] - 2026-11-04
 
 ### Added
