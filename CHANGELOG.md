@@ -9,7 +9,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - On a machine without a GPU (Cloud PCs, VMs, remote desktops), "Animations: as the system"
   now turns animations off: Windows draws there on the CPU, and spinners, pulses and smooth
-  scrolling kept it busy. Pick "Animations: on" to keep them.
+  scrolling kept it busy. Pick "Animations: on" to keep them (#287).
 
 ### Fixed
 
