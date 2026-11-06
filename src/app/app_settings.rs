@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use crate::ui::px;
 use gpui::{Anchor, ClickEvent, Context, PathPromptOptions, Window, div, prelude::*};
 use kynex_core::awake::KeepAwake;
+use kynex_core::browser::{self, Browser, Pick};
 use kynex_core::cli;
 use kynex_core::column::ColumnWidth;
 use kynex_core::live::SleepAfter;
@@ -33,6 +34,10 @@ pub struct AppSettingsView {
     cli: Option<CliInfo>,
     pub(super) providers: super::providers::ProvidersView,
     pub(super) agents: super::agents_settings::AgentsView,
+    /// Which browsers are installed, and whether `npx` is on PATH; looked up
+    /// when the modal opens, not every frame.
+    browsers: Vec<Browser>,
+    npx: bool,
 }
 
 /// Found off the UI thread when the modal opens, so no frame searches PATH.
@@ -59,7 +64,9 @@ impl KynexApp {
         self.extensions = None;
         let providers = self.new_providers_view(cx);
         let agents = self.new_agents_view(cx);
-        self.app_settings = Some(AppSettingsView { section: 0, cli: None, providers, agents });
+        let browsers = Browser::ALL.into_iter().filter(|b| b.installed()).collect();
+        let npx = kynex_core::mcp_config::npx_found();
+        self.app_settings = Some(AppSettingsView { section: 0, cli: None, providers, agents, browsers, npx });
         // Storage is measured again each time Settings opens; the last stays up meanwhile.
         if let Some(s) = &mut self.storage {
             s.stale = true;
@@ -131,6 +138,14 @@ impl KynexApp {
             }
         })
         .detach();
+    }
+
+    /// Sessions started from now on get this browser.
+    fn set_browser(&mut self, pick: Pick, cx: &mut Context<Self>) {
+        browser::set(pick);
+        self.saved.browser = pick;
+        self.save();
+        cx.notify();
     }
 
     fn set_shell(&mut self, shell: Option<ShellKind>, cx: &mut Context<Self>) {
@@ -276,6 +291,34 @@ impl KynexApp {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_shell(kind, cx)))
             }));
 
+        let picked = self.saved.browser;
+        let installed = view.map(|v| v.browsers.clone()).unwrap_or_default();
+        let npx = view.is_none_or(|v| v.npx);
+        let browser = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(heading(
+                "Browser",
+                "Claude opens pages, clicks and fills in forms in a window of its own, with a profile kept per \
+                 folder: sign in there once and it stays signed in. Sessions started from now on use it.",
+                t,
+            ))
+            .children(Pick::ALL.into_iter().enumerate().map(|(n, p)| {
+                let missing = p.browser().is_some_and(|b| !installed.contains(&b));
+                let label = if missing { format!("{} (not found)", p.label()) } else { p.label().to_string() };
+                choice(("browser", n), picked == p, label, t)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_browser(p, cx)))
+            }))
+            .when(!npx && picked != Pick::Off, |d| {
+                d.child(
+                    div()
+                        .text_xs()
+                        .text_color(t.warning)
+                        .child("Node.js isn't on your PATH; the browser runs with npx. Install it from nodejs.org."),
+                )
+            });
+
         let past = self.saved.name_past_sessions;
         let recent = format!("Also the {} most recent unnamed ones", super::titles::NAME_RECENT);
         let naming = div()
@@ -375,6 +418,7 @@ impl KynexApp {
             .gap_6()
             .child(cli)
             .child(shell)
+            .child(browser)
             .child(naming)
             .child(notifications)
             .children(closing)

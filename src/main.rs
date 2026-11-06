@@ -55,6 +55,7 @@ fn main() {
         ui::motion::apply(saved.motion, cx);
         kynex_core::cli::set_program(saved.cli_path.clone());
         kynex_core::delegate::set_default(saved.delegate);
+        kynex_core::browser::set(saved.browser);
         kynex_core::terminal::ShellKind::set_default(saved.shell);
         ui::input::bind_keys(cx);
         prompt::bind_keys(cx);

@@ -1,8 +1,7 @@
 //! Starting a session's process off the UI thread.
 //!
 //! Everything a start does can block: reading settings, finding the CLI on
-//! `PATH`, a worker's `git worktree add`, starting browser MCP servers
-//! (`npx`), and the process itself (long on a first launch, or under an
+//! `PATH`, a worker's `git worktree add`, and the process itself (long on a first launch, or under an
 //! antivirus scan). [`begin`] does all of it on a thread and hands back a
 //! [`Started`]; the session takes it in on its next poll, and what it wrote
 //! meanwhile goes out then.
@@ -16,7 +15,6 @@ use std::thread;
 use serde_json::Value;
 
 use super::{Event, Kind, Wake, claude_command, spawn_readers};
-use crate::browser_server::BrowserServer;
 use crate::project;
 use crate::provider::{Launch, Provider};
 
@@ -31,9 +29,6 @@ pub(super) struct Spec {
     pub resume: Option<String>,
     pub resume_at: Option<String>,
     pub wake: Wake,
-    /// The session's browser servers, which a start brings up to its settings
-    /// and hands back.
-    pub browser_servers: Vec<BrowserServer>,
 }
 
 /// A finished start: the process, or why there is none. A process that is
@@ -46,11 +41,6 @@ pub(super) struct Started {
     pub launched: Option<project::Launched>,
     /// The model it runs on (a worker's is picked here).
     pub model: String,
-    /// The session's browser servers, back from [`Spec::browser_servers`].
-    pub browser_servers: Vec<BrowserServer>,
-    /// The ones it was given, and of those the ones still starting when it did.
-    pub browser_given: Vec<String>,
-    pub browser_late: Vec<String>,
 }
 
 impl Drop for Started {
@@ -77,19 +67,9 @@ pub(super) fn begin(spec: Spec, events: Sender<Event>) -> Receiver<Started> {
 
 /// Builds the command and starts it. Blocks.
 fn run(mut spec: Spec, events: Sender<Event>) -> Started {
-    let mut started = Started {
-        child: None,
-        stdin: None,
-        error: None,
-        launched: None,
-        model: spec.model.clone(),
-        browser_servers: Vec::new(),
-        browser_given: Vec::new(),
-        browser_late: Vec::new(),
-    };
+    let mut started = Started { child: None, stdin: None, error: None, launched: None, model: spec.model.clone() };
     let built = command(&mut spec, &mut started);
     started.model = spec.model;
-    started.browser_servers = spec.browser_servers;
     let (mut cmd, what) = match built {
         Ok(c) => c,
         Err(e) => {
@@ -213,15 +193,9 @@ fn command(spec: &mut Spec, started: &mut Started) -> Result<(Command, &'static 
             }
             cmd.args(claude.cli_args());
             started.launched = Some(project::Launched::new(&perms, &claude));
-            // Kynex's own browser servers, under the configured names. One
-            // still starting is given all the same: the configured one would
-            // be another client fighting over the browser.
-            let servers = &mut spec.browser_servers;
-            crate::browser_server::reconcile(servers, &crate::browser_server::entries(&spec.cwd), &spec.wake);
-            started.browser_given = servers.iter().map(|s| s.name.clone()).collect();
-            started.browser_late = servers.iter().filter(|s| !s.ready()).map(|s| s.name.clone()).collect();
-            if !servers.is_empty() {
-                cmd.args(["--mcp-config", &crate::browser_server::mcp_config(&*servers)]);
+            // The browser picked in Settings, in place of a configured one of the same name.
+            if let Some(b) = crate::browser::current().browser() {
+                cmd.args(["--mcp-config", &crate::browser::mcp_config(b)]);
             }
         }
     }

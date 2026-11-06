@@ -11,6 +11,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
   terminals and Claude sessions read the PATH and new variables from the registry when they
   start, and the terminal's new Restart button starts the shell over to pick them up.
 
+### Changed
+
+- Claude's browser is a setting now: Settings → General → Browser picks Edge, Chrome or off,
+  and every session gets it without setting up a server. It opens Playwright's own window, with
+  a profile kept per folder (sign in there once), instead of driving your browser through the
+  Playwright extension, which kept breaking (tabs that reopened when closed, pairing lost on
+  restarts). The browser preset in Extensions → Add a server is gone, and a Playwright server
+  you set up before says it's no longer needed.
+
 ## [0.0.23] - 2026-11-05
 
 ### Changed
