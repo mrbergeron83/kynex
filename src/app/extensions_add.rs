@@ -1,18 +1,15 @@
-//! The Extensions modal's Add server panel: the browser preset (Playwright on
-//! your own Edge or Chrome, or a fresh one) and a server of your own, both
-//! added through `claude mcp add`.
+//! The Extensions modal's Add server panel: a server of your own, added
+//! through `claude mcp add`. The browser is a setting (Settings → General).
 
 use gpui::{AnyElement, Context, Entity, FontWeight, div, prelude::*};
-use kynex_core::mcp_config::{self, BROWSER_EXTENSION_URL, Browser, NewServer, Scope};
+use kynex_core::mcp_config::{self, NewServer, Scope};
 
 use super::KynexApp;
-use super::extensions::{AddForm, chip};
+use super::extensions::AddForm;
 use super::settings::radio;
-use crate::theme::{Palette, mono};
+use crate::theme::Palette;
 use crate::ui::input::TextInput;
-use crate::ui::{Tooltip, outline_button, primary_button};
-
-const NODE_URL: &str = "https://nodejs.org/";
+use crate::ui::{outline_button, primary_button};
 
 impl KynexApp {
     fn edit_add_form(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut AddForm)) {
@@ -25,21 +22,6 @@ impl KynexApp {
     fn add_server(&mut self, server: NewServer, cx: &mut Context<Self>) {
         let busy = format!("Adding {}…", server.name);
         self.change_servers(busy, move |cwd| mcp_config::add(cwd, &server), cx);
-    }
-
-    pub(super) fn add_browser(&mut self, cx: &mut Context<Self>) {
-        let Some(form) = self.extensions.as_ref().and_then(|v| v.adding.as_ref()) else { return };
-        let server = form.browser.preset(form.own_profile, form.token.read(cx).text());
-        self.add_server(server, cx);
-    }
-
-    fn open_token_page(&mut self, browser: Browser, cx: &mut Context<Self>) {
-        if let Err(e) = browser.open_token_page()
-            && let Some(view) = &mut self.extensions
-        {
-            view.error = Some(e);
-        }
-        cx.notify();
     }
 
     /// Adds what's typed in the panel's own-server fields.
@@ -59,89 +41,6 @@ impl KynexApp {
 
     pub(super) fn render_add_server(&self, form: &AddForm, t: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let busy = self.extensions.as_ref().is_some_and(|v| v.busy.is_some());
-        let browser = form.browser;
-        let preset = browser.preset(form.own_profile, "");
-        let browsers = div().flex().gap_1().children(Browser::ALL.into_iter().enumerate().map(|(n, b)| {
-            let installed = form.installed.contains(&b);
-            let label = if installed { b.label().to_string() } else { format!("{} (not found)", b.label()) };
-            choice(("ext-browser", n), b == browser, label, None, t)
-                .on_click(cx.listener(move |this, _, _, cx| this.edit_add_form(cx, |f| f.browser = b)))
-        }));
-        let profiles = div()
-            .flex()
-            .flex_col()
-            .child(
-                choice(
-                    "ext-own-profile",
-                    form.own_profile,
-                    "Your own browser".into(),
-                    Some(format!(
-                        "Keeps your logins. Needs the Playwright extension in {}; with its token it connects without asking.",
-                        browser.label()
-                    )),
-                    t,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.edit_add_form(cx, |f| f.own_profile = true))),
-            )
-            .child(
-                choice(
-                    "ext-fresh-profile",
-                    !form.own_profile,
-                    "A fresh browser".into(),
-                    Some("Opens a separate window with no saved logins. Nothing to install.".into()),
-                    t,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.edit_add_form(cx, |f| f.own_profile = false))),
-            );
-        let extension_step = form.own_profile.then(|| {
-            let other_store = (browser == Browser::Edge).then_some(" Edge asks to allow extensions from other stores.");
-            step(
-                format!("Install the Playwright extension in {}.{}", browser.label(), other_store.unwrap_or("")),
-                outline_button("ext-store", "Open store page", cx)
-                    .on_click(|_, _, cx| cx.open_url(BROWSER_EXTENSION_URL)),
-                t,
-            )
-        });
-        let token_step = form.own_profile.then(|| {
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(step(
-                    "Copy the extension's token from its status page, so it connects without asking each time.".into(),
-                    outline_button("ext-token-page", "Open token page", cx)
-                        .on_click(cx.listener(move |this, _, _, cx| this.open_token_page(browser, cx))),
-                    t,
-                ))
-                .child(div().px_2().child(field("Extension token", form.token.clone(), t)))
-        });
-        let node_step = (!form.npx).then(|| {
-            step(
-                "Node.js isn't on your PATH; the browser server runs with npx. Install it, then restart Kynex.".into(),
-                outline_button("ext-node", "Open nodejs.org", cx).on_click(|_, _, cx| cx.open_url(NODE_URL)),
-                t,
-            )
-            .text_color(t.warning)
-        });
-        let configured = self.extensions.as_ref().and_then(|v| v.config.as_ref());
-        let exists = configured.is_some_and(|c| c.servers.iter().any(|s| s.name == preset.name));
-        let add_browser = if exists {
-            div()
-                .text_xs()
-                .text_color(t.text_muted)
-                .child(format!("{} is already set up; remove it below to set it up again.", preset.name))
-                .into_any_element()
-        } else {
-            primary_button("ext-add-browser", format!("Add {}", browser.label()), cx)
-                .when(busy, |b| b.opacity(0.5))
-                .tooltip(Tooltip::with_meta(
-                    format!("Adds {} for every folder", preset.name),
-                    preset.transport.detail(),
-                ))
-                .on_click(cx.listener(|this, _, _, cx| this.add_browser(cx)))
-                .into_any_element()
-        };
-
         let scopes = div().flex().flex_col().children(Scope::ALL.into_iter().enumerate().map(|(n, s)| {
             choice(("ext-scope", n), s == form.scope, s.label().into(), None, t)
                 .on_click(cx.listener(move |this, _, _, cx| this.edit_add_form(cx, |f| f.scope = s)))
@@ -171,22 +70,6 @@ impl KynexApp {
                         }
                         cx.notify();
                     }))),
-            )
-            .child(
-                section("Browser", "Lets Claude open pages, click and fill in forms, for every folder.", t)
-                    .child(browsers)
-                    .child(profiles)
-                    .children(extension_step)
-                    .children(token_step)
-                    .children(node_step)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(add_browser)
-                            .when(!exists, |d| d.child(chip(preset.name.clone(), t).text_xs().font_family(mono()))),
-                    ),
             )
             .child(
                 section("Your own", "A command Claude Code runs, or the URL of an HTTP server.", t)
@@ -238,19 +121,6 @@ fn choice(
                 .child(div().text_sm().child(label))
                 .children(help.map(|h| div().text_xs().text_color(t.text_muted).child(h))),
         )
-}
-
-/// Something to do first, with the button that does it.
-fn step(text: String, button: impl IntoElement, t: &Palette) -> gpui::Div {
-    div()
-        .flex()
-        .items_center()
-        .gap_3()
-        .px_2()
-        .text_xs()
-        .text_color(t.text_muted)
-        .child(div().flex_1().min_w_0().child(text))
-        .child(button)
 }
 
 fn field(label: &'static str, input: Entity<TextInput>, t: &Palette) -> gpui::Div {

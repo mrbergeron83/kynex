@@ -1,6 +1,5 @@
 //! Changing which MCP servers Claude gets, through the CLI so Kynex never edits
-//! its files: `claude mcp add` / `remove`, the browser presets (Playwright on
-//! your own Edge or Chrome), and `claude mcp list` for every server's health
+//! its files: `claude mcp add` / `remove`, and `claude mcp list` for every server's health
 //! when no session is open. [`crate::extensions`] reads what's configured.
 
 use std::path::{Path, PathBuf};
@@ -8,18 +7,6 @@ use std::path::{Path, PathBuf};
 use crate::cli;
 use crate::extensions::{Source, Transport};
 use crate::mcp::{self, Status};
-
-/// The browser extension `@playwright/mcp --extension` talks to. Edge installs
-/// it from the Chrome Web Store too.
-pub const BROWSER_EXTENSION_URL: &str =
-    "https://chromewebstore.google.com/detail/playwright-mcp-bridge/mmlmfjhmonkocbjadbfplnigmagldckm";
-
-/// The extension's status page, which shows its token.
-const BROWSER_EXTENSION_STATUS: &str = "chrome-extension://mmlmfjhmonkocbjadbfplnigmagldckm/status.html";
-
-/// With the extension's token here, `@playwright/mcp --extension` connects
-/// without the extension asking each time.
-pub const BROWSER_TOKEN_ENV: &str = "PLAYWRIGHT_MCP_EXTENSION_TOKEN";
 
 /// Where `claude mcp add` writes a server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,113 +198,7 @@ pub fn parse_list(text: &str) -> Vec<mcp::Server> {
         .collect()
 }
 
-/// A browser Playwright can drive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Browser {
-    Edge,
-    Chrome,
-}
-
-impl Browser {
-    pub const ALL: [Self; 2] = [Self::Edge, Self::Chrome];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Edge => "Edge",
-            Self::Chrome => "Chrome",
-        }
-    }
-
-    /// `@playwright/mcp`'s `--browser` value.
-    fn channel(self) -> &'static str {
-        match self {
-            Self::Edge => "msedge",
-            Self::Chrome => "chrome",
-        }
-    }
-
-    /// The preset: `@playwright/mcp` on this browser, for every folder. With
-    /// `own_profile` it attaches to your running browser through its extension
-    /// (your logins stay), and with the extension's `token` without it asking
-    /// each time; without, it opens a fresh browser with none.
-    pub fn preset(self, own_profile: bool, token: &str) -> NewServer {
-        let mut args: Vec<String> = ["@playwright/mcp@latest", "--browser", self.channel()].map(Into::into).into();
-        let mut env = Vec::new();
-        if own_profile {
-            args.push("--extension".into());
-            let token = token.trim();
-            if !token.is_empty() {
-                env.push((BROWSER_TOKEN_ENV.into(), token.into()));
-            }
-        }
-        NewServer {
-            name: format!("playwright-{}", self.label().to_ascii_lowercase()),
-            scope: Scope::User,
-            transport: Transport::Stdio { command: "npx".into(), args },
-            env,
-        }
-    }
-
-    /// Opens the Playwright extension's status page, which shows its token, in
-    /// this browser (an extension page only opens in its own browser).
-    pub fn open_token_page(self) -> Result<(), String> {
-        let place = self.places().into_iter().find(|p| p.exists());
-        let place = place.ok_or_else(|| format!("{} isn't installed.", self.label()))?;
-        #[cfg(target_os = "macos")]
-        let mut cmd = {
-            let mut c = std::process::Command::new("open");
-            c.arg("-a").arg(&place).arg(BROWSER_EXTENSION_STATUS);
-            c
-        };
-        #[cfg(not(target_os = "macos"))]
-        let mut cmd = {
-            let mut c = std::process::Command::new(&place);
-            c.arg(BROWSER_EXTENSION_STATUS);
-            c
-        };
-        crate::process::detach(&mut cmd).map(|_| ()).map_err(|e| format!("couldn't open {}: {e}", self.label()))
-    }
-
-    /// Whether it's installed, by where its installers put it.
-    pub fn installed(self) -> bool {
-        self.places().iter().any(|p| p.exists())
-    }
-
-    #[cfg(windows)]
-    fn places(self) -> Vec<PathBuf> {
-        let rel = match self {
-            Self::Edge => ["Microsoft", "Edge", "Application", "msedge.exe"],
-            Self::Chrome => ["Google", "Chrome", "Application", "chrome.exe"],
-        };
-        ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]
-            .iter()
-            .filter_map(std::env::var_os)
-            .map(|root| rel.iter().fold(PathBuf::from(root), |p, part| p.join(part)))
-            .collect()
-    }
-
-    #[cfg(target_os = "macos")]
-    fn places(self) -> Vec<PathBuf> {
-        let app = match self {
-            Self::Edge => "Microsoft Edge.app",
-            Self::Chrome => "Google Chrome.app",
-        };
-        let mut out = vec![Path::new("/Applications").join(app)];
-        out.extend(dirs::home_dir().map(|h| h.join("Applications").join(app)));
-        out
-    }
-
-    #[cfg(not(any(windows, target_os = "macos")))]
-    fn places(self) -> Vec<PathBuf> {
-        let names: &[&str] = match self {
-            Self::Edge => &["microsoft-edge", "microsoft-edge-stable"],
-            Self::Chrome => &["google-chrome", "google-chrome-stable"],
-        };
-        names.iter().filter_map(|n| on_path(n)).collect()
-    }
-}
-
-/// Whether `npx` is on PATH; the browser presets run through it.
+/// Whether `npx` is on PATH; the browser ([`crate::browser`]) runs through it.
 pub fn npx_found() -> bool {
     on_path(if cfg!(windows) { "npx.cmd" } else { "npx" }).is_some()
 }
@@ -414,37 +295,6 @@ mod tests {
     }
 
     #[test]
-    fn browser_presets() {
-        let edge = Browser::Edge.preset(true, "");
-        assert_eq!(edge.name, "playwright-edge");
-        assert_eq!(edge.scope, Scope::User);
-        assert_eq!(edge.transport.detail(), "npx @playwright/mcp@latest --browser msedge --extension");
-        assert!(edge.env.is_empty());
-        assert_eq!(Browser::Chrome.preset(false, "").transport.detail(), "npx @playwright/mcp@latest --browser chrome");
-        // The token goes in the server's environment, and only with your own browser.
-        let edge = Browser::Edge.preset(true, " tok-1 ");
-        assert_eq!(
-            edge.add_args().unwrap(),
-            [
-                "mcp",
-                "add",
-                "--scope",
-                "user",
-                "-e",
-                "PLAYWRIGHT_MCP_EXTENSION_TOKEN=tok-1",
-                "playwright-edge",
-                "--",
-                "npx",
-                "@playwright/mcp@latest",
-                "--browser",
-                "msedge",
-                "--extension"
-            ]
-        );
-        assert!(Browser::Chrome.preset(false, "tok-1").env.is_empty());
-    }
-
-    #[test]
     fn only_config_scopes_are_removable() {
         assert_eq!(Scope::of(&Source::Project), Some(Scope::Project));
         assert_eq!(Scope::of(&Source::Plugin("pw@m".into())), None);
@@ -481,6 +331,7 @@ mod tests {
         for s in check(&std::env::current_dir().unwrap()).unwrap() {
             println!("{:<32} {:?}", s.name, s.status);
         }
+        use crate::browser::Browser;
         println!("npx: {}, edge: {}, chrome: {}", npx_found(), Browser::Edge.installed(), Browser::Chrome.installed());
     }
 }

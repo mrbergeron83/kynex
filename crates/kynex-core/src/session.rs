@@ -387,12 +387,6 @@ pub struct Session {
     loader: Option<Loader>,
     /// While replaying: the log and line the entry came from, so its images stay there.
     origin: Option<(Arc<PathBuf>, Span)>,
-    /// Its `--extension` browser servers, run by Kynex so the pairing outlives
-    /// the process ([`crate::browser_server`]); the ones the running process was given, and
-    /// of those the ones still starting then, which it reconnects to once up.
-    browser_servers: Vec<crate::browser_server::BrowserServer>,
-    browser_given: Vec<String>,
-    browser_late: Vec<String>,
 }
 
 /// A session log being read back on a thread: its newest turns, then the rest.
@@ -545,9 +539,6 @@ impl Session {
             runs: 0,
             loader: None,
             origin: None,
-            browser_servers: Vec::new(),
-            browser_late: Vec::new(),
-            browser_given: Vec::new(),
         }
     }
 
@@ -780,7 +771,6 @@ impl Session {
             resume: self.resume_id().map(str::to_string),
             resume_at: if grok { None } else { self.resume_at.take() },
             wake: self.wake.clone(),
-            browser_servers: std::mem::take(&mut self.browser_servers),
         };
         self.starting = Some(launch::begin(spec, tx));
         self.outbox.clear();
@@ -826,9 +816,6 @@ impl Session {
             }
         };
         self.starting = None;
-        self.browser_servers = std::mem::take(&mut started.browser_servers);
-        self.browser_given = std::mem::take(&mut started.browser_given);
-        self.browser_late = std::mem::take(&mut started.browser_late);
         self.model = std::mem::take(&mut started.model);
         let (Some(child), Some(stdin)) = (started.child.take(), started.stdin.take()) else {
             let e = started.error.take().unwrap_or_else(|| "failed to start the process".into());
@@ -1262,10 +1249,8 @@ impl Session {
         self.spawned = None;
         self.ready = false;
         self.in_block = false;
-        // A browser Kynex holds stays paired for the next process.
-        self.browser = self.browser_servers.iter().any(|s| s.held());
-        self.browser_given.clear();
-        self.browser_late.clear();
+        // Its browser closed with it.
+        self.browser = false;
         self.stale = false;
         self.launched = None;
         self.applying.clear();
@@ -1274,48 +1259,6 @@ impl Session {
         self.stopping.clear();
         // Nobody is left to answer them.
         self.cancel_permissions(|_| true);
-    }
-
-    /// The process drove the browser of MCP server `server`: if that's one of
-    /// Kynex's, Kynex joins it so the pairing outlives the process.
-    fn hold_browser(&mut self, server: &str) {
-        if !self.browser_given.iter().any(|n| n == server) {
-            return;
-        }
-        for s in self.browser_servers.iter_mut().filter(|s| s.name == server) {
-            s.hold();
-        }
-    }
-
-    /// Browser servers that were still starting when the process started, and
-    /// so failed to connect: it reconnects to the ones up now.
-    fn connect_late_browsers(&mut self) {
-        // Servers that died and started again on their port (#267): the
-        // process gave up on them, or will; it connects again now.
-        let back: Vec<String> = self
-            .browser_servers
-            .iter()
-            .filter(|s| s.take_restarted() && self.browser_given.contains(&s.name))
-            .map(|s| s.name.clone())
-            .collect();
-        if self.ready {
-            for name in back {
-                self.reconnect_mcp(&name);
-            }
-        }
-        if !self.ready || self.browser_late.is_empty() {
-            return;
-        }
-        let up: Vec<String> = self
-            .browser_servers
-            .iter()
-            .filter(|s| self.browser_late.contains(&s.name) && s.ready())
-            .map(|s| s.name.clone())
-            .collect();
-        self.browser_late.retain(|n| !up.contains(n));
-        for name in up {
-            self.reconnect_mcp(&name);
-        }
     }
 
     /// Marks the pending permission prompts `which` picks as cancelled.
@@ -1338,7 +1281,6 @@ impl Session {
     /// Drain pending events from the process. Call when woken.
     pub fn poll(&mut self) {
         self.take_started();
-        self.connect_late_browsers();
         let Some(rx) = &self.rx else { return };
         let events: Vec<Event> = rx.try_iter().collect();
         if !events.is_empty() {
@@ -1522,11 +1464,10 @@ impl Session {
                             let input = serde_json::to_string_pretty(&block["input"]).unwrap_or_default();
                             let id = block["id"].as_str().unwrap_or("").to_string();
                             if self.is_running()
-                                && let Some((server, tool)) = crate::mcp::split(&name)
+                                && let Some((_, tool)) = crate::mcp::split(&name)
                                 && crate::mcp::is_browser(tool)
                             {
                                 self.browser = true;
-                                self.hold_browser(server);
                             }
                             // Streamed in already: it gets its whole input.
                             if let Some(Item::ToolUse { name: n, summary: s, input: i, .. }) = self.streamed_call(&id) {
@@ -1753,11 +1694,6 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.kill();
-        // Stopping a browser server waits on `taskkill`; not on the UI thread.
-        let servers = std::mem::take(&mut self.browser_servers);
-        if !servers.is_empty() {
-            thread::spawn(move || drop(servers));
-        }
     }
 }
 
@@ -3161,11 +3097,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// The browser pairing outlives the process (#181): a session opens a page
-    /// through Kynex's server for an `--extension` Playwright entry in your
-    /// config, its process is stopped as a restart would, and the next process
-    /// still finds the page. Uses your browser, its extension and a little
-    /// quota. Run with `cargo test -- --ignored`.
     #[test]
     #[ignore = "needs the grok CLI, logged in; uses a little quota"]
     fn a_grok_session_keeps_its_process_and_asks_before_an_edit() {
@@ -3207,56 +3138,6 @@ mod tests {
         assert!(note.contains("kynex"), "{note}");
         assert!(reply.unwrap_or_default().to_lowercase().contains("second"));
         assert!(id.is_some_and(|id| crate::grok::log::session_dir(&root, &id).is_some()), "Grok keeps the session");
-    }
-
-    #[test]
-    #[ignore = "needs the claude CLI, npx, and a browser with the Playwright extension; opens example.com in it"]
-    fn browser_pairing_outlives_the_process() {
-        let root = std::env::temp_dir().join(format!("kynex-browser-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let mut s = Session::new(Kind::Code, root.clone());
-        s.model = "haiku".into();
-        let entries = crate::browser_server::entries(&root);
-        let name = entries.first().expect("an --extension Playwright server in your config").name.clone();
-        crate::browser_server::reconcile(&mut s.browser_servers, &entries, &s.wake.clone());
-        let start = Instant::now();
-        while !s.browser_servers.iter().all(|b| b.ready()) && start.elapsed() < Duration::from_secs(60) {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        let turn = |s: &mut Session, text: &str| {
-            s.send(text.into(), Vec::new());
-            let start = Instant::now();
-            while s.busy && start.elapsed() < Duration::from_secs(180) {
-                s.poll();
-                // Allow whatever it asks for: only browser tools are in play.
-                if let Some(i) =
-                    s.items.iter().position(|i| matches!(i, Item::Permission { state: PermState::Pending, .. }))
-                {
-                    s.answer_permission(i, Answer::Server);
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            s.items
-                .iter()
-                .rev()
-                .find_map(|i| if let Item::Assistant(t) = i { Some(t.clone()) } else { None })
-                .unwrap_or_default()
-        };
-        turn(&mut s, &format!("With the {name} browser tools, open https://example.com. Reply only DONE."));
-        assert!(s.browser, "the session didn't use the browser");
-        let start = Instant::now();
-        while !s.browser_servers.iter().any(|b| b.held()) && start.elapsed() < Duration::from_secs(60) {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        s.kill();
-        assert!(s.browser, "the pairing went with the process");
-        let reply = turn(
-            &mut s,
-            &format!("With the {name} browser_tabs tool, list the open tabs. Reply with their URLs only."),
-        );
-        drop(s);
-        let _ = std::fs::remove_dir_all(&root);
-        assert!(reply.contains("example.com"), "got: {reply:?}");
     }
 
     /// A project session starts in Auto (no prompt for a harmless mkdir), then a

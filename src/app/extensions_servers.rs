@@ -215,22 +215,22 @@ fn server_row(n: usize, r: &Row, rc: RowCtx, t: &Palette, cx: &mut Context<Kynex
     let detail = r.transport.as_ref().map(|tr| (tr.label().to_string(), tr.detail()));
     let browser = r.transport.as_ref().is_some_and(|tr| tr.detail().contains("playwright"))
         || rc.tools.is_some_and(|tools| tools.iter().any(|t| t == "browser_navigate"));
-    let extension = r.transport.as_ref().is_some_and(|tr| tr.detail().contains("--extension"));
+    // A Playwright server of its own, from before the browser was a setting.
+    let old_browser = r.transport.as_ref().is_some_and(|tr| tr.detail().contains("@playwright/mcp"))
+        && r.source != Source::ClaudeAi
+        && kynex_core::browser::current() != kynex_core::browser::Pick::Off;
     let failed = matches!(r.status, Some(Status::Failed));
     let note = match (&r.status, r.approval, &r.source) {
         (Some(Status::NeedsAuth), _, Source::ClaudeAi) => {
             Some("Connect it on claude.ai; sessions pick it up when they start.")
         }
         (Some(Status::NeedsAuth), _, _) => Some("It needs you to sign in."),
-        (Some(Status::Failed), _, _) if extension => Some(
-            "It didn't start. Check that Node.js is installed; the browser's Playwright extension is only \
-             needed once Claude uses it.",
+        (_, _, _) if old_browser => Some(
+            "Sessions get the browser picked in Settings → General now, so this one isn't needed; \
+             remove it.",
         ),
         (Some(Status::Failed), _, _) if rc.log.is_none() => {
             Some("It didn't start. Check its command, or that the program it runs is installed.")
-        }
-        (Some(Status::Connected), _, _) if extension => {
-            Some("Uses your own browser: the Playwright extension asks you to allow each connection.")
         }
         (_, Approval::Pending, _) => Some("A project server: Claude Code asks you to allow it when a session starts."),
         _ => None,

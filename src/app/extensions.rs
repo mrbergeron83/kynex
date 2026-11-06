@@ -16,7 +16,7 @@ use gpui::{AnyElement, Context, Entity, Window, div, prelude::*};
 use kynex_core::catalog::{self, Hook, Item};
 use kynex_core::extensions::{self, Config};
 use kynex_core::mcp;
-use kynex_core::mcp_config::{self, Browser, Scope};
+use kynex_core::mcp_config::{self, Scope};
 use kynex_core::plugins::{self, Available, Contributes, Marketplace};
 use kynex_core::{mcp_logs, paths};
 
@@ -74,21 +74,13 @@ pub(super) struct Extra {
     pub(super) logs: HashMap<String, String>,
 }
 
-/// The Add server panel: the browser preset, or a server of your own.
+/// The Add server panel: a server of your own.
 #[derive(Clone)]
 pub(super) struct AddForm {
-    pub(super) browser: Browser,
-    /// Attach to your own browser through its extension, keeping your logins.
-    pub(super) own_profile: bool,
-    /// The extension's token, so it connects without asking each time.
-    pub(super) token: Entity<TextInput>,
     pub(super) name: Entity<TextInput>,
     /// A command line, or an http(s) URL.
     pub(super) what: Entity<TextInput>,
     pub(super) scope: Scope,
-    /// Looked up once when the panel opens, not every frame.
-    pub(super) npx: bool,
-    pub(super) installed: Vec<Browser>,
 }
 
 /// Plugins the added marketplaces offer, and adding another marketplace.
@@ -141,7 +133,7 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Opens the Add server panel, on the first browser that's installed.
+    /// Opens the Add server panel.
     pub(super) fn open_add_server(&mut self, cx: &mut Context<Self>) {
         let input = |placeholder: &'static str, cx: &mut Context<Self>| {
             let input = cx.new(|cx| TextInput::new(cx).mono().placeholder(placeholder));
@@ -153,23 +145,10 @@ impl KynexApp {
             .detach();
             input
         };
-        let token = cx.new(|cx| TextInput::new(cx).mono().placeholder("Paste the token (optional)"));
-        cx.subscribe(&token, |this, _, ev, cx| {
-            if let InputEvent::Submit = ev {
-                this.add_browser(cx);
-            }
-        })
-        .detach();
-        let installed: Vec<Browser> = Browser::ALL.into_iter().filter(|b| b.installed()).collect();
         let form = AddForm {
-            browser: installed.first().copied().unwrap_or(Browser::Edge),
-            own_profile: true,
-            token,
             name: input("my-server", cx),
             what: input("npx some-mcp-server, or https://…", cx),
             scope: Scope::Local,
-            npx: mcp_config::npx_found(),
-            installed,
         };
         if let Some(view) = &mut self.extensions {
             view.adding = Some(form);

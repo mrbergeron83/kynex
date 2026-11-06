@@ -5,7 +5,7 @@
 pub mod attach;
 pub mod attention;
 pub mod awake;
-pub mod browser_server;
+pub mod browser;
 pub mod careful;
 pub mod catalog;
 pub mod chat_api;

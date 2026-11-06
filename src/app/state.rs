@@ -74,6 +74,8 @@ pub struct Saved {
     pub cli_path: Option<PathBuf>,
     /// The shell new terminals open; `None` is the OS's.
     pub shell: Option<ShellKind>,
+    /// The browser Claude sessions get (`kynex_core::browser`), or none.
+    pub browser: kynex_core::browser::Pick,
     /// A Claude Code release the user chose to skip; newer ones are offered again.
     pub skipped_cli_version: Option<String>,
     /// The terminal panel under the conversation is showing.
@@ -146,6 +148,7 @@ impl Default for Saved {
             window: None,
             cli_path: None,
             shell: None,
+            browser: Default::default(),
             skipped_cli_version: None,
             terminal_open: false,
             terminal_height: 280.,
