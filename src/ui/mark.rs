@@ -7,10 +7,11 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, BoxShadow, ElementId, Hsla, Pixels, Transformation, div,
-    linear_color_stop, linear_gradient, point, prelude::*, px, radians,
+    AnimationExt, AnyElement, App, BoxShadow, ElementId, Hsla, Pixels, Transformation, div, linear_color_stop,
+    linear_gradient, point, prelude::*, px, radians,
 };
 
+use super::motion::looping;
 use super::{Icon, Lamp, icon, pulse};
 
 /// A soft halo of `color` around an element, `blur` wide.
@@ -32,7 +33,7 @@ pub fn mark(id: impl Into<ElementId>, size: Pixels, lamp: Lamp, cx: &App) -> Any
     let pointer = if !detailed {
         None
     } else if working {
-        let sweep = Animation::new(Duration::from_millis(4800)).repeat().with_easing(gpui::bounce(gpui::ease_in_out));
+        let sweep = looping(Duration::from_millis(4800)).with_easing(gpui::bounce(gpui::ease_in_out));
         Some(
             pointer
                 .with_animation((id.clone(), "pointer"), sweep, |p, d| {
@@ -54,7 +55,7 @@ pub fn mark(id: impl Into<ElementId>, size: Pixels, lamp: Lamp, cx: &App) -> Any
 
     // While working, a ring grows out of the knob and fades, stopping short of the lamp.
     let ripple = (detailed && working).then(|| {
-        let ring = Animation::new(Duration::from_millis(1600)).repeat().with_easing(gpui::ease_out_quint());
+        let ring = looping(Duration::from_millis(1600)).with_easing(gpui::ease_out_quint());
         div()
             .absolute()
             .rounded_full()
