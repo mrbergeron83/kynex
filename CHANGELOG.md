@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.25] - 2026-11-09
+
 ### Added
 
 - "Animations: reduced": transitions stay, while spinners, pulses and the logo tick about 12
@@ -783,7 +785,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.24...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.25...HEAD
+[0.0.25]: https://github.com/mrbergeron83/kynex/compare/v0.0.24...v0.0.25
 [0.0.24]: https://github.com/mrbergeron83/kynex/compare/v0.0.23...v0.0.24
 [0.0.23]: https://github.com/mrbergeron83/kynex/compare/v0.0.22...v0.0.23
 [0.0.22]: https://github.com/mrbergeron83/kynex/compare/v0.0.21...v0.0.22
