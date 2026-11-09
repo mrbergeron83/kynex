@@ -239,7 +239,7 @@ pub fn icon(icon: Icon, color: Hsla) -> gpui::Svg {
 pub fn spinner(id: impl Into<ElementId>, color: Hsla, size: gpui::Rems) -> gpui::AnimationElement<gpui::Svg> {
     icon(Icon::Loader, color).size(size).with_animation(
         id,
-        Animation::new(Duration::from_millis(900)).repeat(),
+        motion::looping(Duration::from_millis(900)),
         |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
     )
 }
@@ -484,7 +484,7 @@ impl Lamp {
 
 /// The pulse of a working lamp: 1.6 s, easing in and out.
 pub fn pulse() -> Animation {
-    Animation::new(Duration::from_millis(1600)).repeat().with_easing(gpui::pulsating_between(0.3, 1.))
+    motion::looping(Duration::from_millis(1600)).with_easing(gpui::pulsating_between(0.3, 1.))
 }
 
 /// A 7 px lamp: pulsing petrol while working, amber when it needs you, green when

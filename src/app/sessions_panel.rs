@@ -80,17 +80,27 @@ impl KynexApp {
     /// ends); the panel keeps showing the last list until they're in.
     fn read_sessions(&mut self, read: ListRead, cx: &mut Context<Self>) {
         self.sessions_reading = Some(read.clone());
+        self.sessions_reads.0 += 1;
+        let n = self.sessions_reads.0;
         let cwd = read.cwd.clone();
         cx.spawn(async move |this, cx| {
             let (mut items, default_branch) = cx
                 .background_spawn(async move { (session::list_sessions(&cwd), kynex_core::git::default_branch(&cwd)) })
                 .await;
             this.update(cx, |this, cx| {
-                // A newer read is on its way.
-                if this.sessions_reading.as_ref() != Some(&read) {
+                // A newer read is on its way. If it's for the same folder, this one is
+                // still shown meanwhile: open sessions starting, getting their ids and
+                // replying all start reads, and dropping each would leave a newly opened
+                // folder saying it's loading until they settle.
+                let newest = this.sessions_reading.as_ref() == Some(&read);
+                let same_folder = this.sessions_reading.as_ref().is_none_or(|r| r.cwd == read.cwd);
+                if n < this.sessions_reads.1 || !(newest || same_folder) {
                     return;
                 }
-                this.sessions_reading = None;
+                this.sessions_reads.1 = n;
+                if newest {
+                    this.sessions_reading = None;
+                }
                 // A name given by hand wins, and counts as named, so none is generated.
                 for i in &mut items {
                     if let Some(name) = this.given_name(&read.cwd, &i.id) {

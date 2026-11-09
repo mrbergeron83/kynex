@@ -469,8 +469,9 @@ impl KynexApp {
             .child(heading("Animations", "Transitions and smooth scrolling.", t))
             .children(Motion::ALL.into_iter().enumerate().map(|(n, m)| {
                 let label = match m {
-                    Motion::System => "As the system (reduce motion turns them off)",
+                    Motion::System => "As the system (reduce motion turns them off; reduced without a GPU)",
                     Motion::On => "On",
+                    Motion::Reduced => "Reduced (spinners and pulses tick slower: light on a PC without a GPU)",
                     Motion::Off => "Off",
                 };
                 choice(("app-motion", n), self.saved.motion == m, label.to_string(), t)

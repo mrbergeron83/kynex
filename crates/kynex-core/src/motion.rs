@@ -1,6 +1,6 @@
 //! Whether Kynex animates: your pick (Appearance menu), or the operating
 //! system's "reduce motion" setting when you leave it to the system (and
-//! none when there's no GPU, so frames don't burn CPU).
+//! reduced when there's no GPU, so frames don't burn CPU).
 
 use serde::{Deserialize, Serialize};
 
@@ -12,28 +12,74 @@ pub enum Motion {
     System,
     /// Always animate.
     On,
+    /// Transitions as usual; what loops while Claude works (spinners, pulses)
+    /// ticks a few times a second instead of every frame.
+    Reduced,
     /// Never animate: everything appears in its final state at once.
     Off,
 }
 
 impl Motion {
-    pub const ALL: [Motion; 3] = [Motion::System, Motion::On, Motion::Off];
+    pub const ALL: [Motion; 4] = [Motion::System, Motion::On, Motion::Reduced, Motion::Off];
 
     pub fn label(self) -> &'static str {
         match self {
             Motion::System => "Animations: as the system",
             Motion::On => "Animations: on",
+            Motion::Reduced => "Animations: reduced",
             Motion::Off => "Animations: off",
         }
     }
 
-    /// Whether to hold animations back, given whether the OS asks for less motion.
-    pub fn reduce(self, os_reduces: bool) -> bool {
+    /// How much to animate, given what the system asks for.
+    pub fn level(self, system: System) -> Level {
         match self {
-            Motion::System => os_reduces,
-            Motion::On => false,
-            Motion::Off => true,
+            Motion::System if system.reduce_motion => Level::Off,
+            Motion::System if system.software_rendering => Level::Reduced,
+            Motion::System | Motion::On => Level::Full,
+            Motion::Reduced => Level::Reduced,
+            Motion::Off => Level::Off,
         }
+    }
+}
+
+/// How much Kynex animates, once the setting meets the system.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Level {
+    /// Everything, every frame.
+    Full,
+    /// Transitions every frame; loops at [`Level::loop_fps`].
+    Reduced,
+    /// Nothing: final states at once, loops still.
+    Off,
+}
+
+impl Level {
+    /// Whether animations are off altogether.
+    pub fn off(self) -> bool {
+        self == Level::Off
+    }
+
+    /// How often a looping animation redraws, if capped. A spinner or pulse runs
+    /// as long as Claude works, so on a CPU-drawn window it's what costs: at
+    /// this rate it still shows life for a fraction of the frames.
+    pub fn loop_fps(self) -> Option<f32> {
+        (self == Level::Reduced).then_some(12.)
+    }
+}
+
+/// What the system asks for: less motion (the OS setting), or cheap frames
+/// because there's no GPU to draw them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct System {
+    pub reduce_motion: bool,
+    pub software_rendering: bool,
+}
+
+impl System {
+    /// Reads both. Blocks (see [`os_reduces_motion`] and [`software_rendering`]).
+    pub fn read() -> Self {
+        Self { reduce_motion: os_reduces_motion(), software_rendering: software_rendering() }
     }
 }
 
@@ -184,16 +230,10 @@ pub fn os_reduces_motion() -> bool {
     }
 }
 
-/// Whether the system asks for less motion: the OS setting, or no GPU to draw
-/// with. Without one (Cloud PCs, VMs, remote desktops) Windows draws through
-/// WARP, its CPU rasterizer, and every animated frame costs real CPU across
-/// every core. Blocks (see [`os_reduces_motion`] and [`software_rendering`]).
-pub fn system_reduces_motion() -> bool {
-    os_reduces_motion() || software_rendering()
-}
-
 /// Whether there's no hardware GPU to draw with, so frames are rasterized on
-/// the CPU. Anything unreadable counts as no. Blocks briefly (asks DXGI).
+/// the CPU. Without one (Cloud PCs, VMs, remote desktops) Windows draws through
+/// WARP, its CPU rasterizer, and every animated frame costs real CPU across
+/// every core. Anything unreadable counts as no. Blocks briefly (asks DXGI).
 pub fn software_rendering() -> bool {
     #[cfg(windows)]
     {
@@ -239,10 +279,24 @@ mod tests {
 
     #[test]
     fn your_pick_wins_over_the_system() {
-        assert!(Motion::System.reduce(true));
-        assert!(!Motion::System.reduce(false));
-        assert!(!Motion::On.reduce(true));
-        assert!(Motion::Off.reduce(false));
+        let none = System::default();
+        let reduce = System { reduce_motion: true, ..none };
+        let no_gpu = System { software_rendering: true, ..none };
+        let both = System { reduce_motion: true, software_rendering: true };
+        assert_eq!(Motion::System.level(none), Level::Full);
+        assert_eq!(Motion::System.level(no_gpu), Level::Reduced);
+        assert_eq!(Motion::System.level(reduce), Level::Off);
+        assert_eq!(Motion::System.level(both), Level::Off);
+        assert_eq!(Motion::On.level(both), Level::Full);
+        assert_eq!(Motion::Reduced.level(none), Level::Reduced);
+        assert_eq!(Motion::Off.level(none), Level::Off);
+    }
+
+    #[test]
+    fn only_reduced_caps_loops() {
+        assert_eq!(Level::Full.loop_fps(), None);
+        assert!(Level::Reduced.loop_fps().is_some_and(|fps| fps > 0.));
+        assert!(Level::Off.off() && !Level::Reduced.off());
     }
 
     /// Runs a glide for `seconds` at `hz`, returning the distance covered.

@@ -12,13 +12,14 @@
 //! closes, the view draws it once more per frame with how far it has gone,
 //! and [`inert`] keeps that leftover from taking clicks meant for what's under it.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
     Animation, AnimationElement, AnimationExt, AnyElement, App, AppContext, Bounds, ContentMask, Element, ElementId,
     GlobalElementId, IntoElement, LayoutId, Pixels, Styled, Window, px,
 };
-use kynex_core::motion::{Motion, system_reduces_motion};
+use kynex_core::motion::{Level, Motion, System};
 
 /// Hovers, tooltips, small popups.
 pub const QUICK: Duration = Duration::from_millis(110);
@@ -212,14 +213,34 @@ impl Element for Inert {
 }
 
 /// Applies the Animations setting: at once from what's known, then again once
-/// the OS setting has been read in the background.
+/// the system has been asked in the background.
 pub fn apply(motion: Motion, cx: &mut App) {
-    cx.set_reduce_motion(motion == Motion::Off);
+    set_level(motion.level(System::default()), cx);
     if motion == Motion::System {
         cx.spawn(async move |cx| {
-            let os = cx.background_spawn(async { system_reduces_motion() }).await;
-            cx.update(|cx| cx.set_reduce_motion(motion.reduce(os)));
+            let system = cx.background_spawn(async { System::read() }).await;
+            cx.update(|cx| set_level(motion.level(system), cx));
         })
         .detach();
+    }
+}
+
+fn set_level(level: Level, cx: &mut App) {
+    cx.set_reduce_motion(level.off());
+    LOOP_FPS.store(level.loop_fps().map_or(0, f32::to_bits), Ordering::Relaxed);
+    cx.refresh_windows();
+}
+
+/// [`Level::loop_fps`] as bits, 0 for uncapped. A static rather than an `App`
+/// global so [`looping`] needs no context, like gpui's own animations.
+static LOOP_FPS: AtomicU32 = AtomicU32::new(0);
+
+/// A repeating animation for things that run as long as Claude works
+/// (spinners, pulses): every frame, or capped by "Animations: reduced".
+pub fn looping(duration: Duration) -> Animation {
+    let animation = Animation::new(duration).repeat();
+    match LOOP_FPS.load(Ordering::Relaxed) {
+        0 => animation,
+        bits => animation.with_max_fps(f32::from_bits(bits)),
     }
 }

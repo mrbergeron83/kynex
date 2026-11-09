@@ -5,6 +5,17 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- "Animations: reduced": transitions stay, while spinners, pulses and the logo tick about 12
+  times a second instead of every frame, so you still see Claude working without the CPU cost.
+  On a machine without a GPU, "as the system" now picks this instead of turning animations off.
+
+### Fixed
+
+- Switching to another project could leave its sessions list loading for a long while: each
+  session starting or replying there threw away the list just read and read it again (#296).
+
 ## [0.0.24] - 2026-11-06
 
 ### Added

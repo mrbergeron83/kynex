@@ -242,6 +242,8 @@ pub struct KynexApp {
     sessions: Option<SessionList>,
     /// The sessions list being read in the background, for this.
     sessions_reading: Option<ListRead>,
+    /// Sessions reads started, and the newest one shown: an older read finishing late isn't.
+    sessions_reads: (u64, u64),
     /// The sessions panel's title filter, while it's open.
     session_filter: Entity<TextInput>,
     filtering_sessions: bool,
@@ -529,6 +531,7 @@ impl KynexApp {
             palette_recent: Vec::new(),
             sessions: None,
             sessions_reading: None,
+            sessions_reads: (0, 0),
             session_filter,
             filtering_sessions: false,
             organize: Organize::new(group_name),
