@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Switching to another project could leave its sessions list loading for a long while: each
+  session starting or replying there threw away the list just read and read it again (#296).
+
 ## [0.0.24] - 2026-11-06
 
 ### Added
