@@ -14,7 +14,7 @@ use super::KynexApp;
 use super::state::Active;
 use crate::theme::theme;
 use crate::ui::input::{InputEvent, TextInput};
-use crate::ui::{Icon, Tooltip, icon_button, name_field, outline_button, primary_button, px};
+use crate::ui::{Icon, Tooltip, icon_button, name_field, outline_button, primary_button, px, spinner};
 
 /// What's open in the contexts section besides its rows.
 #[derive(Default)]
@@ -25,6 +25,9 @@ pub(super) struct ContextUi {
     branches: Vec<String>,
     /// A context is being made.
     busy: bool,
+    /// Its branch name and the field it was typed in (kept to come back if it fails): the
+    /// form closes at once and a "Creating…" row stands in while `git` makes the worktree.
+    creating: Option<(String, Entity<TextInput>)>,
     /// A context waiting on a yes before it goes.
     removing: Option<Removal>,
 }
@@ -104,6 +107,10 @@ impl KynexApp {
 
     /// Esc: closes the new-context field or the removal question. Returns whether one was open.
     pub(super) fn cancel_new_context(&mut self) -> bool {
+        // One being made can't be taken back from here.
+        if self.context_ui.creating.is_some() {
+            return false;
+        }
         let open = self.context_ui.form.is_some() || self.context_ui.removing.is_some();
         self.context_ui = ContextUi::default();
         open
@@ -118,6 +125,8 @@ impl KynexApp {
             return;
         }
         self.context_ui.busy = true;
+        // The form goes at once; the worktree takes a second or more to check out.
+        self.context_ui.creating = self.context_ui.form.take().map(|input| (name.clone(), input));
         // Whichever session the new context opens with, the composer takes the keys.
         self.focus_input(window, cx);
         cx.spawn(async move |this, cx| {
@@ -132,13 +141,15 @@ impl KynexApp {
             this.update(cx, |this, cx| {
                 let _t = kynex_core::trace::span("new context: showing it (UI thread)");
                 this.context_ui.busy = false;
+                let typed = this.context_ui.creating.take();
                 match made {
                     Ok(path) => {
-                        this.context_ui.form = None;
                         this.refresh_worktrees([&project], cx);
                         this.select_context(&path, cx);
                     }
                     Err(e) => {
+                        // Back to the field, with the name still in it.
+                        this.context_ui.form = typed.map(|(_, input)| input);
                         this.toast(Toast::error(e));
                     }
                 }
@@ -244,6 +255,21 @@ impl KynexApp {
     pub(super) fn render_context_forms(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let t = theme(cx).clone();
         let mut out = Vec::new();
+        if let Some((name, _)) = &self.context_ui.creating {
+            out.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .h(px(28.))
+                    .pl_2()
+                    .text_sm()
+                    .text_color(t.text_muted)
+                    .child(spinner("creating-context-spin", t.accent, px(12.)))
+                    .child(div().flex_1().min_w_0().truncate().child(format!("Creating {name}…")))
+                    .into_any_element(),
+            );
+        }
         if let Some(input) = self.context_ui.form.clone() {
             let typed = input.read(cx).text().trim().to_lowercase();
             let picks: Vec<String> = self
