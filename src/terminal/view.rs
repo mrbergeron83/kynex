@@ -24,7 +24,7 @@ pub struct SendKey(pub &'static str);
 
 pub fn bind_keys(cx: &mut App) {
     let c = Some(CONTEXT);
-    let keys = ["escape", "shift-tab", "ctrl-b", "ctrl-o", "ctrl-c", "ctrl-v", "ctrl-shift-c", "ctrl-shift-v"];
+    let keys = ["escape", "shift-tab", "ctrl-o", "ctrl-c", "ctrl-v", "ctrl-shift-c", "ctrl-shift-v"];
     // The workspace's Cmd+C copies conversation text; in a shell it copies the selection.
     let mac: &[&'static str] = if cfg!(target_os = "macos") { &["cmd-c", "cmd-v"] } else { &[] };
     let keys = keys.into_iter().chain(mac.iter().copied()).chain(crate::app::SHELL_KEYS);
@@ -242,6 +242,13 @@ impl TerminalView {
         }
     }
 
+    /// Prefix twice: the prefix key itself goes to the shell (Ctrl+B for tmux, say).
+    fn send_prefix(&mut self, _: &crate::app::SendPrefix, _: &mut Window, cx: &mut Context<Self>) {
+        if let Ok(ks) = Keystroke::parse(crate::app::prefix_key()) {
+            self.send_keystroke(&ks, cx);
+        }
+    }
+
     fn send_keystroke(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
         let Some(t) = &self.terminal else { return false };
         let app_cursor = t.app_cursor();
@@ -441,6 +448,7 @@ impl Render for TerminalView {
             .bg(background(&t))
             .cursor(MouseCursor::IBeam)
             .on_action(cx.listener(Self::send_key))
+            .on_action(cx.listener(Self::send_prefix))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::right_click))

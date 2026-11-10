@@ -97,6 +97,7 @@ impl KynexApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         div()
+            .key_context("Pane")
             .flex()
             .flex_1()
             .min_h_0()
@@ -206,7 +207,8 @@ impl KynexApp {
 
     /// `root` with the window's shortcuts: each action to the method that runs it.
     pub(super) fn with_actions(&self, root: Stateful<gpui::Div>, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
-        root.on_action(cx.listener(Self::toggle_palette))
+        let root = root
+            .on_action(cx.listener(Self::toggle_palette))
             .on_action(cx.listener(Self::open_find))
             .on_action(cx.listener(Self::open_project))
             .on_action(cx.listener(Self::open_settings_action))
@@ -245,7 +247,8 @@ impl KynexApp {
             .on_action(cx.listener(|this, _: &keys::ScrollBottom, _, cx| this.scroll_keys(Scroll::Bottom, cx)))
             .on_action(cx.listener(|_, _: &CopySelection, _, cx| copy_selection(cx)))
             // The composer's Ctrl+C, passed on when nothing is selected in it.
-            .on_action(cx.listener(|_, _: &crate::ui::input::Copy, _, cx| copy_selection(cx)))
+            .on_action(cx.listener(|_, _: &crate::ui::input::Copy, _, cx| copy_selection(cx)));
+        self.with_pane_actions(root, cx)
     }
 
     /// What each frame settles before drawing; returns the project's view.
@@ -267,6 +270,7 @@ impl KynexApp {
             s.finished = false;
         }
         self.sync_tiles(window, cx);
+        self.sync_resize_mode();
         self.sync_attention(cx);
         self.sync_awake();
         let key = self.focused_key();

@@ -7,6 +7,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Herdr-style keys: Ctrl+B then a key splits, moves between, swaps, zooms and resizes panes, and
+  works pane tabs, workspaces and projects; Ctrl+B B toggles the sessions column.
+  Changed: the sessions column moved from Ctrl+B (Cmd+B on macOS) to Ctrl+B then B, and in a
+  terminal a single Ctrl+B now reaches the shell after a 1 s pause, or as Ctrl+B Ctrl+B.
 - Each workspace's panes and tabs are saved, and every session in them comes back after a
   restart (a session's process starts when you focus or use its pane).
 - Panes: split a workspace into several sessions side by side (Split pane right / down in the

@@ -292,6 +292,11 @@ impl KynexApp {
         Rect::new(half, half, (b.w - gap).max(0.0), (b.h - gap).max(0.0))
     }
 
+    /// The area the panes are laid out in, for moving between, swapping and resizing them.
+    pub(super) fn layout_bounds(&self, cx: &Context<Self>) -> Rect {
+        self.core_bounds(self.tile_style(cx).gap)
+    }
+
     /// The tiles' look: the theme's, with what Appearance changed.
     fn tile_style(&self, cx: &Context<Self>) -> TileStyle {
         self.saved.tiles.resolve(theme(cx).tile)

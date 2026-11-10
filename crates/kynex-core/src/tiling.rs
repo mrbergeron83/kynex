@@ -201,6 +201,24 @@ impl Tiling {
         self.layout.tab_mut().is_some_and(|t| t.set_focus(pane))
     }
 
+    /// Focuses the pane next to the focused one on the `dir` side. False if there is none.
+    pub fn focus_dir(&mut self, dir: Direction, bounds: Rect) -> bool {
+        self.layout.tab_mut().is_some_and(|t| t.focus_dir(dir, bounds))
+    }
+
+    /// Swaps the focused pane with its neighbour on the `dir` side (focus stays on the
+    /// pane). False if there is none.
+    pub fn swap_dir(&mut self, dir: Direction, bounds: Rect) -> bool {
+        self.layout.tab_mut().is_some_and(|t| t.swap_dir(dir, bounds))
+    }
+
+    /// Grows the focused pane `px` towards `dir`. False if its edge that way is the tab's.
+    pub fn resize_focused(&mut self, dir: Direction, px: f32, bounds: Rect) -> bool {
+        let Some(t) = self.layout.tab_mut() else { return false };
+        let focus = t.focus();
+        t.resize(focus, dir, px, bounds)
+    }
+
     /// Where the panes and dividers of the active tab sit in `bounds`.
     pub fn rects(&self, bounds: Rect) -> Rects {
         self.layout.tab().map(|t| t.rects(bounds)).unwrap_or_default()
@@ -503,6 +521,32 @@ mod tests {
         assert!(!t.show_in(2, 10), "10 is in another pane");
         assert!(t.show_in(2, 40), "showing what it shows is fine");
         assert!(!t.show_in(9, 50));
+    }
+
+    #[test]
+    fn focus_and_swap_go_by_direction() {
+        let mut t = three();
+        assert_eq!(t.focus(), Some(3));
+        assert!(t.focus_dir(Direction::Up, BIG));
+        assert_eq!(t.focus(), Some(2));
+        assert!(!t.focus_dir(Direction::Up, BIG));
+        assert!(t.focus_dir(Direction::Left, BIG));
+        assert_eq!(t.focus(), Some(1));
+        let before = t.rects(BIG).pane(1).unwrap();
+        assert!(t.swap_dir(Direction::Right, BIG));
+        assert_eq!(t.focus(), Some(1));
+        assert_ne!(t.rects(BIG).pane(1).unwrap(), before);
+        assert!(!t.swap_dir(Direction::Up, BIG), "pane 1 is on the top edge now");
+    }
+
+    #[test]
+    fn the_focused_pane_grows_towards_a_direction() {
+        let mut t = three();
+        assert!(t.focus_pane(1));
+        let w = t.rects(BIG).pane(1).unwrap().w;
+        assert!(t.resize_focused(Direction::Right, 40.0, BIG));
+        assert!((t.rects(BIG).pane(1).unwrap().w - w - 40.0).abs() < 0.5);
+        assert!(!t.resize_focused(Direction::Left, 40.0, BIG));
     }
 
     #[test]

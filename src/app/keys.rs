@@ -2,9 +2,11 @@
 //! aren't tied to one panel (tabs, Esc, Shift+Tab, Ctrl+1…9).
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::{App, Context, KeyBinding, KeyDownEvent, Window, actions};
+use kynex_core::layout::Direction;
 use kynex_core::paths::data_dir;
 use kynex_core::project::Mode;
 use kynex_core::session::Kind;
@@ -60,9 +62,42 @@ actions!(
         ListOpen,
         ListRename,
         ListArchive,
-        ListDelete
+        ListDelete,
+        SendPrefix,
+        SplitRight,
+        SplitDown,
+        ZoomPane,
+        ClosePane,
+        NextPane,
+        ResizeMode,
+        NewPaneTab,
+        NextPaneTab,
+        PrevPaneTab,
+        RenamePaneTab,
+        ClosePaneTab,
+        PickWorkspace,
+        NewWorkspace,
+        CloseWorkspace,
+        KeyboardSettings,
+        PickProject,
+        ClosePaneOrTab
     ]
 );
+
+/// Focus the pane next to the focused one, that way.
+#[derive(Clone, PartialEq, Debug, gpui::Action)]
+#[action(namespace = kynex, no_json)]
+pub struct FocusPane(pub Direction);
+
+/// Swap the focused pane with the one next to it, that way.
+#[derive(Clone, PartialEq, Debug, gpui::Action)]
+#[action(namespace = kynex, no_json)]
+pub struct SwapPane(pub Direction);
+
+/// Show pane tab `n` (counting from 1).
+#[derive(Clone, PartialEq, Debug, gpui::Action)]
+#[action(namespace = kynex, no_json)]
+pub struct JumpPaneTab(pub usize);
 
 /// The sessions list's own keys, while it has the focus.
 const LIST_KEYS: [(&str, &str); 6] = [
@@ -99,7 +134,7 @@ const SHORTCUTS: [(&str, &str); 37] = [
     // The shown project tab one place left or right, as in browsers.
     ("move_tab_left", "ctrl-shift-pageup"),
     ("move_tab_right", "ctrl-shift-pagedown"),
-    ("toggle_sessions", "secondary-b"),
+    ("toggle_sessions", "prefix b"),
     ("toggle_terminal", "ctrl-`"),
     ("cycle_mode", "shift-tab"),
     ("interrupt", "escape"),
@@ -130,6 +165,61 @@ const SHORTCUTS: [(&str, &str); 37] = [
     ("zoom_reset", "secondary-0"),
 ];
 
+/// The prefix key, as `keymap.json` can change it: `prefix` in a shortcut stands for it.
+const DEFAULT_PREFIX: &str = "ctrl-b";
+
+/// Shortcuts that start with the prefix key (herdr / tmux style), and `secondary-w` in the
+/// "Pane" context. The word `prefix` stands for the prefix key; names work as in `SHORTCUTS`.
+const PREFIXED: &[(&str, &str)] = &[
+    // Twice, the prefix key itself goes on to the shell in a terminal.
+    ("send_prefix", "prefix prefix"),
+    ("split_right", "prefix v"),
+    ("split_down", "prefix -"),
+    ("focus_left", "prefix h"),
+    ("focus_down", "prefix j"),
+    ("focus_up", "prefix k"),
+    ("focus_right", "prefix l"),
+    ("focus_left_arrow", "prefix left"),
+    ("focus_down_arrow", "prefix down"),
+    ("focus_up_arrow", "prefix up"),
+    ("focus_right_arrow", "prefix right"),
+    ("swap_left", "prefix shift-h"),
+    ("swap_down", "prefix shift-j"),
+    ("swap_up", "prefix shift-k"),
+    ("swap_right", "prefix shift-l"),
+    ("swap_left_arrow", "prefix shift-left"),
+    ("swap_down_arrow", "prefix shift-down"),
+    ("swap_up_arrow", "prefix shift-up"),
+    ("swap_right_arrow", "prefix shift-right"),
+    ("next_pane", "prefix tab"),
+    ("zoom_pane", "prefix z"),
+    ("close_pane", "prefix x"),
+    // h / j / k / l or the arrows grow the pane; Esc or Enter is done.
+    ("resize_panes", "prefix r"),
+    ("new_pane_tab", "prefix c"),
+    ("next_pane_tab", "prefix n"),
+    ("prev_pane_tab", "prefix p"),
+    ("pane_tab_1", "prefix 1"),
+    ("pane_tab_2", "prefix 2"),
+    ("pane_tab_3", "prefix 3"),
+    ("pane_tab_4", "prefix 4"),
+    ("pane_tab_5", "prefix 5"),
+    ("pane_tab_6", "prefix 6"),
+    ("pane_tab_7", "prefix 7"),
+    ("pane_tab_8", "prefix 8"),
+    ("pane_tab_9", "prefix 9"),
+    ("rename_pane_tab", "prefix shift-t"),
+    ("close_pane_tab", "prefix shift-x"),
+    ("pick_workspace", "prefix w"),
+    ("new_workspace", "prefix shift-n"),
+    ("close_workspace", "prefix shift-d"),
+    ("go_to", "prefix g"),
+    ("keyboard_shortcuts", "prefix ?"),
+    ("next_project", "prefix ]"),
+    ("prev_project", "prefix ["),
+    ("pick_project", "prefix shift-p"),
+];
+
 /// Keys that scroll the transcript when nothing focused (the message box, a
 /// prompt) uses them, on top of the rebindable ones above.
 const TRANSCRIPT_KEYS: [&str; 4] = ["home", "end", "up", "down"];
@@ -138,6 +228,72 @@ const ESC_ESC: &str = "escape escape";
 
 /// Title bar places taken before the projects: Chat.
 pub(super) const PROJECTS_AT: usize = 1;
+
+static PREFIX: OnceLock<&'static str> = OnceLock::new();
+
+/// The prefix key, as a keystroke `Keystroke::parse` takes (`ctrl-b` by default).
+pub fn prefix_key() -> &'static str {
+    PREFIX.get().copied().unwrap_or(DEFAULT_PREFIX)
+}
+
+/// `keys` with each `prefix` in it replaced by `prefix`, and `secondary` by the OS's key.
+fn resolve(keys: &str, prefix: &str) -> &'static str {
+    let words: Vec<&str> = keys.split_whitespace().map(|k| if k == "prefix" { prefix } else { k }).collect();
+    crate::ui::keys(&words.join(" "))
+}
+
+/// Whether `keys` is the prefix key alone: it would make every prefixed shortcut wait.
+fn is_prefix_alone(keys: &str, prefix: &str) -> bool {
+    let words: Vec<&str> = keys.split_whitespace().collect();
+    words.len() == 1 && crate::ui::keys(words[0]).eq_ignore_ascii_case(prefix)
+}
+
+/// The binding for a `PREFIXED` shortcut (in the "Workspace" context, or "Pane").
+fn prefixed_binding(name: &str, keys: &'static str) -> Option<KeyBinding> {
+    use Direction::{Down, Left, Right, Up};
+    let c = Some("Workspace");
+    let dir = |n: &str| match n {
+        "left" => Left,
+        "down" => Down,
+        "up" => Up,
+        _ => Right,
+    };
+    Some(match name {
+        "send_prefix" => KeyBinding::new(keys, SendPrefix, c),
+        "split_right" => KeyBinding::new(keys, SplitRight, c),
+        "split_down" => KeyBinding::new(keys, SplitDown, c),
+        "next_pane" => KeyBinding::new(keys, NextPane, c),
+        "zoom_pane" => KeyBinding::new(keys, ZoomPane, c),
+        "close_pane" => KeyBinding::new(keys, ClosePane, c),
+        "resize_panes" => KeyBinding::new(keys, ResizeMode, c),
+        "new_pane_tab" => KeyBinding::new(keys, NewPaneTab, c),
+        "next_pane_tab" => KeyBinding::new(keys, NextPaneTab, c),
+        "prev_pane_tab" => KeyBinding::new(keys, PrevPaneTab, c),
+        "rename_pane_tab" => KeyBinding::new(keys, RenamePaneTab, c),
+        "close_pane_tab" => KeyBinding::new(keys, ClosePaneTab, c),
+        "pick_workspace" => KeyBinding::new(keys, PickWorkspace, c),
+        "new_workspace" => KeyBinding::new(keys, NewWorkspace, c),
+        "close_workspace" => KeyBinding::new(keys, CloseWorkspace, c),
+        "go_to" => KeyBinding::new(keys, CommandPalette, c),
+        "keyboard_shortcuts" => KeyBinding::new(keys, KeyboardSettings, c),
+        "next_project" => KeyBinding::new(keys, NextTab, c),
+        "prev_project" => KeyBinding::new(keys, PrevTab, c),
+        "pick_project" => KeyBinding::new(keys, PickProject, c),
+        _ => {
+            let (what, rest) = name.split_once('_')?;
+            let rest = rest.strip_suffix("_arrow").unwrap_or(rest);
+            match what {
+                "focus" => KeyBinding::new(keys, FocusPane(dir(rest)), c),
+                "swap" => KeyBinding::new(keys, SwapPane(dir(rest)), c),
+                "pane" => {
+                    let n = rest.strip_prefix("tab_")?.parse().ok()?;
+                    KeyBinding::new(keys, JumpPaneTab(n), c)
+                }
+                _ => return None,
+            }
+        }
+    })
+}
 
 /// Whether Esc Esc opens the rewind menu: the default, unless `keymap.json` moved it.
 static ESC_ESC_REWINDS: AtomicBool = AtomicBool::new(true);
@@ -175,7 +331,8 @@ pub fn bind_keys(cx: &mut App) {
         }),
         Err(_) => {
             // Write the defaults out so there's something to edit.
-            let defaults: BTreeMap<_, _> = SHORTCUTS.iter().copied().collect();
+            let mut defaults: BTreeMap<_, _> = SHORTCUTS.iter().chain(PREFIXED).copied().collect();
+            defaults.insert("prefix", DEFAULT_PREFIX);
             if let Ok(s) = serde_json::to_string_pretty(&defaults) {
                 let _ = std::fs::create_dir_all(data_dir());
                 let _ = std::fs::write(&path, s);
@@ -190,10 +347,38 @@ pub fn bind_keys(cx: &mut App) {
             user.entry(new.to_string()).or_insert(keys);
         }
     }
+    // The prefix is one keystroke; anything else is ignored.
+    let prefix = user
+        .get("prefix")
+        .map(|p| crate::ui::keys(p))
+        .filter(|p| {
+            let ok = p.split_whitespace().count() == 1 && gpui::Keystroke::parse(p).is_ok();
+            if !ok {
+                eprintln!("kynex: keymap.json: `{p}` isn't one key for prefix; using {DEFAULT_PREFIX}");
+            }
+            ok
+        })
+        .unwrap_or(DEFAULT_PREFIX);
+    let _ = PREFIX.set(prefix);
     let c = Some("Workspace");
     let mut bindings = Vec::new();
-    for (name, default) in SHORTCUTS {
-        let keys = crate::ui::keys(user.get(name).map_or(default, String::as_str));
+    // Ctrl+W in a pane closes the pane while the tab has several: on whatever keys `close_tab` has.
+    let mut close_keys = None;
+    for &(name, default) in SHORTCUTS.iter().chain(PREFIXED) {
+        let default = resolve(default, prefix);
+        // The old default for the sessions column (written out on first run) would make
+        // every prefix wait; so would any key that is the prefix alone.
+        let user_keys = user.get(name).map(String::as_str).filter(|k| {
+            // Only what Kynex wrote itself on first run (`secondary-b`), or the same typed as `cmd-b`.
+            let old = name == "toggle_sessions"
+                && (k.trim() == "secondary-b" || (cfg!(target_os = "macos") && k.trim() == "cmd-b"));
+            let alone = is_prefix_alone(k, prefix);
+            if alone && !old {
+                eprintln!("kynex: keymap.json: {name} can't be the prefix key alone; using {default}");
+            }
+            !old && !alone
+        });
+        let keys = user_keys.map_or(default, |k| resolve(k, prefix));
         if name == "rewind" {
             let esc_esc = keys.split_whitespace().collect::<Vec<_>>().join(" ") == ESC_ESC;
             ESC_ESC_REWINDS.store(esc_esc, Ordering::Relaxed);
@@ -207,11 +392,14 @@ pub fn bind_keys(cx: &mut App) {
         if let Some(bad) = keys.split_whitespace().find(|k| gpui::Keystroke::parse(k).is_err()) {
             eprintln!("kynex: keymap.json: `{bad}` isn't a key for {name}; using {default}");
         }
-        let keys = if keys.split_whitespace().all(|k| gpui::Keystroke::parse(k).is_ok()) {
-            keys
-        } else {
-            crate::ui::keys(default)
-        };
+        let keys = if keys.split_whitespace().all(|k| gpui::Keystroke::parse(k).is_ok()) { keys } else { default };
+        if name == "close_tab" {
+            close_keys = Some(keys);
+        }
+        if let Some(binding) = prefixed_binding(name, keys) {
+            bindings.push(binding);
+            continue;
+        }
         bindings.push(match name {
             "command_palette" => KeyBinding::new(keys, CommandPalette, c),
             "find" => KeyBinding::new(keys, FindInTranscript, c),
@@ -249,6 +437,9 @@ pub fn bind_keys(cx: &mut App) {
             "zoom_reset" => KeyBinding::new(keys, ZoomReset, c),
             _ => KeyBinding::new(keys, Interrupt, c),
         });
+    }
+    if let Some(keys) = close_keys {
+        bindings.push(KeyBinding::new(keys, ClosePaneOrTab, Some("Pane")));
     }
     for key in TRANSCRIPT_KEYS {
         bindings.push(match key {

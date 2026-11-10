@@ -643,7 +643,7 @@ impl KynexApp {
             .gap_2()
             .child(heading(
                 "Shortcuts",
-                "Rebind Kynex's shortcuts in keymap.json by name, e.g. { \"interrupt\": \"ctrl-c\" }; an empty string unbinds one. Changes apply from the next start.",
+                "Rebind Kynex's shortcuts in keymap.json by name, e.g. { \"interrupt\": \"ctrl-c\" }; an empty string unbinds one. Shortcuts that start with `prefix` (Ctrl+B, then a key) follow the \"prefix\" entry, e.g. { \"prefix\": \"ctrl-a\" }. Changes apply from the next start.",
                 t,
             ))
             .child(div().font_family(mono()).text_sm().text_color(t.text_muted).child(path.display().to_string()))
