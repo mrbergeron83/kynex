@@ -184,7 +184,7 @@ jobs:
           sudo apt-get install -y libfontconfig-dev libfreetype-dev libwayland-dev libxkbcommon-x11-dev \
             libx11-xcb-dev libxcb1-dev libvulkan-dev libasound2-dev
       - run: cargo build --release --locked --target ${{ matrix.target }}
-      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+      - uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: cargo-about
       # Fails if a dependency's license isn't accepted in packaging/about.toml.
