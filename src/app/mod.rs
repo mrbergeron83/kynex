@@ -607,7 +607,7 @@ impl KynexApp {
         // Background tasks that just ended, for a toast if their session isn't shown.
         let mut ended = Vec::new();
         // The shown session finishing a turn scrolls to its end; others keep their place.
-        let shown = self.active_key();
+        let shown = self.focused_key();
         let mut shown_ended = false;
         // Sessions whose history came in from their log, and how many items went in front.
         let mut histories = Vec::new();

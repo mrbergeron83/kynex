@@ -45,6 +45,7 @@ impl KynexApp {
     /// The conversation: header, transcript, composer, timeline and terminal.
     pub(super) fn render_code_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
+        let key = self.focused_key();
         div()
             .flex()
             .flex_1()
@@ -58,7 +59,7 @@ impl KynexApp {
                     .min_w_0()
                     .bg(t.editor)
                     .child(self.render_toolbar(cx))
-                    .children(self.render_session_header(cx))
+                    .children(key.and_then(|key| self.render_session_header(key, cx)))
                     .children(self.render_reporter(window, cx))
                     // The timeline runs the full height beside the transcript
                     // and the composer under it, down to the terminal dock.
@@ -80,7 +81,10 @@ impl KynexApp {
                                             .flex_col()
                                             .flex_1()
                                             .min_h_0()
-                                            .child(self.render_thread(window, cx))
+                                            .child(match key {
+                                                Some(key) => self.render_thread(key, window, cx),
+                                                None => self.render_empty_thread(cx),
+                                            })
                                             .children(self.render_find(cx))
                                             .child(self.toast_room_probe()),
                                     )

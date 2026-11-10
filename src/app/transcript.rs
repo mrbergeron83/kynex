@@ -150,13 +150,12 @@ impl Thread {
 }
 
 impl KynexApp {
-    pub(super) fn render_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_thread(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
-        let key = self.active_key();
-        let count = self.active_session().map_or(0, |s| s.items.len());
-        let busy = self.active_session().is_some_and(|s| s.busy);
+        let count = self.session_by_key(key).map_or(0, |s| s.items.len());
+        let busy = self.session_by_key(key).is_some_and(|s| s.busy);
         // A session opening: its log is read back off this thread, newest turns first.
-        if count == 0 && self.active_session().is_some_and(|s| s.loading()) {
+        if count == 0 && self.session_by_key(key).is_some_and(|s| s.loading()) {
             return div()
                 .flex_1()
                 .flex()
@@ -168,64 +167,82 @@ impl KynexApp {
                 .into_any_element();
         }
         if count == 0 {
-            let on_openrouter = self.active_provider().is_openrouter();
-            let on_grok = self.active_provider() == kynex_core::provider::Provider::Grok;
-            let chat_only = self.active_provider() == kynex_core::provider::Provider::OpenRouterChat;
-            let msg = match self.saved.active {
-                Active::Chat if self.saved.chief_view => {
-                    "Give KNX Ops a goal. It sends the work to a worker in each of your projects and reports back."
-                        .to_string()
-                }
-                _ if chat_only => format!(
-                    "Chat with {} through OpenRouter. Chat only: it can't see, run or change anything here.",
-                    self.active_model_name()
-                ),
-                Active::Chat if on_openrouter => {
-                    format!("Start a conversation. Runs on {} through OpenRouter.", self.active_model_name())
-                }
-                Active::Chat if on_grok => format!("Start a conversation with {}.", self.active_model_name()),
-                Active::Chat => "Start a conversation. Uses your Claude Code login, no API key needed.".to_string(),
-                Active::Project(_) if on_openrouter => {
-                    format!(
-                        "Ask Claude Code to work on this project, on {} through OpenRouter.",
-                        self.active_model_name()
-                    )
-                }
-                Active::Project(_) if on_grok => {
-                    format!("Ask Grok to work on this project, on {}.", self.active_model_name())
-                }
-                Active::Project(_) => "Ask Claude Code to work on this project.".to_string(),
-            };
-            // A new conversation in a project starts under its name, in its colour.
-            let name = self.active_project().map(|p| {
-                let colour = self.project_colour(&p.path, &t).unwrap_or(t.text_muted);
-                div()
-                    .text_size(px(22.))
-                    .font_family(label_font())
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(colour)
-                    .child(project_name(&p.path))
-            });
-            return div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(t.text_placeholder)
-                .children(name)
-                .child(msg)
-                .into_any_element();
+            return self.render_empty_thread(cx);
         }
-        let Some(key) = key else { return div().into_any_element() };
+        if self.session_by_key(key).is_none() {
+            return div().into_any_element();
+        }
+        self.render_thread_rows(key, count, busy, window, cx)
+    }
+
+    /// What the transcript area shows with nothing in it: the prompt to start.
+    pub(super) fn render_empty_thread(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme(cx).clone();
+        let on_openrouter = self.active_provider().is_openrouter();
+        let on_grok = self.active_provider() == kynex_core::provider::Provider::Grok;
+        let chat_only = self.active_provider() == kynex_core::provider::Provider::OpenRouterChat;
+        let msg = match self.saved.active {
+            Active::Chat if self.saved.chief_view => {
+                "Give KNX Ops a goal. It sends the work to a worker in each of your projects and reports back."
+                    .to_string()
+            }
+            _ if chat_only => format!(
+                "Chat with {} through OpenRouter. Chat only: it can't see, run or change anything here.",
+                self.active_model_name()
+            ),
+            Active::Chat if on_openrouter => {
+                format!("Start a conversation. Runs on {} through OpenRouter.", self.active_model_name())
+            }
+            Active::Chat if on_grok => format!("Start a conversation with {}.", self.active_model_name()),
+            Active::Chat => "Start a conversation. Uses your Claude Code login, no API key needed.".to_string(),
+            Active::Project(_) if on_openrouter => {
+                format!("Ask Claude Code to work on this project, on {} through OpenRouter.", self.active_model_name())
+            }
+            Active::Project(_) if on_grok => {
+                format!("Ask Grok to work on this project, on {}.", self.active_model_name())
+            }
+            Active::Project(_) => "Ask Claude Code to work on this project.".to_string(),
+        };
+        // A new conversation in a project starts under its name, in its colour.
+        let name = self.active_project().map(|p| {
+            let colour = self.project_colour(&p.path, &t).unwrap_or(t.text_muted);
+            div()
+                .text_size(px(22.))
+                .font_family(label_font())
+                .font_weight(FontWeight::BOLD)
+                .text_color(colour)
+                .child(project_name(&p.path))
+        });
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .items_center()
+            .justify_center()
+            .text_sm()
+            .text_color(t.text_placeholder)
+            .children(name)
+            .child(msg)
+            .into_any_element()
+    }
+
+    /// The transcript list of session `key`, with its pulse and scrollbar.
+    fn render_thread_rows(
+        &mut self,
+        key: Key,
+        count: usize,
+        busy: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = theme(cx).clone();
         self.tick_clocks(cx);
         // Lay the rows out again when items come or go, or one changed how it
         // lays out; only the rows that changed (usually the last few) are measured again.
-        let revision = self.active_session().map_or(0, |s| s.revision());
+        let revision = self.session_by_key(key).map_or(0, |s| s.revision());
         let stale = self.threads.get(&key).is_none_or(|t| t.items != count || t.revision != revision);
-        let rows = stale.then(|| self.active_session().map(|s| transcript::rows(&s.items)).unwrap_or_default());
+        let rows = stale.then(|| self.session_by_key(key).map(|s| transcript::rows(&s.items)).unwrap_or_default());
         let thread = self.threads.entry(key).or_insert_with(|| {
             let list = ListState::new(0, ListAlignment::Top, gpui::px(1000.));
             list.set_follow_mode(FollowMode::Tail);
@@ -285,7 +302,7 @@ impl KynexApp {
         }
         let (state, width) = (thread.list.clone(), thread.width.clone());
         let at_latest = thread.at_latest();
-        let uid = self.active_session().map_or(0, |s| s.uid as usize);
+        let uid = key as usize;
         // No padding on the list itself: gpui scrolls past it but leaves it
         // out of `max_offset_for_scrollbar`, so the glides here stopped short
         // of the end and pulled back from it (#105).
@@ -307,8 +324,9 @@ impl KynexApp {
         .absolute()
         .inset_0();
         let bar = scrollbar::vertical(("thread-bar", uid), state.clone());
-        let pulse = busy.then(|| self.render_pulse(&t));
-        let thread = list(state, cx.processor(|this, ix, _, cx| this.render_item(ix, cx))).flex_1().size_full();
+        let pulse = busy.then(|| self.render_pulse(key, &t));
+        let thread =
+            list(state, cx.processor(move |this, ix, _, cx| this.render_item(key, ix, cx))).flex_1().size_full();
         div()
             .relative()
             .flex()
@@ -330,15 +348,15 @@ impl KynexApp {
     /// Claude… 3s", "Working… 5s" (#157, #177). Text only, no spinner (#115).
     /// Its room stays for the whole turn, so the transcript doesn't hop as
     /// steps start and end.
-    fn render_pulse(&self, t: &Palette) -> impl IntoElement + use<> {
-        let label = self.active_session().and_then(|s| {
+    fn render_pulse(&self, key: Key, t: &Palette) -> impl IntoElement + use<> {
+        let label = self.session_by_key(key).and_then(|s| {
             let who = match s.provider().provider() {
                 kynex_core::provider::Provider::Grok => "Grok",
                 _ => "Claude",
             };
             s.pulse().map(|p| p.label(who))
         });
-        let available = self.active_key().and_then(|k| self.threads.get(&k)).map_or(0., |th| th.width.get());
+        let available = self.threads.get(&key).map_or(0., |th| th.width.get());
         // Measured in pixels; the columns are in sizes at 100%, which `px` scales back.
         let available = available / self.saved.zoom;
         let column = (available > 0.).then(|| self.saved.column.columns(available - ROW_PADDING * 2.));
@@ -383,7 +401,7 @@ impl KynexApp {
     /// distance isn't known yet.
     pub(super) fn follow_tail(&mut self, cx: &mut Context<Self>) {
         let reduce = cx.reduce_motion();
-        let Some(t) = self.active_key().and_then(|k| self.threads.get_mut(&k)) else { return };
+        let Some(t) = self.focused_key().and_then(|k| self.threads.get_mut(&k)) else { return };
         let (offset, max) = (t.offset(), f32::from(t.list.max_offset_for_scrollbar().y));
         if reduce || max <= offset {
             t.glide.stop();
@@ -415,7 +433,7 @@ impl KynexApp {
             return self.follow_tail(cx);
         }
         let reduce = cx.reduce_motion();
-        let Some(t) = self.active_key().and_then(|k| self.threads.get_mut(&k)) else { return cx.propagate() };
+        let Some(t) = self.focused_key().and_then(|k| self.threads.get_mut(&k)) else { return cx.propagate() };
         let page = f32::from(t.list.viewport_bounds().size.height) - 2. * ARROW_STEP;
         let distance = match by {
             Scroll::Line(dir) => dir * ARROW_STEP,

@@ -24,13 +24,13 @@ use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, outline_button, 
 impl KynexApp {
     /// A run of tool calls at transcript row `row`. While Claude is still in
     /// it (`live`), the latest call shows under the summary.
-    pub(super) fn render_run(&self, run: &Run, row: usize, live: bool, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_run(&self, key: Key, run: &Run, row: usize, live: bool, cx: &mut Context<Self>) -> AnyElement {
         if let [call] = run.calls.as_slice() {
-            return self.render_call(call, row, cx);
+            return self.render_call(key, call, row, cx);
         }
         let t = theme(cx).clone();
-        let Some(session) = self.active_session() else { return div().into_any_element() };
-        let (key, busy) = (session.uid, session.busy);
+        let Some(session) = self.session_by_key(key) else { return div().into_any_element() };
+        let busy = session.busy;
         let first = run.first();
         let open = self.expand_tools || self.open_runs.contains(&(key, first));
         let pending = busy && run.calls.iter().any(|c| c.result.is_none());
@@ -85,7 +85,7 @@ impl KynexApp {
             .iter()
             .filter(|c| refused(session, c))
             .chain(&run.calls[run.calls.len() - shown..])
-            .map(|c| self.render_call(c, row, cx))
+            .map(|c| self.render_call(key, c, row, cx))
             .collect();
         div()
             .flex()
@@ -124,10 +124,9 @@ impl KynexApp {
     /// One tool call, with its result, at transcript row `row`. Collapsed it's
     /// one line, with a marker if it failed; open, it shows the diff or the
     /// input and output.
-    fn render_call(&self, call: &Call, row: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_call(&self, key: Key, call: &Call, row: usize, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
-        let Some(session) = self.active_session() else { return div().into_any_element() };
-        let key = session.uid;
+        let Some(session) = self.session_by_key(key) else { return div().into_any_element() };
         let ix = call.ix;
         let Some(Item::ToolUse { name, summary, input, timing, .. }) = session.items.get(ix) else {
             return div().into_any_element();
@@ -283,7 +282,7 @@ impl KynexApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = theme(cx).clone();
-        let code = self.active_session().is_some_and(|s| s.kind == Kind::Code);
+        let code = self.session_by_key(key).is_some_and(|s| s.kind == Kind::Code);
         let what = if reason.is_empty() {
             "Auto mode blocked this without asking".to_string()
         } else {
@@ -315,9 +314,9 @@ impl KynexApp {
                 .text_color(t.text_muted)
                 .child("Permissions…")
                 .tooltip(Tooltip::text("This project's allow and deny rules"))
-                .on_click(cx.listener(|this, _, _, cx| {
+                .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    if let Some(cwd) = this.active_session().map(|s| s.cwd.clone()) {
+                    if let Some(cwd) = this.session_by_key(key).map(|s| s.cwd.clone()) {
                         this.open_settings(cwd, cx);
                     }
                 }))

@@ -63,7 +63,7 @@ impl KynexApp {
     /// Brings the shown session's turns up to date with its items, walking
     /// only what changed; they're in `timelines` under the key returned.
     fn update_turns(&mut self) -> Option<Key> {
-        let key = self.active_key()?;
+        let key = self.focused_key()?;
         let mut cache = self.timelines.remove(&key).unwrap_or_default();
         cache.update(&self.active_session()?.items);
         self.timelines.insert(key, cache);
@@ -86,14 +86,14 @@ impl KynexApp {
 
     /// Collapse all / Expand all.
     fn fold_all(&mut self, open: bool, cx: &mut Context<Self>) {
-        let Some(key) = self.active_key() else { return };
+        let Some(key) = self.focused_key() else { return };
         self.folds.entry(key).or_default().set_all(open);
         cx.notify();
     }
 
     /// The first item drawn at the top of the shown transcript.
     fn item_in_view(&self) -> Option<usize> {
-        let th = self.threads.get(&self.active_key()?)?;
+        let th = self.threads.get(&self.focused_key()?)?;
         let row = th.list.logical_scroll_top().item_ix;
         th.rows.get(row.min(th.rows.len().checked_sub(1)?)).map(|r| r.first_item())
     }
@@ -102,7 +102,7 @@ impl KynexApp {
     /// and flashes it. Glides there when it can, as the wheel does.
     pub(super) fn jump_to_item(&mut self, item: usize, cx: &mut Context<Self>) {
         let reduce = cx.reduce_motion();
-        let Some(key) = self.active_key() else { return };
+        let Some(key) = self.focused_key() else { return };
         let Some(th) = self.threads.get_mut(&key) else { return };
         let Some(row) = row_of(&th.rows, item) else { return };
         if reduce || !th.glide_to_row(row) {

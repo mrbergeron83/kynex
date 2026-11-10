@@ -213,7 +213,7 @@ impl KynexApp {
         self.threads.remove(&key);
         self.expanded.retain(|(k, _)| *k != key);
         self.open_runs.retain(|(k, _)| *k != key);
-        if self.active_key() == Some(key) {
+        if self.focused_key() == Some(key) {
             self.set_composer(point.text.clone(), cx);
         }
         cx.notify();
@@ -221,7 +221,7 @@ impl KynexApp {
 
     /// The popup above the composer: the messages, or what to restore.
     pub(super) fn render_rewind(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.rewind.as_ref().is_some_and(|r| self.active_key() != Some(r.key)) {
+        if self.rewind.as_ref().is_some_and(|r| self.focused_key() != Some(r.key)) {
             self.rewind = None;
         }
         let r = self.rewind.as_ref()?;

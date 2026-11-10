@@ -23,23 +23,22 @@ use crate::ui::wash::wash;
 use crate::ui::{Icon, Tooltip, icon};
 
 impl KynexApp {
-    pub(super) fn render_item(&mut self, row: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some(key) = self.active_key() else { return div().into_any_element() };
+    pub(super) fn render_item(&mut self, key: Key, row: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(thread) = self.threads.get(&key) else { return div().into_any_element() };
         let last = row + 1 == thread.rows.len();
         // Tool traffic sits tight together; messages get room to breathe.
         // Tool calls and results (diffs, output) may use the wider column.
         let (body, compact, wide) = match thread.rows.get(row).cloned() {
             Some(Row::Tools(run)) => {
-                let live = last && self.active_session().is_some_and(|s| s.busy);
-                (self.render_run(&run, row, live, cx), true, true)
+                let live = last && self.session_by_key(key).is_some_and(|s| s.busy);
+                (self.render_run(key, &run, row, live, cx), true, true)
             }
             Some(Row::Item(ix)) => {
-                let item = self.active_session().and_then(|s| s.items.get(ix));
+                let item = self.session_by_key(key).and_then(|s| s.items.get(ix));
                 let compact =
                     matches!(item, Some(Item::ToolResult { .. } | Item::Permission { .. } | Item::Thinking(_)));
                 let wide = matches!(item, Some(Item::ToolResult { .. }));
-                (self.render_entry(ix, row, cx), compact, wide)
+                (self.render_entry(key, ix, row, cx), compact, wide)
             }
             None => return div().into_any_element(),
         };
@@ -73,10 +72,9 @@ impl KynexApp {
     }
 
     /// Item `ix` drawn on its own, as transcript row `row`.
-    fn render_entry(&mut self, ix: usize, row: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_entry(&mut self, key: Key, ix: usize, row: usize, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
-        let Some(session) = self.active_session() else { return div().into_any_element() };
-        let key = session.uid;
+        let Some(session) = self.session_by_key(key) else { return div().into_any_element() };
         let session_kind = session.kind;
         let Some(item) = session.items.get(ix) else { return div().into_any_element() };
         let expanded = self.expand_tools || self.expanded.contains(&(key, ix));

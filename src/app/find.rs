@@ -64,7 +64,7 @@ impl KynexApp {
     /// Finds again when the query or the conversation changed; a new query
     /// goes to its first match from the top of the view down.
     fn refresh_find(&mut self, cx: &mut Context<Self>) {
-        let key = self.active_key();
+        let key = self.focused_key();
         let (count, revision) = self.active_session().map_or((0, 0), |s| (s.items.len(), s.revision()));
         let top = key.and_then(|k| self.threads.get(&k)).map(|th| {
             let row = th.list.logical_scroll_top().item_ix;
@@ -114,7 +114,7 @@ impl KynexApp {
     /// Opens whatever folds `hit` (a run of tool calls, a call's output, a
     /// thought) and scrolls its row into view.
     fn reveal(&mut self, hit: Hit, cx: &mut Context<Self>) {
-        let Some(key) = self.active_key() else { return };
+        let Some(key) = self.focused_key() else { return };
         let Some(th) = self.threads.get(&key) else { return };
         let Some(row) = row_of(&th.rows, hit.item) else { return };
         match &th.rows[row] {
@@ -137,7 +137,7 @@ impl KynexApp {
         self.find.as_ref()?;
         self.refresh_find(cx);
         let t = theme(cx).clone();
-        let key = self.active_key();
+        let key = self.focused_key();
         let bar = self.find.as_ref()?;
         let (n, current) = (bar.hits.len(), bar.current);
         let current_hit = bar.hits.get(current).map(|h| (h.item, h.nth));

@@ -5,6 +5,7 @@
 use crate::ui::px;
 use gpui::{AnyElement, ClickEvent, Context, div, prelude::*};
 use kynex_core::git::Worktree;
+use kynex_core::live::Key;
 use kynex_core::session::{Item, Kind};
 use kynex_core::{fmt, mcp};
 
@@ -13,9 +14,9 @@ use crate::theme::{Palette, mono, theme};
 use crate::ui::{Icon, Tooltip, icon};
 
 impl KynexApp {
-    pub(super) fn render_session_header(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn render_session_header(&mut self, key: Key, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
-        let s = self.active_session()?;
+        let s = self.session_by_key(key)?;
         // Its name; until that comes, the first words of its first message,
         // quieter, since the whole message is right below.
         let name = s.session_id.as_deref().and_then(|id| self.session_name(id));
