@@ -36,8 +36,13 @@ impl Branch {
 }
 
 /// Local branches, then remote ones that have no local branch of the same
-/// name, each newest first.
+/// name, each newest first. Read in-process when that can, else by `git`.
 pub fn branches(root: &Path) -> Result<Vec<Branch>, String> {
+    super::native::branches(root).or_else(|_| branches_cli(root))
+}
+
+/// [`branches`] by running `git for-each-ref`.
+pub(crate) fn branches_cli(root: &Path) -> Result<Vec<Branch>, String> {
     let s = git(
         root,
         &[
@@ -50,6 +55,18 @@ pub fn branches(root: &Path) -> Result<Vec<Branch>, String> {
         ],
     )?;
     Ok(parse(&s))
+}
+
+/// Local branches first, then the remote ones nobody tracks or has a local twin of
+/// (noise in the picker), each in the order given.
+pub(crate) fn assemble(local: Vec<Branch>, mut remote: Vec<Branch>) -> Vec<Branch> {
+    remote.retain(|r: &Branch| {
+        let short = r.short_name();
+        !local.iter().any(|l| l.upstream.as_deref() == Some(&r.name) || l.name == short)
+    });
+    let mut all = local;
+    all.extend(remote);
+    all
 }
 
 pub(crate) fn parse(s: &str) -> Vec<Branch> {
@@ -95,13 +112,7 @@ pub(crate) fn parse(s: &str) -> Vec<Branch> {
             remote.push(b);
         }
     }
-    // A remote branch that's already tracked (or has a local twin) is noise in the picker.
-    remote.retain(|r: &Branch| {
-        let short = r.short_name();
-        !local.iter().any(|l| l.upstream.as_deref() == Some(&r.name) || l.name == short)
-    });
-    local.extend(remote);
-    local
+    assemble(local, remote)
 }
 
 /// Checks out a branch. A remote one (`origin/feature`) gets a local branch
@@ -195,6 +206,14 @@ fn default_remote(root: &Path) -> Result<String, String> {
 
 /// The remote's default branch (`origin/HEAD`), else a local `main` or `master`.
 pub fn default_branch(root: &Path) -> Option<String> {
+    match super::native::default_branch(root) {
+        Ok(name) => name,
+        Err(_) => default_branch_cli(root),
+    }
+}
+
+/// [`default_branch`] by running `git`.
+pub(crate) fn default_branch_cli(root: &Path) -> Option<String> {
     if let Ok(s) = git(root, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
         && let Some((_, name)) = s.trim().split_once('/')
     {
