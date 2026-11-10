@@ -7,6 +7,7 @@ use std::sync::{OnceLock, RwLock};
 
 use gpui::{App, FontStyle, Global, HighlightStyle, Hsla, SharedString, WindowAppearance, rgb};
 use kynex_core::highlight::Token;
+use kynex_core::tile_style::TileStyle;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -69,6 +70,8 @@ pub struct Palette {
     pub diff_del: Hsla,
     /// Syntax highlighting (`kynex_core::highlight::Token`); comments draw italic.
     pub syntax: Syntax,
+    /// How the pane tiles look until Appearance says otherwise.
+    pub tile: TileStyle,
 }
 
 /// Code colours: low chroma, so code doesn't out-shout the prose.
@@ -116,6 +119,7 @@ impl Theme {
                 border: c(0x33312e),
                 border_variant: c(0x282624),
                 border_focused: c(0x77becf),
+                tile: TileStyle::default(),
                 text: c(0xe5e2df),
                 text_muted: c(0xa7a4a0),
                 text_placeholder: c(0x777471),
@@ -151,6 +155,7 @@ impl Theme {
                 border: c(0xd4d2cf),
                 border_variant: c(0xe2dfdc),
                 border_focused: c(0x07657d),
+                tile: TileStyle::default(),
                 text: c(0x292622),
                 text_muted: c(0x5d5a56),
                 text_placeholder: c(0x888682),
@@ -186,6 +191,7 @@ impl Theme {
                 border: c(0x464b57),
                 border_variant: c(0x363c46),
                 border_focused: c(0x47679e),
+                tile: TileStyle::default(),
                 text: c(0xdce0e5),
                 text_muted: c(0xa9afbc),
                 text_placeholder: c(0x878a98),
@@ -220,6 +226,7 @@ impl Theme {
                 border: c(0x313244),
                 border_variant: c(0x26263a),
                 border_focused: c(0x89b4fa),
+                tile: TileStyle { gap: 10.0, border: 2.0, radius: 10.0 },
                 text: c(0xcdd6f4),
                 text_muted: c(0xa6adc8),
                 text_placeholder: c(0x6c7086),
@@ -256,6 +263,7 @@ impl Theme {
                 border: c(0x2b2b2b),
                 border_variant: c(0x2b2b2b),
                 border_focused: c(0x0078d4),
+                tile: TileStyle::default(),
                 text: c(0xcccccc),
                 text_muted: c(0x9d9d9d),
                 text_placeholder: c(0x6e7681),

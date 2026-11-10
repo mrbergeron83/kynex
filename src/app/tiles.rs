@@ -9,10 +9,11 @@
 
 use std::path::PathBuf;
 
-use gpui::{AnyElement, Context, Entity, Focusable, Window, canvas, div, prelude::*};
-use kynex_core::layout::{Axis, PaneId, Rect};
+use gpui::{AnyElement, ClickEvent, Context, Entity, Focusable, MouseButton, Window, canvas, div, prelude::*};
+use kynex_core::layout::{Axis, DIVIDER, Divider, PaneId, Rect};
 use kynex_core::live::Key;
 use kynex_core::session::Session;
+use kynex_core::tile_style::TileStyle;
 use kynex_core::tiling::Tiling;
 
 use super::KynexApp;
@@ -265,18 +266,89 @@ impl KynexApp {
         self.stash_draft(cx);
     }
 
-    /// The panes of the context, when it has several on screen: each a session view in its
-    /// rectangle, with a line between. `None` for one pane, which `render_code_main` draws
-    /// as it always has.
+    /// The area the tiles are laid out in, in the container's own logical pixels: the
+    /// container less half a gap on each side (each tile is inset by half a gap too, which
+    /// makes the margin round the outside a whole gap).
+    fn core_bounds(&self, gap: f32) -> Rect {
+        let b = self.tile_bounds();
+        let half = gap / 2.0;
+        Rect::new(half, half, (b.w - gap).max(0.0), (b.h - gap).max(0.0))
+    }
+
+    /// The tiles' look: the theme's, with what Appearance changed.
+    fn tile_style(&self, cx: &Context<Self>) -> TileStyle {
+        self.saved.tiles.resolve(theme(cx).tile)
+    }
+
+    /// A divider is grabbed by its handle: a strip as wide as the gap (at least a few
+    /// pixels) along it.
+    fn handle_of(d: &Divider, gap: f32) -> Rect {
+        let grow = (gap / 2.0).max(3.0);
+        let r = d.rect;
+        match d.axis {
+            Axis::Row => Rect::new(r.x - grow, r.y, r.w + 2.0 * grow, r.h),
+            Axis::Column => Rect::new(r.x, r.y - grow, r.w, r.h + 2.0 * grow),
+        }
+    }
+
+    /// Starts dragging the dividers `splits` (one, or two where a row and a column meet).
+    fn start_tile_drag(&mut self, splits: Vec<Resizing>, cx: &mut Context<Self>) {
+        self.tile_drag = Some(splits);
+        cx.notify();
+    }
+
+    /// The pointer moved with dividers held: they follow it, live, and the panes inside
+    /// keep their proportions (the ratios are fractions).
+    pub(super) fn drag_tiles(&mut self, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
+        let Some(drag) = self.tile_drag.clone() else { return };
+        let Some(area) = self.tile_area.get() else { return };
+        let Some((_, cwd, _)) = self.tiling_scope() else { return };
+        let z = self.saved.zoom;
+        let (x, y) = (f32::from(pos.x - area.origin.x) / z, f32::from(pos.y - area.origin.y) / z);
+        let bounds = self.core_bounds(self.tile_style(cx).gap);
+        let Some(t) = self.tiles.get_mut(&cwd) else { return };
+        for Resizing { path, axis } in drag {
+            // Looked up afresh: moving one divider moves the area of those inside it.
+            let rects = t.rects(bounds);
+            let Some(d) = rects.dividers.iter().find(|d| d.path == path) else { continue };
+            let (at, from, len) = match axis {
+                Axis::Row => (x, d.area.x, d.area.w),
+                Axis::Column => (y, d.area.y, d.area.h),
+            };
+            let avail = len - DIVIDER;
+            if avail > 0.0 {
+                t.set_ratio(&path, (at - from - DIVIDER / 2.0) / avail, bounds);
+            }
+        }
+        cx.notify();
+    }
+
+    /// The divider `path` back to the middle of its split (double-click).
+    fn even_out(&mut self, path: &[bool], cx: &mut Context<Self>) {
+        let Some((_, cwd, _)) = self.tiling_scope() else { return };
+        let bounds = self.core_bounds(self.tile_style(cx).gap);
+        if let Some(t) = self.tiles.get_mut(&cwd) {
+            t.set_ratio(path, 0.5, bounds);
+        }
+        cx.notify();
+    }
+
+    /// The panes of the context, when it has several on screen: each a session view in a
+    /// tile (a rounded, bordered surface with a gap round it; the focused tile's border is
+    /// in the project's colour and a pixel thicker), with a handle on every divider to drag.
+    /// With no gap the panes are flush, split by 1px dividers. `None` for one pane, which
+    /// `render_code_main` draws as it always has.
     pub(super) fn render_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
+        let style = self.tile_style(cx);
+        let bounds = self.core_bounds(style.gap);
         let tiling = self.tiled()?;
-        let tab = tiling.layout().tab()?;
-        let rects = tab.rects(self.tile_bounds());
+        let rects = tiling.rects(bounds);
         let measured = self.tile_area.get().is_some();
         let panes: Vec<(PaneId, Option<Key>, Rect)> =
             rects.panes.iter().map(|(id, r)| (*id, tiling.key_of(*id), *r)).collect();
-        let focus = tab.focus();
+        let focus = tiling.focus();
+        let focus_colour = self.active_colour(&t).unwrap_or(t.border_focused);
         let area = self.tile_area.clone();
         let probe = canvas(
             move |bounds, window, _| {
@@ -289,10 +361,15 @@ impl KynexApp {
         )
         .absolute()
         .inset_0();
+        let flush = style.gap == 0.0;
+        let half = style.gap / 2.0;
+        // The focused tile's border is a pixel thicker; the others make up the pixel as padding.
+        let (bw, fw) = if flush { (0, 0) } else { (style.border as u32, (style.border as u32 + 1).min(4)) };
+        let radius = if flush { 0.0 } else { style.radius };
         let mut children: Vec<AnyElement> = Vec::new();
         if measured {
             for (id, key, r) in panes {
-                let focused = id == focus;
+                let focused = Some(id) == focus;
                 let body = self.with_pane(id, |this| {
                     div()
                         .size_full()
@@ -301,29 +378,116 @@ impl KynexApp {
                         .children(key.and_then(|k| this.render_session_header(k, cx)))
                         .child(this.render_pane_body(key, focused, window, cx))
                 });
+                let width = if focused { fw } else { bw };
+                let surface = bordered(div().size_full().overflow_hidden().bg(t.editor), width)
+                    .border_color(if focused { focus_colour } else { t.border })
+                    .rounded(px(radius))
+                    .child(body);
                 children.push(
                     div()
                         .absolute()
-                        .left(px(r.x))
-                        .top(px(r.y))
-                        .w(px(r.w))
-                        .h(px(r.h))
-                        .overflow_hidden()
+                        .left(px(r.x + half))
+                        .top(px(r.y + half))
+                        .w(px((r.w - style.gap).max(0.0)))
+                        .h(px((r.h - style.gap).max(0.0)))
+                        .when(!focused && fw > bw, |d| d.p_px())
                         // The click that focuses a pane comes before what it lands on.
                         .capture_any_mouse_down(cx.listener(move |this, _, window, cx| {
                             this.focus_pane(id, window, cx);
                         }))
-                        .child(body)
+                        .child(surface)
                         .into_any_element(),
                 );
             }
-            for d in &rects.dividers {
-                let r = d.rect;
+            if flush {
+                for d in &rects.dividers {
+                    let r = d.rect;
+                    children.push(
+                        div()
+                            .absolute()
+                            .left(px(r.x))
+                            .top(px(r.y))
+                            .w(px(r.w))
+                            .h(px(r.h))
+                            .bg(t.border)
+                            .into_any_element(),
+                    );
+                }
+            }
+            // Handles: one per divider, and one where a row's meets a column's, which drags both.
+            let hits: Vec<Rect> = rects.dividers.iter().map(|d| Self::handle_of(d, style.gap)).collect();
+            let splits: Vec<Resizing> =
+                rects.dividers.iter().map(|d| Resizing { path: d.path.clone(), axis: d.axis }).collect();
+            let mut handles: Vec<(Rect, Vec<Resizing>, Option<Axis>)> = Vec::new();
+            for (i, d) in rects.dividers.iter().enumerate() {
+                handles.push((hits[i], vec![splits[i].clone()], Some(d.axis)));
+            }
+            for i in 0..hits.len() {
+                for j in i + 1..hits.len() {
+                    if rects.dividers[i].axis != rects.dividers[j].axis
+                        && let Some(both) = overlap(hits[i], hits[j])
+                    {
+                        handles.push((both, vec![splits[i].clone(), splits[j].clone()], None));
+                    }
+                }
+            }
+            for (n, (r, drag, axis)) in handles.into_iter().enumerate() {
+                let first = drag[0].path.clone();
+                let el = div().id(("tile-handle", n)).absolute().left(px(r.x)).top(px(r.y)).w(px(r.w)).h(px(r.h));
+                let el = match axis {
+                    Some(Axis::Row) => el.cursor_col_resize(),
+                    Some(Axis::Column) => el.cursor_row_resize(),
+                    None => el.cursor_move(),
+                };
                 children.push(
-                    div().absolute().left(px(r.x)).top(px(r.y)).w(px(r.w)).h(px(r.h)).bg(t.border).into_any_element(),
+                    el.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| this.start_tile_drag(drag.clone(), cx)),
+                    )
+                    .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
+                        if ev.click_count() == 2 {
+                            this.even_out(&first, cx);
+                        }
+                    }))
+                    .into_any_element(),
                 );
             }
         }
-        Some(div().relative().flex_1().min_h_0().min_w_0().child(probe).children(children).into_any_element())
+        Some(
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .bg(if flush { t.editor } else { t.panel })
+                .child(probe)
+                .children(children)
+                .into_any_element(),
+        )
     }
+}
+
+/// A divider being dragged: which split, and along which axis.
+#[derive(Clone)]
+pub(super) struct Resizing {
+    path: Vec<bool>,
+    axis: Axis,
+}
+
+/// `d` with its border `w` pixels wide (0 to 4).
+fn bordered(d: gpui::Div, w: u32) -> gpui::Div {
+    match w {
+        0 => d.border_0(),
+        1 => d.border_1(),
+        2 => d.border_2(),
+        3 => d.border_3(),
+        _ => d.border_4(),
+    }
+}
+
+/// Where two rectangles cross, if they do.
+fn overlap(a: Rect, b: Rect) -> Option<Rect> {
+    let (x, y) = (a.x.max(b.x), a.y.max(b.y));
+    let (r, bottom) = ((a.x + a.w).min(b.x + b.w), (a.y + a.h).min(b.y + b.h));
+    (r > x && bottom > y).then(|| Rect::new(x, y, r - x, bottom - y))
 }

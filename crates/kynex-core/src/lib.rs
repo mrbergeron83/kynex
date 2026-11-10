@@ -70,6 +70,7 @@ pub mod subagents;
 pub mod tab_order;
 pub mod tasks;
 pub mod terminal;
+pub mod tile_style;
 pub mod tiling;
 pub mod timeline;
 pub mod titles;

@@ -102,6 +102,8 @@ pub struct Saved {
     pub shortcuts_stamped: bool,
     /// How wide the transcript and composer are.
     pub column: ColumnWidth,
+    /// What Appearance changes of the pane tiles' look; the theme gives the rest.
+    pub tiles: kynex_core::tile_style::TileTweaks,
     /// The window corner toasts gather in.
     pub toast_corner: Corner,
     /// The UI zoom, 1.0 for normal size (`kynex_core::scale`).
@@ -171,6 +173,7 @@ impl Default for Saved {
             notify: false,
             shortcuts_stamped: false,
             column: ColumnWidth::default(),
+            tiles: Default::default(),
             toast_corner: Corner::default(),
             zoom: kynex_core::scale::NORMAL,
             footer: true,

@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use crate::layout::{Axis, Layout, PaneId, Rect};
+use crate::layout::{Axis, Layout, PaneId, Rect, Rects};
 use crate::live::Key;
 
 pub struct Tiling {
@@ -52,6 +52,17 @@ impl Tiling {
         let Some(i) = self.layout.tab_of(pane) else { return false };
         self.layout.select(i);
         self.layout.tab_mut().is_some_and(|t| t.set_focus(pane))
+    }
+
+    /// Where the panes and dividers of the active tab sit in `bounds`.
+    pub fn rects(&self, bounds: Rect) -> Rects {
+        self.layout.tab().map(|t| t.rects(bounds)).unwrap_or_default()
+    }
+
+    /// Moves the divider of the split at `path` to `ratio` of its split (kept inside the panes'
+    /// minimum sizes). False if there is no such split.
+    pub fn set_ratio(&mut self, path: &[bool], ratio: f32, bounds: Rect) -> bool {
+        self.layout.tab_mut().is_some_and(|t| t.set_ratio(path, ratio, bounds))
     }
 
     /// Splits the focused pane, the new one (showing `key`) on its right (`Row`) or below

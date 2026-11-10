@@ -227,6 +227,8 @@ pub struct KynexApp {
     parked: HashMap<kynex_core::layout::PaneId, SessionPane>,
     /// Each context's panes, by the context's folder.
     tiles: HashMap<PathBuf, kynex_core::tiling::Tiling>,
+    /// Dividers held by the pointer, while the panes are being resized.
+    tile_drag: Option<Vec<tiles::Resizing>>,
     /// Where the panes are drawn, as last laid out.
     tile_area: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     palette: Option<PaletteView>,
@@ -515,6 +517,7 @@ impl KynexApp {
             next_pane: 2,
             parked: HashMap::new(),
             tiles: HashMap::new(),
+            tile_drag: None,
             tile_area: Default::default(),
             palette: None,
             scratch: None,

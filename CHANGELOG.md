@@ -7,6 +7,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Panes: split a context into several sessions side by side (Split pane right / down in the
+  palette, Ctrl+K), each a tile with its own conversation, message box and prompts. Drag the gap
+  between tiles to resize them, both ways at once where a row and a column meet; double-click a
+  gap to even it out. The focused tile's border is in the project's colour. Settings →
+  Appearance → Pane tiles sets the gap (0 for flush panes), border and corner radius.
 - Contexts: a project with git worktrees lists each checkout at the top of the sessions column,
   with its branch, changes and a lamp for the sessions working in it. Pick one to switch to its
   sessions, or step through them with Ctrl+Alt+PageDown / PageUp (Next / Previous context in the

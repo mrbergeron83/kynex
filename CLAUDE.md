@@ -165,6 +165,9 @@ to open it without taking focus.
 - Rust 2024 edition. Hot-patch code is gated behind the `hotpatch` feature
   (`gpui/hot-reload`, debug builds only); keep release builds free of subsecond.
 - UI follows Zed: flat surfaces, 1px borders, small radii, colours only from `theme(cx)`.
+  One exception: the pane tiles (`app/tiles.rs`) are rounded surfaces with a gap between them and a
+  border that's thicker on the focused one, in the Hyprland style; their gap, border and radius come
+  from the theme (`Palette::tile`) and Appearance (`kynex_core::tile_style`).
   New widgets go in `src/ui/`; when a hard one is needed (scrollbars, selection), copy and
   trim it from longbridge/gpui-component (Apache-2.0) rather than adding the dependency.
 - Helpers that return `impl IntoElement` from `&self`/`cx` need `+ use<>` (Rust 2024

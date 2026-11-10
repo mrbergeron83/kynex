@@ -168,6 +168,16 @@ impl KynexApp {
                     }),
                 )
         })
+        .when(self.tile_drag.is_some(), |d| {
+            d.on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| this.drag_tiles(ev.position, cx)))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.tile_drag = None;
+                        cx.notify();
+                    }),
+                )
+        })
         .when(self.resizing_terminal, |d| {
             d.cursor_row_resize()
                 .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
