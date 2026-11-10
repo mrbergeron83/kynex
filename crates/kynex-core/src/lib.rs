@@ -38,6 +38,7 @@ pub mod mcp;
 pub mod mcp_config;
 pub mod mcp_logs;
 pub mod mentions;
+pub mod migrate;
 pub mod model_groups;
 pub mod motion;
 pub mod open;

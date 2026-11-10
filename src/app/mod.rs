@@ -488,6 +488,18 @@ impl KynexApp {
         .detach();
 
         composer.read(cx).focus_handle(cx).focus(window, cx);
+        if let Some(found) = saved.newer_than_us {
+            let msg = format!(
+                "state.json was saved by a newer Kynex (format v{found}); it was kept as state.json.bak and this session won't overwrite it."
+            );
+            cx.spawn(async move |this, cx| {
+                this.update(cx, |this, cx| {
+                    this.toast(kynex_core::toasts::Toast::error(msg));
+                    cx.notify();
+                })
+            })
+            .detach();
+        }
         Self {
             saved,
             code: HashMap::new(),

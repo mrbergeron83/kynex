@@ -62,10 +62,7 @@ struct ProjectInfo {
 }
 
 pub(crate) fn load<T: DeserializeOwned + Default>(project: &Path, file: &str) -> T {
-    std::fs::read_to_string(dir(project).join(file))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    crate::migrate::read(&dir(project).join(file)).0
 }
 
 /// Writes one section, creating the project's folder (and `project.json`) on first use.
@@ -77,7 +74,13 @@ pub(crate) fn save<T: Serialize>(project: &Path, file: &str, value: &T) -> Resul
     if !info.exists() {
         write_json(&info, &ProjectInfo { path: project.to_path_buf() })?;
     }
-    write_json(&dir.join(file), value)
+    let path = dir.join(file);
+    if let Ok(text) = std::fs::read_to_string(&path)
+        && let crate::migrate::Loaded::Newer { found } = crate::migrate::migrate(&text)
+    {
+        return Err(format!("{} was saved by a newer Kynex (format v{found}); not overwriting it", path.display()));
+    }
+    write_json(&path, value)
 }
 
 /// Writes `value` to a temporary file beside `path`, then renames it over
