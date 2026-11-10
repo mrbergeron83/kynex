@@ -355,7 +355,7 @@ impl KynexApp {
             return window.dispatch_action(action, cx);
         }
         match cmd {
-            Cmd::Compact => self.compact(cx),
+            Cmd::Compact => self.compact(self.focused_key(), cx),
             Cmd::Settings(section) => {
                 self.app_settings = None;
                 self.open_app_settings(cx);
@@ -370,7 +370,11 @@ impl KynexApp {
                 }
             }
             Cmd::Extensions => self.open_extensions(0, cx),
-            Cmd::SessionScratch => self.open_session_scratch(window, cx),
+            Cmd::SessionScratch => {
+                if let Some(key) = self.focused_key() {
+                    self.open_session_scratch(key, window, cx);
+                }
+            }
             Cmd::ProjectScratch => self.open_project_scratch(window, cx),
             Cmd::About => self.open_about(cx),
             Cmd::CheckForUpdates => {

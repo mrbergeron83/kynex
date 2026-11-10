@@ -32,7 +32,7 @@ pub(super) struct FindBar {
 impl KynexApp {
     /// Ctrl+F: opens the bar, or puts the keyboard back in it.
     pub(super) fn open_find(&mut self, _: &FindInTranscript, window: &mut Window, cx: &mut Context<Self>) {
-        if self.active_session().is_none_or(|s| s.items.is_empty()) {
+        if self.focused_key().and_then(|k| self.session_by_key(k)).is_none_or(|s| s.items.is_empty()) {
             return cx.propagate();
         }
         let input = match &self.find {
@@ -65,7 +65,8 @@ impl KynexApp {
     /// goes to its first match from the top of the view down.
     fn refresh_find(&mut self, cx: &mut Context<Self>) {
         let key = self.focused_key();
-        let (count, revision) = self.active_session().map_or((0, 0), |s| (s.items.len(), s.revision()));
+        let session = key.and_then(|k| self.session_by_key(k));
+        let (count, revision) = session.map_or((0, 0), |s| (s.items.len(), s.revision()));
         let top = key.and_then(|k| self.threads.get(&k)).map(|th| {
             let row = th.list.logical_scroll_top().item_ix;
             th.rows.get(row).map_or(0, first_item)
@@ -76,7 +77,7 @@ impl KynexApp {
         if !new_query && bar.revision == (count, revision) {
             return;
         }
-        let hits = Rc::new(find::find(self.code_items(), &query));
+        let hits = Rc::new(find::find(self.code_items(key), &query));
         let bar = self.find.as_mut().unwrap();
         bar.hits = hits;
         bar.revision = (count, revision);
@@ -94,8 +95,8 @@ impl KynexApp {
     }
 
     /// The shown session's items, or none.
-    fn code_items(&self) -> &[Item] {
-        self.active_session().map_or(&[], |s| &s.items)
+    fn code_items(&self, key: Option<Key>) -> &[Item] {
+        key.and_then(|k| self.session_by_key(k)).map_or(&[], |s| &s.items)
     }
 
     /// Goes `by` matches on (back if negative), round the ends.

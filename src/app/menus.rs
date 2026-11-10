@@ -335,7 +335,8 @@ impl KynexApp {
                 }
             }
             Menu::Mode => {
-                let current = self.active_session().map(|s| s.mode);
+                let key = self.focused_key();
+                let current = key.and_then(|k| self.session_by_key(k)).map(|s| s.mode);
                 for (n, m) in Mode::ALL.into_iter().enumerate() {
                     items.push(
                         menu_item(("mode", n), m.label(), current == Some(m), cx)
@@ -344,7 +345,7 @@ impl KynexApp {
                             .child(div())
                             .tooltip(Tooltip::text(m.help()))
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Some(s) = this.session_mut() {
+                                if let Some(s) = key.and_then(|k| this.session_for(k)) {
                                     s.set_mode(m);
                                 }
                                 this.menu = None;

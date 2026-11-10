@@ -19,7 +19,7 @@ impl KynexApp {
         let s = self.session_by_key(key)?;
         // Its name; until that comes, the first words of its first message,
         // quieter, since the whole message is right below.
-        let name = s.session_id.as_deref().and_then(|id| self.session_name(id));
+        let name = s.session_id.as_deref().and_then(|id| self.session_name(key, id));
         let stand_in = s.items.iter().find_map(|i| match i {
             Item::User { text, .. } if !text.trim().is_empty() => {
                 Some(fmt::first_words(text, kynex_core::titles::FIRST_WORDS))
@@ -55,7 +55,7 @@ impl KynexApp {
                     "This session's files",
                     "its scratch folder, what it edited, its images and task output",
                 ))
-                .on_click(cx.listener(|this, _, window, cx| this.open_session_scratch(window, cx)))
+                .on_click(cx.listener(move |this, _, window, cx| this.open_session_scratch(key, window, cx)))
         });
         let servers = mcp_status(&s.mcp, &t, cx);
         // Double-clicking the name renames the session in place.
@@ -93,7 +93,7 @@ impl KynexApp {
 
         // Where Claude is actually working, when that's another worktree: one
         // click opens its changes.
-        let working = self.working_worktree(cx).map(|w| {
+        let working = self.working_worktree(key, cx).map(|w| {
             let path = w.path.clone();
             let accent = t.accent;
             div()
@@ -182,7 +182,7 @@ impl KynexApp {
                 .when(can_compact, |d| {
                     d.cursor_pointer()
                         .hover(move |s| s.bg(hover))
-                        .on_click(cx.listener(|this, _, _, cx| this.compact(cx)))
+                        .on_click(cx.listener(move |this, _, _, cx| this.compact(Some(key), cx)))
                 })
         });
 

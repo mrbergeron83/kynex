@@ -377,7 +377,8 @@ impl KynexApp {
         // On Work, a model without tool calls can't run Claude Code: picking
         // one on a new session switches it to Chat; a started one can't take it.
         let work = self.active_provider() == kynex_core::provider::Provider::OpenRouter;
-        let fresh = self.active_session().is_none_or(kynex_core::session::Session::is_new);
+        let fresh =
+            self.focused_key().and_then(|k| self.session_by_key(k)).is_none_or(kynex_core::session::Session::is_new);
         let no_tools: Vec<String> = self.saved.openrouter.no_tools.clone();
         let mut items: Vec<AnyElement> = self
             .saved

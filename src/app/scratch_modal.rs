@@ -70,9 +70,9 @@ impl KynexApp {
 
     /// The shown session's files: its scratch folder, what it edited, its
     /// images and task output. Nothing for a session not saved yet.
-    pub(super) fn open_session_scratch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(s) = self.active_session().filter(|s| s.kind == Kind::Code) else { return };
-        let (cwd, id, key) = (s.cwd.clone(), s.session_id.clone(), s.uid);
+    pub(super) fn open_session_scratch(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(s) = self.session_by_key(key).filter(|s| s.kind == Kind::Code) else { return };
+        let (cwd, id) = (s.cwd.clone(), s.session_id.clone());
         let Some(root) = Roots::local().zip(id.clone()).and_then(|(r, id)| storage::session_scratch(&r, &cwd, &id))
         else {
             return;
@@ -82,7 +82,7 @@ impl KynexApp {
             self.scratch_seen.insert(id.clone(), SystemTime::now());
             self.scratch_new.remove(id);
         }
-        let title = id.as_deref().and_then(|id| self.session_name(id));
+        let title = id.as_deref().and_then(|id| self.session_name(key, id));
         let title = title.map_or_else(|| "This session's files".into(), |t| format!("Files · {t}"));
         self.open_scratch(root, title, Some((key, SessionExtras { cwd, files })), window, cx);
     }
@@ -100,8 +100,8 @@ impl KynexApp {
     /// were last opened, for the composer's badge; it stays, through later
     /// turns too, until they're opened. Counted off the UI thread when its
     /// conversation grows, so not every frame.
-    pub(super) fn scratch_badge(&mut self, cx: &mut Context<Self>) -> Option<usize> {
-        let s = self.active_session().filter(|s| s.kind == Kind::Code)?;
+    pub(super) fn scratch_badge(&mut self, key: Key, cx: &mut Context<Self>) -> Option<usize> {
+        let s = self.session_by_key(key).filter(|s| s.kind == Kind::Code)?;
         let (id, cwd) = (s.session_id.clone()?, s.cwd.clone());
         // Counted again when a turn starts or ends, not on every streamed item.
         let stamp = (id.clone(), s.busy);
@@ -126,7 +126,7 @@ impl KynexApp {
             })
             .detach();
         }
-        let id = self.active_session()?.session_id.clone()?;
+        let id = self.session_by_key(key)?.session_id.clone()?;
         Some(self.scratch_new.get(&id).copied().unwrap_or(0))
     }
 

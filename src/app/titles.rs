@@ -3,6 +3,7 @@
 //! turned that on in Settings, since each name is a call on their quota.
 
 use gpui::{Context, prelude::*};
+use kynex_core::live::Key;
 use kynex_core::session::SessionInfo;
 use kynex_core::titles;
 
@@ -19,7 +20,7 @@ impl KynexApp {
         if self.naming.is_some() {
             return;
         }
-        let shown = self.active_session().and_then(|s| s.session_id.clone());
+        let shown = self.focused_key().and_then(|k| self.session_by_key(k)).and_then(|s| s.session_id.clone());
         let wanted = |s: &&SessionInfo| !s.named && !self.naming_tried.contains(&s.id);
         let recent = if self.saved.name_past_sessions { NAME_RECENT } else { 0 };
         let next = items
@@ -59,8 +60,8 @@ impl KynexApp {
     }
 
     /// The shown session's name, if it has one yet: the one given by hand first.
-    pub(super) fn session_name(&self, id: &str) -> Option<String> {
-        if let Some(name) = self.active_session().and_then(|s| self.organize.name_of(&s.cwd, id)) {
+    pub(super) fn session_name(&self, key: Key, id: &str) -> Option<String> {
+        if let Some(name) = self.session_by_key(key).and_then(|s| self.organize.name_of(&s.cwd, id)) {
             return Some(name);
         }
         let list = self.sessions.as_ref()?;

@@ -293,7 +293,7 @@ impl KynexApp {
     /// The session `by` rows down the sessions panel (up if negative), in its
     /// order: pinned, ungrouped, then each group; the archive is skipped.
     fn step_session(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(s) = self.active_session() else { return };
+        let Some(s) = self.focused_key().and_then(|k| self.session_by_key(k)) else { return };
         let cwd = s.cwd.clone();
         let Some(list) = self.sessions.as_ref().filter(|l| l.read.cwd == cwd) else {
             // The panel is collapsed, so its list isn't read: read it off the UI thread first.
@@ -313,7 +313,7 @@ impl KynexApp {
 
     /// [`Self::step_session`] in the folder's sessions `items`, newest first.
     fn step_through(&mut self, items: Vec<String>, by: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(s) = self.active_session() else { return };
+        let Some(s) = self.focused_key().and_then(|k| self.session_by_key(k)) else { return };
         let (kind, cwd, current) = (s.kind, s.cwd.clone(), s.session_id.clone());
         let arranged = self.groups_for(&cwd).arrange(items.iter().map(String::as_str));
         let order: Vec<String> =
@@ -412,7 +412,7 @@ impl KynexApp {
         {
             return cx.notify();
         }
-        if self.active_session().is_some_and(|s| s.busy) {
+        if self.focused_key().and_then(|k| self.session_by_key(k)).is_some_and(|s| s.busy) {
             self.interrupt(cx);
         } else {
             cx.propagate();
@@ -421,7 +421,10 @@ impl KynexApp {
 
     /// Like Shift+Tab in the CLI: the next permission mode, live.
     pub(super) fn cycle_mode(&mut self, _: &CycleMode, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(s) = self.session_mut().filter(|s| s.kind == Kind::Code) else { return };
+        let key = self.composer_key();
+        let Some(s) = key.and_then(|k| self.session_for(k)).filter(|s| s.kind == Kind::Code) else {
+            return;
+        };
         let next = Mode::ALL.iter().position(|m| *m == s.mode).map_or(0, |i| (i + 1) % Mode::ALL.len());
         s.set_mode(Mode::ALL[next]);
         cx.notify();

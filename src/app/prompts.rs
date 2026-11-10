@@ -68,7 +68,7 @@ impl KynexApp {
     /// Keeps the prompt view in step with the oldest pending request: in KNX Ops
     /// the stack's question (a worker's, which blocks the chief's composer until
     /// answered), else the active session's.
-    pub(super) fn sync_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn sync_prompt(&mut self, shown: Option<Key>, window: &mut Window, cx: &mut Context<Self>) {
         let stacked = if self.in_chief() { self.chief_focus() } else { None };
         // The request to show, its session (a stacked question has the worker's), how many wait
         // behind it, and the question's number when it's a stacked one.
@@ -86,7 +86,7 @@ impl KynexApp {
             };
             (Some((key, req, queued)), Some(ask.id))
         } else {
-            let pending = self.active_session().and_then(|s| {
+            let pending = shown.and_then(|k| self.session_by_key(k)).and_then(|s| {
                 let mut it = s.items.iter().filter_map(|i| request_for(s, i));
                 let first = it.next()?;
                 Some((s.uid, first, it.count()))

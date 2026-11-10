@@ -65,9 +65,11 @@ impl KynexApp {
     }
 
     /// Has Claude summarize the conversation so far, freeing up its context.
-    pub(super) fn compact(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn compact(&mut self, key: Option<Key>, cx: &mut Context<Self>) {
         let model = self.active_model();
-        if let Some(s) = self.session_mut().filter(|s| !s.busy) {
+        // A folder with no session yet gets one, as on a first send.
+        let key = key.or_else(|| self.session_mut().map(|s| s.uid));
+        if let Some(s) = key.and_then(|k| self.session_for(k)).filter(|s| !s.busy) {
             s.use_model(model);
             s.send("/compact".into(), Vec::new());
         }
@@ -170,7 +172,7 @@ impl KynexApp {
         let running = key.and_then(|k| self.render_running_tasks(k, cx));
         let agents = key.and_then(|k| self.render_turn_agents(k, cx));
         let handoff = key.and_then(|k| self.render_handoff(k, cx));
-        let files_badge = self.scratch_badge(cx);
+        let files_badge = key.and_then(|k| self.scratch_badge(k, cx));
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
         self.slash.shown = None;
         let popup = match () {
@@ -527,7 +529,11 @@ impl KynexApp {
                                         "This session's files",
                                         "scratch folder, edited files, images, task output",
                                     ))
-                                    .on_click(cx.listener(|this, _, window, cx| this.open_session_scratch(window, cx))),
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if let Some(key) = key {
+                                            this.open_session_scratch(key, window, cx);
+                                        }
+                                    })),
                             )
                             .when(new > 0, |d| {
                                 d.child(

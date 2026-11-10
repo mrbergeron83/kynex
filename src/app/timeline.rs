@@ -324,7 +324,7 @@ impl KynexApp {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
-                        this.open_rewind_at(Some(text.clone()), cx);
+                        this.open_rewind_at(Some(key), Some(text.clone()), cx);
                     })),
             )
             .on_click(cx.listener(move |this, _, _, cx| this.jump_to(key, item, cx)));

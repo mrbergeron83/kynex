@@ -59,7 +59,7 @@ struct Typing {
 
 impl KynexApp {
     fn mention_typed(&self, cx: &Context<Self>) -> Option<Typing> {
-        let session = self.active_session().filter(|s| s.kind == Kind::Code)?;
+        let session = self.focused_key().and_then(|k| self.session_by_key(k)).filter(|s| s.kind == Kind::Code)?;
         let input = self.composer.read(cx);
         if self.prompt.is_some() || self.mentions.dismissed.as_deref() == Some(input.text()) {
             return None;

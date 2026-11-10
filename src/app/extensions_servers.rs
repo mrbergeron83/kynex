@@ -6,6 +6,7 @@
 use crate::ui::px;
 use gpui::{AnyElement, Context, FontWeight, div, prelude::*};
 use kynex_core::extensions::{self, Approval, Row, Source};
+use kynex_core::live::Key;
 use kynex_core::mcp::Status;
 use kynex_core::mcp_config::{self, Scope};
 use kynex_core::plugins;
@@ -47,7 +48,8 @@ impl KynexApp {
     /// again when no session runs in the folder.
     fn restart_server(&mut self, name: String, cx: &mut Context<Self>) {
         let Some(cwd) = self.extensions.as_ref().map(|v| v.cwd.clone()) else { return };
-        match self.session_mut().filter(|s| s.cwd == cwd) {
+        let key = self.composer_key();
+        match key.and_then(|k| self.session_for(k)).filter(|s| s.cwd == cwd) {
             Some(s) => {
                 s.reconnect_mcp(&name);
                 if let Some(view) = &mut self.extensions {
@@ -102,7 +104,8 @@ impl KynexApp {
         // The open session picks the sign-in up on a restart of the server.
         let then = |this: &mut Self, name: &str, cx: &mut Context<Self>| {
             let cwd = this.extensions.as_ref().map(|v| v.cwd.clone());
-            if let Some(s) = this.session_mut().filter(|s| Some(&s.cwd) == cwd.as_ref()) {
+            let key = this.composer_key();
+            if let Some(s) = key.and_then(|k| this.session_for(k)).filter(|s| Some(&s.cwd) == cwd.as_ref()) {
                 s.reconnect_mcp(name);
             }
             this.check_servers(cx);
@@ -116,11 +119,11 @@ impl KynexApp {
         self.server_job(name, move |cwd| mcp_config::test_browser(cwd, &server), |_, _, _| {}, cx);
     }
 
-    pub(super) fn render_mcp_servers(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
+    pub(super) fn render_mcp_servers(&self, key: Option<Key>, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
         let Some(view) = &self.extensions else { return div() };
         let (Some(config), Some(extra)) = (&view.config, &view.extra) else { return div() };
         // The open session's servers if it runs in this folder, then what a check found.
-        let session = self.active_session().filter(|s| s.cwd == view.cwd && !s.mcp.is_empty());
+        let session = key.and_then(|k| self.session_by_key(k)).filter(|s| s.cwd == view.cwd && !s.mcp.is_empty());
         let mut live = session.map(|s| s.mcp.clone());
         let has_session = live.is_some();
         for s in view.checked.iter().flatten() {

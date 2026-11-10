@@ -49,7 +49,10 @@ impl KynexApp {
 
     /// ↑ on the composer's first line: everything queued comes back to edit.
     pub(super) fn take_back_queue(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(m) = self.session_mut().and_then(|s| s.queue.take_all()) else { return false };
+        let key = self.composer_key();
+        let Some(m) = key.and_then(|k| self.session_for(k)).and_then(|s| s.queue.take_all()) else {
+            return false;
+        };
         self.take_back(m, cx);
         true
     }

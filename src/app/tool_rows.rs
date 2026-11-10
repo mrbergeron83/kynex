@@ -100,7 +100,7 @@ impl KynexApp {
     /// count up ("Thinking… 4s", a call's "1m 12s / max 2m", the pulse), even
     /// when no output comes; stops when it's done.
     pub(super) fn tick_clocks(&mut self, cx: &mut Context<Self>) {
-        let busy = |this: &Self| this.active_session().is_some_and(|s| s.busy);
+        let busy = |this: &Self| this.focused_key().and_then(|k| this.session_by_key(k)).is_some_and(|s| s.busy);
         if self.clocks_ticking || !busy(self) {
             return;
         }

@@ -102,6 +102,13 @@ impl KynexApp {
         self.active_session().map(|s| s.uid)
     }
 
+    /// The key of the session the composer talks to: like `focused_key()`, but
+    /// `None` in the Git view and while KNX Ops is off, and a folder with no
+    /// session gets one. For actions that used to go through `session_mut()`.
+    pub(super) fn composer_key(&mut self) -> Option<Key> {
+        self.session_mut().map(|s| s.uid)
+    }
+
     pub(super) fn session_by_key(&self, key: Key) -> Option<&Session> {
         self.all_sessions().find(|s| s.uid == key)
     }
@@ -118,7 +125,7 @@ impl KynexApp {
         }
     }
 
-    pub(super) fn active_session(&self) -> Option<&Session> {
+    fn active_session(&self) -> Option<&Session> {
         self.active_live().and_then(Live::current)
     }
 

@@ -227,8 +227,9 @@ impl KynexApp {
         }
         self.sync_attention(cx);
         self.sync_awake();
-        self.sync_draft(cx);
-        self.sync_prompt(window, cx);
+        let key = self.focused_key();
+        self.sync_draft(key, cx);
+        self.sync_prompt(key, window, cx);
         self.sync_toasts(window, cx);
         self.load_project_settings();
         // Shortcuts (Esc, Ctrl+B…) only reach the workspace through the focused

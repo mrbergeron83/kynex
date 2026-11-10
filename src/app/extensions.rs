@@ -275,7 +275,7 @@ impl KynexApp {
         );
         let content = match (&view.config, &view.extra) {
             (Some(_), Some(_)) => match section {
-                0 => self.render_mcp_servers(&t, cx),
+                0 => self.render_mcp_servers(self.focused_key(), &t, cx),
                 1 => self.render_plugins(&t, cx),
                 2 => self.render_skills(&t),
                 3 => self.render_agents(&t),
