@@ -63,7 +63,7 @@ impl KynexApp {
     fn slash_query(&self, cx: &Context<Self>) -> Option<String> {
         let text = self.pane.composer.read(cx).text();
         let query = text.strip_prefix('/')?;
-        let open = self.prompt.is_none()
+        let open = self.pane.prompt.is_none()
             && !query.contains(char::is_whitespace)
             && self.pane.slash.dismissed.as_deref() != Some(text)
             && self.focused_key().is_some();

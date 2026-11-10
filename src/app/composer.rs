@@ -176,7 +176,7 @@ impl KynexApp {
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
         self.pane.slash.shown = None;
         let popup = match () {
-            _ if self.prompt.is_some() => None,
+            _ if self.pane.prompt.is_some() => None,
             _ if self.rewinding() => self.render_rewind(cx),
             _ if self.history_searching() => self.render_history_search(cx),
             _ => self.render_slash(cx).or_else(|| self.render_mentions(cx)),
@@ -193,8 +193,8 @@ impl KynexApp {
             (None, None) => (None, None),
         };
         // A prompt that just closed fades out over the composer it hands back.
-        let prompt = self.prompt.as_ref().map(|p| p.view.clone());
-        let prompt_out = self.exits.prompt.track(prompt.as_ref(), window, cx).map(|(view, gone)| {
+        let prompt = self.pane.prompt.as_ref().map(|p| p.view.clone());
+        let prompt_out = self.pane.prompt_exit.track(prompt.as_ref(), window, cx).map(|(view, gone)| {
             let layer = div().absolute().inset_0().p_3().rounded_lg().overflow_hidden().bg(t.panel).child(view);
             fade("prompt-out", layer, motion::QUICK, Some(gone))
         });
@@ -257,12 +257,12 @@ impl KynexApp {
                     ),
             )
         };
-        if let Some(p) = &self.prompt {
+        if let Some(p) = &self.pane.prompt {
             let focused = p.view.read(cx).focus_handle(cx).contains_focused(window, cx);
             // Each prompt fades in over the composer it replaces.
             let id = ("prompt-in", p.view.entity_id().as_u64() as usize);
             let view = fade_in(id, div().child(p.view.clone()), motion::QUICK);
-            return shell(view.into_any_element(), focused, true);
+            return shell(view.into_any_element(), focused, self.pane.needs_you());
         }
 
         let session = key.and_then(|k| self.session_by_key(k));

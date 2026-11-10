@@ -61,7 +61,7 @@ impl KynexApp {
     fn mention_typed(&self, cx: &Context<Self>) -> Option<Typing> {
         let session = self.focused_key().and_then(|k| self.session_by_key(k)).filter(|s| s.kind == Kind::Code)?;
         let input = self.pane.composer.read(cx);
-        if self.prompt.is_some() || self.pane.mentions.dismissed.as_deref() == Some(input.text()) {
+        if self.pane.prompt.is_some() || self.pane.mentions.dismissed.as_deref() == Some(input.text()) {
             return None;
         }
         let (token, query) = mentions::at_cursor(input.text(), input.cursor()?)?;
