@@ -431,6 +431,7 @@ impl KynexApp {
             || self.app_settings.take().is_some()
             || self.extensions.take().is_some()
             || self.cancel_rename()
+            || self.cancel_tab_rename(cx)
             || self.cancel_new_workspace()
         {
             return cx.notify();

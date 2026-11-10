@@ -61,7 +61,7 @@ impl KynexApp {
 
     /// The code project's workspace you're in: (project folder, workspace folder, shown session).
     /// `None` outside the Code view and in chat and KNX Ops, which stay a single pane.
-    fn tiling_scope(&self) -> Option<(PathBuf, PathBuf, Key)> {
+    pub(super) fn tiling_scope(&self) -> Option<(PathBuf, PathBuf, Key)> {
         if self.in_chief() {
             return None;
         }
@@ -92,7 +92,7 @@ impl KynexApp {
 
     /// Makes `id`'s state `self.pane`, parking the one that was. If the keyboard was in the
     /// old message box, it goes to the new one.
-    fn swap_to(&mut self, id: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn swap_to(&mut self, id: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         if id == self.pane_id {
             return;
         }
@@ -129,7 +129,7 @@ impl KynexApp {
     }
 
     /// Lets the focused pane's session be the shown one, after the layout changed it.
-    fn show_focused_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn show_focused_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((project, cwd, _)) = self.tiling_scope() else { return };
         let Some(t) = self.tiles.get(&cwd) else { return };
         let Some(focus) = t.focus() else { return };
@@ -153,11 +153,20 @@ impl KynexApp {
         }
     }
 
+    /// A new session for a new pane in `cwd`, under the project's settings.
+    pub(super) fn pane_session(&mut self, kind: kynex_core::session::Kind, cwd: PathBuf) -> Session {
+        let mut s = Session::new(kind, cwd);
+        self.adopt_project_settings(&mut s);
+        self.start_model(&mut s);
+        s.wake = self.wake.clone();
+        s
+    }
+
     /// Splits the focused pane: a new session in the new pane beside (`Row`) or under it.
     pub(super) fn split_pane(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
         let Some((project, cwd, _)) = self.tiling_scope() else { return };
         let Some(live) = self.code.get(&project) else { return };
-        if live.visible().len() >= kynex_core::live::MAX_RUNNING {
+        if self.tiles.get(&cwd).is_some_and(|t| t.visible().len() >= kynex_core::live::MAX_RUNNING) {
             self.toast(kynex_core::toasts::Toast::error(format!(
                 "{} panes are up already. Close one to open another.",
                 kynex_core::live::MAX_RUNNING
@@ -167,10 +176,7 @@ impl KynexApp {
         }
         let Some(kind) = live.current().map(|s| s.kind) else { return };
         let id = self.next_pane;
-        let mut s = Session::new(kind, cwd.clone());
-        self.adopt_project_settings(&mut s);
-        self.start_model(&mut s);
-        s.wake = self.wake.clone();
+        let s = self.pane_session(kind, cwd.clone());
         let key = s.uid;
         let bounds = self.tile_bounds();
         let Some(t) = self.tiles.get_mut(&cwd) else { return };
@@ -236,9 +242,11 @@ impl KynexApp {
         t.reconcile(&open, current);
         let visible = t.visible();
         let focus = t.focus();
+        // Every pane's session stays open: those of the other tabs and workspaces too, which
+        // come back as they were.
+        let held: Vec<Key> = self.tiles.values().flat_map(Tiling::sessions).collect();
         if let Some(live) = self.code.get_mut(&project) {
-            let keys: Vec<Key> = visible.iter().map(|(_, k)| *k).collect();
-            live.set_visible(&keys);
+            live.set_visible(&held);
         }
         if let Some(focus) = focus {
             self.swap_to(focus, window, cx);

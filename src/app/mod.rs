@@ -11,6 +11,7 @@
 //! | `title_bar.rs`      | title bar and project tabs                           |
 //! | `footer.rs`         | status footer: Kynex's CPU / memory, meters, update  |
 //! | `status.rs`         | the footer's usage-limits meter and update pill      |
+//! | `pane_tabs.rs`     | the selected workspace's tab bar: new, close, rename, reorder |
 //! | `tiles.rs`          | the split panes of a workspace: layouts, focus, drawing |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
 //! | `sessions_panel.rs` | open and past sessions                               |
@@ -103,6 +104,7 @@ pub(crate) mod mentions;
 mod menus;
 mod models;
 mod palette;
+mod pane_tabs;
 mod project_setup;
 mod projects;
 pub(crate) mod prompts;
@@ -229,6 +231,8 @@ pub struct KynexApp {
     parked: HashMap<kynex_core::layout::PaneId, SessionPane>,
     /// Each workspace's panes, by the workspace's folder.
     tiles: HashMap<PathBuf, kynex_core::tiling::Tiling>,
+    /// The pane tab being renamed, and the field its name is typed in.
+    pane_tab_rename: Option<(usize, Entity<TextInput>)>,
     /// Dividers held by the pointer, while the panes are being resized.
     tile_drag: Option<Vec<tiles::Resizing>>,
     /// Where the panes are drawn, as last laid out.
@@ -519,6 +523,7 @@ impl KynexApp {
             next_pane: 2,
             parked: HashMap::new(),
             tiles: HashMap::new(),
+            pane_tab_rename: None,
             tile_drag: None,
             tile_area: Default::default(),
             palette: None,

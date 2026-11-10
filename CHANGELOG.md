@@ -12,6 +12,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   between tiles to resize them, both ways at once where a row and a column meet; double-click a
   gap to even it out. The focused tile's border is in the project's colour. Settings →
   Appearance → Pane tiles sets the gap (0 for flush panes), border and corner radius.
+- Pane tabs: a workspace can hold several layouts of panes, each in a tab above them with a lamp
+  for its sessions. New pane tab (palette) or the + opens one with a new session; click a tab to
+  show it, double-click to rename it, drag to reorder, × or middle-click to close. With one tab
+  the row is hidden.
 - Workspaces: the sidebar lists a project's workspaces (its main tree, git worktrees and added
   folders), each with its branch, a lamp for the sessions working in it, its changes on hover and
   the sessions open in it, each with a lamp of its own. Pick a workspace to switch to it, or a

@@ -50,6 +50,7 @@ impl KynexApp {
         let t = theme(cx).clone();
         let key = self.focused_key();
         // Several panes: each draws its own header and conversation.
+        let pane_tabs = self.render_pane_tabs(cx);
         let tiled = self.render_panes(window, cx);
         let single = tiled.is_none();
         let header = key.filter(|_| single).and_then(|key| self.render_session_header(key, cx));
@@ -70,6 +71,7 @@ impl KynexApp {
                     .min_w_0()
                     .bg(t.editor)
                     .child(self.render_toolbar(cx))
+                    .children(pane_tabs)
                     .children(header)
                     .children(self.render_reporter(window, cx))
                     .child(body)
