@@ -306,8 +306,6 @@ pub struct Session {
     /// Tokens and cost of every turn this session object has seen, subagents included.
     pub spent: crate::spent::Spent,
     pub context: ContextUse,
-    /// A chief worker ([`crate::chief`]): it runs with no permission prompts.
-    pub worker: bool,
     /// The live permission mode: starts at the project's default, follows the
     /// CLI's reports, and is switched from the composer without a restart.
     pub mode: project::Mode,
@@ -503,7 +501,6 @@ impl Session {
             total_cost: 0.0,
             spent: Default::default(),
             context: ContextUse::default(),
-            worker: false,
             mode,
             queue: Queue::default(),
             reopened: false,
@@ -777,7 +774,6 @@ impl Session {
             settings_dir: self.settings_folder().to_path_buf(),
             model: self.model.clone(),
             provider: self.provider.clone(),
-            worker: self.worker,
             mode: self.mode,
             resume: self.resume_id().map(str::to_string),
             resume_at: if grok { None } else { self.resume_at.take() },
@@ -800,8 +796,7 @@ impl Session {
                 Kind::Chat => String::new(),
             };
             let mut acp =
-                crate::grok::acp::Acp::new(self.cwd.clone(), &model, self.mode, self.worker, resume.as_deref())
-                    .with_effort(&effort);
+                crate::grok::acp::Acp::new(self.cwd.clone(), &model, self.mode, resume.as_deref()).with_effort(&effort);
             for line in acp.start() {
                 self.write_line(&line);
             }

@@ -14,24 +14,16 @@ use super::state::{Active, ProjectState, View};
 impl KynexApp {
     /// Every open session, in every tab.
     pub(super) fn all_sessions(&self) -> impl Iterator<Item = &Session> {
-        self.chat
-            .sessions
-            .iter()
-            .chain(&self.chief.live.sessions)
-            .chain(self.code.values().flat_map(|l| l.sessions.iter()))
+        self.chat.sessions.iter().chain(self.code.values().flat_map(|l| l.sessions.iter()))
     }
 
     pub(super) fn all_sessions_mut(&mut self) -> impl Iterator<Item = &mut Session> {
-        self.chat
-            .sessions
-            .iter_mut()
-            .chain(&mut self.chief.live.sessions)
-            .chain(self.code.values_mut().flat_map(|l| l.sessions.iter_mut()))
+        self.chat.sessions.iter_mut().chain(self.code.values_mut().flat_map(|l| l.sessions.iter_mut()))
     }
 
     /// Copy live session ids into the saved state so they survive a restart.
     pub(super) fn sync_session_ids(&mut self) {
-        let mut changed = self.sync_chief_ids();
+        let mut changed = false;
         // A new session's early process may report an id before anything is
         // sent; it names no conversation, so it isn't kept to resume.
         let started = |s: &Session| s.session_id.clone().filter(|_| !s.is_new());
@@ -103,9 +95,6 @@ impl KynexApp {
 
     /// The active tab's folder: the project's path, or chat's own.
     pub(super) fn active_dir(&self) -> PathBuf {
-        if self.in_chief() {
-            return kynex_core::paths::chief_dir();
-        }
         self.active_project().map_or_else(chat_dir, |p| p.path.clone())
     }
 
@@ -116,7 +105,7 @@ impl KynexApp {
     }
 
     /// The key of the session the composer talks to: like `focused_key()`, but
-    /// `None` in the Git view and while KNX Ops is off, and a folder with no
+    /// `None` in the Git view, and a folder with no
     /// session gets one. For actions that used to go through `session_mut()`.
     pub(super) fn composer_key(&mut self) -> Option<Key> {
         self.session_mut().map(|s| s.uid)
@@ -132,7 +121,6 @@ impl KynexApp {
 
     fn active_live(&self) -> Option<&Live> {
         match self.saved.active {
-            Active::Chat if self.saved.chief_view => Some(&self.chief.live),
             Active::Chat => Some(&self.chat),
             Active::Project(i) => self.saved.projects.get(i).and_then(|p| self.code.get(&p.path)),
         }
@@ -145,10 +133,6 @@ impl KynexApp {
     /// The open sessions in the active tab's folder, created (with the saved
     /// session resumed) on first use.
     pub(super) fn live_mut(&mut self) -> Option<&mut Live> {
-        if self.in_chief() {
-            // Not until it's turned on, past its warning.
-            return self.saved.chief_consented.then(|| self.chief_live_mut());
-        }
         let wake = self.wake.clone();
         let (kind, path, resume) = match self.saved.active {
             Active::Chat => (Kind::Chat, chat_dir(), None),

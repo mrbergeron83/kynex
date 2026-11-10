@@ -371,11 +371,11 @@ mod tests {
     fn info_and_warnings_close_on_their_own_errors_wait() {
         let mut t = Toasts::default();
         t.push(Toast::info("saved"));
-        t.push(Toast::warning("careful"));
+        t.push(Toast::warning("warned"));
         t.push(Toast::error("broke"));
         run(&mut t, 5.3, false);
         let titles: Vec<_> = t.visible().0.iter().map(|t| t.title.as_str()).collect();
-        assert_eq!(titles, ["careful", "broke"]);
+        assert_eq!(titles, ["warned", "broke"]);
         run(&mut t, 3., false);
         assert_eq!(t.visible().0.len(), 1);
         run(&mut t, 600., false);

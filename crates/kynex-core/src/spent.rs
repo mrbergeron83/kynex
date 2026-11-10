@@ -13,11 +13,6 @@ pub struct Spent {
     pub cache_write: u64,
     /// The CLI's estimate in USD, at list prices.
     pub cost: f64,
-    /// The parts of `cost` that went to each model family, so what a mix of models cost
-    /// (careful mode's Opus planning and Haiku doing) can be told apart.
-    pub opus_cost: f64,
-    pub sonnet_cost: f64,
-    pub haiku_cost: f64,
 }
 
 impl Spent {
@@ -30,22 +25,13 @@ impl Spent {
     /// model the turn used, subagents included), else its main-thread `usage`.
     pub fn add_turn(&mut self, result: &Value) {
         if let Some(models) = result["model_usage_since_last_result"].as_object() {
-            for (model, u) in models {
+            for u in models.values() {
                 let n = |k: &str| u[k].as_u64().unwrap_or(0);
                 self.input += n("inputTokens");
                 self.output += n("outputTokens");
                 self.cache_read += n("cacheReadInputTokens");
                 self.cache_write += n("cacheCreationInputTokens");
-                let cost = u["costUSD"].as_f64().unwrap_or(0.0);
-                self.cost += cost;
-                let model = model.to_lowercase();
-                if model.contains("opus") {
-                    self.opus_cost += cost;
-                } else if model.contains("sonnet") {
-                    self.sonnet_cost += cost;
-                } else if model.contains("haiku") {
-                    self.haiku_cost += cost;
-                }
+                self.cost += u["costUSD"].as_f64().unwrap_or(0.0);
             }
             return;
         }
@@ -64,19 +50,7 @@ impl Spent {
             cache_read: self.cache_read + other.cache_read,
             cache_write: self.cache_write + other.cache_write,
             cost: self.cost + other.cost,
-            opus_cost: self.opus_cost + other.opus_cost,
-            sonnet_cost: self.sonnet_cost + other.sonnet_cost,
-            haiku_cost: self.haiku_cost + other.haiku_cost,
         }
-    }
-
-    /// What each model family cost, as (name, USD), the pricier first, leaving out the
-    /// ones that cost nothing.
-    pub fn by_model(&self) -> Vec<(&'static str, f64)> {
-        [("Opus", self.opus_cost), ("Sonnet", self.sonnet_cost), ("Haiku", self.haiku_cost)]
-            .into_iter()
-            .filter(|(_, c)| *c > 0.0)
-            .collect()
     }
 }
 
@@ -100,10 +74,7 @@ mod tests {
         assert_eq!((s.input, s.output, s.cache_read, s.cache_write), (7, 20, 100, 600));
         assert_eq!(s.tokens(), 727);
         assert!((s.cost - 0.51).abs() < 1e-9);
-        // Each family's share, the pricier first; a family that cost nothing is left out.
-        assert_eq!(s.by_model(), [("Opus", 0.5), ("Haiku", 0.01)]);
-        let twice = s.plus(s);
-        assert_eq!(twice.by_model(), [("Opus", 1.0), ("Haiku", 0.02)]);
+        assert!((s.plus(s).cost - 1.02).abs() < 1e-9);
     }
 
     #[test]

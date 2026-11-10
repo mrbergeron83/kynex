@@ -53,9 +53,7 @@ impl KynexApp {
 
     /// Goes to an open session, in whichever tab it's in.
     pub(super) fn go_to_session(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) {
-        let chief = self.chief.live.sessions.iter().any(|s| s.uid == key);
-        let target = if chief || self.chat.sessions.iter().any(|s| s.uid == key) {
-            self.saved.chief_view = chief;
+        let target = if self.chat.sessions.iter().any(|s| s.uid == key) {
             Some(Active::Chat)
         } else {
             self.code

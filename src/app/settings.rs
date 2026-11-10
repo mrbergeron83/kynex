@@ -162,13 +162,9 @@ impl KynexApp {
             .map_or_else(|| self.new_session_provider(&self.active_dir()), |s| s.provider().provider())
     }
 
-    /// The model dir's sessions start on: its own, or Haiku for the chief.
+    /// The model dir's sessions start on: its own, or the CLI's default (empty).
     pub(super) fn dir_model(&self, dir: &Path) -> String {
-        let model = self.claude_settings(dir).model;
-        if model.is_empty() && dir == kynex_core::paths::chief_dir() {
-            return kynex_core::chief::DEFAULT_MODEL.into();
-        }
-        model
+        self.claude_settings(dir).model
     }
 
     /// Picks a model where it applies now: the shown session's own, if it has
@@ -563,71 +559,6 @@ impl KynexApp {
                                 "The model and effort are also in the composer, where a session can pin a model of its own over the project's.",
                             ),
                     )
-                    .child(div().pt_3().child(heading(
-                        "KNX Ops workers",
-                        "The model KNX Ops workers run on, and careful mode, which adds a read-only Opus planner and reviewer for larger or riskier tasks. They apply from a worker's next start.",
-                        &t,
-                    )))
-                    .children([
-                        ("", "Haiku 5.5", "As correct as Opus on clear, checkable tasks in our tests. The default."),
-                        ("sonnet", "Sonnet 5.5", "A step up for work Haiku fumbles."),
-                        ("opus", "Opus 5.5", "The strongest: for hard, ambiguous work."),
-                    ]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(n, (id, name, help))| {
-                            let selected = view.claude.worker_model == id;
-                            let hover = t.hover;
-                            div()
-                                .id(("worker-model", n))
-                                .flex()
-                                .items_start()
-                                .gap_2()
-                                .px_2()
-                                .py_1()
-                                .rounded_md()
-                                .cursor_pointer()
-                                .hover(move |s| s.bg(hover))
-                                .child(radio(selected, &t))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .child(div().text_sm().child(name))
-                                        .child(div().text_xs().text_color(t.text_muted).child(kynex_core::prices::with_price(name, help))),
-                                )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.edit_settings(cx, |v| v.claude.worker_model = id.to_string())
-                                }))
-                        }))                    .child({
-                        let on = view.claude.careful;
-                        let hover = t.hover;
-                        div()
-                            .id("careful")
-                            .flex()
-                            .items_start()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(hover))
-                            .child(radio(on, &t))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(div().text_sm().child("Careful mode"))
-                                    .child(
-                                        div().text_xs().text_color(t.text_muted).child(
-                                            "Opus plans and reviews, Haiku executes. Costs more and was slower in tests; for work where Haiku isn't enough. The reporter shows what Opus took. Anthropic only.",
-                                        ),
-                                    ),
-                            )
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.edit_settings(cx, |v| v.claude.careful = !v.claude.careful)),
-                            )
-                    })
             }
             AGENTS_SECTION => self.render_delegate_settings(view, &t, cx),
             _ => self.render_colour_picker(&path, &t, cx),

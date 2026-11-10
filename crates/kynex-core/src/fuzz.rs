@@ -27,7 +27,7 @@ pub fn grok_history(text: &str) {
 /// the adapter and into a session, with the session's answers going back.
 pub fn grok_acp(text: &str) {
     use crate::grok::acp::{Acp, Out};
-    let mut acp = Acp::new(PathBuf::new(), "m", crate::project::Mode::Manual, false, None);
+    let mut acp = Acp::new(PathBuf::new(), "m", crate::project::Mode::Manual, None);
     let _ = acp.start();
     let _ = acp.outgoing(serde_json::json!({ "type": "user", "message": { "content": "hi" } }));
     let mut s = Session::new(Kind::Code, PathBuf::new());

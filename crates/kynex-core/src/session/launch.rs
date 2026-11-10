@@ -1,7 +1,7 @@
 //! Starting a session's process off the UI thread.
 //!
 //! Everything a start does can block: reading settings, finding the CLI on
-//! `PATH`, a worker's `git worktree add`, and the process itself (long on a first launch, or under an
+//! `PATH`, and the process itself (long on a first launch, or under an
 //! antivirus scan). [`begin`] does all of it on a thread and hands back a
 //! [`Started`]; the session takes it in on its next poll, and what it wrote
 //! meanwhile goes out then.
@@ -26,7 +26,6 @@ pub(super) struct Spec {
     pub settings_dir: PathBuf,
     pub model: String,
     pub provider: Launch,
-    pub worker: bool,
     pub mode: project::Mode,
     pub resume: Option<String>,
     pub resume_at: Option<String>,
@@ -41,7 +40,7 @@ pub(super) struct Started {
     pub stdin: Option<Sender<String>>,
     pub error: Option<String>,
     pub launched: Option<project::Launched>,
-    /// The model it runs on (a worker's is picked here).
+    /// The model it runs on.
     pub model: String,
 }
 
@@ -147,15 +146,10 @@ fn command(spec: &mut Spec, started: &mut Started) -> Result<(Command, &'static 
     match spec.kind {
         Kind::Chat => {
             cmd.args(["--tools", ""]);
-            // The chief of staff, in its folder: its role and Kynex's tools.
-            let chief = crate::chief::launch_args_for(&spec.cwd);
-            if chief.is_empty() {
-                // A plain chat has no tools, so none of the configured MCP
-                // servers either: each would start for nothing, and a
-                // browser one is one more client of the extension (#267).
-                cmd.arg("--strict-mcp-config");
-            }
-            cmd.args(chief);
+            // A plain chat has no tools, so none of the configured MCP
+            // servers either: each would start for nothing, and a
+            // browser one is one more client of the extension (#267).
+            cmd.arg("--strict-mcp-config");
         }
         // Read fresh on every start, so edits in Claude settings apply to the next process.
         Kind::Code => {
@@ -166,32 +160,13 @@ fn command(spec: &mut Spec, started: &mut Started) -> Result<(Command, &'static 
             {
                 settings.extend(rules);
             }
-            if spec.worker {
-                // No prompts, its own worktree, and the chief's contract. On Anthropic a worker runs on
-                // Haiku, with careful mode's Opus planner and reviewer when the project turned it on.
-                let anthropic = spec.provider.provider() == Provider::Anthropic;
-                if anthropic {
-                    spec.model = if claude.worker_model.is_empty() {
-                        crate::careful::WORKER_MODEL.into()
-                    } else {
-                        claude.worker_model.clone()
-                    };
-                }
-                cmd.args(crate::chief::worker_args(&spec.cwd, claude.careful && anthropic)?);
-            } else {
-                cmd.args(["--permission-mode", spec.mode.cli()]);
-                // Routine work to Kynex's subagents, unless the project or app turned it off.
-                if spec.provider.provider() == Provider::Anthropic
-                    && crate::delegate::enabled(claude.delegate, crate::delegate::default_on())
-                {
-                    let agents = crate::delegate::load();
-                    cmd.args(crate::delegate::cli_args(
-                        &agents,
-                        &claude.agents_off,
-                        &spec.model,
-                        &claude.delegate_rule,
-                    ));
-                }
+            cmd.args(["--permission-mode", spec.mode.cli()]);
+            // Routine work to Kynex's subagents, unless the project or app turned it off.
+            if spec.provider.provider() == Provider::Anthropic
+                && crate::delegate::enabled(claude.delegate, crate::delegate::default_on())
+            {
+                let agents = crate::delegate::load();
+                cmd.args(crate::delegate::cli_args(&agents, &claude.agents_off, &spec.model, &claude.delegate_rule));
             }
             cmd.args(claude.cli_args());
             started.launched = Some(project::Launched::new(&perms, &claude));

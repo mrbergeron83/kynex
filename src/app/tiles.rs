@@ -61,11 +61,8 @@ impl KynexApp {
     }
 
     /// The code project's workspace you're in: (project folder, workspace folder, shown session).
-    /// `None` outside the Code view and in chat and KNX Ops, which stay a single pane.
+    /// `None` outside the Code view and in chat, which stays a single pane.
     pub(super) fn tiling_scope(&self) -> Option<(PathBuf, PathBuf, Key)> {
-        if self.in_chief() {
-            return None;
-        }
         let Active::Project(i) = self.saved.active else { return None };
         let p = self.saved.projects.get(i).filter(|p| p.view == View::Code)?;
         let s = self.code.get(&p.path)?.current()?;

@@ -267,8 +267,6 @@ impl KynexApp {
 
         let session = key.and_then(|k| self.session_by_key(k));
         let busy = session.is_some_and(|s| s.busy);
-        // A chief worker runs without prompts; its mode doesn't apply.
-        let worker = session.is_some_and(|s| s.worker);
         models::fetch_models(cx);
         if self.saved.grok && kynex_core::grok::installed() {
             models::fetch_grok_models(cx);
@@ -279,7 +277,7 @@ impl KynexApp {
         let on_openrouter = provider.is_openrouter();
         let chat_only = provider == kynex_core::provider::Provider::OpenRouterChat;
         // Chat has no tools, so no permission mode either.
-        let mode = session.filter(|s| s.kind == Kind::Code && !s.worker && !chat_only).map(|s| s.mode);
+        let mode = session.filter(|s| s.kind == Kind::Code && !chat_only).map(|s| s.mode);
         let fresh = session.is_none_or(Session::is_new);
         // On OpenRouter: Work (Claude Code) or Chat, picked on a new session.
         // Work is off when the Work model takes no tools.
@@ -610,19 +608,6 @@ impl KynexApp {
                                 .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
                                     this.open_menu(Menu::Mode, ev.position(), Anchor::BottomLeft, cx)
                                 })),
-                        )
-                    })
-                    .when(worker, |d| {
-                        d.child(
-                            div()
-                                .id("worker-mode")
-                                .px_1p5()
-                                .text_color(t.warning)
-                                .child("KNX Ops worker · no prompts")
-                                .tooltip(Tooltip::text(
-                                    "KNX Ops (the chief of staff) runs this session with no permission prompts, \
-                                     in its own worktree",
-                                )),
                         )
                     })
                     .child(div().flex_1())

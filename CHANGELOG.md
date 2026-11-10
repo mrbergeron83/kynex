@@ -59,6 +59,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
   and `git` also answers where the in-process read can't (a sparse checkout, submodules, a
   repository owned by someone else, an upstream it can't follow).
 
+### Removed
+
+- KNX Ops (the chief of staff) is gone; run several sessions with workspaces, tabs and panes
+  instead. A state saved on its tab opens on your first project. Leftover `<repo>-chief-worker`
+  worktrees and `chief-worker` branches can be removed by hand.
+
 ## [0.0.26] - 2026-11-09
 
 ### Added

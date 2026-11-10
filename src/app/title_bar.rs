@@ -1,4 +1,4 @@
-//! The custom title bar: app name, Chat and KNX Ops, one tab per project, Settings
+//! The custom title bar: app name, Chat, one tab per project, Settings
 //! and the window buttons. Usage limits and the update pill are in the footer.
 //! The theme lives in Settings and the Kynex menu's Appearance.
 
@@ -76,11 +76,8 @@ impl KynexApp {
             None => (0..n).collect(),
         };
         *self.tab_spans.borrow_mut() = vec![(0., 0.); n];
-        let (chat, ops) = (status(&self.chat), status(&self.chief.live));
-        let mut tabs = vec![
-            self.render_tab(0, 0, "Chat".into(), None, None, chat, cx),
-            self.render_tab(1, 0, "KNX Ops".into(), None, Some("KNX Ops".into()), ops, cx),
-        ];
+        let chat = status(&self.chat);
+        let mut tabs = vec![self.render_tab(0, 0, "Chat".into(), None, None, chat, cx)];
         for (slot, i) in order.into_iter().enumerate() {
             let p = &self.saved.projects[i];
             let state = self.code.get(&p.path).map_or((false, false, false), status);
@@ -152,7 +149,7 @@ impl KynexApp {
             .child(chrome::window_controls(window, cx))
     }
 
-    /// `pos` is the tab's place in the bar (Chat is 0, KNX Ops 1, then the
+    /// `pos` is the tab's place in the bar (Chat is 0, then the
     /// projects), `slot` where a project tab is shown while one is dragged.
     #[allow(clippy::too_many_arguments)]
     fn render_tab(
@@ -186,29 +183,14 @@ impl KynexApp {
             .cursor_pointer()
             .when(active, |d| d.bg(t.active))
             .when(!active, |d| d.hover(move |s| s.bg(hover)))
-            .child(
-                icon(
-                    match pos {
-                        0 => Icon::Message,
-                        1 => Icon::Timeline,
-                        _ => Icon::Folder,
-                    },
-                    colour.unwrap_or(fg),
-                )
-                .size_3p5(),
-            )
+            .child(icon(if pos == 0 { Icon::Message } else { Icon::Folder }, colour.unwrap_or(fg)).size_3p5())
             .child(label)
             .map(|d| match Lamp::of(busy, waiting, finished) {
                 Lamp::Idle => d,
                 state => d.child(lamp(("tab-lamp", pos), state, cx)),
             })
             .when_some(tooltip, |d, tip| {
-                let meta = if pos >= PROJECTS_AT {
-                    "Middle-click to close · right-click for more"
-                } else {
-                    "Chief of staff: dispatches your goals to a worker in each project and reports back"
-                };
-                d.tooltip(Tooltip::with_meta(tip, meta))
+                d.tooltip(Tooltip::with_meta(tip, "Middle-click to close · right-click for more"))
             })
             .on_click(cx.listener(move |this, _, window, cx| this.jump(pos, window, cx)))
             .when(pos >= PROJECTS_AT, |d| {

@@ -70,8 +70,6 @@ enum Target {
         project: PathBuf,
         path: PathBuf,
     },
-    /// KNX Ops, the chief of staff.
-    Ops,
     Command(Cmd),
 }
 
@@ -307,12 +305,7 @@ impl KynexApp {
             }
         }
         let tabs =
-            [
-                (Target::Tab(Active::Chat), "Chat".to_string(), String::new()),
-                (Target::Ops, "KNX Ops".to_string(), "chief of staff".to_string()),
-            ]
-            .into_iter()
-            .chain(
+            [(Target::Tab(Active::Chat), "Chat".to_string(), String::new())].into_iter().chain(
                 self.saved.projects.iter().enumerate().map(|(i, p)| {
                     (Target::Tab(Active::Project(i)), project_name(&p.path), p.path.display().to_string())
                 }),
@@ -390,7 +383,6 @@ impl KynexApp {
                 self.focus_input(window, cx);
             }
             Target::Tab(Active::Chat) => self.jump(0, window, cx),
-            Target::Ops => self.jump(1, window, cx),
             Target::Tab(tab) => {
                 self.select(tab, window, cx);
                 self.focus_input(window, cx);

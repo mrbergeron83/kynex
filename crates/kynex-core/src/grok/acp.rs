@@ -45,8 +45,6 @@ pub struct Acp {
     /// The model to switch to once the session is open; empty is Grok's default.
     model: String,
     mode: Mode,
-    /// A chief's worker: nobody to ask, so nothing asks.
-    worker: bool,
     /// The conversation to continue, if any.
     resume: Option<String>,
     next_id: u64,
@@ -89,12 +87,11 @@ fn stream(event: Value) -> Out {
 }
 
 impl Acp {
-    pub fn new(cwd: PathBuf, model: &str, mode: Mode, worker: bool, resume: Option<&str>) -> Self {
+    pub fn new(cwd: PathBuf, model: &str, mode: Mode, resume: Option<&str>) -> Self {
         Self {
             cwd,
             model: model.trim().to_string(),
             mode,
-            worker,
             resume: resume.filter(|r| !r.is_empty()).map(str::to_string),
             next_id: 0,
             init: None,
@@ -191,8 +188,8 @@ impl Acp {
         }
         let id = self.id();
         self.opening = Some(id);
-        // Asking is the default; `yoloMode` approves everything (a worker), `autoMode` is Grok's auto.
-        let meta = json!({ "yoloMode": self.worker, "autoMode": !self.worker && self.mode == Mode::Auto });
+        // Asking is the default; `yoloMode` (approve everything) stays off, and `autoMode` is Grok's auto.
+        let meta = json!({ "yoloMode": false, "autoMode": self.mode == Mode::Auto });
         let cwd = self.cwd.to_string_lossy();
         match &self.resume {
             Some(sid) => {
@@ -208,7 +205,6 @@ impl Acp {
     fn mode_lines(&mut self) -> Vec<Value> {
         let Some(sid) = self.session.clone() else { return Vec::new() };
         let word = match () {
-            _ if self.worker => "always-approve",
             _ if self.mode == Mode::Auto => "auto",
             _ => "ask",
         };
@@ -216,7 +212,7 @@ impl Acp {
         vec![
             notification(
                 "_x.ai/yolo_mode_changed",
-                json!({ "yolo_mode": self.worker, "auto_mode": word == "auto", "permission_mode": word }),
+                json!({ "yolo_mode": false, "auto_mode": word == "auto", "permission_mode": word }),
             ),
             request(
                 id,
@@ -497,7 +493,7 @@ impl Acp {
         let options = p["options"].as_array().cloned().unwrap_or_default();
         let call = &p["toolCall"];
         let kind = call["kind"].as_str().or(call["_meta"]["x.ai/tool"]["kind"].as_str()).unwrap_or("");
-        if self.worker || (kind == "edit" && matches!(self.mode, Mode::AcceptEdits | Mode::Auto)) {
+        if kind == "edit" && matches!(self.mode, Mode::AcceptEdits | Mode::Auto) {
             return vec![Out::Write(choose(v["id"].clone(), &options, &["allow_once", "allow_always"]))];
         }
         let request_id = format!("acp-{}", v["id"]);
@@ -628,7 +624,7 @@ mod tests {
 
     /// An `Acp` with its session open, as after `initialize` and `session/new`.
     fn open(mode: Mode) -> Acp {
-        let mut a = Acp::new(PathBuf::from("C:/work"), "", mode, false, None);
+        let mut a = Acp::new(PathBuf::from("C:/work"), "", mode, None);
         let init = a.start();
         a.incoming(json!({ "jsonrpc": "2.0", "id": init[0]["id"], "result": {} }));
         let new = a.outgoing(user("hi"));
@@ -640,7 +636,7 @@ mod tests {
 
     #[test]
     fn the_first_message_opens_the_session_then_goes() {
-        let mut a = Acp::new(PathBuf::from("C:/work"), "grok-4.7", Mode::Manual, false, None);
+        let mut a = Acp::new(PathBuf::from("C:/work"), "grok-4.7", Mode::Manual, None);
         let init = a.start();
         assert_eq!(init[0]["method"], "initialize");
         // Nothing to open until there's a message.
@@ -660,7 +656,7 @@ mod tests {
 
     #[test]
     fn resuming_loads_at_once_and_skips_the_replay() {
-        let mut a = Acp::new(PathBuf::from("C:/work"), "", Mode::Manual, false, Some("old"));
+        let mut a = Acp::new(PathBuf::from("C:/work"), "", Mode::Manual, Some("old"));
         let init = a.start();
         let out = a.incoming(json!({ "jsonrpc": "2.0", "id": init[0]["id"], "result": {} }));
         let load = writes(&out)[0].clone();
@@ -679,7 +675,7 @@ mod tests {
 
     #[test]
     fn a_lost_session_starts_a_new_one() {
-        let mut a = Acp::new(PathBuf::from("C:/work"), "", Mode::Manual, false, Some("gone"));
+        let mut a = Acp::new(PathBuf::from("C:/work"), "", Mode::Manual, Some("gone"));
         let init = a.start();
         let out = a.incoming(json!({ "jsonrpc": "2.0", "id": init[0]["id"], "result": {} }));
         let load = writes(&out)[0].clone();
@@ -813,7 +809,7 @@ mod tests {
 
     #[test]
     fn usage_reaches_the_session_as_context_and_cost() {
-        let mut a = Acp::new(PathBuf::from("C:/work"), "", Mode::Manual, false, None);
+        let mut a = Acp::new(PathBuf::from("C:/work"), "", Mode::Manual, None);
         let init = a.start();
         a.incoming(json!({ "jsonrpc": "2.0", "id": init[0]["id"], "result": {} }));
         let new = a.outgoing(user("hi"));
@@ -856,7 +852,7 @@ mod tests {
 
     #[test]
     fn models_and_effort_reach_grok_and_the_picker() {
-        let mut a = Acp::new(PathBuf::from("C:/work"), "", Mode::Manual, false, None).with_effort("low");
+        let mut a = Acp::new(PathBuf::from("C:/work"), "", Mode::Manual, None).with_effort("low");
         let init = a.start();
         a.incoming(json!({ "jsonrpc": "2.0", "id": init[0]["id"], "result": {} }));
         let new = a.outgoing(user("hi"));

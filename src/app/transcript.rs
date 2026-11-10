@@ -182,10 +182,6 @@ impl KynexApp {
         let on_grok = self.active_provider() == kynex_core::provider::Provider::Grok;
         let chat_only = self.active_provider() == kynex_core::provider::Provider::OpenRouterChat;
         let msg = match self.saved.active {
-            Active::Chat if self.saved.chief_view => {
-                "Give KNX Ops a goal. It sends the work to a worker in each of your projects and reports back."
-                    .to_string()
-            }
             _ if chat_only => format!(
                 "Chat with {} through OpenRouter. Chat only: it can't see, run or change anything here.",
                 self.active_model_name()

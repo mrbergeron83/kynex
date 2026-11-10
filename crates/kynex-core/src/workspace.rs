@@ -34,11 +34,6 @@ impl Workspace {
         Self { path: path.to_path_buf(), branch: None, main: true, label: folder_label(path), folder: false }
     }
 
-    /// A KNX Ops worker's checkout (its own branch, made by the chief of staff).
-    pub fn worker(&self) -> bool {
-        self.branch.as_deref() == Some(crate::chief::BRANCH)
-    }
-
     /// Whether this workspace's folder is `path` (slashes and, on Windows, case aside).
     pub fn at(&self, path: &Path) -> bool {
         same_folder(&self.path, path)
@@ -466,16 +461,6 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
         assert_eq!(after.len(), 1);
         assert!(after[0].main);
-    }
-
-    #[test]
-    fn a_chief_worker_branch_is_a_worker_workspace() {
-        let list = from_worktrees(
-            Path::new("/work/app"),
-            &[wt("/work/app", Some("main"), true), wt("/work/app-chief-worker", Some("chief-worker"), false)],
-        );
-        assert!(!list[0].worker());
-        assert!(list[1].worker());
     }
 
     #[test]

@@ -39,8 +39,6 @@
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
 //! | `handoff.rs`        | "waiting for you in the browser" banner, Continue    |
 //! | `trust.rs`          | "trust this folder?" strip, as the CLI's dialog       |
-//! | `chief.rs`          | the chief of staff: its tools, workers, their reports |
-//! | `chief_view.rs`     | its view: the warning, the reporter, Kynex's messages |
 //! | `attention.rs`      | OS notifications and the icon's "needs you" dot     |
 //! | `background.rs`     | close to tray / Dock, keep awake, `claude` started early, idle sessions sleep |
 //! | `history.rs`        | ↑ / ↓ history, Ctrl+R search, stash, Esc Esc, editor |
@@ -82,8 +80,6 @@ mod app_update;
 mod appearance;
 mod attention;
 mod background;
-mod chief;
-mod chief_view;
 mod composer;
 mod delegate_view;
 mod drafts;
@@ -184,8 +180,6 @@ pub struct KynexApp {
     saved: Saved,
     code: HashMap<PathBuf, Live>,
     chat: Live,
-    /// The chief of staff, its server and its workers (`chief.rs`).
-    chief: chief::Chief,
     git: HashMap<PathBuf, Entity<GitView>>,
     /// The folder whose Git view is open in a modal over the conversation.
     git_modal: Option<PathBuf>,
@@ -499,7 +493,6 @@ impl KynexApp {
             saved,
             code: HashMap::new(),
             chat,
-            chief: Default::default(),
             git: HashMap::new(),
             git_modal: None,
             worktrees: HashMap::new(),
@@ -698,7 +691,6 @@ impl KynexApp {
                     .ok();
             });
         }
-        self.poll_chief(cx);
         self.open_pending_setup(cx);
         self.restart_idle();
         self.sync_session_ids();
@@ -742,15 +734,6 @@ impl Render for KynexApp {
             setup
         } else if view == Some(View::Git) {
             self.render_git_main(window, cx)
-        } else if self.in_chief() && !self.saved.chief_consented {
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_h_0()
-                .child(self.render_toolbar(cx))
-                .child(self.render_chief_consent(cx))
-                .into_any_element()
         } else {
             self.render_code_main(window, cx)
         };

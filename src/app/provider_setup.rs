@@ -301,14 +301,13 @@ impl KynexApp {
             // A new one: its settings folder's pick (the project's, for a workspace).
             None => self.new_session_provider(settings),
         };
-        self.launch_in(cwd, provider)
+        self.launch_in(provider)
     }
 
     /// `provider`'s launch for a session in `cwd`, Anthropic if it isn't set
-    /// up. KNX Ops works through tools, so it never gets the chat-only one.
-    fn launch_in(&self, cwd: &Path, provider: Provider) -> Launch {
-        let launch = self.launch_for(provider).unwrap_or(Launch::Anthropic);
-        if cwd == kynex_core::paths::chief_dir() { launch.for_work() } else { launch }
+    /// up.
+    fn launch_in(&self, provider: Provider) -> Launch {
+        self.launch_for(provider).unwrap_or(Launch::Anthropic)
     }
 
     /// Gives `s` the provider and model it starts on: see [`Self::start_launch`],
@@ -333,12 +332,12 @@ impl KynexApp {
         let fresh: Vec<_> = self
             .code
             .values()
-            .chain([&self.chat, &self.chief.live])
+            .chain([&self.chat])
             .flat_map(|live| live.sessions.iter())
             .filter(|s| s.is_new())
             .map(|s| {
                 let models = self.folder_models(s.settings_folder());
-                let launch = self.launch_in(&s.cwd, self.new_session_provider(s.settings_folder()));
+                let launch = self.launch_in(self.new_session_provider(s.settings_folder()));
                 (s.uid, launch, models)
             })
             .collect();
@@ -350,11 +349,7 @@ impl KynexApp {
     }
 
     fn find_session_mut(&mut self, uid: u64) -> Option<&mut Session> {
-        self.code
-            .values_mut()
-            .chain([&mut self.chat, &mut self.chief.live])
-            .flat_map(|live| live.sessions.iter_mut())
-            .find(|s| s.uid == uid)
+        self.code.values_mut().chain([&mut self.chat]).flat_map(|live| live.sessions.iter_mut()).find(|s| s.uid == uid)
     }
 
     /// The setup screen gives way to the workspace: the CLI is ready, or it's

@@ -226,15 +226,6 @@ impl Launch {
         }
     }
 
-    /// This provider for a session that has to use tools (KNX Ops and its
-    /// workers): OpenRouter chat becomes OpenRouter in the CLI, same model.
-    pub fn for_work(self) -> Launch {
-        match self {
-            Launch::OpenRouterChat { key, settings } => Launch::OpenRouter { key, settings },
-            other => other,
-        }
-    }
-
     /// The model it runs on; `None` on Anthropic (that one goes as `--model`).
     pub fn model(&self) -> Option<&str> {
         match self {
@@ -601,6 +592,5 @@ mod tests {
         assert!(Provider::Grok.takes_effort());
         assert!(Provider::Grok.knows_cost());
         assert_eq!(format!("{launch:?}"), "Grok { model: \"grok-4.7\" }");
-        assert_eq!(launch.for_work().provider(), Provider::Grok);
     }
 }
