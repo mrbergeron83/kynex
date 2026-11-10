@@ -1233,9 +1233,15 @@ impl Session {
     }
 
     pub fn kill(&mut self) {
+        let _t = crate::trace::span("Session::kill");
         if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+            // Ending a process can take seconds (it has MCP servers and a browser of its
+            // own to take down, and an antivirus looks at every exit), and this runs when a
+            // session closes, from the thread that draws the window: end it on another.
+            thread::spawn(move || {
+                let _ = child.kill();
+                let _ = child.wait();
+            });
         }
         // A start still running finishes on a thread; what it started is stopped there.
         if let Some(rx) = self.starting.take() {
