@@ -50,7 +50,37 @@ impl Worktrees {
         self.reading = true;
         let root = self.root.clone();
         cx.spawn(async move |this, cx| {
-            let list = cx.background_spawn(async move { git::list_worktrees(&root).unwrap_or_default() }).await;
+            // The list first (one `git` call), so a new or removed worktree shows at once;
+            // each one's changes follow, read in parallel.
+            let at = root.clone();
+            let mut list = cx.background_spawn(async move { git::list_worktrees_quick(&at).unwrap_or_default() }).await;
+            this.update(cx, |this, cx| {
+                // Until its numbers are in, a worktree keeps the last ones.
+                let known: Vec<Worktree> = list
+                    .iter()
+                    .map(|w| match this.list.iter().find(|o| o.path == w.path) {
+                        Some(o) => Worktree {
+                            changes: o.changes,
+                            lines: o.lines,
+                            ahead_behind: o.ahead_behind,
+                            upstream: o.upstream,
+                            ..w.clone()
+                        },
+                        None => w.clone(),
+                    })
+                    .collect();
+                if this.list != known {
+                    this.list = known;
+                    cx.notify();
+                }
+            })
+            .ok();
+            let list = cx
+                .background_spawn(async move {
+                    git::fill_worktrees(&root, &mut list);
+                    list
+                })
+                .await;
             this.update(cx, |this, cx| {
                 this.reading = false;
                 if this.list != list {

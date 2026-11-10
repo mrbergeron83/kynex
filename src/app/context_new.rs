@@ -90,13 +90,10 @@ impl KynexApp {
                         .worktrees
                         .get(&project)
                         .is_some_and(|w| w.read(cx).list.iter().any(|w| context::same_folder(&w.path, &dir)));
-                    let contexts = this.saved_contexts(&project);
-                    if !checkout
-                        && contexts.add_folder(&project, &dir)
-                        && let Err(e) = contexts.save(&project)
-                    {
-                        this.toast(Toast::error(e));
+                    if !checkout {
+                        this.saved_contexts(&project).add_folder(&project, &dir);
                     }
+                    // (Selecting it saves the list.)
                     this.select_context(&dir, cx);
                 })
                 .ok();
@@ -214,11 +211,8 @@ impl KynexApp {
         }
         // A folder added by hand only leaves the list; nothing on disk goes.
         if self.saved_contexts(&project).is_folder(&path) {
-            let contexts = self.saved_contexts(&project);
-            contexts.remove_folder(&path);
-            if let Err(e) = contexts.save(&project) {
-                self.toast(Toast::error(e));
-            }
+            self.saved_contexts(&project).remove_folder(&path);
+            self.save_contexts(&project, cx);
             return cx.notify();
         }
         let root = project.clone();
@@ -228,11 +222,8 @@ impl KynexApp {
             this.update(cx, |this, cx| {
                 match removed {
                     Ok(()) => {
-                        let contexts = this.contexts.entry(project.clone()).or_default();
-                        contexts.forget(&path);
-                        if let Err(e) = contexts.save(&project) {
-                            this.toast(Toast::error(e));
-                        }
+                        this.contexts.entry(project.clone()).or_default().forget(&path);
+                        this.save_contexts(&project, cx);
                     }
                     Err(e) => {
                         this.toast(Toast::error(e));

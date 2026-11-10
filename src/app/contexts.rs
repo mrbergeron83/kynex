@@ -37,8 +37,8 @@ impl KynexApp {
         ordered
             .into_iter()
             // A worktree whose folder is gone is no context to pick.
-            // (An added folder that's gone stays, marked, so it can be removed.)
-            .filter(|c| c.main || c.folder || c.path.is_dir())
+            // (A worktree that's gone is `prunable` and already dropped; an added folder
+            // that's gone stays, marked, so it can be removed.)
             .map(|c| {
                 let worktree = list.iter().find(|w| c.at(&w.path)).cloned();
                 (c, worktree)
@@ -49,6 +49,22 @@ impl KynexApp {
     /// The code project in the active tab, if it is one.
     pub(super) fn context_project(&self) -> Option<PathBuf> {
         self.active_project().map(|p| p.path.clone())
+    }
+
+    /// Writes the project's contexts file off the UI thread; a failure shows as a notice.
+    pub(super) fn save_contexts(&mut self, project: &Path, cx: &mut Context<Self>) {
+        let Some(contexts) = self.contexts.get(project).cloned() else { return };
+        let project = project.to_path_buf();
+        cx.spawn(async move |this, cx| {
+            if let Err(e) = cx.background_spawn(async move { contexts.save(&project) }).await {
+                this.update(cx, |this, cx| {
+                    this.toast(Toast::error(e));
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     /// The folder you're in: the shown session's, which is the selected context's.
@@ -90,9 +106,7 @@ impl KynexApp {
         }
         contexts.select(target);
         let remembered = contexts.session(target).map(str::to_string);
-        if let Err(e) = contexts.save(&project) {
-            self.toast(Toast::error(e));
-        }
+        self.save_contexts(&project, cx);
         // Sessions are reached through the Code view; the view you were in comes back after.
         let was_git = self.active_project().is_some_and(|p| p.view == View::Git);
         self.show_code_view();

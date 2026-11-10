@@ -39,29 +39,49 @@ impl Worktree {
 /// each one's changes (files and lines), distance from its upstream and from
 /// the main branch. Runs a few `git` commands per worktree.
 pub fn list_worktrees(root: &Path) -> Result<Vec<Worktree>, String> {
-    let mut list = parse_worktrees(&git(root, &["worktree", "list", "--porcelain"])?);
-    let base = list.first().and_then(|w| w.branch.clone());
-    for w in &mut list {
-        if w.prunable {
-            continue;
-        }
-        if let Ok(st) = status(&w.path) {
-            w.changes = Some(st.files.len());
-            w.upstream = st.upstream.is_some().then_some((st.ahead, st.behind));
-            let untracked: Vec<&str> =
-                st.files.iter().filter(|f| f.unstaged == Some(Change::Untracked)).map(|f| f.path.as_str()).collect();
-            w.lines = if st.files.is_empty() { Some((0, 0)) } else { diff_stat(&w.path, &untracked).ok() };
-        }
-        if let (Some(base), Some(branch)) = (&base, &w.branch)
-            && !w.main
-        {
-            w.ahead_behind = git(root, &["rev-list", "--left-right", "--count", &format!("{base}...{branch}")])
-                .ok()
-                .and_then(|s| parse_left_right(&s))
-                .map(|(behind, ahead)| (ahead, behind));
-        }
-    }
+    let mut list = list_worktrees_quick(root)?;
+    fill_worktrees(root, &mut list);
     Ok(list)
+}
+
+/// The working trees as `git worktree list` names them (one `git` call), without
+/// their changes or distances: for showing the list at once while
+/// [`fill_worktrees`] works out the rest.
+pub fn list_worktrees_quick(root: &Path) -> Result<Vec<Worktree>, String> {
+    Ok(parse_worktrees(&git(root, &["worktree", "list", "--porcelain"])?))
+}
+
+/// Works out each worktree's changes and distances, one thread per worktree (each
+/// is several `git` calls, and starting a process can take a while). Blocking.
+pub fn fill_worktrees(root: &Path, list: &mut [Worktree]) {
+    let base = list.first().and_then(|w| w.branch.clone());
+    std::thread::scope(|scope| {
+        for w in list.iter_mut() {
+            let base = base.as_deref();
+            scope.spawn(move || fill_worktree(root, base, w));
+        }
+    });
+}
+
+fn fill_worktree(root: &Path, base: Option<&str>, w: &mut Worktree) {
+    if w.prunable {
+        return;
+    }
+    if let Ok(st) = status(&w.path) {
+        w.changes = Some(st.files.len());
+        w.upstream = st.upstream.is_some().then_some((st.ahead, st.behind));
+        let untracked: Vec<&str> =
+            st.files.iter().filter(|f| f.unstaged == Some(Change::Untracked)).map(|f| f.path.as_str()).collect();
+        w.lines = if st.files.is_empty() { Some((0, 0)) } else { diff_stat(&w.path, &untracked).ok() };
+    }
+    if let (Some(base), Some(branch)) = (base, &w.branch)
+        && !w.main
+    {
+        w.ahead_behind = git(root, &["rev-list", "--left-right", "--count", &format!("{base}...{branch}")])
+            .ok()
+            .and_then(|s| parse_left_right(&s))
+            .map(|(behind, ahead)| (ahead, behind));
+    }
 }
 
 /// Where a new worktree for `branch` goes by default: beside the repository,
