@@ -5,7 +5,9 @@
 
 use kynex_core::live::Key;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use gpui::{App, Context, Entity, prelude::*};
 use kynex_core::git::{self, Worktree};
@@ -14,31 +16,47 @@ use kynex_core::session::{Item, Kind};
 use super::KynexApp;
 use super::state::{Active, View};
 
-/// Worktrees change behind our back (Claude makes and removes them), so re-read often.
-const REFRESH_EVERY: Duration = Duration::from_secs(10);
+/// Worktrees change behind our back (Claude makes and removes them). The git folder
+/// is watched for that; this is the net under it, for what a watcher can miss (the
+/// working tree's own changes, a project that has no watchable git folder).
+const FALLBACK_EVERY: Duration = Duration::from_secs(60);
 
-/// A project's worktrees, re-read in the background while the project is open,
-/// and sooner when a turn ends, a tool call finishes or the window comes back.
+/// How often the watcher's flag is looked at (no `git` runs unless it's set).
+const CHECK_EVERY: Duration = Duration::from_secs(1);
+
+/// A project's worktrees, re-read in the background while the project is open: when
+/// its git folder changes, and sooner when a turn ends, a tool call finishes or the
+/// window comes back; otherwise only as a slow fallback.
 pub struct Worktrees {
     pub list: Vec<Worktree>,
     root: PathBuf,
     /// A read is running; `again` asks for another one once it's done.
     reading: bool,
     again: bool,
+    /// Watching the git folder (a worktree made or removed, a commit, a branch switch).
+    watch: Option<kynex_core::watch::GitWatch>,
 }
 
 impl Worktrees {
     fn new(root: PathBuf, cx: &mut Context<Self>) -> Self {
+        let changed = Arc::new(AtomicBool::new(false));
+        let flag = changed.clone();
+        let watch = kynex_core::watch::watch_git(&root, move || flag.store(true, Ordering::Relaxed));
         cx.spawn(async move |this, cx| {
+            let mut last: Option<Instant> = None;
             loop {
-                if this.update(cx, |this, cx| this.refresh(cx)).is_err() {
-                    break;
+                let due = last.is_none_or(|t| t.elapsed() >= FALLBACK_EVERY);
+                if changed.swap(false, Ordering::Relaxed) || due {
+                    if this.update(cx, |this, cx| this.refresh(cx)).is_err() {
+                        break;
+                    }
+                    last = Some(Instant::now());
                 }
-                cx.background_executor().timer(REFRESH_EVERY).await;
+                cx.background_executor().timer(CHECK_EVERY).await;
             }
         })
         .detach();
-        Self { list: Vec::new(), root, reading: false, again: false }
+        Self { list: Vec::new(), root, reading: false, again: false, watch }
     }
 
     /// Re-reads the list now (or right after the read already running).
@@ -83,6 +101,10 @@ impl Worktrees {
                 .await;
             this.update(cx, |this, cx| {
                 this.reading = false;
+                // `worktrees` appears with the first linked worktree and goes with the last.
+                if let Some(w) = &mut this.watch {
+                    w.rewatch();
+                }
                 if this.list != list {
                     this.list = list;
                     cx.notify();

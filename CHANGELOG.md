@@ -16,7 +16,6 @@ and versions follow [Semantic Versioning](https://semver.org/).
   branch) or existing, and opens it with a new session. Right-click a context to remove its
   worktree (the branch stays); Kynex asks first when it has changes or a session still working.
   KNX Ops workers' worktrees show as contexts, marked "worker".
-
 - Folders as contexts: the folder button beside Contexts adds any folder (scripts, notes, tools)
   as a context of the project, with its own sessions and terminal. It's marked "folder", and
   right-click → "Remove folder from contexts" takes it out of the list without touching the disk.
@@ -32,6 +31,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A git worktree is a context of its project, no longer a project tab of its own: "Open as tab"
   in a worktree's Git view switches to that context, and worktrees open as tabs by an earlier
   version fold into their project when Kynex starts.
+- Worktrees refresh faster and quieter: Kynex watches each repository's git folder (a worktree
+  made or removed, a commit, a branch switch) instead of polling every 10 seconds, with a
+  60-second fallback, so a new or removed context shows at once and an idle Kynex starts no `git`
+  processes. The list appears first and each worktree's changes fill in after, read in parallel.
+  On Windows, read-only `git` calls run Git for Windows' real `git.exe` directly instead of its
+  `cmd\git.exe` wrapper, which halves the process starts.
 
 ## [0.0.26] - 2026-11-09
 
