@@ -14,7 +14,7 @@ use kynex_core::transcript::{Call, Run, shows_result};
 use kynex_core::{fmt, links, mcp, why};
 
 use super::KynexApp;
-use super::transcript::{code_box, diff_box, disclosure_row};
+use super::transcript_rows::{code_box, diff_box, disclosure_row};
 use crate::file_links;
 use crate::prompt;
 use crate::theme::mono;

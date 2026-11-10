@@ -6,6 +6,7 @@
 //! |---------------------|------------------------------------------------------|
 //! | `state.rs`          | `Saved`: what persists to `state.json`               |
 //! | `keys.rs`           | actions, `keymap.json`, tab / Esc / mode shortcuts   |
+//! | `layout.rs`         | Code and Git layouts, overlays, shortcuts, resize drags |
 //! | `workspace.rs`      | tabs, projects, and which session is shown           |
 //! | `title_bar.rs`      | title bar and project tabs                           |
 //! | `footer.rs`         | status footer: Kynex's CPU / memory, meters, update  |
@@ -20,7 +21,8 @@
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
 //! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
-//! | `transcript.rs`     | the conversation list and how each item draws        |
+//! | `transcript.rs`     | the conversation list, its scrolling and follow-the-tail |
+//! | `transcript_rows.rs` | how each transcript row draws: messages, results, the turn's end |
 //! | `find.rs`           | find in the transcript (Ctrl+F)                      |
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
@@ -91,6 +93,7 @@ mod grok_setup;
 mod handoff;
 mod history;
 mod keys;
+mod layout;
 mod leaving;
 mod mentions;
 mod menus;
@@ -125,6 +128,7 @@ mod toasts;
 mod tool_rows;
 mod toolbar;
 mod transcript;
+mod transcript_rows;
 mod trust;
 mod viewer;
 mod workspace;
@@ -134,9 +138,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, MouseButton, MouseMoveEvent, Window, WindowBounds, div, prelude::*,
-};
+use gpui::{App, Context, Entity, FocusHandle, Focusable, Window, WindowBounds, div, prelude::*};
 use kynex_core::cli::UpdateState;
 use kynex_core::live::{Key, Live};
 use kynex_core::paths::chat_dir;
@@ -145,7 +147,6 @@ use kynex_core::session::{self, Attachment, Kind, Session};
 
 use drafts::Draft;
 use find::FindBar;
-use keys::{CopySelection, copy_selection};
 pub use keys::{SHELL_KEYS, ToggleTerminal, bind_keys};
 use mentions::Mentions;
 use menus::OpenMenu;
@@ -158,9 +159,9 @@ use settings::SettingsView;
 use setup::{CliCheck, Setup};
 use slash::Slash;
 pub use state::Saved;
-use state::{Active, View, WindowState};
+use state::{View, WindowState};
 use storage::StorageView;
-use transcript::{Scroll, Thread};
+use transcript::Thread;
 use worktrees::Worktrees;
 
 use crate::git::GitView;
@@ -168,7 +169,6 @@ use crate::terminal::TerminalPanel;
 use crate::theme::{theme, ui_font};
 use crate::ui::image_viewer::ImageViewer;
 use crate::ui::input::{InputEvent, TextInput};
-use crate::ui::motion::{self, fade_in};
 use crate::ui::smooth_scroll::SmoothWheel;
 
 pub struct KynexApp {
@@ -722,33 +722,7 @@ impl Render for KynexApp {
         // The UI zoom: everything sized in rems scales with it.
         window.set_rem_size(gpui::px(16.) * self.saved.zoom);
         let t = theme(cx).clone();
-        if let Active::Project(i) = self.saved.active
-            && let Some(p) = self.saved.projects.get_mut(i).filter(|p| p.view == View::Settings)
-        {
-            p.view = View::Code;
-        }
-        let view = self.active_project().map(|p| p.view);
-        // Create (or resume) the project's session as soon as its tab is shown,
-        // so a restored transcript is visible before the first message.
-        // Showing it counts as seeing it finish, while Kynex is in front.
-        let active = window.is_window_active();
-        if view != Some(View::Git)
-            && let Some(s) = self.session_mut()
-            && active
-        {
-            s.finished = false;
-        }
-        self.sync_attention(cx);
-        self.sync_awake();
-        self.sync_draft(cx);
-        self.sync_prompt(window, cx);
-        self.sync_toasts(window, cx);
-        self.load_project_settings();
-        // Shortcuts (Esc, Ctrl+B…) only reach the workspace through the focused
-        // element, so never leave the window with nothing focused.
-        if window.focused(cx).is_none() {
-            self.focus.focus(window, cx);
-        }
+        let view = self.sync_before_render(window, cx);
 
         // Toasts sit in the corner picked in Settings, the same in every view;
         // the conversation's own bars and composer are measured to stay clear of.
@@ -760,31 +734,7 @@ impl Render for KynexApp {
         let main = if let Some(setup) = self.render_setup(cx) {
             setup
         } else if view == Some(View::Git) {
-            let path = self.active_project().map(|p| p.path.clone()).unwrap();
-            let git = self.git_view(&path, cx);
-            // The sessions panel stays, so the toolbar (and its Code / Git switch)
-            // doesn't move when the view changes.
-            div()
-                .flex()
-                .flex_1()
-                .min_h_0()
-                .children(self.render_sessions_column(window, cx))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .min_w_0()
-                        .bg(t.editor)
-                        .child(self.render_toolbar(cx))
-                        // Fades in when you switch to it, as the transcript does.
-                        .child(fade_in(
-                            ("git-view-in", git.entity_id().as_u64() as usize),
-                            div().flex_1().min_h_0().child(git),
-                            motion::NORMAL,
-                        )),
-                )
-                .into_any_element()
+            self.render_git_main(window, cx)
         } else if self.in_chief() && !self.saved.chief_consented {
             div()
                 .flex()
@@ -795,68 +745,10 @@ impl Render for KynexApp {
                 .child(self.render_chief_consent(cx))
                 .into_any_element()
         } else {
-            div()
-                .flex()
-                .flex_1()
-                .min_h_0()
-                .children(self.render_sessions_column(window, cx))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .min_w_0()
-                        .bg(t.editor)
-                        .child(self.render_toolbar(cx))
-                        .children(self.render_session_header(cx))
-                        .children(self.render_reporter(window, cx))
-                        // The timeline runs the full height beside the transcript
-                        // and the composer under it, down to the terminal dock.
-                        .child(
-                            div()
-                                .flex()
-                                .flex_1()
-                                .min_h_0()
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_col()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .child(
-                                            div()
-                                                .relative()
-                                                .flex()
-                                                .flex_col()
-                                                .flex_1()
-                                                .min_h_0()
-                                                .child(self.render_thread(window, cx))
-                                                .children(self.render_find(cx))
-                                                .child(self.toast_room_probe()),
-                                        )
-                                        .child(self.render_composer(window, cx)),
-                                )
-                                .children(self.render_timeline(cx)),
-                        )
-                        .children(self.render_terminal_dock(window, cx)),
-                )
-                .into_any_element()
+            self.render_code_main(window, cx)
         };
 
-        let menu = self.draw_leaving(|s| &mut s.menu, |e| &mut e.menu, window, cx, |s, l, _, cx| s.render_menu(l, cx));
-        let settings = self.draw_leaving(|s| &mut s.settings, |e| &mut e.settings, window, cx, Self::render_settings);
-        let app_settings =
-            self.draw_leaving(|s| &mut s.app_settings, |e| &mut e.app_settings, window, cx, Self::render_app_settings);
-        let extensions =
-            self.draw_leaving(|s| &mut s.extensions, |e| &mut e.extensions, window, cx, Self::render_extensions);
-        let about = self.render_about(window, cx);
-        let palette = self.draw_leaving(|s| &mut s.palette, |e| &mut e.palette, window, cx, Self::render_palette);
-        let git_modal =
-            self.draw_leaving(|s| &mut s.git_modal, |e| &mut e.git_modal, window, cx, Self::render_git_modal);
-        let scratch = self.draw_leaving(|s| &mut s.scratch, |e| &mut e.scratch, window, cx, Self::render_scratch_modal);
-        let viewer =
-            self.draw_leaving(|s| &mut s.viewer, |e| &mut e.viewer, window, cx, |s, l, _, _| s.render_image_viewer(l));
-        div()
+        let root = div()
             .id("workspace")
             .key_context("Workspace")
             .track_focus(&self.focus)
@@ -868,93 +760,17 @@ impl Render for KynexApp {
             .font_family(ui_font())
             .text_color(t.text)
             .text_sm()
-            .on_action(cx.listener(Self::toggle_palette))
-            .on_action(cx.listener(Self::open_find))
-            .on_action(cx.listener(Self::open_project))
-            .on_action(cx.listener(Self::open_settings_action))
-            .on_action(cx.listener(|_, _: &keys::Quit, _, cx| cx.quit()))
-            .on_action(cx.listener(|this, _: &keys::ZoomIn, _, cx| this.zoom_by(1, cx)))
-            .on_action(cx.listener(|this, _: &keys::ZoomOut, _, cx| this.zoom_by(-1, cx)))
-            .on_action(cx.listener(|this, _: &keys::ZoomReset, _, cx| this.zoom_by(0, cx)))
-            .on_action(cx.listener(Self::new_session_action))
-            .on_action(cx.listener(Self::next_session))
-            .on_action(cx.listener(Self::prev_session))
-            .on_action(cx.listener(Self::close_tab))
-            .on_action(cx.listener(Self::next_tab))
-            .on_action(cx.listener(Self::prev_tab))
-            .on_action(cx.listener(Self::move_tab_left))
-            .on_action(cx.listener(Self::move_tab_right))
-            .on_action(cx.listener(Self::toggle_sessions))
-            .on_action(cx.listener(Self::cycle_mode))
-            .on_action(cx.listener(Self::interrupt_action))
-            .on_action(cx.listener(Self::toggle_terminal))
-            .on_action(cx.listener(Self::search_history))
-            .on_action(cx.listener(Self::stash_action))
-            .on_action(cx.listener(Self::pick_model))
-            .on_action(cx.listener(Self::expand_tools))
-            .on_action(cx.listener(Self::edit_in_editor_action))
-            .on_action(cx.listener(Self::rewind_action))
-            .on_action(cx.listener(Self::toggle_timeline))
-            .on_action(cx.listener(Self::prev_turn))
-            .on_action(cx.listener(Self::next_turn))
-            .on_action(cx.listener(|this, _: &keys::PageUp, _, cx| this.scroll_keys(Scroll::Page(-1.), cx)))
-            .on_action(cx.listener(|this, _: &keys::PageDown, _, cx| this.scroll_keys(Scroll::Page(1.), cx)))
-            .on_action(cx.listener(|this, _: &keys::LineUp, _, cx| this.scroll_keys(Scroll::Line(-1.), cx)))
-            .on_action(cx.listener(|this, _: &keys::LineDown, _, cx| this.scroll_keys(Scroll::Line(1.), cx)))
-            .on_action(cx.listener(|this, _: &keys::ScrollTop, _, cx| this.scroll_keys(Scroll::Top, cx)))
-            .on_action(cx.listener(|this, _: &keys::ScrollBottom, _, cx| this.scroll_keys(Scroll::Bottom, cx)))
-            .on_action(cx.listener(|_, _: &CopySelection, _, cx| copy_selection(cx)))
-            // The composer's Ctrl+C, passed on when nothing is selected in it.
-            .on_action(cx.listener(|_, _: &crate::ui::input::Copy, _, cx| copy_selection(cx)))
             .on_key_down(cx.listener(Self::key_down))
             .on_drop(cx.listener(Self::on_drop))
             // A dragged project tab follows the pointer anywhere in the window,
             // and lands where it's shown wherever it's let go.
             .on_drag_move(cx.listener(Self::drag_tab))
             .on_drop(cx.listener(Self::drop_tab))
-            .when(self.resizing_sessions, |d| {
-                d.cursor_col_resize()
-                    .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
-                        this.saved.sessions_width = (f32::from(ev.position.x) / this.saved.zoom).clamp(180., 480.);
-                        cx.notify();
-                    }))
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.resizing_sessions = false;
-                            this.save();
-                            cx.notify();
-                        }),
-                    )
-            })
-            .when(self.resizing_terminal, |d| {
-                d.cursor_row_resize()
-                    .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
-                        this.drag_terminal_edge(f32::from(ev.position.y), window);
-                        cx.notify();
-                    }))
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            this.resizing_terminal = false;
-                            this.save();
-                            cx.notify();
-                        }),
-                    )
-            })
             .child(self.wheel.listener())
             .child(self.render_title_bar(window, cx))
             .child(main)
-            .when(self.saved.footer, |d| d.child(self.render_footer(cx)))
-            .children(toasts)
-            .children(git_modal)
-            .children(scratch)
-            .children(settings)
-            .children(app_settings)
-            .children(extensions)
-            .children(about)
-            .children(palette)
-            .children(menu)
-            .children(viewer)
+            .when(self.saved.footer, |d| d.child(self.render_footer(cx)));
+        let root = self.with_actions(self.with_resize_drag(root, cx), cx);
+        self.with_overlays(root, toasts, window, cx)
     }
 }
