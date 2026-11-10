@@ -59,12 +59,12 @@ jobs:
             ${{ runner.temp }}/codeql-target
           key: codeql-rust-${{ runner.os }}-${{ steps.gate.outputs.rustc }}-${{ hashFiles('**/Cargo.lock') }}
       - if: steps.gate.outputs.run == 'true'
-        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/init@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
         with:
           languages: ${{ matrix.language }}
           build-mode: none
       - if: steps.gate.outputs.run == 'true'
-        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/analyze@1fc58d04a4d4374f921bdac573c3811c240f9c26 # v4.39.2
         env:
           # Where the Rust extractor compiles build scripts and proc macros, cached above.
           CODEQL_EXTRACTOR_RUST_OPTION_CARGO_TARGET_DIR: ${{ runner.temp }}/codeql-target
