@@ -171,6 +171,7 @@ impl KynexApp {
     /// Starts the shown session's process if it isn't running, as a message is
     /// likely soon: the composer focused or typed in, a session opened.
     pub(super) fn warm_shown(&mut self) {
+        let _t = kynex_core::trace::span("warm_shown");
         if !matches!(self.setup, Setup::Ready) {
             return;
         }

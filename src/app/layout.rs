@@ -15,7 +15,8 @@ impl KynexApp {
     /// The Git view beside the sessions panel.
     pub(super) fn render_git_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
-        let path = self.active_project().map(|p| p.path.clone()).unwrap();
+        // The selected context's checkout.
+        let path = self.context_cwd().unwrap();
         let git = self.git_view(&path, cx);
         // The sessions panel stays, so the toolbar (and its Code / Git switch)
         // doesn't move when the view changes.
@@ -179,6 +180,8 @@ impl KynexApp {
             .on_action(cx.listener(Self::next_session))
             .on_action(cx.listener(Self::prev_session))
             .on_action(cx.listener(Self::close_tab))
+            .on_action(cx.listener(Self::next_context))
+            .on_action(cx.listener(Self::prev_context))
             .on_action(cx.listener(Self::next_tab))
             .on_action(cx.listener(Self::prev_tab))
             .on_action(cx.listener(Self::move_tab_left))

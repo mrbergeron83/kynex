@@ -41,11 +41,22 @@ impl KynexApp {
             changed = true;
         }
         for p in &mut self.saved.projects {
-            if let Some(s) = self.code.get(&p.path).and_then(Live::current)
-                && p.session_id != started(s)
-            {
-                p.session_id = started(s);
-                changed = true;
+            let Some(s) = self.code.get(&p.path).and_then(Live::current) else { continue };
+            if kynex_core::context::same_folder(&s.cwd, &p.path) {
+                if p.session_id != started(s) {
+                    p.session_id = started(s);
+                    changed = true;
+                }
+            } else if let Some(id) = started(s) {
+                // A session in another context (a worktree) can't be resumed from the
+                // project's folder: it's remembered for its own context instead.
+                let c =
+                    self.contexts.entry(p.path.clone()).or_insert_with(|| kynex_core::context::Contexts::load(&p.path));
+                if c.remember(&s.cwd, Some(&id))
+                    && let Err(e) = c.save(&p.path)
+                {
+                    eprintln!("{e}");
+                }
             }
         }
         if changed {
@@ -204,7 +215,12 @@ impl KynexApp {
     /// Shows `s` in the active tab. Sessions it replaces keep running if
     /// they're working; idle ones close.
     pub(super) fn open_session(&mut self, mut s: Session) {
-        self.start_model(&mut s);
+        let _t = kynex_core::trace::span("open_session");
+        self.adopt_project_settings(&mut s);
+        {
+            let _t = kynex_core::trace::span("open_session: start_model (settings, provider)");
+            self.start_model(&mut s);
+        }
         s.wake = self.wake.clone();
         let Some(live) = self.live_mut() else { return };
         let closed = live.show(s);
@@ -266,7 +282,7 @@ impl KynexApp {
     }
 
     /// Drops the view state of sessions that closed.
-    fn forget(&mut self, closed: &[Key]) {
+    pub(super) fn forget(&mut self, closed: &[Key]) {
         for k in closed {
             self.threads.remove(k);
             self.timelines.remove(k);
@@ -292,7 +308,7 @@ impl KynexApp {
             None => {
                 // A folder opened for the first time starts on its setup checklist (open_pending_setup).
                 self.setup_for = Some(path.clone());
-                self.saved.projects.push(ProjectState { path, view: View::Code, session_id: None });
+                self.saved.projects.push(ProjectState { path, view: View::Code, session_id: None, own_tab: false });
                 self.saved.projects.len() - 1
             }
         };
@@ -302,12 +318,14 @@ impl KynexApp {
 
     pub(super) fn close_project(&mut self, i: usize) {
         let p = self.saved.projects.remove(i);
-        let closed: Vec<Key> = self.code.remove(&p.path).into_iter().flat_map(|l| l.sessions).map(|s| s.uid).collect();
+        let sessions: Vec<_> = self.code.remove(&p.path).into_iter().flat_map(|l| l.sessions).collect();
+        let cwds: Vec<PathBuf> = sessions.iter().map(|s| s.cwd.clone()).collect();
+        let closed: Vec<Key> = sessions.iter().map(|s| s.uid).collect();
+        drop(sessions);
         self.forget(&closed);
-        self.git.remove(&p.path);
         self.worktrees.remove(&p.path);
-        // Dropping the panel ends its shells.
-        self.terminals.remove(&p.path);
+        // Its Git views and terminals, in every context's folder (dropping a panel ends its shells).
+        self.drop_context_views(&p.path, &cwds);
         self.saved.active = match self.saved.active {
             Active::Project(a) if a > i => Active::Project(a - 1),
             Active::Project(a) if a == i && i > 0 => Active::Project(i - 1),

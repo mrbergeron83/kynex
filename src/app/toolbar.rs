@@ -63,6 +63,8 @@ impl KynexApp {
             // Chat and KNX Ops are tabs in the title bar; here only the timeline.
             return bar.child(div().flex_1()).child(timeline);
         };
+        // Where you are: the selected context's folder, for the path and open-in buttons.
+        let here = self.context_cwd().unwrap_or_else(|| path.clone());
         let segment = |id: &'static str, label: &'static str, which: Icon, v: View, cx: &mut Context<Self>| {
             tab(id, label, which, view == v).on_click(cx.listener(move |this, _, _, cx| {
                 if let Active::Project(i) = this.saved.active
@@ -95,7 +97,7 @@ impl KynexApp {
                     .truncate()
                     .text_xs()
                     .text_color(t.text_placeholder)
-                    .child(path.display().to_string()),
+                    .child(here.display().to_string()),
             )
             .when(view == View::Code, |d| d.child(timeline))
             .child({
@@ -119,8 +121,8 @@ impl KynexApp {
                     .tooltip(Tooltip::with_meta("Scratch files", "Claude's temporary files, for every session here"))
                     .on_click(cx.listener(|this, _, window, cx| this.open_project_scratch(window, cx))),
             )
-            .child(open("open-code", Icon::Code, "Open in VS Code", Opener::Code, path.clone(), cx))
-            .child(open("open-files", Icon::Folder, "Open in file manager", Opener::Explorer, path.clone(), cx))
+            .child(open("open-code", Icon::Code, "Open in VS Code", Opener::Code, here.clone(), cx))
+            .child(open("open-files", Icon::Folder, "Open in file manager", Opener::Explorer, here.clone(), cx))
             .child(
                 icon_button("open-term", Icon::Terminal, cx)
                     .when(self.saved.terminal_open && view == View::Code, |b| b.bg(t.active))

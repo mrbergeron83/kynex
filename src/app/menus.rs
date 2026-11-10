@@ -32,6 +32,8 @@ pub enum Menu {
     Sessions(Vec<String>),
     /// The sessions panel header's menu: tidying old sessions.
     SessionsPanel,
+    /// A context's right-click menu, by its folder.
+    Context(std::path::PathBuf),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -396,6 +398,60 @@ impl KynexApp {
             Menu::Group(i) => items = self.group_menu_items(*i, cx),
             Menu::Sessions(ids) => items = self.sessions_menu_items(ids, cx),
             Menu::SessionsPanel => items = self.sessions_panel_menu_items(cx),
+            Menu::Context(path) => {
+                for (n, (label, opener)) in [
+                    ("Open in VS Code", Opener::Code),
+                    ("Open in file manager", Opener::Explorer),
+                    ("Open in an external terminal", Opener::Terminal),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let path = path.clone();
+                    items.push(
+                        menu_item(("context-menu", n), label, false, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open_in(opener, &path);
+                                this.menu = None;
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    );
+                }
+                // The project's own tree can't be removed; a linked worktree can (its branch stays).
+                if self.active_project().is_some_and(|p| !kynex_core::context::same_folder(&p.path, path)) {
+                    let folder = self
+                        .active_project()
+                        .and_then(|p| self.contexts.get(&p.path))
+                        .is_some_and(|c| c.is_folder(path));
+                    let path = path.clone();
+                    let tab_path = path.clone();
+                    items.push(
+                        menu_item("context-new-tab", "Open in a new tab", false, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.menu = None;
+                                this.open_context_tab(tab_path.clone(), cx);
+                            }))
+                            .into_any_element(),
+                    );
+                    items.push(div().my_1().child(divider(cx)).into_any_element());
+                    items.push(
+                        menu_item(
+                            "context-remove",
+                            if folder { "Remove folder from contexts" } else { "Remove context" },
+                            false,
+                            cx,
+                        )
+                        .text_color(t.error)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = None;
+                            this.remove_context(path.clone(), cx);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                    );
+                }
+            }
         }
         Some(
             deferred(

@@ -22,6 +22,8 @@ use crate::provider::{Launch, Provider};
 pub(super) struct Spec {
     pub kind: Kind,
     pub cwd: PathBuf,
+    /// Whose Kynex settings it runs under: its project's, for a session in one of its contexts.
+    pub settings_dir: PathBuf,
     pub model: String,
     pub provider: Launch,
     pub worker: bool,
@@ -157,8 +159,8 @@ fn command(spec: &mut Spec, started: &mut Started) -> Result<(Command, &'static 
         }
         // Read fresh on every start, so edits in Claude settings apply to the next process.
         Kind::Code => {
-            let perms = project::Permissions::load(&spec.cwd);
-            let claude = project::ClaudeSettings::load(&spec.cwd).for_provider(spec.provider.provider());
+            let perms = project::Permissions::load(&spec.settings_dir);
+            let claude = project::ClaudeSettings::load(&spec.settings_dir).for_provider(spec.provider.provider());
             if let Some(Value::Object(rules)) =
                 perms.as_cli_settings().and_then(|s| serde_json::from_str::<Value>(&s).ok())
             {

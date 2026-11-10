@@ -26,6 +26,8 @@
 //! | `find.rs`           | find in the transcript (Ctrl+F)                      |
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
+//! | `contexts.rs`       | the contexts section of the sessions column          |
+//! | `context_new.rs`    | making and removing contexts, folding worktree tabs  |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, from the header    |
 //! | `scratch_modal.rs`  | the file explorer in a modal: session or project     |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
@@ -79,6 +81,8 @@ mod background;
 mod chief;
 mod chief_view;
 mod composer;
+mod context_new;
+mod contexts;
 mod delegate_view;
 mod drafts;
 mod extensions;
@@ -182,6 +186,9 @@ pub struct KynexApp {
     git_modal: Option<PathBuf>,
     /// Each open project's git worktrees, kept fresh in the background.
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
+    /// Each project's saved contexts (selection, sessions, order), read on first use.
+    contexts: HashMap<PathBuf, kynex_core::context::Contexts>,
+    context_ui: context_new::ContextUi,
     /// Each open project's colour settings, read once.
     appearances: HashMap<PathBuf, kynex_core::project::Appearance>,
     /// Each open project's Claude settings (mode, effort, folders), read once and
@@ -398,6 +405,7 @@ impl KynexApp {
         .detach();
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.check_setup(cx))).detach();
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.load_openrouter(cx))).detach();
+        cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.fold_worktree_tabs(cx))).detach();
         let setup_key = cx.new(|cx| TextInput::new(cx).mono().masked().placeholder("Paste your OpenRouter key"));
         cx.subscribe(&setup_key, |this, _, ev, cx| {
             if let InputEvent::Submit = ev {
@@ -508,6 +516,8 @@ impl KynexApp {
             git: HashMap::new(),
             git_modal: None,
             worktrees: HashMap::new(),
+            contexts: HashMap::new(),
+            context_ui: Default::default(),
             terminals: HashMap::new(),
             appearances: HashMap::new(),
             claude_settings: HashMap::new(),
@@ -603,10 +613,12 @@ impl KynexApp {
     }
 
     fn save(&self) {
+        let _t = kynex_core::trace::span("save state.json");
         self.saved.write();
     }
 
     fn poll(&mut self, cx: &mut Context<Self>) {
+        let _t = kynex_core::trace::span("poll (draining sessions)");
         // A session that starts wanting you (turn done, prompt up) while Kynex is
         // in the background flashes the taskbar / bounces the Dock icon.
         let mut called = false;
@@ -731,6 +743,7 @@ impl Focusable for KynexApp {
 
 impl Render for KynexApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _t = kynex_core::trace::span("render (building the frame)");
         // The UI zoom: everything sized in rems scales with it.
         window.set_rem_size(gpui::px(16.) * self.saved.zoom);
         let t = theme(cx).clone();

@@ -174,7 +174,12 @@ impl KynexApp {
         if self.saved.projects.iter().any(|p| p.path == path) {
             return format!("{name} ({}) is already open.", path.display());
         }
-        self.saved.projects.push(ProjectState { path: path.clone(), view: View::Code, session_id: None });
+        self.saved.projects.push(ProjectState {
+            path: path.clone(),
+            view: View::Code,
+            session_id: None,
+            own_tab: false,
+        });
         self.save();
         format!("Opened {name} ({}). dispatch can send it work now.", path.display())
     }
@@ -205,7 +210,7 @@ impl KynexApp {
         let spent = self.saved.chief_spent.get(path).copied().unwrap_or_default();
         let key = self.chief.workers.get(path).copied();
         let wake = self.wake.clone();
-        let (launch, models) = self.start_parts(path, resume.as_deref());
+        let (launch, models) = self.start_parts(path, path, resume.as_deref());
         // A worker does work: never on the chat-only provider.
         let launch = launch.for_work();
         let live = self.code.entry(path.to_path_buf()).or_default();

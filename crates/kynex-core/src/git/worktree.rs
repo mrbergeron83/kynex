@@ -39,29 +39,78 @@ impl Worktree {
 /// each one's changes (files and lines), distance from its upstream and from
 /// the main branch. Runs a few `git` commands per worktree.
 pub fn list_worktrees(root: &Path) -> Result<Vec<Worktree>, String> {
-    let mut list = parse_worktrees(&git(root, &["worktree", "list", "--porcelain"])?);
-    let base = list.first().and_then(|w| w.branch.clone());
-    for w in &mut list {
-        if w.prunable {
-            continue;
-        }
-        if let Ok(st) = status(&w.path) {
-            w.changes = Some(st.files.len());
-            w.upstream = st.upstream.is_some().then_some((st.ahead, st.behind));
-            let untracked: Vec<&str> =
-                st.files.iter().filter(|f| f.unstaged == Some(Change::Untracked)).map(|f| f.path.as_str()).collect();
-            w.lines = if st.files.is_empty() { Some((0, 0)) } else { diff_stat(&w.path, &untracked).ok() };
-        }
-        if let (Some(base), Some(branch)) = (&base, &w.branch)
-            && !w.main
-        {
-            w.ahead_behind = git(root, &["rev-list", "--left-right", "--count", &format!("{base}...{branch}")])
-                .ok()
-                .and_then(|s| parse_left_right(&s))
-                .map(|(behind, ahead)| (ahead, behind));
-        }
-    }
+    let mut list = list_worktrees_quick(root)?;
+    fill_worktrees(root, &mut list);
     Ok(list)
+}
+
+/// The working trees as `git worktree list` names them, without their changes or
+/// distances: for showing the list at once while [`fill_worktrees`] works out the
+/// rest. Read in-process; when that can't answer, one `git` call.
+pub fn list_worktrees_quick(root: &Path) -> Result<Vec<Worktree>, String> {
+    let _t = crate::trace::span("list_worktrees_quick (background)");
+    match super::native::worktrees(root) {
+        Ok(Some(list)) => Ok(list),
+        Ok(None) => Err("Not a git repository".into()),
+        Err(_) => Ok(parse_worktrees(&git(root, &["worktree", "list", "--porcelain"])?)),
+    }
+}
+
+/// Works out each worktree's changes and distances, one thread per worktree (each
+/// is several `git` calls, and starting a process can take a while). Blocking.
+pub fn fill_worktrees(root: &Path, list: &mut [Worktree]) {
+    let _t = crate::trace::span("fill_worktrees (background)");
+    let base = list.first().and_then(|w| w.branch.clone());
+    std::thread::scope(|scope| {
+        for w in list.iter_mut() {
+            let base = base.as_deref();
+            // One worktree that can't be read (or a panic in what reads it) leaves its numbers
+            // empty; it must not take the others, or the caller, down with it.
+            scope.spawn(move || {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fill_worktree(root, base, w)));
+            });
+        }
+    });
+}
+
+fn fill_worktree(root: &Path, base: Option<&str>, w: &mut Worktree) {
+    if w.prunable {
+        return;
+    }
+    // In-process first; the CLI answers when that can't.
+    let summary = super::native::summary(&w.path).ok().or_else(|| {
+        let st = status(&w.path).ok()?;
+        Some(super::native::Summary {
+            files: st.files.len(),
+            untracked: st
+                .files
+                .iter()
+                .filter(|f| f.unstaged == Some(Change::Untracked))
+                .map(|f| f.path.clone())
+                .collect(),
+            upstream: st.upstream.is_some().then_some((st.ahead, st.behind)),
+        })
+    });
+    if let Some(s) = summary {
+        w.changes = Some(s.files);
+        w.upstream = s.upstream;
+        // The lines (`+42 −7`) are `git diff`'s, and only asked for when something changed.
+        let untracked: Vec<&str> = s.untracked.iter().map(String::as_str).collect();
+        w.lines = if s.files == 0 { Some((0, 0)) } else { diff_stat(&w.path, &untracked).ok() };
+    }
+    if let (Some(base), Some(branch)) = (base, &w.branch)
+        && !w.main
+    {
+        // `base...branch`: commits only on base are how far behind, only on branch how far ahead.
+        w.ahead_behind = super::native::ahead_behind(root, base, branch)
+            .ok()
+            .or_else(|| {
+                git(root, &["rev-list", "--left-right", "--count", &format!("{base}...{branch}")])
+                    .ok()
+                    .and_then(|s| parse_left_right(&s))
+            })
+            .map(|(behind, ahead)| (ahead, behind));
+    }
 }
 
 /// Where a new worktree for `branch` goes by default: beside the repository,
@@ -75,6 +124,12 @@ pub fn default_worktree_path(root: &Path, branch: &str) -> PathBuf {
 /// Adds a worktree at `path` on `branch`: the existing local branch, or a new
 /// one from HEAD when there's none by that name.
 pub fn add_worktree(root: &Path, path: &Path, branch: &str) -> Result<(), String> {
+    add_worktree_from(root, path, branch, None)
+}
+
+/// [`add_worktree`], where a new branch starts from `base` (a branch, tag or
+/// commit) instead of HEAD. `base` means nothing for a branch that exists.
+pub fn add_worktree_from(root: &Path, path: &Path, branch: &str, base: Option<&str>) -> Result<(), String> {
     let branch = branch.trim();
     let path = path.to_string_lossy();
     if git(root, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok() {
@@ -82,7 +137,9 @@ pub fn add_worktree(root: &Path, path: &Path, branch: &str) -> Result<(), String
     } else {
         git(root, &["check-ref-format", "--branch", branch])
             .map_err(|_| format!("\"{branch}\" isn't a valid branch name"))?;
-        git(root, &["worktree", "add", "-b", branch, &path]).map(drop)
+        let mut args = vec!["worktree", "add", "-b", branch, &*path];
+        args.extend(base.filter(|b| !b.trim().is_empty()));
+        git(root, &args).map(drop)
     }
 }
 

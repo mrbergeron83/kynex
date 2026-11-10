@@ -5,6 +5,45 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Contexts: a project with git worktrees lists each checkout at the top of the sessions column,
+  with its branch, changes and a lamp for the sessions working in it. Pick one to switch to its
+  sessions, or step through them with Ctrl+Alt+PageDown / PageUp (Next / Previous context in the
+  palette, where they're also listed); right-click one to open it in your editor, file manager or
+  terminal.
+- New context: the + beside Contexts makes a git worktree on a branch, new (off the default
+  branch) or existing, and opens it with a new session. Right-click a context to remove its
+  worktree (the branch stays); Kynex asks first when it has changes or a session still working.
+  KNX Ops workers' worktrees show as contexts, marked "worker".
+- Folders as contexts: the folder button beside Contexts adds any folder (scripts, notes, tools)
+  as a context of the project, with its own sessions and terminal. It's marked "folder", and
+  right-click → "Remove folder from contexts" takes it out of the list without touching the disk.
+  A project that isn't a git repository can add folders too. Right-click a context →
+  "Open in a new tab" makes it a project tab of its own, which stays one.
+
+### Changed
+
+- Everything follows the context you're in: switching context switches the sessions, the
+  terminal (each checkout keeps its own shells), the Git view, the path and open-in buttons and
+  the session header together, and switching back finds each as you left it. The header's
+  "working in <worktree>" chip now switches to that context.
+- A git worktree is a context of its project, no longer a project tab of its own: "Open as tab"
+  in a worktree's Git view switches to that context, and worktrees open as tabs by an earlier
+  version fold into their project when Kynex starts.
+- Worktrees refresh faster and quieter: Kynex watches each repository's git folder (a worktree
+  made or removed, a commit, a branch switch) instead of polling every 10 seconds, with a
+  60-second fallback, so a new or removed context shows at once and an idle Kynex starts no `git`
+  processes. The list appears first and each worktree's changes fill in after, read in parallel.
+  On Windows, read-only `git` calls run Git for Windows' real `git.exe` directly instead of its
+  `cmd\git.exe` wrapper, which halves the process starts.
+- Git reads without a process: the worktree list, each worktree's changed-file count and its
+  distance from its upstream and from the default branch are read in-process (with `gix`),
+  about ten times faster than running `git status`. Anything that writes (commit, push, pull,
+  worktree add / remove) still runs `git`, so hooks and your credential manager work as before,
+  and `git` also answers where the in-process read can't (a sparse checkout, submodules, a
+  repository owned by someone else, an upstream it can't follow).
+
 ## [0.0.26] - 2026-11-09
 
 ### Added

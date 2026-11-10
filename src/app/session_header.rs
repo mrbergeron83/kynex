@@ -61,7 +61,9 @@ impl KynexApp {
         // Double-clicking the name renames the session in place.
         let field = id.as_deref().and_then(|id| self.session_name_field(id, true, cx));
 
-        let place = if kind == Kind::Code { self.worktrees(&cwd, cx).read(cx).at(&cwd).cloned() } else { None };
+        // The project's worktree list (one watcher per project, not per checkout).
+        let project = self.context_project().unwrap_or_else(|| cwd.clone());
+        let place = if kind == Kind::Code { self.worktrees(&project, cx).read(cx).at(&cwd).cloned() } else { None };
         // Where a project session runs: its branch, flagged when it's a linked
         // worktree, and what's changed there. A click opens its Git view.
         let place = place.map(|w| {
@@ -118,9 +120,9 @@ impl KynexApp {
                 .children(git_stats(&w, &t))
                 .tooltip(Tooltip::with_meta(
                     format!("Claude is editing the worktree at {}", w.path.display()),
-                    "Click to see its changes",
+                    "Click to switch to that context",
                 ))
-                .on_click(cx.listener(move |this, _, _, cx| this.open_git_modal(path.clone(), cx)))
+                .on_click(cx.listener(move |this, _, _, cx| this.select_context(&path, cx)))
         });
 
         // How full the context is; past half, a click compacts it.
@@ -297,7 +299,7 @@ fn mcp_status(servers: &[mcp::Server], t: &Palette, cx: &mut Context<KynexApp>) 
 
 /// A worktree's uncommitted changes and distance from its upstream, for a
 /// branch chip: `3 files +42 −7 ↑2 ↓1`; nothing when it's clean and in sync.
-fn git_stats(w: &Worktree, t: &Palette) -> Vec<AnyElement> {
+pub(super) fn git_stats(w: &Worktree, t: &Palette) -> Vec<AnyElement> {
     let mut out = Vec::new();
     let stat = |text: String, color| div().font_family(mono()).text_color(color).child(text).into_any_element();
     if let Some(n) = w.changes.filter(|&n| n > 0) {

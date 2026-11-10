@@ -128,7 +128,14 @@ impl Status {
     }
 }
 
+/// The status of the working tree at `root`: read in-process, or by `git status` when
+/// that can't answer (see [`super::native`]). Blocking.
 pub fn status(root: &Path) -> Result<Status, String> {
+    super::native::status(root).or_else(|_| status_cli(root))
+}
+
+/// [`status`] by running `git status`.
+pub(crate) fn status_cli(root: &Path) -> Result<Status, String> {
     git(root, &["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"]).map(|s| parse(&s))
 }
 

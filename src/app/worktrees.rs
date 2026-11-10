@@ -1,10 +1,13 @@
-//! The project's git worktrees, at the bottom of the sessions panel: one row
-//! per worktree with its branch, changed files, distance from main, and
-//! whether a session is working in it. Clicking one opens it as a project tab.
+//! The project's git worktrees, kept up to date in the background: their
+//! branch, changed files and distance from main, for the contexts section of the
+//! sessions panel (`contexts.rs`) and the session header. A worktree can also be
+//! opened as a project tab, on its Git view.
 
 use kynex_core::live::Key;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use gpui::{App, Context, Entity, prelude::*};
 use kynex_core::git::{self, Worktree};
@@ -13,31 +16,47 @@ use kynex_core::session::{Item, Kind};
 use super::KynexApp;
 use super::state::{Active, View};
 
-/// Worktrees change behind our back (Claude makes and removes them), so re-read often.
-const REFRESH_EVERY: Duration = Duration::from_secs(10);
+/// Worktrees change behind our back (Claude makes and removes them). The git folder
+/// is watched for that; this is the net under it, for what a watcher can miss (the
+/// working tree's own changes, a project that has no watchable git folder).
+const FALLBACK_EVERY: Duration = Duration::from_secs(60);
 
-/// A project's worktrees, re-read in the background while the project is open,
-/// and sooner when a turn ends, a tool call finishes or the window comes back.
+/// How often the watcher's flag is looked at (no `git` runs unless it's set).
+const CHECK_EVERY: Duration = Duration::from_secs(1);
+
+/// A project's worktrees, re-read in the background while the project is open: when
+/// its git folder changes, and sooner when a turn ends, a tool call finishes or the
+/// window comes back; otherwise only as a slow fallback.
 pub struct Worktrees {
     pub list: Vec<Worktree>,
     root: PathBuf,
     /// A read is running; `again` asks for another one once it's done.
     reading: bool,
     again: bool,
+    /// Watching the git folder (a worktree made or removed, a commit, a branch switch).
+    watch: Option<kynex_core::watch::GitWatch>,
 }
 
 impl Worktrees {
     fn new(root: PathBuf, cx: &mut Context<Self>) -> Self {
+        let changed = Arc::new(AtomicBool::new(false));
+        let flag = changed.clone();
+        let watch = kynex_core::watch::watch_git(&root, move || flag.store(true, Ordering::Relaxed));
         cx.spawn(async move |this, cx| {
+            let mut last: Option<Instant> = None;
             loop {
-                if this.update(cx, |this, cx| this.refresh(cx)).is_err() {
-                    break;
+                let due = last.is_none_or(|t| t.elapsed() >= FALLBACK_EVERY);
+                if changed.swap(false, Ordering::Relaxed) || due {
+                    if this.update(cx, |this, cx| this.refresh(cx)).is_err() {
+                        break;
+                    }
+                    last = Some(Instant::now());
                 }
-                cx.background_executor().timer(REFRESH_EVERY).await;
+                cx.background_executor().timer(CHECK_EVERY).await;
             }
         })
         .detach();
-        Self { list: Vec::new(), root, reading: false, again: false }
+        Self { list: Vec::new(), root, reading: false, again: false, watch }
     }
 
     /// Re-reads the list now (or right after the read already running).
@@ -49,9 +68,45 @@ impl Worktrees {
         self.reading = true;
         let root = self.root.clone();
         cx.spawn(async move |this, cx| {
-            let list = cx.background_spawn(async move { git::list_worktrees(&root).unwrap_or_default() }).await;
+            // The list first (one `git` call), so a new or removed worktree shows at once;
+            // each one's changes follow, read in parallel.
+            let at = root.clone();
+            let mut list = cx.background_spawn(async move { git::list_worktrees_quick(&at).unwrap_or_default() }).await;
             this.update(cx, |this, cx| {
+                let _t = kynex_core::trace::span("worktrees: publish the list (UI thread)");
+                // Until its numbers are in, a worktree keeps the last ones.
+                let known: Vec<Worktree> = list
+                    .iter()
+                    .map(|w| match this.list.iter().find(|o| o.path == w.path) {
+                        Some(o) => Worktree {
+                            changes: o.changes,
+                            lines: o.lines,
+                            ahead_behind: o.ahead_behind,
+                            upstream: o.upstream,
+                            ..w.clone()
+                        },
+                        None => w.clone(),
+                    })
+                    .collect();
+                if this.list != known {
+                    this.list = known;
+                    cx.notify();
+                }
+            })
+            .ok();
+            let list = cx
+                .background_spawn(async move {
+                    git::fill_worktrees(&root, &mut list);
+                    list
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let _t = kynex_core::trace::span("worktrees: publish the numbers (UI thread)");
                 this.reading = false;
+                // `worktrees` appears with the first linked worktree and goes with the last.
+                if let Some(w) = &mut this.watch {
+                    w.rewatch();
+                }
                 if this.list != list {
                     this.list = list;
                     cx.notify();
@@ -100,7 +155,8 @@ impl KynexApp {
             })
             .take(300)
             .collect();
-        let list = self.worktrees(&cwd, cx).read(cx).list.clone();
+        let project = self.context_project().unwrap_or_else(|| cwd.clone());
+        let list = self.worktrees(&project, cx).read(cx).list.clone();
         inputs.iter().find_map(|input| git::worktree_in(input, &list)).filter(|w| w.path != cwd).cloned()
     }
 
@@ -113,8 +169,13 @@ impl KynexApp {
         }
     }
 
-    /// Opens a worktree as a tab, on its Git view, to look at its changes.
+    /// Opens a worktree to look at its changes: its project's context when it has
+    /// one, else a tab on its Git view.
     pub(super) fn open_worktree_changes(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        // A worktree of an open project is one of its contexts: switch to it.
+        if self.open_as_context(&path, cx) {
+            return cx.notify();
+        }
         self.add_project(path);
         // A worktree is another view of a project you have: no setup checklist for it.
         self.setup_for = None;

@@ -339,6 +339,8 @@ impl KynexApp {
         cx: &mut Context<Self>,
     ) {
         let Some(cwd) = self.session_for(key).map(|s| s.cwd.clone()) else { return };
+        // A session in a context allows its project's rules, not its folder's own.
+        let cwd = self.settings_dir(&cwd);
         let mut perms = Permissions::load(&cwd);
         if perms.allow([rule]) {
             if let Err(e) = perms.save(&cwd) {

@@ -295,10 +295,11 @@ impl KynexApp {
     /// The provider a session in `cwd` starts on: a reopened one (`id`) the
     /// provider it ran on, Anthropic if that isn't set up any more; a new one
     /// its folder's.
-    fn start_launch(&mut self, cwd: &Path, id: Option<&str>) -> Launch {
+    fn start_launch(&mut self, cwd: &Path, settings: &Path, id: Option<&str>) -> Launch {
         let provider = match id {
             Some(id) => self.groups_for(cwd).provider_of(id),
-            None => self.new_session_provider(cwd),
+            // A new one: its settings folder's pick (the project's, for a context).
+            None => self.new_session_provider(settings),
         };
         self.launch_in(cwd, provider)
     }
@@ -314,14 +315,16 @@ impl KynexApp {
     /// and the model pinned to it, else its folder's for that provider.
     pub(super) fn start_session(&mut self, s: &mut Session) {
         let id = s.session_id.clone().filter(|_| !s.is_new());
-        let (launch, models) = self.start_parts(&s.cwd, id.as_deref());
+        let settings = s.settings_folder().to_path_buf();
+        let (launch, models) = self.start_parts(&s.cwd, &settings, id.as_deref());
         apply_start(s, launch, &models);
     }
 
-    /// What [`apply_start`] needs for a session in `cwd` (reopened if `id`).
-    pub(super) fn start_parts(&mut self, cwd: &Path, id: Option<&str>) -> (Launch, [String; 4]) {
-        let models = self.folder_models(cwd);
-        (self.start_launch(cwd, id), models)
+    /// What [`apply_start`] needs for a session in `cwd` (reopened if `id`) that runs
+    /// under the settings of `settings` (its own folder, or its project's).
+    pub(super) fn start_parts(&mut self, cwd: &Path, settings: &Path, id: Option<&str>) -> (Launch, [String; 4]) {
+        let models = self.folder_models(settings);
+        (self.start_launch(cwd, settings, id), models)
     }
 
     /// Re-picks the provider and model of every open session that hasn't
@@ -334,8 +337,8 @@ impl KynexApp {
             .flat_map(|live| live.sessions.iter())
             .filter(|s| s.is_new())
             .map(|s| {
-                let models = self.folder_models(&s.cwd);
-                let launch = self.launch_in(&s.cwd, self.new_session_provider(&s.cwd));
+                let models = self.folder_models(s.settings_folder());
+                let launch = self.launch_in(&s.cwd, self.new_session_provider(s.settings_folder()));
                 (s.uid, launch, models)
             })
             .collect();
