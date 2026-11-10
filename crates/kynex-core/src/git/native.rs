@@ -72,18 +72,27 @@ pub fn worktrees(root: &Path) -> Result<Option<Vec<Worktree>>, String> {
     Ok(Some(out))
 }
 
+/// `path` with symlinks and short names resolved, as git prints it; as it is when that
+/// can't be done (the folder is gone). Windows' `\\?\C:\x` form is written `C:\x`.
+fn real_path(path: std::path::PathBuf) -> std::path::PathBuf {
+    let Ok(real) = path.canonicalize() else { return path };
+    let text = real.to_string_lossy();
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with(r"UNC\") => std::path::PathBuf::from(rest),
+        _ => real,
+    }
+}
+
 fn worktree(repo: &gix::Repository, path: std::path::PathBuf, main: bool, locked: bool, prunable: bool) -> Worktree {
     // As the CLI's output is read: the short commit is seven characters, an unborn branch has all zeros.
     let head = repo.head_id().map_or_else(|_| "0000000".to_string(), |id| id.to_string().chars().take(7).collect());
     let branch = repo.head_name().ok().flatten().map(|name| name.shorten().to_string());
     // Git prints `/` everywhere; the rest of Kynex has paths the way the OS writes them.
-    // Git reports the real path (`/private/var/…` for a `/var/…` that's a symlink on macOS),
-    // so the rest of Kynex, which compares these with paths git gave before, sees the same.
-    let path = if cfg!(windows) {
-        std::path::PathBuf::from(path.to_string_lossy().replace('/', "\\"))
-    } else {
-        path.canonicalize().unwrap_or(path)
-    };
+    // Git reports the real path (`/private/var/…` for a `/var/…` that's a symlink on macOS, the
+    // long name for an 8.3 short one on Windows), so the rest of Kynex, which compares these
+    // with paths git gave before, sees the same.
+    let path = real_path(path);
+    let path = if cfg!(windows) { std::path::PathBuf::from(path.to_string_lossy().replace('/', "\\")) } else { path };
     Worktree { path, branch, head, main, locked, prunable, ..Default::default() }
 }
 
