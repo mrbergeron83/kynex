@@ -27,7 +27,7 @@ pub fn dir(project: &Path) -> PathBuf {
 
 /// Readable but unique: the folder's name plus a hash of its full path, so two
 /// repos that are both called `api` don't share settings.
-fn folder_name(project: &Path) -> String {
+pub(crate) fn folder_name(project: &Path) -> String {
     let name = project.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let mut slug: String =
         name.chars()

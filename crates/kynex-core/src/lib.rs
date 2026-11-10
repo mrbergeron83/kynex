@@ -13,6 +13,7 @@ pub mod chief;
 pub mod cli;
 pub mod column;
 pub mod commands;
+pub mod context;
 pub mod dates;
 pub mod delegate;
 pub mod edit_lines;
