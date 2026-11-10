@@ -85,6 +85,11 @@ enum Cmd {
     PrevTab,
     NextContext,
     PrevContext,
+    SplitRight,
+    SplitDown,
+    ClosePane,
+    NextPane,
+    PrevPane,
     ToggleSessions,
     ToggleTerminal,
     ToggleTimeline,
@@ -153,6 +158,11 @@ fn commands() -> Vec<(Cmd, String, &'static str)> {
         (Cmd::PrevTab, "Previous tab", "project"),
         (Cmd::NextContext, "Next context", "worktree checkout branch"),
         (Cmd::PrevContext, "Previous context", "worktree checkout branch"),
+        (Cmd::SplitRight, "Split pane right", "tile side by side new session"),
+        (Cmd::SplitDown, "Split pane down", "tile below new session"),
+        (Cmd::ClosePane, "Close pane", "tile split"),
+        (Cmd::NextPane, "Next pane", "tile focus split"),
+        (Cmd::PrevPane, "Previous pane", "tile focus split"),
         (Cmd::ToggleSessions, "Toggle sessions panel", "sidebar list"),
         (Cmd::ToggleTerminal, "Toggle terminal", "shell panel console"),
         (Cmd::ToggleTimeline, "Toggle timeline", "turns steps panel"),
@@ -395,6 +405,11 @@ impl KynexApp {
             return window.dispatch_action(action, cx);
         }
         match cmd {
+            Cmd::SplitRight => self.split_pane(kynex_core::layout::Axis::Row, window, cx),
+            Cmd::SplitDown => self.split_pane(kynex_core::layout::Axis::Column, window, cx),
+            Cmd::ClosePane => self.close_pane(window, cx),
+            Cmd::NextPane => self.step_pane(1, window, cx),
+            Cmd::PrevPane => self.step_pane(-1, window, cx),
             Cmd::Compact => self.compact(self.focused_key(), cx),
             Cmd::Settings(section) => {
                 self.app_settings = None;

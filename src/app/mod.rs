@@ -11,6 +11,7 @@
 //! | `title_bar.rs`      | title bar and project tabs                           |
 //! | `footer.rs`         | status footer: Kynex's CPU / memory, meters, update  |
 //! | `status.rs`         | the footer's usage-limits meter and update pill      |
+//! | `tiles.rs`          | The split panes of a context: layouts, focus, drawing |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_groups.rs` | session groups and the archive, their menus          |
@@ -125,6 +126,7 @@ mod storage;
 mod storage_list;
 mod tasks;
 mod terminal_dock;
+mod tiles;
 pub(crate) mod timeline;
 mod title_bar;
 mod titles;
@@ -217,8 +219,16 @@ pub struct KynexApp {
     /// Unsent messages of the sessions not shown, by draft key; and the shown
     /// session's uid and draft key, whose message is in the composer.
     drafts: HashMap<String, Draft>,
-    /// The one pane: the message box and what goes with it (`src/pane/`).
+    /// The focused pane: the message box and what goes with it (`src/pane/`). Every
+    /// other pane's is parked until it is focused (`tiles.rs`).
     pane: SessionPane,
+    pane_id: kynex_core::layout::PaneId,
+    next_pane: kynex_core::layout::PaneId,
+    parked: HashMap<kynex_core::layout::PaneId, SessionPane>,
+    /// Each context's panes, by the context's folder.
+    tiles: HashMap<PathBuf, kynex_core::tiling::Tiling>,
+    /// Where the panes are drawn, as last laid out.
+    tile_area: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     palette: Option<PaletteView>,
     scratch: Option<ScratchModal>,
     /// When each session's files were last opened, for the composer's badge,
@@ -362,20 +372,7 @@ impl KynexApp {
         chat.wake = wake.clone();
         let chat = Live::of(chat);
 
-        let composer = cx.new(|cx| TextInput::new(cx).multiline());
-        cx.subscribe_in(&composer, window, |this, _, ev, window, cx| match ev {
-            InputEvent::Submit => this.send(window, cx),
-            InputEvent::PasteImages(images) => {
-                for i in images {
-                    this.attach_bytes(&i.bytes, cx);
-                }
-            }
-            InputEvent::Changed => this.warm_shown(),
-        })
-        .detach();
-        // Focusing the message box means a message is coming: start Claude now.
-        let composer_focus = composer.read(cx).focus_handle(cx);
-        cx.on_focus(&composer_focus, window, |this, _, _| this.warm_shown()).detach();
+        let composer = Self::new_composer(1, window, cx);
         let login_code = cx.new(|cx| TextInput::new(cx).mono().placeholder("Paste the code here"));
         cx.subscribe(&login_code, |this, _, ev, cx| {
             if let InputEvent::Submit = ev {
@@ -469,7 +466,7 @@ impl KynexApp {
         })
         .detach();
         cx.on_app_quit(|this, cx| {
-            this.stash_draft(cx);
+            this.stash_all_drafts(cx);
             this.save();
             async {}
         })
@@ -514,6 +511,11 @@ impl KynexApp {
             delegate_rule,
             drafts: HashMap::new(),
             pane: SessionPane::new(composer),
+            pane_id: 1,
+            next_pane: 2,
+            parked: HashMap::new(),
+            tiles: HashMap::new(),
+            tile_area: Default::default(),
             palette: None,
             scratch: None,
             scratch_seen: HashMap::new(),

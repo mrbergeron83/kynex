@@ -119,7 +119,8 @@ A cargo workspace with two crates:
     (the table at the top of `app/mod.rs` lists them: title bar, sessions panel, transcript,
     composer, prompts, menus, settings modal, setup screen…)
   - `pane/` — `SessionPane`: one session view's composer and what goes with it (attachments,
-    slash / mention popups, find, history search, rewind); `KynexApp` holds one as `pane`
+    slash / mention popups, find, history search, rewind); `KynexApp` holds the focused pane's as
+    `pane` and parks the others (`app/tiles.rs`, over `kynex_core::tiling`, a context's layout)
   - `prompt/` — `PromptView`: permission / plan / question prompts in the composer's place,
     Claude Code-style (cursor, numbered choices, a tab per question); `questions.rs` draws the
     questions, whose state is `kynex_core::questions::Form`; `preview.rs` has titles and diffs

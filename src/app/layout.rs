@@ -4,6 +4,8 @@
 
 use gpui::{AnyElement, Context, MouseButton, MouseMoveEvent, Stateful, Window, div, prelude::*};
 
+use kynex_core::live::Key;
+
 use super::KynexApp;
 use super::keys::{self, CopySelection, copy_selection};
 use super::state::{Active, View};
@@ -47,6 +49,14 @@ impl KynexApp {
     pub(super) fn render_code_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let key = self.focused_key();
+        // Several panes: each draws its own header and conversation.
+        let tiled = self.render_panes(window, cx);
+        let single = tiled.is_none();
+        let header = key.filter(|_| single).and_then(|key| self.render_session_header(key, cx));
+        let body = match tiled {
+            Some(tiles) => tiles,
+            None => self.render_pane_body(key, true, window, cx),
+        };
         div()
             .flex()
             .flex_1()
@@ -60,41 +70,50 @@ impl KynexApp {
                     .min_w_0()
                     .bg(t.editor)
                     .child(self.render_toolbar(cx))
-                    .children(key.and_then(|key| self.render_session_header(key, cx)))
+                    .children(header)
                     .children(self.render_reporter(window, cx))
-                    // The timeline runs the full height beside the transcript
-                    // and the composer under it, down to the terminal dock.
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_h_0()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(
-                                        div()
-                                            .relative()
-                                            .flex()
-                                            .flex_col()
-                                            .flex_1()
-                                            .min_h_0()
-                                            .child(match key {
-                                                Some(key) => self.render_thread(key, window, cx),
-                                                None => self.render_empty_thread(cx),
-                                            })
-                                            .children(self.render_find(cx))
-                                            .child(self.toast_room_probe()),
-                                    )
-                                    .child(self.render_composer(key, window, cx)),
-                            )
-                            .children(key.and_then(|key| self.render_timeline(key, cx))),
-                    )
+                    .child(body)
                     .children(self.render_terminal_dock(window, cx)),
             )
+            .into_any_element()
+    }
+
+    /// One pane's conversation: transcript and composer, the timeline running the full
+    /// height beside them. `focused` panes also draw the find bar.
+    pub(super) fn render_pane_body(
+        &mut self,
+        key: Option<Key>,
+        focused: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .flex()
+            .flex_1()
+            .min_h_0()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_h_0()
+                            .child(match key {
+                                Some(key) => self.render_thread(key, window, cx),
+                                None => self.render_empty_thread(cx),
+                            })
+                            .children(focused.then(|| self.render_find(cx)).flatten())
+                            .child(self.toast_room_probe()),
+                    )
+                    .child(self.render_composer(key, window, cx)),
+            )
+            .children(key.and_then(|key| self.render_timeline(key, cx)))
             .into_any_element()
     }
 
@@ -228,6 +247,7 @@ impl KynexApp {
         {
             s.finished = false;
         }
+        self.sync_tiles(window, cx);
         self.sync_attention(cx);
         self.sync_awake();
         let key = self.focused_key();

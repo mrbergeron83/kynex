@@ -185,7 +185,7 @@ impl KynexApp {
     /// Gives a session the model it starts on: the one pinned to it (restored
     /// from its folder's sessions when it resumes), else its folder's; and a
     /// new one its provider.
-    fn start_model(&mut self, s: &mut Session) {
+    pub(super) fn start_model(&mut self, s: &mut Session) {
         let cwd = s.cwd.clone();
         if let Some(id) = &s.session_id
             && s.own_model.is_none()
