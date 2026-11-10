@@ -24,6 +24,8 @@ actions!(
         CloseTab,
         NextTab,
         PrevTab,
+        NextContext,
+        PrevContext,
         MoveTabLeft,
         MoveTabRight,
         ToggleSessions,
@@ -75,7 +77,7 @@ const LIST_KEYS: [(&str, &str); 6] = [
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 35] = [
+const SHORTCUTS: [(&str, &str); 37] = [
     ("command_palette", "secondary-k"),
     ("find", "secondary-f"),
     ("open_project", "secondary-o"),
@@ -88,6 +90,9 @@ const SHORTCUTS: [(&str, &str); 35] = [
     // Ctrl+Shift+] / [ as well, where they don't already belong to the line above.
     ("next_session_too", if cfg!(target_os = "macos") { "" } else { "ctrl-shift-]" }),
     ("prev_session_too", if cfg!(target_os = "macos") { "" } else { "ctrl-shift-[" }),
+    // The project's checkouts (contexts), as sessions are with Ctrl+PageDown / Up.
+    ("next_context", "secondary-alt-pagedown"),
+    ("prev_context", "secondary-alt-pageup"),
     ("close_tab", "secondary-w"),
     ("next_tab", "ctrl-tab"),
     ("prev_tab", "ctrl-shift-tab"),
@@ -208,6 +213,8 @@ pub fn bind_keys(cx: &mut App) {
             "new_session" => KeyBinding::new(keys, NewSession, c),
             "next_session" | "next_session_too" => KeyBinding::new(keys, NextSession, c),
             "prev_session" | "prev_session_too" => KeyBinding::new(keys, PrevSession, c),
+            "next_context" => KeyBinding::new(keys, NextContext, c),
+            "prev_context" => KeyBinding::new(keys, PrevContext, c),
             "close_tab" => KeyBinding::new(keys, CloseTab, c),
             "next_tab" => KeyBinding::new(keys, NextTab, c),
             "prev_tab" => KeyBinding::new(keys, PrevTab, c),
@@ -391,6 +398,14 @@ impl KynexApp {
         let n = self.tab_count();
         let t = (self.tab_pos() + n - 1) % n;
         self.jump(t, window, cx);
+    }
+
+    pub(super) fn next_context(&mut self, _: &NextContext, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_context(1, cx);
+    }
+
+    pub(super) fn prev_context(&mut self, _: &PrevContext, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_context(-1, cx);
     }
 
     pub(super) fn toggle_sessions(&mut self, _: &ToggleSessions, _: &mut Window, cx: &mut Context<Self>) {

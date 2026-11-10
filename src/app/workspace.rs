@@ -41,11 +41,22 @@ impl KynexApp {
             changed = true;
         }
         for p in &mut self.saved.projects {
-            if let Some(s) = self.code.get(&p.path).and_then(Live::current)
-                && p.session_id != started(s)
-            {
-                p.session_id = started(s);
-                changed = true;
+            let Some(s) = self.code.get(&p.path).and_then(Live::current) else { continue };
+            if kynex_core::context::same_folder(&s.cwd, &p.path) {
+                if p.session_id != started(s) {
+                    p.session_id = started(s);
+                    changed = true;
+                }
+            } else if let Some(id) = started(s) {
+                // A session in another context (a worktree) can't be resumed from the
+                // project's folder: it's remembered for its own context instead.
+                let c =
+                    self.contexts.entry(p.path.clone()).or_insert_with(|| kynex_core::context::Contexts::load(&p.path));
+                if c.remember(&s.cwd, Some(&id))
+                    && let Err(e) = c.save(&p.path)
+                {
+                    eprintln!("{e}");
+                }
             }
         }
         if changed {

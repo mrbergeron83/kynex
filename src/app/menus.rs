@@ -32,6 +32,8 @@ pub enum Menu {
     Sessions(Vec<String>),
     /// The sessions panel header's menu: tidying old sessions.
     SessionsPanel,
+    /// A context's right-click menu, by its folder.
+    Context(std::path::PathBuf),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -396,6 +398,27 @@ impl KynexApp {
             Menu::Group(i) => items = self.group_menu_items(*i, cx),
             Menu::Sessions(ids) => items = self.sessions_menu_items(ids, cx),
             Menu::SessionsPanel => items = self.sessions_panel_menu_items(cx),
+            Menu::Context(path) => {
+                for (n, (label, opener)) in [
+                    ("Open in VS Code", Opener::Code),
+                    ("Open in file manager", Opener::Explorer),
+                    ("Open in an external terminal", Opener::Terminal),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let path = path.clone();
+                    items.push(
+                        menu_item(("context-menu", n), label, false, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.open_in(opener, &path);
+                                this.menu = None;
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
         }
         Some(
             deferred(

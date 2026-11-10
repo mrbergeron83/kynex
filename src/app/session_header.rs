@@ -297,7 +297,7 @@ fn mcp_status(servers: &[mcp::Server], t: &Palette, cx: &mut Context<KynexApp>) 
 
 /// A worktree's uncommitted changes and distance from its upstream, for a
 /// branch chip: `3 files +42 −7 ↑2 ↓1`; nothing when it's clean and in sync.
-fn git_stats(w: &Worktree, t: &Palette) -> Vec<AnyElement> {
+pub(super) fn git_stats(w: &Worktree, t: &Palette) -> Vec<AnyElement> {
     let mut out = Vec::new();
     let stat = |text: String, color| div().font_family(mono()).text_color(color).child(text).into_any_element();
     if let Some(n) = w.changes.filter(|&n| n > 0) {

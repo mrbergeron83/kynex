@@ -26,6 +26,7 @@
 //! | `find.rs`           | find in the transcript (Ctrl+F)                      |
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
+//! | `contexts.rs`       | the contexts section of the sessions column          |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, from the header    |
 //! | `scratch_modal.rs`  | the file explorer in a modal: session or project     |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
@@ -79,6 +80,7 @@ mod background;
 mod chief;
 mod chief_view;
 mod composer;
+mod contexts;
 mod delegate_view;
 mod drafts;
 mod extensions;
@@ -182,6 +184,8 @@ pub struct KynexApp {
     git_modal: Option<PathBuf>,
     /// Each open project's git worktrees, kept fresh in the background.
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
+    /// Each project's saved contexts (selection, sessions, order), read on first use.
+    contexts: HashMap<PathBuf, kynex_core::context::Contexts>,
     /// Each open project's colour settings, read once.
     appearances: HashMap<PathBuf, kynex_core::project::Appearance>,
     /// Each open project's Claude settings (mode, effort, folders), read once and
@@ -508,6 +512,7 @@ impl KynexApp {
             git: HashMap::new(),
             git_modal: None,
             worktrees: HashMap::new(),
+            contexts: HashMap::new(),
             terminals: HashMap::new(),
             appearances: HashMap::new(),
             claude_settings: HashMap::new(),

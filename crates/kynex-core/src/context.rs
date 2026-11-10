@@ -32,9 +32,15 @@ impl Context {
         Self { path: path.to_path_buf(), branch: None, main: true, label: folder_label(path) }
     }
 
-    fn is(&self, path: &Path) -> bool {
-        normalize(&self.path) == normalize(path)
+    /// Whether this context's folder is `path` (slashes and, on Windows, case aside).
+    pub fn at(&self, path: &Path) -> bool {
+        same_folder(&self.path, path)
     }
+}
+
+/// Whether two paths name the same folder (slashes and, on Windows, case aside).
+pub fn same_folder(a: &Path, b: &Path) -> bool {
+    normalize(a) == normalize(b)
 }
 
 fn folder_label(path: &Path) -> String {
@@ -141,7 +147,7 @@ impl Contexts {
     pub fn selected_in<'a>(&self, list: &'a [Context]) -> &'a Context {
         self.selected
             .as_deref()
-            .and_then(|s| list.iter().find(|c| c.is(s)))
+            .and_then(|s| list.iter().find(|c| c.at(s)))
             .or_else(|| list.iter().find(|c| c.main))
             .unwrap_or(&list[0])
     }
@@ -159,7 +165,7 @@ impl Contexts {
     pub fn ordered(&self, mut list: Vec<Context>) -> Vec<Context> {
         let mut out = Vec::with_capacity(list.len());
         for p in &self.order {
-            if let Some(i) = list.iter().position(|c| c.is(p)) {
+            if let Some(i) = list.iter().position(|c| c.at(p)) {
                 out.push(list.remove(i));
             }
         }
@@ -330,6 +336,13 @@ mod tests {
         assert!(!c.adopt_legacy_session(main, Some("other")));
         assert_eq!(c.session(main), Some("old"));
         assert!(!Contexts::default().adopt_legacy_session(main, None));
+    }
+
+    #[test]
+    fn same_folder_ignores_trailing_slashes() {
+        assert!(same_folder(Path::new("/work/app/"), Path::new("/work/app")));
+        assert!(!same_folder(Path::new("/work/app"), Path::new("/work/api")));
+        assert!(sample()[1].at(Path::new("/data/wt/feat-x/")));
     }
 
     #[test]

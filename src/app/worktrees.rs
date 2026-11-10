@@ -1,6 +1,7 @@
-//! The project's git worktrees, at the bottom of the sessions panel: one row
-//! per worktree with its branch, changed files, distance from main, and
-//! whether a session is working in it. Clicking one opens it as a project tab.
+//! The project's git worktrees, kept up to date in the background: their
+//! branch, changed files and distance from main, for the contexts section of the
+//! sessions panel (`contexts.rs`) and the session header. A worktree can also be
+//! opened as a project tab, on its Git view.
 
 use kynex_core::live::Key;
 use std::path::{Path, PathBuf};

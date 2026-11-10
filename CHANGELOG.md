@@ -5,6 +5,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Contexts: a project with git worktrees lists each checkout at the top of the sessions column,
+  with its branch, changes and a lamp for the sessions working in it. Pick one to switch to its
+  sessions, or step through them with Ctrl+Alt+PageDown / PageUp (Next / Previous context in the
+  palette, where they're also listed); right-click one to open it in your editor, file manager or
+  terminal.
+
 ## [0.0.26] - 2026-11-09
 
 ### Added

@@ -179,6 +179,8 @@ impl KynexApp {
             .on_action(cx.listener(Self::next_session))
             .on_action(cx.listener(Self::prev_session))
             .on_action(cx.listener(Self::close_tab))
+            .on_action(cx.listener(Self::next_context))
+            .on_action(cx.listener(Self::prev_context))
             .on_action(cx.listener(Self::next_tab))
             .on_action(cx.listener(Self::prev_tab))
             .on_action(cx.listener(Self::move_tab_left))
