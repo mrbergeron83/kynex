@@ -32,6 +32,11 @@ impl Context {
         Self { path: path.to_path_buf(), branch: None, main: true, label: folder_label(path) }
     }
 
+    /// A KNX Ops worker's checkout (its own branch, made by the chief of staff).
+    pub fn worker(&self) -> bool {
+        self.branch.as_deref() == Some(crate::chief::BRANCH)
+    }
+
     /// Whether this context's folder is `path` (slashes and, on Windows, case aside).
     pub fn at(&self, path: &Path) -> bool {
         same_folder(&self.path, path)
@@ -89,6 +94,34 @@ pub fn worktrees_dir(project: &Path) -> PathBuf {
 /// branches can share a slug (`feat/x`, `feat-x`), so the caller checks the folder is free.
 pub fn new_worktree_path(project: &Path, branch: &str) -> PathBuf {
     worktrees_dir(project).join(branch_slug(branch))
+}
+
+/// Makes a context: a worktree on `branch` (the existing branch of that name, or a new
+/// one from `base`) under [`worktrees_dir`]. Returns its folder. Blocking: runs `git`.
+pub fn create(project: &Path, branch: &str, base: Option<&str>) -> Result<PathBuf, String> {
+    let path = new_worktree_path(project, branch);
+    create_at(project, &path, branch, base)?;
+    Ok(path)
+}
+
+fn create_at(project: &Path, path: &Path, branch: &str, base: Option<&str>) -> Result<(), String> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("Name the branch for the new context".into());
+    }
+    if path.exists() {
+        return Err(format!("{} already exists; pick another branch name", path.display()));
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Couldn't create {}: {e}", parent.display()))?;
+    }
+    git::add_worktree_from(project, path, branch, base)
+}
+
+/// Removes a context's worktree; its branch stays. Git refuses while it has
+/// changes, unless `force`. Blocking: runs `git`.
+pub fn remove(project: &Path, path: &Path, force: bool) -> Result<(), String> {
+    git::remove_worktree(project, path, force)
 }
 
 /// A branch name as a folder name: lower case (one folder on case-insensitive disks),
@@ -336,6 +369,52 @@ mod tests {
         assert!(!c.adopt_legacy_session(main, Some("other")));
         assert_eq!(c.session(main), Some("old"));
         assert!(!Contexts::default().adopt_legacy_session(main, None));
+    }
+
+    fn git_in(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[test]
+    fn creates_and_removes_a_context() {
+        let dir = std::env::temp_dir().join(format!("kynex-context-wt-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git_in(&repo, &["init", "-q", "-b", "main"]);
+        git_in(&repo, &["commit", "-q", "--allow-empty", "-m", "first"]);
+
+        let wt = dir.join("worktrees").join("feat-x");
+        create_at(&repo, &wt, "feat/x", Some("main")).unwrap();
+        assert!(wt.is_dir());
+        let list = list(&repo);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[1].branch.as_deref(), Some("feat/x"));
+        // The folder is taken, and a name is needed.
+        assert!(create_at(&repo, &wt, "feat/y", None).is_err());
+        assert!(create_at(&repo, &dir.join("other"), "  ", None).is_err());
+
+        remove(&repo, &wt, false).unwrap();
+        let after = super::list(&repo);
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(after.len(), 1);
+        assert!(after[0].main);
+    }
+
+    #[test]
+    fn a_chief_worker_branch_is_a_worker_context() {
+        let list = from_worktrees(
+            Path::new("/work/app"),
+            &[wt("/work/app", Some("main"), true), wt("/work/app-chief-worker", Some("chief-worker"), false)],
+        );
+        assert!(!list[0].worker());
+        assert!(list[1].worker());
     }
 
     #[test]

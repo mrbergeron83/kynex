@@ -16,7 +16,7 @@ use super::menus::Menu;
 use super::session_header::git_stats;
 use crate::theme::{mono, theme};
 use crate::ui::wash::row_wash;
-use crate::ui::{Lamp, Tooltip, lamp, px, section_label};
+use crate::ui::{Icon, Lamp, Tooltip, icon_button, lamp, px, section_label};
 
 /// A checkout with the worktree it came from (for its changes).
 type Entry = (context::Context, Option<Worktree>);
@@ -44,7 +44,7 @@ impl KynexApp {
     }
 
     /// The code project in the active tab, if it is one.
-    fn context_project(&self) -> Option<PathBuf> {
+    pub(super) fn context_project(&self) -> Option<PathBuf> {
         self.active_project().map(|p| p.path.clone())
     }
 
@@ -92,14 +92,16 @@ impl KynexApp {
         self.select_context(&list[next].0.path, cx);
     }
 
-    /// The section: a header and a row per context. Nothing for a project with a
-    /// single checkout, which has no other context to tell apart.
+    /// The section: a header with "New context" and a row per context. Nothing for a
+    /// folder that isn't a git repository.
     pub(super) fn render_contexts(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let project = self.context_project()?;
-        let list = self.contexts_of(&project, cx);
-        if list.len() < 2 {
+        // A git repository, which is where a context can be made; git read it once
+        // the worktree list isn't empty.
+        if self.worktrees(&project, cx).read(cx).list.is_empty() {
             return None;
         }
+        let list = self.contexts_of(&project, cx);
         let t = theme(cx).clone();
         let cwd = self.code.get(&project)?.current()?.cwd.clone();
         let colour = self.project_colour(&project, &t).unwrap_or(t.accent);
@@ -123,8 +125,9 @@ impl KynexApp {
                 let path = c.path.clone();
                 let menu_path = c.path.clone();
                 let stats = worktree.as_ref().map(|w| git_stats(w, &t)).unwrap_or_default();
-                // The branch, when the folder's name doesn't already say it.
-                let branch = c.branch.clone().filter(|b| *b != c.label);
+                // The branch, when the folder's name doesn't already say it; a KNX Ops worker's says so.
+                let branch =
+                    if c.worker() { Some("worker".to_string()) } else { c.branch.clone().filter(|b| *b != c.label) };
                 div()
                     .id(("context", n))
                     .flex()
@@ -179,6 +182,7 @@ impl KynexApp {
                     .into_any_element()
             })
             .collect();
+        let forms = self.render_context_forms(cx);
         Some(
             div()
                 .flex()
@@ -188,8 +192,19 @@ impl KynexApp {
                 .pb_1p5()
                 .border_b_1()
                 .border_color(t.border_variant)
-                .child(section_label("Contexts", cx).px_2().pt_1p5().pb_1())
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .child(section_label("Contexts", cx).flex_1().px_2().pt_1p5().pb_1())
+                        .child(
+                            icon_button("new-context", Icon::Plus, cx)
+                                .tooltip(Tooltip::text("New context: a worktree on a branch"))
+                                .on_click(cx.listener(|this, _, window, cx| this.open_new_context(window, cx))),
+                        ),
+                )
                 .children(rows)
+                .children(forms)
                 .into_any_element(),
         )
     }

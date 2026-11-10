@@ -12,6 +12,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
   sessions, or step through them with Ctrl+Alt+PageDown / PageUp (Next / Previous context in the
   palette, where they're also listed); right-click one to open it in your editor, file manager or
   terminal.
+- New context: the + beside Contexts makes a git worktree on a branch, new (off the default
+  branch) or existing, and opens it with a new session. Right-click a context to remove its
+  worktree (the branch stays); Kynex asks first when it has changes or a session still working.
+  KNX Ops workers' worktrees show as contexts, marked "worker".
+
+### Changed
+
+- A git worktree is a context of its project, no longer a project tab of its own: "Open as tab"
+  in a worktree's Git view switches to that context, and worktrees open as tabs by an earlier
+  version fold into their project when Kynex starts.
 
 ## [0.0.26] - 2026-11-09
 

@@ -33,7 +33,10 @@ impl KynexApp {
         cx.subscribe(&g, |this, _, ev: &GitEvent, cx| match ev {
             GitEvent::OpenFolder(folder) => {
                 this.git_modal = None;
-                this.add_project(folder.clone());
+                // A worktree of an open project is one of its contexts, not a tab.
+                if !this.open_as_context(folder, cx) {
+                    this.add_project(folder.clone());
+                }
                 cx.notify();
             }
         })

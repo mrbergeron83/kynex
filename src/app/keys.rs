@@ -424,6 +424,7 @@ impl KynexApp {
             || self.app_settings.take().is_some()
             || self.extensions.take().is_some()
             || self.cancel_rename()
+            || self.cancel_new_context()
         {
             return cx.notify();
         }

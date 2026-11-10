@@ -75,6 +75,12 @@ pub fn default_worktree_path(root: &Path, branch: &str) -> PathBuf {
 /// Adds a worktree at `path` on `branch`: the existing local branch, or a new
 /// one from HEAD when there's none by that name.
 pub fn add_worktree(root: &Path, path: &Path, branch: &str) -> Result<(), String> {
+    add_worktree_from(root, path, branch, None)
+}
+
+/// [`add_worktree`], where a new branch starts from `base` (a branch, tag or
+/// commit) instead of HEAD. `base` means nothing for a branch that exists.
+pub fn add_worktree_from(root: &Path, path: &Path, branch: &str, base: Option<&str>) -> Result<(), String> {
     let branch = branch.trim();
     let path = path.to_string_lossy();
     if git(root, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}")]).is_ok() {
@@ -82,7 +88,9 @@ pub fn add_worktree(root: &Path, path: &Path, branch: &str) -> Result<(), String
     } else {
         git(root, &["check-ref-format", "--branch", branch])
             .map_err(|_| format!("\"{branch}\" isn't a valid branch name"))?;
-        git(root, &["worktree", "add", "-b", branch, &path]).map(drop)
+        let mut args = vec!["worktree", "add", "-b", branch, &*path];
+        args.extend(base.filter(|b| !b.trim().is_empty()));
+        git(root, &args).map(drop)
     }
 }
 

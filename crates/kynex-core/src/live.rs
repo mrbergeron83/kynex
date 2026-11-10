@@ -137,6 +137,23 @@ impl Live {
         closed
     }
 
+    /// Closes every session `f` picks, working or not (their processes die with
+    /// them; transcripts stay). Returns the uids that closed.
+    pub fn close_where(&mut self, f: impl Fn(&Session) -> bool) -> Vec<Key> {
+        let shown = self.current().map(|s| s.uid);
+        let mut closed = Vec::new();
+        self.sessions.retain(|s| {
+            let gone = f(s);
+            if gone {
+                closed.push(s.uid);
+            }
+            !gone
+        });
+        self.shown.retain(|k| !closed.contains(k));
+        self.active = self.sessions.iter().position(|s| Some(s.uid) == shown).unwrap_or(0);
+        closed
+    }
+
     /// Closes an open session that isn't working (its transcript stays).
     /// Returns whether it closed.
     pub fn close(&mut self, key: Key) -> bool {
@@ -158,6 +175,25 @@ mod tests {
 
     fn session() -> Session {
         Session::new(Kind::Chat, PathBuf::from("."))
+    }
+
+    #[test]
+    fn close_where_closes_even_a_working_session_and_keeps_the_one_shown() {
+        let mut live = Live::default();
+        let mut s: Vec<Session> = (0..3).map(|_| session()).collect();
+        s[0].busy = true;
+        let uids: Vec<Key> = s.iter().map(|s| s.uid).collect();
+        for s in s {
+            live.show(s);
+        }
+        // The first is working, the second idle, the third shown.
+        let closed = live.close_where(|s| s.uid == uids[0]);
+        assert_eq!(closed, [uids[0]]);
+        assert_eq!(live.current().map(|s| s.uid), Some(uids[2]));
+        // Closing the shown one falls back to the first left.
+        assert_eq!(live.close_where(|s| s.uid == uids[2]), [uids[2]]);
+        assert_eq!(live.current().map(|s| s.uid), Some(uids[1]));
+        assert!(live.close_where(|_| false).is_empty());
     }
 
     #[test]

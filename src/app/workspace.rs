@@ -277,7 +277,7 @@ impl KynexApp {
     }
 
     /// Drops the view state of sessions that closed.
-    fn forget(&mut self, closed: &[Key]) {
+    pub(super) fn forget(&mut self, closed: &[Key]) {
         for k in closed {
             self.threads.remove(k);
             self.timelines.remove(k);

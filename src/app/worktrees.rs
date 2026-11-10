@@ -114,8 +114,13 @@ impl KynexApp {
         }
     }
 
-    /// Opens a worktree as a tab, on its Git view, to look at its changes.
+    /// Opens a worktree to look at its changes: its project's context when it has
+    /// one, else a tab on its Git view.
     pub(super) fn open_worktree_changes(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        // A worktree of an open project is one of its contexts: switch to it.
+        if self.open_as_context(&path, cx) {
+            return cx.notify();
+        }
         self.add_project(path);
         // A worktree is another view of a project you have: no setup checklist for it.
         self.setup_for = None;

@@ -28,7 +28,8 @@ pub use log::{Commit, CommitDetail, Ref, RefKind, commit_detail, log};
 pub use ops::{Sync, commit, discard, last_message, stage, stage_all, sync, unstage, unstage_all};
 pub use status::{Change, FileStatus, Head, Status, status};
 pub use worktree::{
-    Worktree, add_worktree, default_worktree_path, list_worktrees, prune_worktrees, remove_worktree, worktree_in,
+    Worktree, add_worktree, add_worktree_from, default_worktree_path, list_worktrees, prune_worktrees, remove_worktree,
+    worktree_in,
 };
 
 /// `git` for `root`, set up to never prompt on a terminal (there is none) and
