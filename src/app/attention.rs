@@ -7,6 +7,7 @@
 use gpui::{Context, SystemNotification, Window};
 use kynex_core::attention::{self, Why};
 use kynex_core::live::Key;
+use kynex_core::toasts::{Action, Toast};
 
 use super::KynexApp;
 
@@ -48,18 +49,46 @@ impl KynexApp {
             .chain(self.code.values().flat_map(|l| l.sessions.iter()))
             .filter_map(|s| Some((s.uid, Why::of(s)?)))
             .collect();
-        if !self.window_active && self.saved.notify {
+        let mut heard = Vec::new();
+        if self.saved.notify {
+            let focused = self.focused_key();
+            let visible: Vec<Key> = self
+                .tiling_scope()
+                .and_then(|(_, cwd, _)| self.tiles.get(&cwd))
+                .map(|t| t.visible().into_iter().map(|(_, k)| k).collect())
+                .unwrap_or_default();
             for &(key, why) in &now {
-                if attention::news(self.wants.get(&key).copied(), Some(why)).is_some() {
-                    let title = self.session_title(key).unwrap_or_else(|| "Kynex".into());
+                if attention::news(self.wants.get(&key).copied(), Some(why)).is_none() {
+                    continue;
+                }
+                let title = self.session_title(key);
+                if !self.window_active {
                     cx.show_system_notification(SystemNotification {
                         tag: tag(key).into(),
-                        title: title.into(),
+                        title: title.unwrap_or_else(|| "Kynex".into()).into(),
                         body: why.body().into(),
                         actions: Vec::new(),
                     });
+                    heard.push(why);
+                } else if !attention::on_screen(key, focused, &visible) {
+                    let project =
+                        self.code.iter().find(|(_, l)| l.sessions.iter().any(|s| s.uid == key)).map(|(p, _)| p);
+                    let detail = match project.and_then(|p| p.file_name()) {
+                        Some(name) => format!("{} · {}", name.to_string_lossy(), why.body()),
+                        None => why.body().to_string(),
+                    };
+                    let toast = if why == Why::Finished { Toast::success("") } else { Toast::warning("") };
+                    let toast = self.toast(toast.detail(detail).session(key).action(Action::GoToSession(key)));
+                    toast.title = title.unwrap_or_else(|| "Another session".into());
+                    heard.push(why);
                 }
             }
+        }
+        if self.saved.notify
+            && self.saved.sounds
+            && let Some(sound) = attention::loudest(heard)
+        {
+            kynex_core::sound::play(sound);
         }
         for key in self.wants.keys().filter(|k| !now.iter().any(|(n, _)| n == *k)) {
             cx.dismiss_system_notification(&tag(*key));

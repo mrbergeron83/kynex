@@ -60,6 +60,7 @@ pub mod secrets;
 pub mod session;
 pub mod session_files;
 pub mod session_log;
+pub mod sound;
 pub mod spent;
 pub mod starters;
 pub mod storage;

@@ -7,6 +7,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- With notifications on, a session you aren't looking at that finishes or needs you shows a toast that takes you
+  there, and an optional sound (Settings → Notifications) plays.
 - The palette (Ctrl+K) groups sessions by project and workspace, with Needs you / Working / Idle / Done
   filters (Tab cycles them), and Ctrl+Shift+A (Cmd+Shift+A on macOS) jumps to the next session that needs you.
 - Herdr-style keys: Ctrl+B then a key splits, moves between, swaps, zooms and resizes panes, and

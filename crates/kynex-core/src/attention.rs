@@ -4,6 +4,7 @@
 //! on Windows, a Dock badge on macOS. Linux has no common badge; nothing there.
 
 use crate::session::Session;
+use crate::sound::Sound;
 
 /// Of sessions in a stable order, each with whether it wants you: the first one after
 /// `current` that does, wrapping round and never `current` itself. With no `current` in the
@@ -54,6 +55,26 @@ impl Why {
 /// Back to nothing, or the same reason as before, says nothing.
 pub fn news(was: Option<Why>, now: Option<Why>) -> Option<Why> {
     now.filter(|n| was != Some(*n))
+}
+
+impl Why {
+    /// The sound that goes with it.
+    pub fn sound(self) -> Sound {
+        match self {
+            Self::Finished => Sound::Done,
+            Self::Answer | Self::Browser => Sound::NeedsYou,
+        }
+    }
+}
+
+/// Whether session `key` is in sight: the focused one, or in a visible pane.
+pub fn on_screen<T: PartialEq + Copy>(key: T, focused: Option<T>, visible: &[T]) -> bool {
+    focused == Some(key) || visible.contains(&key)
+}
+
+/// The sound for a batch of news: "needs you" wins over "done".
+pub fn loudest(whys: impl IntoIterator<Item = Why>) -> Option<Sound> {
+    whys.into_iter().map(Why::sound).max()
 }
 
 /// The process-wide app identity: the Windows AppUserModelID, which the OS
@@ -110,6 +131,18 @@ mod tests {
         s.handle(json!({ "type": "control_request", "request_id": "r", "request": { "subtype": "can_use_tool", "tool_name": "Bash" } }));
         assert_eq!(Why::of(&s), Some(Why::Answer));
         assert!(matches!(s.items.last(), Some(Item::Permission { .. })));
+    }
+
+    #[test]
+    fn needs_you_outranks_done_and_focus_is_on_screen() {
+        use Why::*;
+        assert_eq!(loudest([Finished, Browser, Finished]), Some(Sound::NeedsYou));
+        assert_eq!(loudest([Finished]), Some(Sound::Done));
+        assert_eq!(loudest([]), None);
+        assert!(on_screen(1, Some(1), &[]));
+        assert!(on_screen(2, Some(1), &[1, 2]));
+        assert!(!on_screen(3, Some(1), &[1, 2]));
+        assert!(!on_screen(3, None, &[]));
     }
 
     #[test]

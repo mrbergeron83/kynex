@@ -339,13 +339,14 @@ impl KynexApp {
             ));
 
         let notify = self.saved.notify;
+        let sounds = self.saved.sounds;
         let notifications = div()
             .flex()
             .flex_col()
             .gap_1()
             .child(heading(
                 "Notifications",
-                "While Kynex is in the background. Its icon shows a dot whenever a session needs you.",
+                "A note when a session you aren't looking at finishes or needs you: from the OS while Kynex is in the background, a toast while it's in front. Its icon shows a dot whenever a session needs you.",
                 t,
             ))
             .children([(false, "Off"), (true, "Notify when a session finishes or needs you")].into_iter().map(
@@ -358,7 +359,17 @@ impl KynexApp {
                         },
                     ))
                 },
-            ));
+            ))
+            .child(div().pt_1().text_xs().text_color(t.text_muted).child("Sound"))
+            .children([(false, "Off"), (true, "Play a sound")].into_iter().map(|(on, label)| {
+                choice(("sounds", usize::from(on)), sounds == on, label.into(), t).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.saved.sounds = on;
+                        this.save();
+                        cx.notify();
+                    },
+                ))
+            }));
 
         let keep = self.saved.keep_awake;
         let awake = div()

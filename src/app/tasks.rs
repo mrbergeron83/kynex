@@ -64,6 +64,14 @@ impl KynexApp {
         };
         let Some(target) = target else { return };
         if let Active::Project(i) = target
+            && let Some(project) = self.saved.projects.get(i).map(|p| p.path.clone())
+            && let Some(cwd) =
+                self.code.get(&project).and_then(|l| l.sessions.iter().find(|s| s.uid == key)).map(|s| s.cwd.clone())
+        {
+            self.reveal_session(&project, &cwd, super::goto::Which::Open(key), window, cx);
+            return;
+        }
+        if let Active::Project(i) = target
             && let Some(p) = self.saved.projects.get_mut(i)
         {
             p.view = View::Code;

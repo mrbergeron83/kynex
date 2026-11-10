@@ -98,6 +98,8 @@ pub struct Saved {
     /// An OS notification when a session finishes or needs you while Kynex
     /// is in the background. Off unless turned on.
     pub notify: bool,
+    /// A sound with those notes and toasts. Off unless turned on, and only with `notify`.
+    pub sounds: bool,
     /// Kynex's shortcuts from an older `install.ps1` got its app ID (Windows; once).
     pub shortcuts_stamped: bool,
     /// How wide the transcript and composer are.
@@ -160,6 +162,7 @@ impl Default for Saved {
             name_past_sessions: false,
             delegate: true,
             notify: false,
+            sounds: false,
             shortcuts_stamped: false,
             column: ColumnWidth::default(),
             tiles: Default::default(),
