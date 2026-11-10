@@ -77,8 +77,8 @@ impl KynexApp {
     }
 
     /// The running tasks over the composer, each with Watch when its output is known.
-    pub(super) fn render_running_tasks(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let session = self.active_session()?;
+    pub(super) fn render_running_tasks(&mut self, key: Key, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let session = self.session_by_key(key)?;
         if !session.has_tasks() {
             return None;
         }
@@ -111,7 +111,7 @@ impl KynexApp {
                         .child("Stop")
                         .tooltip(Tooltip::text(format!("Stop this {}", what.to_lowercase())))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(s) = this.session_mut() {
+                            if let Some(s) = this.session_for(key) {
                                 s.stop_task(&id);
                             }
                             cx.notify();
@@ -160,8 +160,8 @@ impl KynexApp {
     /// The subagents of the turn in progress: a line counting them, then one row
     /// each (working ones first, at most [`AGENT_ROWS`]) with its state, agent,
     /// task and time. Gone when the turn ends; the transcript keeps them.
-    pub(super) fn render_turn_agents(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let session = self.active_session()?;
+    pub(super) fn render_turn_agents(&mut self, key: Key, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let session = self.session_by_key(key)?;
         if !session.busy {
             return None;
         }

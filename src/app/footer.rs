@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use gpui::{Context, div, prelude::*};
+use kynex_core::live::Key;
 use kynex_core::resources::Sampler;
 
 use super::KynexApp;
@@ -45,7 +46,7 @@ impl KynexApp {
         .detach();
     }
 
-    pub(super) fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub(super) fn render_footer(&self, key: Option<Key>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         let resources = self.resources.as_ref().filter(|u| !u.processes.is_empty()).map(|u| {
             div()
@@ -69,7 +70,7 @@ impl KynexApp {
             .text_xs()
             .children(resources)
             .child(div().flex_1())
-            .children(self.render_openrouter_credit(cx))
+            .children(self.render_openrouter_credit(key, cx))
             .children(self.render_usage(cx))
             .children(self.render_update_pill(cx))
     }

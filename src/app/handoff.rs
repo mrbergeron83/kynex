@@ -5,6 +5,7 @@
 
 use crate::ui::px;
 use gpui::{AnyElement, Context, FontWeight, div, prelude::*};
+use kynex_core::live::Key;
 use kynex_core::mcp;
 use kynex_core::session::Item;
 
@@ -14,9 +15,9 @@ use crate::ui::{Icon, Tooltip, ghost_button, icon};
 
 impl KynexApp {
     /// Tells Claude you've finished in the browser.
-    fn continue_after_handoff(&mut self, cx: &mut Context<Self>) {
+    fn continue_after_handoff(&mut self, key: Key, cx: &mut Context<Self>) {
         let model = self.active_model();
-        if let Some(s) = self.session_mut().filter(|s| !s.busy) {
+        if let Some(s) = self.session_for(key).filter(|s| !s.busy) {
             s.use_model(model);
             s.send(mcp::CONTINUE.into(), Vec::new());
         }
@@ -24,8 +25,8 @@ impl KynexApp {
         cx.notify();
     }
 
-    pub(super) fn render_handoff(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let session = self.active_session().filter(|s| !s.busy)?;
+    pub(super) fn render_handoff(&mut self, key: Key, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let session = self.session_by_key(key).filter(|s| !s.busy)?;
         let handoff = mcp::handoff(&session.items)?;
         let images = handoff.screenshot.and_then(|r| match session.items.get(r) {
             Some(Item::ToolResult { images, .. }) => Some((r, images.clone())),
@@ -79,7 +80,7 @@ impl KynexApp {
                         .text_color(t.text)
                         .child("Continue")
                         .tooltip(Tooltip::with_meta("Tell Claude you're done", mcp::CONTINUE))
-                        .on_click(cx.listener(|this, _, _, cx| this.continue_after_handoff(cx))),
+                        .on_click(cx.listener(move |this, _, _, cx| this.continue_after_handoff(key, cx))),
                 )
                 .into_any_element(),
         )

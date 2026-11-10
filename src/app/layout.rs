@@ -88,9 +88,9 @@ impl KynexApp {
                                             .children(self.render_find(cx))
                                             .child(self.toast_room_probe()),
                                     )
-                                    .child(self.render_composer(window, cx)),
+                                    .child(self.render_composer(key, window, cx)),
                             )
-                            .children(self.render_timeline(cx)),
+                            .children(key.and_then(|key| self.render_timeline(key, cx))),
                     )
                     .children(self.render_terminal_dock(window, cx)),
             )

@@ -748,6 +748,7 @@ impl Render for KynexApp {
             self.render_code_main(window, cx)
         };
 
+        let key = self.focused_key();
         let root = div()
             .id("workspace")
             .key_context("Workspace")
@@ -767,9 +768,9 @@ impl Render for KynexApp {
             .on_drag_move(cx.listener(Self::drag_tab))
             .on_drop(cx.listener(Self::drop_tab))
             .child(self.wheel.listener())
-            .child(self.render_title_bar(window, cx))
+            .child(self.render_title_bar(key, window, cx))
             .child(main)
-            .when(self.saved.footer, |d| d.child(self.render_footer(cx)));
+            .when(self.saved.footer, |d| d.child(self.render_footer(key, cx)));
         let root = self.with_actions(self.with_resize_drag(root, cx), cx);
         self.with_overlays(root, toasts, window, cx)
     }

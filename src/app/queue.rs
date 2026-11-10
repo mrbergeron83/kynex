@@ -7,15 +7,17 @@
 use crate::ui::px;
 use gpui::{AnyElement, Context, Image, div, prelude::*};
 
+use kynex_core::live::Key;
+
 use super::KynexApp;
 use crate::theme::theme;
 use crate::ui::{Icon, Tooltip, ghost_button, icon_button};
 
 impl KynexApp {
-    /// Queues the composer's message on the shown session.
-    pub(super) fn queue_message(&mut self, text: String, cx: &mut Context<Self>) {
+    /// Queues the composer's message on the session `key`.
+    pub(super) fn queue_message(&mut self, key: Option<Key>, text: String, cx: &mut Context<Self>) {
         let atts = std::mem::take(&mut self.attachments);
-        if let Some(s) = self.session_mut() {
+        if let Some(s) = key.and_then(|k| self.session_for(k)) {
             s.queue.push(text, atts);
         }
         self.composer.update(cx, |c, cx| c.set_text("", cx));
@@ -24,14 +26,14 @@ impl KynexApp {
 
     /// Ctrl+Enter: the queue and the draft behind it go now, stopping Claude
     /// if it's working. With nothing queued and Claude idle, it just sends.
-    pub(super) fn send_queue_now(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn send_queue_now(&mut self, key: Option<Key>, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).text().trim().to_string();
         self.remember_sent(&text, cx);
         if !text.is_empty() || !self.attachments.is_empty() {
-            self.queue_message(text, cx);
+            self.queue_message(key, text, cx);
         }
         let model = self.active_model();
-        if let Some(s) = self.session_mut() {
+        if let Some(s) = key.and_then(|k| self.session_for(k)) {
             s.use_model(model);
             s.send_queue_now();
         }
@@ -40,8 +42,8 @@ impl KynexApp {
     }
 
     /// Takes a queued message back into the composer, ahead of what's there.
-    pub(super) fn edit_queued(&mut self, i: usize, cx: &mut Context<Self>) {
-        let Some(m) = self.session_mut().and_then(|s| s.queue.remove(i)) else { return };
+    fn edit_queued(&mut self, key: Key, i: usize, cx: &mut Context<Self>) {
+        let Some(m) = self.session_for(key).and_then(|s| s.queue.remove(i)) else { return };
         self.take_back(m, cx);
     }
 
@@ -60,8 +62,8 @@ impl KynexApp {
         cx.notify();
     }
 
-    pub(super) fn render_queue(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let session = self.active_session()?;
+    pub(super) fn render_queue(&mut self, key: Key, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let session = self.session_by_key(key)?;
         let (items, busy) = (session.queue.items(), session.busy);
         if items.is_empty() {
             return None;
@@ -94,13 +96,13 @@ impl KynexApp {
                         .hover(|s| s.text_color(t.text))
                         .child(first_line)
                         .tooltip(Tooltip::with_meta("Edit in the message box", "↑ takes them all back"))
-                        .on_click(cx.listener(move |this, _, _, cx| this.edit_queued(i, cx))),
+                        .on_click(cx.listener(move |this, _, _, cx| this.edit_queued(key, i, cx))),
                 )
                 .child(
                     icon_button(("queued-remove", i), Icon::Close, cx)
                         .tooltip(Tooltip::text("Remove from the queue"))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(s) = this.session_mut() {
+                            if let Some(s) = this.session_for(key) {
                                 s.queue.remove(i);
                             }
                             cx.notify();
@@ -130,7 +132,7 @@ impl KynexApp {
                             cfg!(target_os = "macos"),
                         ),
                     ))
-                    .on_click(cx.listener(|this, _, _, cx| this.send_queue_now(cx))),
+                    .on_click(cx.listener(move |this, _, _, cx| this.send_queue_now(Some(key), cx))),
             );
         Some(div().flex().flex_col().gap_1().child(header).children(rows).into_any_element())
     }

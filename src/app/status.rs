@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::ui::px;
 use gpui::{AnyElement, Context, div, prelude::*};
 use kynex_core::cli::UpdateState;
+use kynex_core::live::Key;
 use kynex_core::openrouter;
 use kynex_core::usage::{self, Level, Limits, Window};
 
@@ -54,15 +55,15 @@ impl KynexApp {
 
     /// What's left on the OpenRouter key, once asked: beside the Anthropic
     /// limits, opening Settings → Providers.
-    pub(super) fn render_openrouter_credit(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn render_openrouter_credit(&self, key: Option<Key>, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
         let (info, at) = self.openrouter_credit.as_ref().filter(|_| self.openrouter_key.is_some())?;
         let low = info.limit_remaining.is_some_and(|left| left < 1.0);
         let checked = kynex_core::fmt::ago(std::time::SystemTime::now() - at.elapsed());
         // Today's free requests, beside the credit while the session is on a
         // `:free` model; their daily cap is the limit that bites there.
-        let on_free = self
-            .active_session()
+        let on_free = key
+            .and_then(|k| self.session_by_key(k))
             .and_then(|s| s.provider().with_model(&s.model).model().map(|m| m.ends_with(":free")))
             .unwrap_or(false);
         let free = info.free.filter(|_| on_free);
