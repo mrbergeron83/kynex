@@ -373,6 +373,19 @@ impl KynexApp {
         true
     }
 
+    /// A context's "Open in a new tab": the folder as a project tab of its own, which
+    /// stays one (it isn't folded back into its project at startup).
+    pub(super) fn open_context_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.add_project(path.clone());
+        if let Active::Project(i) = self.saved.active
+            && let Some(p) = self.saved.projects.get_mut(i)
+        {
+            p.own_tab = true;
+        }
+        self.save();
+        cx.notify();
+    }
+
     /// Worktrees opened as project tabs by earlier versions fold into the project
     /// they belong to, keeping the session each had as that context's. Reads
     /// every project's worktrees off the UI thread.
@@ -401,7 +414,8 @@ impl KynexApp {
             this.update(cx, |this, cx| {
                 for (project, others) in linked {
                     for tab in others {
-                        let Some(i) = this.saved.projects.iter().position(|p| context::same_folder(&p.path, &tab))
+                        let Some(i) =
+                            this.saved.projects.iter().position(|p| !p.own_tab && context::same_folder(&p.path, &tab))
                         else {
                             continue;
                         };

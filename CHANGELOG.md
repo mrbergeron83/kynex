@@ -20,7 +20,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Folders as contexts: the folder button beside Contexts adds any folder (scripts, notes, tools)
   as a context of the project, with its own sessions and terminal. It's marked "folder", and
   right-click → "Remove folder from contexts" takes it out of the list without touching the disk.
-  A project that isn't a git repository can add folders too.
+  A project that isn't a git repository can add folders too. Right-click a context →
+  "Open in a new tab" makes it a project tab of its own, which stays one.
 
 ### Changed
 

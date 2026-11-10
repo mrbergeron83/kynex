@@ -44,6 +44,10 @@ pub struct ProjectState {
     /// Claude Code session to resume when the project is reopened.
     #[serde(default)]
     pub session_id: Option<String>,
+    /// Opened on purpose as a tab of its own (a context, from its menu): it doesn't
+    /// fold into its project at startup.
+    #[serde(default)]
+    pub own_tab: bool,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]

@@ -303,7 +303,7 @@ impl KynexApp {
             None => {
                 // A folder opened for the first time starts on its setup checklist (open_pending_setup).
                 self.setup_for = Some(path.clone());
-                self.saved.projects.push(ProjectState { path, view: View::Code, session_id: None });
+                self.saved.projects.push(ProjectState { path, view: View::Code, session_id: None, own_tab: false });
                 self.saved.projects.len() - 1
             }
         };

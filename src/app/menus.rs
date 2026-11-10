@@ -425,6 +425,15 @@ impl KynexApp {
                         .and_then(|p| self.contexts.get(&p.path))
                         .is_some_and(|c| c.is_folder(path));
                     let path = path.clone();
+                    let tab_path = path.clone();
+                    items.push(
+                        menu_item("context-new-tab", "Open in a new tab", false, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.menu = None;
+                                this.open_context_tab(tab_path.clone(), cx);
+                            }))
+                            .into_any_element(),
+                    );
                     items.push(div().my_1().child(divider(cx)).into_any_element());
                     items.push(
                         menu_item(

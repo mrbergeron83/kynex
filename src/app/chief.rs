@@ -174,7 +174,12 @@ impl KynexApp {
         if self.saved.projects.iter().any(|p| p.path == path) {
             return format!("{name} ({}) is already open.", path.display());
         }
-        self.saved.projects.push(ProjectState { path: path.clone(), view: View::Code, session_id: None });
+        self.saved.projects.push(ProjectState {
+            path: path.clone(),
+            view: View::Code,
+            session_id: None,
+            own_tab: false,
+        });
         self.save();
         format!("Opened {name} ({}). dispatch can send it work now.", path.display())
     }
