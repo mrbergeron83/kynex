@@ -87,7 +87,8 @@ pub struct PromptView {
 }
 
 impl PromptView {
-    pub fn new(req: Request, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// `take_focus` puts the keyboard on it; a prompt for a pane you're not in must not.
+    pub fn new(req: Request, take_focus: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let no_hint = match req.tool.as_str() {
             "ExitPlanMode" => "Tell Claude what to change in the plan",
             _ => "Tell Claude what to do differently",
@@ -166,7 +167,9 @@ impl PromptView {
         };
 
         let focus = cx.focus_handle();
-        focus.focus(window, cx);
+        if take_focus {
+            focus.focus(window, cx);
+        }
         Self { req, queued: 0, focus, selected: 0, feedback, choices, commenting: None, comment, form, other }
     }
 

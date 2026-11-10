@@ -14,6 +14,7 @@ use kynex_core::toasts::Toast;
 use super::KynexApp;
 use crate::prompt::{PromptAnswer, PromptView, Request};
 
+/// A prompt up in a pane: whose request it is, and its view.
 pub struct ActivePrompt {
     pub key: Key,
     id: String,
@@ -62,8 +63,8 @@ impl KynexApp {
         if let Some(cwd) = cwd {
             self.save_rules(&cwd, rules);
         }
-        self.prompt = None;
-        self.composer.read(cx).focus_handle(cx).focus(window, cx);
+        self.pane.prompt = None;
+        self.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
@@ -96,28 +97,30 @@ impl KynexApp {
             (pending, None)
         };
         let Some((key, req, queued)) = pending else {
-            self.prompt = None;
+            self.pane.prompt = None;
             return;
         };
-        if self.prompt.as_ref().is_none_or(|p| p.key != key || p.id != req.id) {
+        if self.pane.prompt.as_ref().is_none_or(|p| p.key != key || p.id != req.id) {
             let id = req.id.clone();
-            let view = cx.new(|cx| PromptView::new(req, window, cx));
+            // Only a prompt for the session you're in (or KNX Ops' stacked question) takes the keyboard.
+            let take_focus = ops.is_some() || Some(key) == self.focused_key();
+            let view = cx.new(|cx| PromptView::new(req, take_focus, window, cx));
             let sub = cx.subscribe_in(&view, window, {
                 let id = id.clone();
                 move |this, _, PromptAnswer(answer, comment), window, cx| match ops {
                     // A worker's question waits on Kynex, not on a session's prompt.
                     Some(n) => {
                         this.answer_ask(n, answer);
-                        this.prompt = None;
-                        this.composer.read(cx).focus_handle(cx).focus(window, cx);
+                        this.pane.prompt = None;
+                        this.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
                         cx.notify();
                     }
                     None => this.answer(key, id.clone(), answer.clone(), comment, window, cx),
                 }
             });
-            self.prompt = Some(ActivePrompt { key, id, view, _sub: sub });
+            self.pane.prompt = Some(ActivePrompt { key, id, view, _sub: sub });
         }
-        if let Some(p) = &self.prompt {
+        if let Some(p) = &self.pane.prompt {
             p.view.update(cx, |v, _| v.queued = queued);
         }
     }

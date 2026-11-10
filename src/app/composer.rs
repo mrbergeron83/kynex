@@ -35,23 +35,23 @@ impl KynexApp {
     /// Sends the composer's message on the session `key` (queued while it works).
     fn send_to(&mut self, key: Option<Key>, _window: &mut Window, cx: &mut Context<Self>) {
         let busy = key.and_then(|k| self.session_for(k)).is_some_and(|s| s.busy);
-        let text = self.composer.read(cx).text().trim().to_string();
-        self.slash.dismissed = None;
-        self.mentions.dismissed = None;
-        self.last_esc = None;
+        let text = self.pane.composer.read(cx).text().trim().to_string();
+        self.pane.slash.dismissed = None;
+        self.pane.mentions.dismissed = None;
+        self.pane.last_esc = None;
         self.remember_sent(&text, cx);
         // Built-ins Kynex runs itself (`/clear`, `/model`…) work even mid-reply.
-        if self.attachments.is_empty() && self.run_command(&text, cx) {
-            self.composer.update(cx, |c, cx| c.set_text("", cx));
+        if self.pane.attachments.is_empty() && self.run_command(&text, cx) {
+            self.pane.composer.update(cx, |c, cx| c.set_text("", cx));
             return;
         }
-        if text.is_empty() && self.attachments.is_empty() {
+        if text.is_empty() && self.pane.attachments.is_empty() {
             return;
         }
         if busy {
             return self.queue_message(key, text, cx);
         }
-        let atts = std::mem::take(&mut self.attachments);
+        let atts = std::mem::take(&mut self.pane.attachments);
         let model = self.active_model();
         // A folder with no session yet gets one on its first send.
         let key = key.or_else(|| self.session_mut().map(|s| s.uid));
@@ -59,7 +59,7 @@ impl KynexApp {
             s.use_model(model);
             s.send(text, atts);
         }
-        self.composer.update(cx, |c, cx| c.set_text("", cx));
+        self.pane.composer.update(cx, |c, cx| c.set_text("", cx));
         self.follow_tail(cx);
         cx.notify();
     }
@@ -123,7 +123,7 @@ impl KynexApp {
                 }
             }
         } else {
-            self.composer.update(cx, |c, cx| {
+            self.pane.composer.update(cx, |c, cx| {
                 let mut text = c.text().to_string();
                 if !text.is_empty() && !text.ends_with(' ') {
                     text.push(' ');
@@ -147,7 +147,7 @@ impl KynexApp {
             return;
         }
         match prepare_image(bytes) {
-            Ok(png) => self.attachments.push(Attachment {
+            Ok(png) => self.pane.attachments.push(Attachment {
                 media_type: "image/png".into(),
                 base64: png.base64,
                 preview: Arc::new(Image::from_bytes(ImageFormat::Png, png.bytes)),
@@ -174,15 +174,15 @@ impl KynexApp {
         let handoff = key.and_then(|k| self.render_handoff(k, cx));
         let files_badge = key.and_then(|k| self.scratch_badge(k, cx));
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
-        self.slash.shown = None;
+        self.pane.slash.shown = None;
         let popup = match () {
-            _ if self.prompt.is_some() => None,
+            _ if self.pane.prompt.is_some() => None,
             _ if self.rewinding() => self.render_rewind(cx),
             _ if self.history_searching() => self.render_history_search(cx),
             _ => self.render_slash(cx).or_else(|| self.render_mentions(cx)),
         };
         // The slash-command and mention lists play out when they close; the others just go.
-        let slash = self.slash.shown.clone();
+        let slash = self.pane.slash.shown.clone();
         let slash_leaving = self.exits.slash.track(slash.as_ref(), window, cx);
         let (popup, popup_leaving) = match (popup, slash_leaving) {
             (Some(p), _) => (Some(p), None),
@@ -193,8 +193,8 @@ impl KynexApp {
             (None, None) => (None, None),
         };
         // A prompt that just closed fades out over the composer it hands back.
-        let prompt = self.prompt.as_ref().map(|p| p.view.clone());
-        let prompt_out = self.exits.prompt.track(prompt.as_ref(), window, cx).map(|(view, gone)| {
+        let prompt = self.pane.prompt.as_ref().map(|p| p.view.clone());
+        let prompt_out = self.pane.prompt_exit.track(prompt.as_ref(), window, cx).map(|(view, gone)| {
             let layer = div().absolute().inset_0().p_3().rounded_lg().overflow_hidden().bg(t.panel).child(view);
             fade("prompt-out", layer, motion::QUICK, Some(gone))
         });
@@ -222,7 +222,7 @@ impl KynexApp {
                             .child(
                                 canvas(
                                     move |bounds, _, cx| {
-                                        this.update(cx, |this, _| this.slash.composer = Some(bounds)).ok();
+                                        this.update(cx, |this, _| this.pane.slash.composer = Some(bounds)).ok();
                                     },
                                     |_, _, _, _| {},
                                 )
@@ -257,12 +257,12 @@ impl KynexApp {
                     ),
             )
         };
-        if let Some(p) = &self.prompt {
+        if let Some(p) = &self.pane.prompt {
             let focused = p.view.read(cx).focus_handle(cx).contains_focused(window, cx);
             // Each prompt fades in over the composer it replaces.
             let id = ("prompt-in", p.view.entity_id().as_u64() as usize);
             let view = fade_in(id, div().child(p.view.clone()), motion::QUICK);
-            return shell(view.into_any_element(), focused, true);
+            return shell(view.into_any_element(), focused, self.pane.needs_you());
         }
 
         let session = key.and_then(|k| self.session_by_key(k));
@@ -318,15 +318,15 @@ impl KynexApp {
         } else {
             "Message Claude…"
         };
-        self.composer.update(cx, |c, _| c.set_placeholder(placeholder));
-        let focused = self.composer.read(cx).is_focused(window);
-        let has_message = !self.composer.read(cx).text().trim().is_empty() || !self.attachments.is_empty();
+        self.pane.composer.update(cx, |c, _| c.set_placeholder(placeholder));
+        let focused = self.pane.composer.read(cx).is_focused(window);
+        let has_message = !self.pane.composer.read(cx).text().trim().is_empty() || !self.pane.attachments.is_empty();
         let can_send = !busy && has_message;
         let max_h = window.viewport_size().height * 0.4;
-        let composer_scroll = self.composer.read(cx).scroll_handle();
+        let composer_scroll = self.pane.composer.read(cx).scroll_handle();
 
         let attachments =
-            div().flex().flex_wrap().gap_2().children(self.attachments.iter().enumerate().map(|(i, a)| {
+            div().flex().flex_wrap().gap_2().children(self.pane.attachments.iter().enumerate().map(|(i, a)| {
                 let preview = a.preview.clone().downcast::<Image>().ok();
                 let group = SharedString::from(format!("attachment-{i}"));
                 div()
@@ -372,7 +372,7 @@ impl KynexApp {
                                     .child(icon(Icon::Close, t.text_muted).size_3())
                                     .tooltip(Tooltip::text("Remove"))
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.attachments.remove(i);
+                                        this.pane.attachments.remove(i);
                                         cx.notify();
                                     })),
                             ),
@@ -499,7 +499,7 @@ impl KynexApp {
                     cx.stop_propagation();
                 }
             }))
-            .when(!self.attachments.is_empty(), |d| d.child(attachments))
+            .when(!self.pane.attachments.is_empty(), |d| d.child(attachments))
             .child(
                 div()
                     .id("composer-scroll")
@@ -507,7 +507,7 @@ impl KynexApp {
                     .overflow_y_scroll()
                     .track_scroll(&composer_scroll)
                     .text_sm()
-                    .child(self.composer.clone()),
+                    .child(self.pane.composer.clone()),
             )
             .child(
                 div()

@@ -30,25 +30,25 @@ impl KynexApp {
     pub(super) fn sync_draft(&mut self, key: Option<Key>, cx: &mut Context<Self>) {
         let Some(s) = key.and_then(|k| self.session_by_key(k)) else { return };
         let (uid, key) = (s.uid, draft_key(s));
-        match &mut self.draft_for {
+        match &mut self.pane.draft_for {
             // Same session; it may just have got its CLI id.
             Some((shown, k)) if *shown == uid => *k = key,
             _ => {
                 self.stash_draft(cx);
                 let draft = self.drafts.remove(&key).unwrap_or_default();
                 let text = self.saved.drafts.remove(&key).unwrap_or(draft.text);
-                self.composer.update(cx, |c, cx| c.set_text(text, cx));
-                self.attachments = draft.attachments;
-                self.draft_for = Some((uid, key));
+                self.pane.composer.update(cx, |c, cx| c.set_text(text, cx));
+                self.pane.attachments = draft.attachments;
+                self.pane.draft_for = Some((uid, key));
             }
         }
     }
 
     /// Puts the shown session's draft aside, and saves its text.
     pub(super) fn stash_draft(&mut self, cx: &mut Context<Self>) {
-        let Some((_, key)) = self.draft_for.take() else { return };
-        let text = self.composer.read(cx).text().to_string();
-        let attachments = std::mem::take(&mut self.attachments);
+        let Some((_, key)) = self.pane.draft_for.take() else { return };
+        let text = self.pane.composer.read(cx).text().to_string();
+        let attachments = std::mem::take(&mut self.pane.attachments);
         if !key.starts_with('#') {
             if text.trim().is_empty() {
                 self.saved.drafts.remove(&key);

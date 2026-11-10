@@ -77,7 +77,7 @@ impl KynexApp {
         let Some(session) = self.session_by_key(key) else { return div().into_any_element() };
         let session_kind = session.kind;
         let Some(item) = session.items.get(ix) else { return div().into_any_element() };
-        let expanded = self.expand_tools || self.expanded.contains(&(key, ix));
+        let expanded = self.pane.expand_tools || self.expanded.contains(&(key, ix));
         let toggle = cx.listener(move |this, _, _, cx| {
             let k = (key, ix);
             if !this.expanded.remove(&k) {
