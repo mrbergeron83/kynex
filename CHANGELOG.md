@@ -37,6 +37,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
   processes. The list appears first and each worktree's changes fill in after, read in parallel.
   On Windows, read-only `git` calls run Git for Windows' real `git.exe` directly instead of its
   `cmd\git.exe` wrapper, which halves the process starts.
+- Git reads without a process: the worktree list, each worktree's changed-file count and its
+  distance from its upstream and from the default branch are read in-process (with `gix`),
+  about ten times faster than running `git status`. Anything that writes (commit, push, pull,
+  worktree add / remove) still runs `git`, so hooks and your credential manager work as before,
+  and `git` also answers where the in-process read can't (a sparse checkout, submodules, a
+  repository owned by someone else, an upstream it can't follow).
 
 ## [0.0.26] - 2026-11-09
 

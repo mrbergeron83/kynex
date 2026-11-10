@@ -10,6 +10,7 @@ pub mod cleanup;
 pub(crate) mod diff;
 pub mod github;
 pub(crate) mod log;
+pub mod native;
 mod ops;
 pub(crate) mod status;
 pub(crate) mod worktree;
@@ -95,7 +96,13 @@ fn direct_git_in(path: &OsStr) -> Option<PathBuf> {
 /// Runs git and returns its stdout, or its stderr as the error.
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let program = if is_local_read(args) { read_program() } else { OsStr::new("git") };
-    let out = command_with(program, root).args(args).output().map_err(|e| format!("Couldn't run git: {e}"))?;
+    let mut cmd = command_with(program, root);
+    // The polling reads never fetch missing objects (a partial clone would start ssh or the
+    // credential helper from a background refresh); a clone that lacks them says so instead.
+    if matches!(args.first(), Some(&"status" | &"rev-list" | &"rev-parse" | &"worktree")) {
+        cmd.env("GIT_NO_LAZY_FETCH", "1");
+    }
+    let out = cmd.args(args).output().map_err(|e| format!("Couldn't run git: {e}"))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {

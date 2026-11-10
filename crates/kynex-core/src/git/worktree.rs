@@ -44,11 +44,15 @@ pub fn list_worktrees(root: &Path) -> Result<Vec<Worktree>, String> {
     Ok(list)
 }
 
-/// The working trees as `git worktree list` names them (one `git` call), without
-/// their changes or distances: for showing the list at once while
-/// [`fill_worktrees`] works out the rest.
+/// The working trees as `git worktree list` names them, without their changes or
+/// distances: for showing the list at once while [`fill_worktrees`] works out the
+/// rest. Read in-process; when that can't answer, one `git` call.
 pub fn list_worktrees_quick(root: &Path) -> Result<Vec<Worktree>, String> {
-    Ok(parse_worktrees(&git(root, &["worktree", "list", "--porcelain"])?))
+    match super::native::worktrees(root) {
+        Ok(Some(list)) => Ok(list),
+        Ok(None) => Err("Not a git repository".into()),
+        Err(_) => Ok(parse_worktrees(&git(root, &["worktree", "list", "--porcelain"])?)),
+    }
 }
 
 /// Works out each worktree's changes and distances, one thread per worktree (each
@@ -58,7 +62,11 @@ pub fn fill_worktrees(root: &Path, list: &mut [Worktree]) {
     std::thread::scope(|scope| {
         for w in list.iter_mut() {
             let base = base.as_deref();
-            scope.spawn(move || fill_worktree(root, base, w));
+            // One worktree that can't be read (or a panic in what reads it) leaves its numbers
+            // empty; it must not take the others, or the caller, down with it.
+            scope.spawn(move || {
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fill_worktree(root, base, w)));
+            });
         }
     });
 }
@@ -67,19 +75,38 @@ fn fill_worktree(root: &Path, base: Option<&str>, w: &mut Worktree) {
     if w.prunable {
         return;
     }
-    if let Ok(st) = status(&w.path) {
-        w.changes = Some(st.files.len());
-        w.upstream = st.upstream.is_some().then_some((st.ahead, st.behind));
-        let untracked: Vec<&str> =
-            st.files.iter().filter(|f| f.unstaged == Some(Change::Untracked)).map(|f| f.path.as_str()).collect();
-        w.lines = if st.files.is_empty() { Some((0, 0)) } else { diff_stat(&w.path, &untracked).ok() };
+    // In-process first; the CLI answers when that can't.
+    let summary = super::native::summary(&w.path).ok().or_else(|| {
+        let st = status(&w.path).ok()?;
+        Some(super::native::Summary {
+            files: st.files.len(),
+            untracked: st
+                .files
+                .iter()
+                .filter(|f| f.unstaged == Some(Change::Untracked))
+                .map(|f| f.path.clone())
+                .collect(),
+            upstream: st.upstream.is_some().then_some((st.ahead, st.behind)),
+        })
+    });
+    if let Some(s) = summary {
+        w.changes = Some(s.files);
+        w.upstream = s.upstream;
+        // The lines (`+42 −7`) are `git diff`'s, and only asked for when something changed.
+        let untracked: Vec<&str> = s.untracked.iter().map(String::as_str).collect();
+        w.lines = if s.files == 0 { Some((0, 0)) } else { diff_stat(&w.path, &untracked).ok() };
     }
     if let (Some(base), Some(branch)) = (base, &w.branch)
         && !w.main
     {
-        w.ahead_behind = git(root, &["rev-list", "--left-right", "--count", &format!("{base}...{branch}")])
+        // `base...branch`: commits only on base are how far behind, only on branch how far ahead.
+        w.ahead_behind = super::native::ahead_behind(root, base, branch)
             .ok()
-            .and_then(|s| parse_left_right(&s))
+            .or_else(|| {
+                git(root, &["rev-list", "--left-right", "--count", &format!("{base}...{branch}")])
+                    .ok()
+                    .and_then(|s| parse_left_right(&s))
+            })
             .map(|(behind, ahead)| (ahead, behind));
     }
 }
