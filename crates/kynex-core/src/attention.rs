@@ -5,6 +5,16 @@
 
 use crate::session::Session;
 
+/// Of sessions in a stable order, each with whether it wants you: the first one after
+/// `current` that does, wrapping round and never `current` itself. With no `current` in the
+/// list, the first that does.
+pub fn next_waiting<T: PartialEq + Copy>(order: &[(T, bool)], current: Option<T>) -> Option<T> {
+    let at = current.and_then(|c| order.iter().position(|(k, _)| *k == c));
+    let n = order.len();
+    let start = at.map_or(0, |a| a + 1);
+    (0..n).map(|i| &order[(start + i) % n]).find(|(k, waiting)| *waiting && Some(*k) != current).map(|(k, _)| *k)
+}
+
 /// Why a session wants you.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Why {
@@ -110,5 +120,17 @@ mod tests {
         assert_eq!(news(Some(Finished), Some(Answer)), Some(Answer));
         assert_eq!(news(Some(Answer), None), None);
         assert_eq!(Answer.body(), "Needs your answer");
+    }
+
+    #[test]
+    fn next_waiting_wraps_and_skips_current() {
+        let order = [(1, false), (2, true), (3, false), (4, true)];
+        assert_eq!(next_waiting(&order, Some(2)), Some(4));
+        assert_eq!(next_waiting(&order, Some(4)), Some(2));
+        assert_eq!(next_waiting(&order, Some(1)), Some(2));
+        assert_eq!(next_waiting(&order, None), Some(2));
+        assert_eq!(next_waiting(&order, Some(9)), Some(2));
+        assert_eq!(next_waiting(&[(1, true)], Some(1)), None);
+        assert_eq!(next_waiting::<u8>(&[], None), None);
     }
 }

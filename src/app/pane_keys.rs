@@ -45,6 +45,7 @@ impl KynexApp {
             .on_action(cx.listener(|this, _: &keys::NewWorkspace, w, cx| this.open_new_workspace(w, cx)))
             .on_action(cx.listener(Self::close_workspace))
             .on_action(cx.listener(|this, _: &keys::KeyboardSettings, _, cx| this.open_settings_on(2, cx)))
+            .on_action(cx.listener(Self::next_needs_you))
             .on_action(cx.listener(|this, _: &keys::PickProject, w, cx| this.open_picker(Menu::Projects, w, cx)))
     }
 

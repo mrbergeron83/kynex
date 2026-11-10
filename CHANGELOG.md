@@ -7,6 +7,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The palette (Ctrl+K) groups sessions by project and workspace, with Needs you / Working / Idle / Done
+  filters (Tab cycles them), and Ctrl+Shift+A (Cmd+Shift+A on macOS) jumps to the next session that needs you.
 - Herdr-style keys: Ctrl+B then a key splits, moves between, swaps, zooms and resizes panes, and
   works pane tabs, workspaces and projects; Ctrl+B B toggles the sessions column.
   Changed: the sessions column moved from Ctrl+B (Cmd+B on macOS) to Ctrl+B then B, and in a

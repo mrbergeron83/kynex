@@ -51,6 +51,9 @@
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
 //! | `palette.rs`        | the command palette (Ctrl+K)                         |
+//! | `palette_filters.rs`| its state filters (All, Needs you, Working, Idle, Done) |
+//! | `palette_sessions.rs`| its session rows: per workspace, and open ones not listed yet |
+//! | `goto.rs`           | revealing a session in its project, workspace and pane; next that needs you |
 //! | `leaving.rs`        | menus, modals and panels animating out as they close |
 //! | `settings.rs`       | the project's Claude settings modal                  |
 //! | `project_setup.rs`  | its "Setup": trust, mode, ask rules, starter rules   |
@@ -93,6 +96,7 @@ mod extensions_servers;
 pub(crate) mod find;
 mod footer;
 mod git_modal;
+mod goto;
 mod grok_setup;
 mod handoff;
 pub(crate) mod history;
@@ -104,6 +108,8 @@ pub(crate) mod mentions;
 mod menus;
 mod models;
 mod palette;
+mod palette_filters;
+mod palette_sessions;
 mod pane_actions;
 mod pane_keys;
 mod pane_tabs;

@@ -80,6 +80,7 @@ actions!(
         CloseWorkspace,
         KeyboardSettings,
         PickProject,
+        NextNeedsYou,
         ClosePaneOrTab
     ]
 );
@@ -112,7 +113,7 @@ const LIST_KEYS: [(&str, &str); 6] = [
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 37] = [
+const SHORTCUTS: [(&str, &str); 38] = [
     ("command_palette", "secondary-k"),
     ("find", "secondary-f"),
     ("open_project", "secondary-o"),
@@ -148,6 +149,8 @@ const SHORTCUTS: [(&str, &str); 37] = [
     // `history.rs`): a key sequence would hold every single Esc back.
     ("rewind", ESC_ESC),
     ("toggle_timeline", "secondary-shift-t"),
+    // The next session, in any project, that wants you.
+    ("next_needs_you", "secondary-shift-a"),
     // The timeline's turns, previous and next.
     ("prev_turn", "alt-up"),
     ("next_turn", "alt-down"),
@@ -425,6 +428,7 @@ pub fn bind_keys(cx: &mut App) {
             "edit_in_editor" => KeyBinding::new(keys, EditInEditor, c),
             "rewind" => KeyBinding::new(keys, Rewind, c),
             "toggle_timeline" => KeyBinding::new(keys, ToggleTimeline, c),
+            "next_needs_you" => KeyBinding::new(keys, NextNeedsYou, c),
             "prev_turn" => KeyBinding::new(keys, PrevTurn, c),
             "next_turn" => KeyBinding::new(keys, NextTurn, c),
             "page_up" => KeyBinding::new(keys, PageUp, c),
@@ -629,6 +633,10 @@ impl KynexApp {
 
     /// Like Shift+Tab in the CLI: the next permission mode, live.
     pub(super) fn cycle_mode(&mut self, _: &CycleMode, _: &mut Window, cx: &mut Context<Self>) {
+        // In the palette, Shift+Tab goes back a filter.
+        if self.palette.is_some() {
+            return self.palette_step_filter(-1, cx);
+        }
         let key = self.composer_key();
         let Some(s) = key.and_then(|k| self.session_for(k)).filter(|s| s.kind == Kind::Code) else {
             return;
