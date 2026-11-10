@@ -1,10 +1,10 @@
-//! Contexts: the checkouts of one project. A context is the project's main tree or one
+//! Workspaces: the checkouts of one project. A workspace is the project's main tree or one
 //! of its linked git worktrees; the sidebar lists them and everything in the window
 //! (sessions, terminal, Git view) follows the selected one. A folder that isn't a git
-//! repository has exactly one context.
+//! repository has exactly one workspace.
 //!
-//! What Kynex remembers per project lives in `contexts.json` ([`Contexts`]): which
-//! context is selected, the session each one last had open, and their order.
+//! What Kynex remembers per project lives in `workspaces.json` ([`Workspaces`]): which
+//! workspace is selected, the session each one last had open, and their order.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,7 +17,7 @@ use crate::project::{self, normalize};
 
 /// One checkout of a project.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Context {
+pub struct Workspace {
     pub path: PathBuf,
     /// `None` when the HEAD is detached, or for a folder that isn't a repository.
     pub branch: Option<String>,
@@ -29,7 +29,7 @@ pub struct Context {
     pub folder: bool,
 }
 
-impl Context {
+impl Workspace {
     fn main_tree(path: &Path) -> Self {
         Self { path: path.to_path_buf(), branch: None, main: true, label: folder_label(path), folder: false }
     }
@@ -39,7 +39,7 @@ impl Context {
         self.branch.as_deref() == Some(crate::chief::BRANCH)
     }
 
-    /// Whether this context's folder is `path` (slashes and, on Windows, case aside).
+    /// Whether this workspace's folder is `path` (slashes and, on Windows, case aside).
     pub fn at(&self, path: &Path) -> bool {
         same_folder(&self.path, path)
     }
@@ -54,34 +54,34 @@ fn folder_label(path: &Path) -> String {
     path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
 }
 
-/// The contexts for `git worktree list` output: worktrees whose folder is gone
+/// The workspaces for `git worktree list` output: worktrees whose folder is gone
 /// (`prunable`) drop out, and the project's own tree is always there, first.
-pub fn from_worktrees(root: &Path, worktrees: &[Worktree]) -> Vec<Context> {
-    let mut out: Vec<Context> = worktrees
+pub fn from_worktrees(root: &Path, worktrees: &[Worktree]) -> Vec<Workspace> {
+    let mut out: Vec<Workspace> = worktrees
         .iter()
         .filter(|w| !w.prunable)
         .map(|w| {
             let label = if w.path.file_name().is_some() { folder_label(&w.path) } else { w.label().to_string() };
-            Context { path: w.path.clone(), branch: w.branch.clone(), main: w.main, label, folder: false }
+            Workspace { path: w.path.clone(), branch: w.branch.clone(), main: w.main, label, folder: false }
         })
         .collect();
     if !out.iter().any(|c| c.main) {
-        out.insert(0, Context::main_tree(root));
+        out.insert(0, Workspace::main_tree(root));
     }
     out
 }
 
-/// The contexts of the project at `root`. A folder that isn't a repository (or whose
-/// worktrees can't be read) has just its main context. Blocking: runs several `git`
+/// The workspaces of the project at `root`. A folder that isn't a repository (or whose
+/// worktrees can't be read) has just its main workspace. Blocking: runs several `git`
 /// commands per worktree (status and diff stats included).
-pub fn list(root: &Path) -> Vec<Context> {
+pub fn list(root: &Path) -> Vec<Workspace> {
     match git::list_worktrees(root) {
         Ok(worktrees) => {
             let mut out = from_worktrees(root, &worktrees);
             out.retain(|c| c.main || c.path.is_dir());
             out
         }
-        Err(_) => vec![Context::main_tree(root)],
+        Err(_) => vec![Workspace::main_tree(root)],
     }
 }
 
@@ -98,7 +98,7 @@ pub fn new_worktree_path(project: &Path, branch: &str) -> PathBuf {
     worktrees_dir(project).join(branch_slug(branch))
 }
 
-/// Makes a context: a worktree on `branch` (the existing branch of that name, or a new
+/// Makes a workspace: a worktree on `branch` (the existing branch of that name, or a new
 /// one from `base`) under [`worktrees_dir`]. Returns its folder. Blocking: runs `git`.
 pub fn create(project: &Path, branch: &str, base: Option<&str>) -> Result<PathBuf, String> {
     let path = new_worktree_path(project, branch);
@@ -109,7 +109,7 @@ pub fn create(project: &Path, branch: &str, base: Option<&str>) -> Result<PathBu
 fn create_at(project: &Path, path: &Path, branch: &str, base: Option<&str>) -> Result<(), String> {
     let branch = branch.trim();
     if branch.is_empty() {
-        return Err("Name the branch for the new context".into());
+        return Err("Name the branch for the new workspace".into());
     }
     if path.exists() {
         return Err(format!("{} already exists; pick another branch name", path.display()));
@@ -120,7 +120,7 @@ fn create_at(project: &Path, path: &Path, branch: &str, base: Option<&str>) -> R
     git::add_worktree_from(project, path, branch, base)
 }
 
-/// Removes a context's worktree; its branch stays. Git refuses while it has
+/// Removes a workspace's worktree; its branch stays. Git refuses while it has
 /// changes, unless `force`. Blocking: runs `git`.
 pub fn remove(project: &Path, path: &Path, force: bool) -> Result<(), String> {
     git::remove_worktree(project, path, force)
@@ -152,25 +152,31 @@ pub fn branch_slug(branch: &str) -> String {
     if reserved { format!("{slug}-wt") } else { slug.to_string() }
 }
 
-/// What Kynex remembers about a project's contexts (`contexts.json`).
+/// What Kynex remembers about a project's workspaces (`workspaces.json`).
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct Contexts {
-    /// The selected context's folder.
+pub struct Workspaces {
+    /// The selected workspace's folder.
     pub selected: Option<PathBuf>,
-    /// The session each context last had open, keyed by its (normalized) folder.
+    /// The session each workspace last had open, keyed by its (normalized) folder.
     pub sessions: BTreeMap<String, String>,
-    /// The sidebar order. Contexts not listed come after, in git's order.
+    /// The sidebar order. Workspaces not listed come after, in git's order.
     pub order: Vec<PathBuf>,
-    /// Plain folders added as contexts by hand, beside the project's checkouts.
+    /// Plain folders added as workspaces by hand, beside the project's checkouts.
     pub folders: Vec<PathBuf>,
 }
 
-impl Contexts {
-    const FILE: &str = "contexts.json";
+impl Workspaces {
+    const FILE: &str = "workspaces.json";
 
-    /// Reads the project's file; missing or unreadable gives the defaults. Blocking.
+    /// What the file was called when workspaces were "contexts".
+    const LEGACY_FILE: &str = "contexts.json";
+
+    /// Reads the project's file; missing or unreadable gives the defaults. A project that
+    /// still has the file from when workspaces were "contexts" has it renamed first.
+    /// Blocking.
     pub fn load(project: &Path) -> Self {
+        migrate_legacy(&project::dir(project));
         project::load(project, Self::FILE)
     }
 
@@ -179,9 +185,9 @@ impl Contexts {
         project::save(project, Self::FILE, self)
     }
 
-    /// The selected context among `list`: the saved one if it still exists, otherwise
+    /// The selected workspace among `list`: the saved one if it still exists, otherwise
     /// the main tree. `list` must not be empty (see [`list`]).
-    pub fn selected_in<'a>(&self, list: &'a [Context]) -> &'a Context {
+    pub fn selected_in<'a>(&self, list: &'a [Workspace]) -> &'a Workspace {
         self.selected
             .as_deref()
             .and_then(|s| list.iter().find(|c| c.at(s)))
@@ -189,7 +195,7 @@ impl Contexts {
             .unwrap_or(&list[0])
     }
 
-    /// Selects the context at `path`. Returns whether that changed anything.
+    /// Selects the workspace at `path`. Returns whether that changed anything.
     pub fn select(&mut self, path: &Path) -> bool {
         if self.selected.as_deref().is_some_and(|s| normalize(s) == normalize(path)) {
             return false;
@@ -198,7 +204,7 @@ impl Contexts {
         true
     }
 
-    /// Adds a plain folder as a context of `project`. Returns whether it was new: the
+    /// Adds a plain folder as a workspace of `project`. Returns whether it was new: the
     /// project's own folder and one already added aren't.
     pub fn add_folder(&mut self, project: &Path, path: &Path) -> bool {
         if same_folder(project, path) || self.is_folder(path) {
@@ -224,17 +230,23 @@ impl Contexts {
     }
 
     /// `list` with the added folders after it (one that is already a checkout stays that).
-    pub fn with_folders(&self, mut list: Vec<Context>) -> Vec<Context> {
+    pub fn with_folders(&self, mut list: Vec<Workspace>) -> Vec<Workspace> {
         for f in &self.folders {
             if !list.iter().any(|c| c.at(f)) {
-                list.push(Context { path: f.clone(), branch: None, main: false, label: folder_label(f), folder: true });
+                list.push(Workspace {
+                    path: f.clone(),
+                    branch: None,
+                    main: false,
+                    label: folder_label(f),
+                    folder: true,
+                });
             }
         }
         list
     }
 
     /// `list` in the saved order.
-    pub fn ordered(&self, mut list: Vec<Context>) -> Vec<Context> {
+    pub fn ordered(&self, mut list: Vec<Workspace>) -> Vec<Workspace> {
         let mut out = Vec::with_capacity(list.len());
         for p in &self.order {
             if let Some(i) = list.iter().position(|c| c.at(p)) {
@@ -245,12 +257,12 @@ impl Contexts {
         out
     }
 
-    /// The session id the context at `path` last had open.
+    /// The session id the workspace at `path` last had open.
     pub fn session(&self, path: &Path) -> Option<&str> {
         self.sessions.get(&normalize(path)).map(String::as_str)
     }
 
-    /// Remembers (or, with `None`, forgets) the context's session. Returns whether
+    /// Remembers (or, with `None`, forgets) the workspace's session. Returns whether
     /// that changed anything.
     pub fn remember(&mut self, path: &Path, session: Option<&str>) -> bool {
         let key = normalize(path);
@@ -264,7 +276,7 @@ impl Contexts {
         }
     }
 
-    /// Drops everything saved about the context at `path`, once it was removed on
+    /// Drops everything saved about the workspace at `path`, once it was removed on
     /// purpose. (Not done on its own when a worktree isn't listed: a failed `git`
     /// call must not cost the sessions.)
     pub fn forget(&mut self, path: &Path) {
@@ -277,13 +289,22 @@ impl Contexts {
     }
 
     /// Migration: the project's one remembered session (`ProjectState.session_id`
-    /// before contexts) becomes the main context's, unless it already has one.
+    /// before workspaces) becomes the main workspace's, unless it already has one.
     /// Returns whether anything changed.
     pub fn adopt_legacy_session(&mut self, main: &Path, legacy: Option<&str>) -> bool {
         match legacy {
             Some(id) if self.session(main).is_none() => self.remember(main, Some(id)),
             _ => false,
         }
+    }
+}
+
+/// Renames a project's `contexts.json` to `workspaces.json` unless that already exists
+/// (it has the same shape). Blocking; failures are left for the next start.
+fn migrate_legacy(dir: &Path) {
+    let (old, new) = (dir.join(Workspaces::LEGACY_FILE), dir.join(Workspaces::FILE));
+    if old.is_file() && !new.exists() {
+        let _ = std::fs::rename(&old, &new);
     }
 }
 
@@ -301,7 +322,7 @@ mod tests {
         }
     }
 
-    fn sample() -> Vec<Context> {
+    fn sample() -> Vec<Workspace> {
         from_worktrees(
             Path::new("/work/app"),
             &[
@@ -341,8 +362,8 @@ mod tests {
     }
 
     #[test]
-    fn a_folder_that_is_not_a_repo_has_one_context() {
-        let dir = std::env::temp_dir().join(format!("kynex-context-{}", std::process::id()));
+    fn a_folder_that_is_not_a_repo_has_one_workspace() {
+        let dir = std::env::temp_dir().join(format!("kynex-workspace-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let list = list(&dir);
         std::fs::remove_dir_all(&dir).ok();
@@ -353,7 +374,7 @@ mod tests {
     #[test]
     fn selection_falls_back_to_the_main_tree() {
         let list = sample();
-        let mut c = Contexts::default();
+        let mut c = Workspaces::default();
         assert!(c.selected_in(&list).main);
         assert!(c.select(Path::new("/data/wt/feat-x")));
         assert!(!c.select(Path::new("/data/wt/feat-x")));
@@ -367,7 +388,7 @@ mod tests {
 
     #[test]
     fn order_puts_listed_first_and_keeps_the_rest() {
-        let c = Contexts {
+        let c = Workspaces {
             order: vec!["/data/wt/fix".into(), "/gone".into(), "/data/wt/feat-x".into()],
             ..Default::default()
         };
@@ -376,8 +397,8 @@ mod tests {
     }
 
     #[test]
-    fn remembers_a_session_per_context() {
-        let mut c = Contexts::default();
+    fn remembers_a_session_per_workspace() {
+        let mut c = Workspaces::default();
         let (a, b) = (Path::new("/work/app"), Path::new("/data/wt/feat-x"));
         assert!(c.remember(a, Some("s1")));
         assert!(!c.remember(a, Some("s1")));
@@ -389,26 +410,26 @@ mod tests {
     }
 
     #[test]
-    fn forget_drops_everything_about_a_context() {
+    fn forget_drops_everything_about_a_workspace() {
         let b = Path::new("/data/wt/feat-x");
-        let mut c = Contexts::default();
+        let mut c = Workspaces::default();
         c.remember(b, Some("s2"));
         c.select(b);
         c.order.push(b.to_path_buf());
         c.forget(b);
-        assert_eq!(c, Contexts::default());
+        assert_eq!(c, Workspaces::default());
     }
 
     #[test]
-    fn legacy_session_becomes_the_main_contexts() {
+    fn legacy_session_becomes_the_main_workspaces() {
         let main = Path::new("/work/app");
-        let mut c = Contexts::default();
+        let mut c = Workspaces::default();
         assert!(c.adopt_legacy_session(main, Some("old")));
         assert_eq!(c.session(main), Some("old"));
-        // A session the context already has wins, and nothing is invented.
+        // A session the workspace already has wins, and nothing is invented.
         assert!(!c.adopt_legacy_session(main, Some("other")));
         assert_eq!(c.session(main), Some("old"));
-        assert!(!Contexts::default().adopt_legacy_session(main, None));
+        assert!(!Workspaces::default().adopt_legacy_session(main, None));
     }
 
     fn git_in(dir: &Path, args: &[&str]) {
@@ -422,8 +443,8 @@ mod tests {
     }
 
     #[test]
-    fn creates_and_removes_a_context() {
-        let dir = std::env::temp_dir().join(format!("kynex-context-wt-{}", std::process::id()));
+    fn creates_and_removes_a_workspace() {
+        let dir = std::env::temp_dir().join(format!("kynex-workspace-wt-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         let repo = dir.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
@@ -448,7 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn a_chief_worker_branch_is_a_worker_context() {
+    fn a_chief_worker_branch_is_a_worker_workspace() {
         let list = from_worktrees(
             Path::new("/work/app"),
             &[wt("/work/app", Some("main"), true), wt("/work/app-chief-worker", Some("chief-worker"), false)],
@@ -458,9 +479,9 @@ mod tests {
     }
 
     #[test]
-    fn plain_folders_are_contexts_too() {
+    fn plain_folders_are_workspaces_too() {
         let project = Path::new("/work/app");
-        let mut c = Contexts::default();
+        let mut c = Workspaces::default();
         assert!(c.add_folder(project, Path::new("/work/scripts")));
         // The project itself and a repeat aren't new.
         assert!(!c.add_folder(project, Path::new("/work/app/")));
@@ -474,7 +495,7 @@ mod tests {
         assert_eq!(folder.label, "scripts");
         assert!(sample().iter().all(|c| !c.folder));
         // A folder that's already a checkout stays a checkout.
-        let mut c2 = Contexts::default();
+        let mut c2 = Workspaces::default();
         assert!(c2.add_folder(project, Path::new("/data/wt/feat-x")));
         assert_eq!(c2.with_folders(sample()).len(), 3);
 
@@ -486,7 +507,7 @@ mod tests {
         assert_eq!(c.session(Path::new("/work/scripts")), Some("s9"));
         // ...and forgetting drops everything.
         c.forget(Path::new("/work/scripts"));
-        assert_eq!(c, Contexts::default());
+        assert_eq!(c, Workspaces::default());
     }
 
     #[test]
@@ -498,13 +519,13 @@ mod tests {
 
     #[test]
     fn the_file_round_trips_and_tolerates_gaps() {
-        let mut c = Contexts::default();
+        let mut c = Workspaces::default();
         c.select(Path::new("/data/wt/feat-x"));
         c.remember(Path::new("/work/app"), Some("s1"));
         c.order.push("/work/app".into());
         let json = serde_json::to_string(&c).unwrap();
-        assert_eq!(serde_json::from_str::<Contexts>(&json).unwrap(), c);
-        assert_eq!(serde_json::from_str::<Contexts>("{}").unwrap(), Contexts::default());
+        assert_eq!(serde_json::from_str::<Workspaces>(&json).unwrap(), c);
+        assert_eq!(serde_json::from_str::<Workspaces>("{}").unwrap(), Workspaces::default());
     }
 
     #[test]
@@ -524,5 +545,26 @@ mod tests {
     fn new_worktrees_go_under_the_data_dir() {
         let p = new_worktree_path(Path::new("/work/app"), "feat/x");
         assert!(p.ends_with(Path::new("worktrees").join(project::folder_name(Path::new("/work/app"))).join("feat-x")));
+    }
+
+    #[test]
+    fn contexts_json_becomes_workspaces_json() {
+        let dir = std::env::temp_dir().join(format!("kynex-workspace-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("contexts.json"), r#"{"selected":"/a","order":["/a","/b"]}"#).unwrap();
+        migrate_legacy(&dir);
+        assert!(!dir.join("contexts.json").exists());
+        let moved: Workspaces =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("workspaces.json")).unwrap()).unwrap();
+        assert_eq!(moved.selected, Some(PathBuf::from("/a")));
+        assert_eq!(moved.order.len(), 2);
+        // One that already has a workspaces.json keeps it, and the old file stays out of the way.
+        std::fs::write(dir.join("contexts.json"), r#"{"selected":"/old"}"#).unwrap();
+        migrate_legacy(&dir);
+        let kept: Workspaces =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("workspaces.json")).unwrap()).unwrap();
+        assert_eq!(kept.selected, Some(PathBuf::from("/a")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

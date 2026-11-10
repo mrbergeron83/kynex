@@ -7,10 +7,13 @@
 //! | `state.rs`          | `Saved`: what persists to `state.json`               |
 //! | `keys.rs`           | actions, `keymap.json`, tab / Esc / mode shortcuts   |
 //! | `layout.rs`         | Code and Git layouts, overlays, shortcuts, resize drags |
-//! | `workspace.rs`      | tabs, projects, and which session is shown           |
+//! | `projects.rs`       | tabs, projects, and which session is shown           |
 //! | `title_bar.rs`      | title bar and project tabs                           |
 //! | `footer.rs`         | status footer: Kynex's CPU / memory, meters, update  |
 //! | `status.rs`         | the footer's usage-limits meter and update pill      |
+//! | `pane_actions.rs`  | a pane's header buttons and menus, opening a session beside one |
+//! | `pane_tabs.rs`     | the selected workspace's tab bar: new, close, rename, reorder |
+//! | `tiles.rs`          | the split panes of a workspace: layouts, focus, drawing |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_groups.rs` | session groups and the archive, their menus          |
@@ -26,8 +29,9 @@
 //! | `find.rs`           | find in the transcript (Ctrl+F)                      |
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
-//! | `contexts.rs`       | the contexts section of the sessions column          |
-//! | `context_new.rs`    | making and removing contexts, folding worktree tabs  |
+//! | `workspaces.rs`     | workspaces: listing, selecting, their folders        |
+//! | `workspace_list.rs` | the workspaces and their open sessions in the sidebar |
+//! | `workspace_new.rs`  | making and removing workspaces, folding worktree tabs |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, from the header    |
 //! | `scratch_modal.rs`  | the file explorer in a modal: session or project     |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
@@ -81,8 +85,6 @@ mod background;
 mod chief;
 mod chief_view;
 mod composer;
-mod context_new;
-mod contexts;
 mod delegate_view;
 mod drafts;
 mod extensions;
@@ -103,7 +105,10 @@ pub(crate) mod mentions;
 mod menus;
 mod models;
 mod palette;
+mod pane_actions;
+mod pane_tabs;
 mod project_setup;
+mod projects;
 pub(crate) mod prompts;
 mod provider_setup;
 mod providers;
@@ -125,6 +130,7 @@ mod storage;
 mod storage_list;
 mod tasks;
 mod terminal_dock;
+mod tiles;
 pub(crate) mod timeline;
 mod title_bar;
 mod titles;
@@ -135,7 +141,9 @@ mod transcript;
 mod transcript_rows;
 mod trust;
 mod viewer;
-mod workspace;
+mod workspace_list;
+mod workspace_new;
+mod workspaces;
 mod worktrees;
 
 use std::collections::{HashMap, HashSet};
@@ -183,9 +191,9 @@ pub struct KynexApp {
     git_modal: Option<PathBuf>,
     /// Each open project's git worktrees, kept fresh in the background.
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
-    /// Each project's saved contexts (selection, sessions, order), read on first use.
-    contexts: HashMap<PathBuf, kynex_core::context::Contexts>,
-    context_ui: context_new::ContextUi,
+    /// Each project's saved workspaces (selection, sessions, order), read on first use.
+    workspaces: HashMap<PathBuf, kynex_core::workspace::Workspaces>,
+    workspace_ui: workspace_new::WorkspaceUi,
     /// Each open project's colour settings, read once.
     appearances: HashMap<PathBuf, kynex_core::project::Appearance>,
     /// Each open project's Claude settings (mode, effort, folders), read once and
@@ -217,8 +225,20 @@ pub struct KynexApp {
     /// Unsent messages of the sessions not shown, by draft key; and the shown
     /// session's uid and draft key, whose message is in the composer.
     drafts: HashMap<String, Draft>,
-    /// The one pane: the message box and what goes with it (`src/pane/`).
+    /// The focused pane: the message box and what goes with it (`src/pane/`). Every
+    /// other pane's is parked until it is focused (`tiles.rs`).
     pane: SessionPane,
+    pane_id: kynex_core::layout::PaneId,
+    next_pane: kynex_core::layout::PaneId,
+    parked: HashMap<kynex_core::layout::PaneId, SessionPane>,
+    /// Each workspace's panes, by the workspace's folder.
+    tiles: HashMap<PathBuf, kynex_core::tiling::Tiling>,
+    /// The pane tab being renamed, and the field its name is typed in.
+    pane_tab_rename: Option<(usize, Entity<TextInput>)>,
+    /// Dividers held by the pointer, while the panes are being resized.
+    tile_drag: Option<Vec<tiles::Resizing>>,
+    /// Where the panes are drawn, as last laid out.
+    tile_area: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     palette: Option<PaletteView>,
     scratch: Option<ScratchModal>,
     /// When each session's files were last opened, for the composer's badge,
@@ -362,20 +382,7 @@ impl KynexApp {
         chat.wake = wake.clone();
         let chat = Live::of(chat);
 
-        let composer = cx.new(|cx| TextInput::new(cx).multiline());
-        cx.subscribe_in(&composer, window, |this, _, ev, window, cx| match ev {
-            InputEvent::Submit => this.send(window, cx),
-            InputEvent::PasteImages(images) => {
-                for i in images {
-                    this.attach_bytes(&i.bytes, cx);
-                }
-            }
-            InputEvent::Changed => this.warm_shown(),
-        })
-        .detach();
-        // Focusing the message box means a message is coming: start Claude now.
-        let composer_focus = composer.read(cx).focus_handle(cx);
-        cx.on_focus(&composer_focus, window, |this, _, _| this.warm_shown()).detach();
+        let composer = Self::new_composer(1, window, cx);
         let login_code = cx.new(|cx| TextInput::new(cx).mono().placeholder("Paste the code here"));
         cx.subscribe(&login_code, |this, _, ev, cx| {
             if let InputEvent::Submit = ev {
@@ -469,7 +476,7 @@ impl KynexApp {
         })
         .detach();
         cx.on_app_quit(|this, cx| {
-            this.stash_draft(cx);
+            this.stash_all_drafts(cx);
             this.save();
             async {}
         })
@@ -496,8 +503,8 @@ impl KynexApp {
             git: HashMap::new(),
             git_modal: None,
             worktrees: HashMap::new(),
-            contexts: HashMap::new(),
-            context_ui: Default::default(),
+            workspaces: HashMap::new(),
+            workspace_ui: Default::default(),
             terminals: HashMap::new(),
             appearances: HashMap::new(),
             claude_settings: HashMap::new(),
@@ -514,6 +521,13 @@ impl KynexApp {
             delegate_rule,
             drafts: HashMap::new(),
             pane: SessionPane::new(composer),
+            pane_id: 1,
+            next_pane: 2,
+            parked: HashMap::new(),
+            tiles: HashMap::new(),
+            pane_tab_rename: None,
+            tile_drag: None,
+            tile_area: Default::default(),
             palette: None,
             scratch: None,
             scratch_seen: HashMap::new(),

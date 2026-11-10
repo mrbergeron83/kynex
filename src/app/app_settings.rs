@@ -17,6 +17,7 @@ use kynex_core::open::Opener;
 use kynex_core::paths::data_dir;
 use kynex_core::scale;
 use kynex_core::terminal::ShellKind;
+use kynex_core::tile_style::{self, TileTweaks};
 use kynex_core::tray::OnClose;
 
 use kynex_core::toasts::{Corner, Toast};
@@ -488,6 +489,51 @@ impl KynexApp {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_column(w, cx)))
             }));
 
+        // The look of the pane tiles: the theme's values until changed here.
+        let style = self.saved.tiles.resolve(t.tile);
+        let stepper = |id: &'static str,
+                       label: &'static str,
+                       value: f32,
+                       max: f32,
+                       set: fn(&mut TileTweaks, f32),
+                       cx: &mut Context<Self>| {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().w(px(110.)).text_sm().child(label))
+                .child(
+                    outline_button((id, 0usize), "−", cx)
+                        .on_click(cx.listener(move |this, _, _, cx| this.tune_tiles(set, (value - 1.).max(0.), cx))),
+                )
+                .child(div().w(px(56.)).flex().justify_center().text_sm().child(format!("{value} px")))
+                .child(
+                    outline_button((id, 1usize), "+", cx)
+                        .on_click(cx.listener(move |this, _, _, cx| this.tune_tiles(set, (value + 1.).min(max), cx))),
+                )
+        };
+        let tiles = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(heading(
+                "Pane tiles",
+                "Side-by-side panes are tiles: the gap between and around them (0 for flush panes with thin dividers), the border and the corner radius. The theme sets the starting values.",
+                t,
+            ))
+            .child(stepper("app-tile-gap", "Gap", style.gap, tile_style::MAX_GAP, |s, v| s.gap = Some(v), cx))
+            .child(stepper("app-tile-border", "Border", style.border, tile_style::MAX_BORDER, |s, v| s.border = Some(v), cx))
+            .child(stepper("app-tile-radius", "Corner radius", style.radius, tile_style::MAX_RADIUS, |s, v| s.radius = Some(v), cx))
+            .child(
+                outline_button("app-tile-reset", "Use the theme's", cx)
+                    .when(self.saved.tiles.is_default(), |b| b.opacity(0.5))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.saved.tiles = TileTweaks::default();
+                        this.save();
+                        cx.notify();
+                    })),
+            );
+
         let corner = div()
             .flex()
             .flex_col()
@@ -555,6 +601,7 @@ impl KynexApp {
             .child(zoom)
             .child(fonts)
             .child(column)
+            .child(tiles)
             .child(corner)
             .child(footer)
             .child(motion)
@@ -569,6 +616,13 @@ impl KynexApp {
             th.list.remeasure();
         }
         cx.refresh_windows();
+    }
+
+    /// Sets one of the pane tiles' looks, and draws the panes again.
+    fn tune_tiles(&mut self, set: fn(&mut TileTweaks, f32), value: f32, cx: &mut Context<Self>) {
+        set(&mut self.saved.tiles, value);
+        self.save();
+        cx.notify();
     }
 
     fn set_column(&mut self, w: ColumnWidth, cx: &mut Context<Self>) {

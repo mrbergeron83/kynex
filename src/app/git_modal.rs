@@ -27,15 +27,15 @@ impl KynexApp {
     /// The Git view for the folder `path`, made the first time it's needed.
     pub(super) fn git_view(&mut self, path: &std::path::Path, cx: &mut Context<Self>) -> gpui::Entity<GitView> {
         // One view per folder, however its path was spelled.
-        if let Some((_, g)) = self.git.iter().find(|(k, _)| kynex_core::context::same_folder(k, path)) {
+        if let Some((_, g)) = self.git.iter().find(|(k, _)| kynex_core::workspace::same_folder(k, path)) {
             return g.clone();
         }
         let g = cx.new(|cx| GitView::new(path.to_path_buf(), cx));
         cx.subscribe(&g, |this, _, ev: &GitEvent, cx| match ev {
             GitEvent::OpenFolder(folder) => {
                 this.git_modal = None;
-                // A worktree of an open project is one of its contexts, not a tab.
-                if !this.open_as_context(folder, cx) {
+                // A worktree of an open project is one of its workspaces, not a tab.
+                if !this.open_as_workspace(folder, cx) {
                     this.add_project(folder.clone());
                 }
                 cx.notify();
@@ -57,7 +57,7 @@ impl KynexApp {
         // A Git view only the modal was showing stops polling with it.
         if let Some(path) = self.git_modal.take()
             && !self.saved.projects.iter().any(|p| p.path == path)
-            && !self.context_cwd().is_some_and(|c| kynex_core::context::same_folder(&c, &path))
+            && !self.workspace_cwd().is_some_and(|c| kynex_core::workspace::same_folder(&c, &path))
         {
             self.git.remove(&path);
         }
@@ -109,7 +109,7 @@ impl KynexApp {
                     .child(path.display().to_string()),
             )
             .child(
-                outline_button("git-modal-tab", if linked { "Switch to context" } else { "Open as tab" }, cx)
+                outline_button("git-modal-tab", if linked { "Switch to workspace" } else { "Open as tab" }, cx)
                     .tooltip(Tooltip::text(if linked {
                         "Show this worktree's sessions, terminal and Git view"
                     } else {

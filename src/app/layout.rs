@@ -4,6 +4,8 @@
 
 use gpui::{AnyElement, Context, MouseButton, MouseMoveEvent, Stateful, Window, div, prelude::*};
 
+use kynex_core::live::Key;
+
 use super::KynexApp;
 use super::keys::{self, CopySelection, copy_selection};
 use super::state::{Active, View};
@@ -15,8 +17,8 @@ impl KynexApp {
     /// The Git view beside the sessions panel.
     pub(super) fn render_git_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
-        // The selected context's checkout.
-        let path = self.context_cwd().unwrap();
+        // The selected workspace's checkout.
+        let path = self.workspace_cwd().unwrap();
         let git = self.git_view(&path, cx);
         // The sessions panel stays, so the toolbar (and its Code / Git switch)
         // doesn't move when the view changes.
@@ -47,6 +49,23 @@ impl KynexApp {
     pub(super) fn render_code_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let key = self.focused_key();
+        // Several panes: each draws its own header and conversation.
+        let pane_tabs = self.render_pane_tabs(cx);
+        let tiled = self.render_panes(window, cx);
+        let single = tiled.is_none();
+        // A project's single pane has the pane menu on its header; chat and KNX Ops don't.
+        let header = match key.filter(|_| single) {
+            Some(key) if self.tiling_scope().is_some() => self.render_tile_header(self.pane_id, Some(key), false, cx),
+            Some(key) => self.render_session_header(key, cx),
+            None => None,
+        };
+        let body = match tiled {
+            Some(tiles) => tiles,
+            None => {
+                let body = self.render_pane_body(key, true, window, cx);
+                self.single_pane_drop(body, cx)
+            }
+        };
         div()
             .flex()
             .flex_1()
@@ -60,41 +79,51 @@ impl KynexApp {
                     .min_w_0()
                     .bg(t.editor)
                     .child(self.render_toolbar(cx))
-                    .children(key.and_then(|key| self.render_session_header(key, cx)))
+                    .children(pane_tabs)
+                    .children(header)
                     .children(self.render_reporter(window, cx))
-                    // The timeline runs the full height beside the transcript
-                    // and the composer under it, down to the terminal dock.
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_h_0()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(
-                                        div()
-                                            .relative()
-                                            .flex()
-                                            .flex_col()
-                                            .flex_1()
-                                            .min_h_0()
-                                            .child(match key {
-                                                Some(key) => self.render_thread(key, window, cx),
-                                                None => self.render_empty_thread(cx),
-                                            })
-                                            .children(self.render_find(cx))
-                                            .child(self.toast_room_probe()),
-                                    )
-                                    .child(self.render_composer(key, window, cx)),
-                            )
-                            .children(key.and_then(|key| self.render_timeline(key, cx))),
-                    )
+                    .child(body)
                     .children(self.render_terminal_dock(window, cx)),
             )
+            .into_any_element()
+    }
+
+    /// One pane's conversation: transcript and composer, the timeline running the full
+    /// height beside them. `focused` panes also draw the find bar.
+    pub(super) fn render_pane_body(
+        &mut self,
+        key: Option<Key>,
+        focused: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .flex()
+            .flex_1()
+            .min_h_0()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_h_0()
+                            .child(match key {
+                                Some(key) => self.render_thread(key, window, cx),
+                                None => self.render_empty_thread(cx),
+                            })
+                            .children(focused.then(|| self.render_find(cx)).flatten())
+                            .child(self.toast_room_probe()),
+                    )
+                    .child(self.render_composer(key, window, cx)),
+            )
+            .children(key.and_then(|key| self.render_timeline(key, cx)))
             .into_any_element()
     }
 
@@ -149,6 +178,16 @@ impl KynexApp {
                     }),
                 )
         })
+        .when(self.tile_drag.is_some(), |d| {
+            d.on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| this.drag_tiles(ev.position, cx)))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.tile_drag = None;
+                        cx.notify();
+                    }),
+                )
+        })
         .when(self.resizing_terminal, |d| {
             d.cursor_row_resize()
                 .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
@@ -180,8 +219,8 @@ impl KynexApp {
             .on_action(cx.listener(Self::next_session))
             .on_action(cx.listener(Self::prev_session))
             .on_action(cx.listener(Self::close_tab))
-            .on_action(cx.listener(Self::next_context))
-            .on_action(cx.listener(Self::prev_context))
+            .on_action(cx.listener(Self::next_workspace))
+            .on_action(cx.listener(Self::prev_workspace))
             .on_action(cx.listener(Self::next_tab))
             .on_action(cx.listener(Self::prev_tab))
             .on_action(cx.listener(Self::move_tab_left))
@@ -228,6 +267,7 @@ impl KynexApp {
         {
             s.finished = false;
         }
+        self.sync_tiles(window, cx);
         self.sync_attention(cx);
         self.sync_awake();
         let key = self.focused_key();

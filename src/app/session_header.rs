@@ -15,6 +15,18 @@ use crate::ui::{Icon, Tooltip, icon};
 
 impl KynexApp {
     pub(super) fn render_session_header(&mut self, key: Key, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.render_session_header_with(key, None, Vec::new(), cx)
+    }
+
+    /// The header with `lead` before the title and `tail` after everything else (a pane's
+    /// lamp and its zoom / close buttons).
+    pub(super) fn render_session_header_with(
+        &mut self,
+        key: Key,
+        lead: Option<AnyElement>,
+        tail: Vec<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let t = theme(cx).clone();
         let s = self.session_by_key(key)?;
         // Its name; until that comes, the first words of its first message,
@@ -62,7 +74,7 @@ impl KynexApp {
         let field = id.as_deref().and_then(|id| self.session_name_field(id, true, cx));
 
         // The project's worktree list (one watcher per project, not per checkout).
-        let project = self.context_project().unwrap_or_else(|| cwd.clone());
+        let project = self.workspace_project().unwrap_or_else(|| cwd.clone());
         let place = if kind == Kind::Code { self.worktrees(&project, cx).read(cx).at(&cwd).cloned() } else { None };
         // Where a project session runs: its branch, flagged when it's a linked
         // worktree, and what's changed there. A click opens its Git view.
@@ -120,9 +132,9 @@ impl KynexApp {
                 .children(git_stats(&w, &t))
                 .tooltip(Tooltip::with_meta(
                     format!("Claude is editing the worktree at {}", w.path.display()),
-                    "Click to switch to that context",
+                    "Click to switch to that workspace",
                 ))
-                .on_click(cx.listener(move |this, _, _, cx| this.select_context(&path, cx)))
+                .on_click(cx.listener(move |this, _, _, cx| this.select_workspace(&path, cx)))
         });
 
         // How full the context is; past half, a click compacts it.
@@ -210,6 +222,7 @@ impl KynexApp {
                 .px_3()
                 .border_b_1()
                 .border_color(t.border_variant)
+                .children(lead)
                 .child(match field {
                     Some(field) => field.flex_1().into_any_element(),
                     None => {
@@ -248,6 +261,7 @@ impl KynexApp {
                             .child(stats.join(" · ")),
                     )
                 })
+                .children(tail)
                 .into_any_element(),
         )
     }

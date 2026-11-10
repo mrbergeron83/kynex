@@ -226,7 +226,7 @@ impl KynexApp {
                 .map_or((false, false, false), |o| (o.busy, o.waiting, o.finished))
         };
 
-        let contexts = if kind == Kind::Code { self.render_contexts(cx) } else { None };
+        let workspaces = if kind == Kind::Code { self.render_workspaces(cx) } else { None };
         let header = div()
             .flex()
             .flex_none()
@@ -644,7 +644,7 @@ impl KynexApp {
             .flex()
             .flex_col()
             .size_full()
-            .children(contexts)
+            .children(workspaces)
             .child(header)
             .children(filter)
             .child(scrollbar::vertical_over("session-list-bar", scroll, list, |d| d.flex_1().min_h_0()))

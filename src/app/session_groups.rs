@@ -219,6 +219,22 @@ impl KynexApp {
                 }))
                 .into_any_element()
         };
+        // Beside what's on show, in a pane of its own (projects only).
+        if self.tiling_scope().is_some() {
+            for (n, label, side) in [
+                (2100, "Open to the side", kynex_core::layout::Direction::Right),
+                (2101, "Open below", kynex_core::layout::Direction::Down),
+            ] {
+                let open_id = id.to_string();
+                items.push(item(
+                    label.into(),
+                    n,
+                    cx,
+                    Box::new(move |this, window, cx| this.open_beside(open_id.clone(), None, Some(side), window, cx)),
+                ));
+            }
+            items.push(div().my_1().child(divider(cx)).into_any_element());
+        }
         let (rename_id, rename_cwd) = (id.to_string(), cwd.clone());
         items.push(item(
             "Rename".into(),

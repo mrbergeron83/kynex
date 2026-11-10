@@ -7,33 +7,48 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Contexts: a project with git worktrees lists each checkout at the top of the sessions column,
-  with its branch, changes and a lamp for the sessions working in it. Pick one to switch to its
-  sessions, or step through them with Ctrl+Alt+PageDown / PageUp (Next / Previous context in the
-  palette, where they're also listed); right-click one to open it in your editor, file manager or
-  terminal.
-- New context: the + beside Contexts makes a git worktree on a branch, new (off the default
-  branch) or existing, and opens it with a new session. Right-click a context to remove its
+- Panes: split a workspace into several sessions side by side (Split pane right / down in the
+  palette, Ctrl+K), each a tile with its own conversation, message box and prompts. Drag the gap
+  between tiles to resize them, both ways at once where a row and a column meet; double-click a
+  gap to even it out. The focused tile's border is in the project's colour. Settings →
+  Appearance → Pane tiles sets the gap (0 for flush panes), border and corner radius.
+- Pane tabs: a workspace can hold several layouts of panes, each in a tab above them with a lamp
+  for its sessions. New pane tab (palette) or the + opens one with a new session; click a tab to
+  show it, double-click to rename it, drag to reorder, × or middle-click to close. With one tab
+  the row is hidden.
+- Panes from the sidebar and by hand: right-click a past session → "Open to the side" or "Open
+  below" puts it in a pane of its own, and dragging a session onto a pane's edge splits there
+  (onto its middle, it opens in that pane). Right-click a pane's header to split it, zoom it to
+  fill the tab, move it to another tab or close it; each tile's header has its lamp, model, and
+  zoom and close buttons. Right-click a pane tab to rename or close it.
+- Workspaces: the sidebar lists a project's workspaces (its main tree, git worktrees and added
+  folders), each with its branch, a lamp for the sessions working in it, its changes on hover and
+  the sessions open in it, each with a lamp of its own. Pick a workspace to switch to it, or a
+  session to focus its pane; step through workspaces with Ctrl+Alt+PageDown / PageUp (Next /
+  Previous workspace in the palette, where they're also listed); right-click one to open it in
+  your editor, file manager or terminal. The selected workspace's past sessions are listed below.
+- New workspace: the + beside Workspaces makes a git worktree on a branch, new (off the default
+  branch) or existing, and opens it with a new session. Right-click a workspace to remove its
   worktree (the branch stays); Kynex asks first when it has changes or a session still working.
-  KNX Ops workers' worktrees show as contexts, marked "worker".
-- Folders as contexts: the folder button beside Contexts adds any folder (scripts, notes, tools)
-  as a context of the project, with its own sessions and terminal. It's marked "folder", and
-  right-click → "Remove folder from contexts" takes it out of the list without touching the disk.
-  A project that isn't a git repository can add folders too. Right-click a context →
+  KNX Ops workers' worktrees show as workspaces, marked "worker".
+- Folders as workspaces: the folder button beside Workspaces adds any folder (scripts, notes,
+  tools) as a workspace of the project, with its own sessions and terminal. It's marked "folder",
+  and right-click → "Remove folder from workspaces" takes it out of the list without touching the
+  disk. A project that isn't a git repository can add folders too. Right-click a workspace →
   "Open in a new tab" makes it a project tab of its own, which stays one.
 
 ### Changed
 
-- Everything follows the context you're in: switching context switches the sessions, the
+- Everything follows the workspace you're in: switching workspace switches the sessions, the
   terminal (each checkout keeps its own shells), the Git view, the path and open-in buttons and
   the session header together, and switching back finds each as you left it. The header's
-  "working in <worktree>" chip now switches to that context.
-- A git worktree is a context of its project, no longer a project tab of its own: "Open as tab"
-  in a worktree's Git view switches to that context, and worktrees open as tabs by an earlier
+  "working in <worktree>" chip now switches to that workspace.
+- A git worktree is a workspace of its project, no longer a project tab of its own: "Open as tab"
+  in a worktree's Git view switches to that workspace, and worktrees open as tabs by an earlier
   version fold into their project when Kynex starts.
 - Worktrees refresh faster and quieter: Kynex watches each repository's git folder (a worktree
   made or removed, a commit, a branch switch) instead of polling every 10 seconds, with a
-  60-second fallback, so a new or removed context shows at once and an idle Kynex starts no `git`
+  60-second fallback, so a new or removed workspace shows at once and an idle Kynex starts no `git`
   processes. The list appears first and each worktree's changes fill in after, read in parallel.
   On Windows, read-only `git` calls run Git for Windows' real `git.exe` directly instead of its
   `cmd\git.exe` wrapper, which halves the process starts.

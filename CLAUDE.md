@@ -119,7 +119,8 @@ A cargo workspace with two crates:
     (the table at the top of `app/mod.rs` lists them: title bar, sessions panel, transcript,
     composer, prompts, menus, settings modal, setup screen…)
   - `pane/` — `SessionPane`: one session view's composer and what goes with it (attachments,
-    slash / mention popups, find, history search, rewind); `KynexApp` holds one as `pane`
+    slash / mention popups, find, history search, rewind); `KynexApp` holds the focused pane's as
+    `pane` and parks the others (`app/tiles.rs`, over `kynex_core::tiling`, a workspace's layout)
   - `prompt/` — `PromptView`: permission / plan / question prompts in the composer's place,
     Claude Code-style (cursor, numbered choices, a tab per question); `questions.rs` draws the
     questions, whose state is `kynex_core::questions::Form`; `preview.rs` has titles and diffs
@@ -164,6 +165,9 @@ to open it without taking focus.
 - Rust 2024 edition. Hot-patch code is gated behind the `hotpatch` feature
   (`gpui/hot-reload`, debug builds only); keep release builds free of subsecond.
 - UI follows Zed: flat surfaces, 1px borders, small radii, colours only from `theme(cx)`.
+  One exception: the pane tiles (`app/tiles.rs`) are rounded surfaces with a gap between them and a
+  border that's thicker on the focused one, in the Hyprland style; their gap, border and radius come
+  from the theme (`Palette::tile`) and Appearance (`kynex_core::tile_style`).
   New widgets go in `src/ui/`; when a hard one is needed (scrollbars, selection), copy and
   trim it from longbridge/gpui-component (Apache-2.0) rather than adding the dependency.
 - Helpers that return `impl IntoElement` from `&self`/`cx` need `+ use<>` (Rust 2024

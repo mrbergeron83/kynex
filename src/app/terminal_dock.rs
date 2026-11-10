@@ -21,15 +21,15 @@ const MIN_HEIGHT: f32 = 120.;
 const MIN_CONVERSATION: f32 = 220.;
 
 impl KynexApp {
-    /// The folder the terminal follows: the selected context's (the project's
+    /// The folder the terminal follows: the selected workspace's (the project's
     /// own tree, or a worktree); Chat has none. Each folder has its own shells.
     fn terminal_cwd(&self) -> Option<PathBuf> {
-        self.context_cwd()
+        self.workspace_cwd()
     }
 
     fn terminal_panel(&mut self, cwd: &Path, cx: &mut Context<Self>) -> Entity<TerminalPanel> {
         // One panel per folder, however its path was spelled.
-        if let Some((_, p)) = self.terminals.iter().find(|(k, _)| kynex_core::context::same_folder(k, cwd)) {
+        if let Some((_, p)) = self.terminals.iter().find(|(k, _)| kynex_core::workspace::same_folder(k, cwd)) {
             return p.clone();
         }
         let panel = cx.new(|cx| TerminalPanel::new(cwd.to_path_buf(), cx));

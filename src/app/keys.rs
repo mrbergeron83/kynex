@@ -24,8 +24,8 @@ actions!(
         CloseTab,
         NextTab,
         PrevTab,
-        NextContext,
-        PrevContext,
+        NextWorkspace,
+        PrevWorkspace,
         MoveTabLeft,
         MoveTabRight,
         ToggleSessions,
@@ -90,9 +90,9 @@ const SHORTCUTS: [(&str, &str); 37] = [
     // Ctrl+Shift+] / [ as well, where they don't already belong to the line above.
     ("next_session_too", if cfg!(target_os = "macos") { "" } else { "ctrl-shift-]" }),
     ("prev_session_too", if cfg!(target_os = "macos") { "" } else { "ctrl-shift-[" }),
-    // The project's checkouts (contexts), as sessions are with Ctrl+PageDown / Up.
-    ("next_context", "secondary-alt-pagedown"),
-    ("prev_context", "secondary-alt-pageup"),
+    // The project's checkouts (workspaces), as sessions are with Ctrl+PageDown / Up.
+    ("next_workspace", "secondary-alt-pagedown"),
+    ("prev_workspace", "secondary-alt-pageup"),
     ("close_tab", "secondary-w"),
     ("next_tab", "ctrl-tab"),
     ("prev_tab", "ctrl-shift-tab"),
@@ -183,6 +183,13 @@ pub fn bind_keys(cx: &mut App) {
             HashMap::new()
         }
     };
+    // Workspaces were "contexts": a keymap.json written then still binds them.
+    let mut user = user;
+    for (old, new) in [("next_context", "next_workspace"), ("prev_context", "prev_workspace")] {
+        if let Some(keys) = user.remove(old) {
+            user.entry(new.to_string()).or_insert(keys);
+        }
+    }
     let c = Some("Workspace");
     let mut bindings = Vec::new();
     for (name, default) in SHORTCUTS {
@@ -213,8 +220,8 @@ pub fn bind_keys(cx: &mut App) {
             "new_session" => KeyBinding::new(keys, NewSession, c),
             "next_session" | "next_session_too" => KeyBinding::new(keys, NextSession, c),
             "prev_session" | "prev_session_too" => KeyBinding::new(keys, PrevSession, c),
-            "next_context" => KeyBinding::new(keys, NextContext, c),
-            "prev_context" => KeyBinding::new(keys, PrevContext, c),
+            "next_workspace" => KeyBinding::new(keys, NextWorkspace, c),
+            "prev_workspace" => KeyBinding::new(keys, PrevWorkspace, c),
             "close_tab" => KeyBinding::new(keys, CloseTab, c),
             "next_tab" => KeyBinding::new(keys, NextTab, c),
             "prev_tab" => KeyBinding::new(keys, PrevTab, c),
@@ -400,12 +407,12 @@ impl KynexApp {
         self.jump(t, window, cx);
     }
 
-    pub(super) fn next_context(&mut self, _: &NextContext, _: &mut Window, cx: &mut Context<Self>) {
-        self.step_context(1, cx);
+    pub(super) fn next_workspace(&mut self, _: &NextWorkspace, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_workspace(1, cx);
     }
 
-    pub(super) fn prev_context(&mut self, _: &PrevContext, _: &mut Window, cx: &mut Context<Self>) {
-        self.step_context(-1, cx);
+    pub(super) fn prev_workspace(&mut self, _: &PrevWorkspace, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_workspace(-1, cx);
     }
 
     pub(super) fn toggle_sessions(&mut self, _: &ToggleSessions, _: &mut Window, cx: &mut Context<Self>) {
@@ -424,7 +431,8 @@ impl KynexApp {
             || self.app_settings.take().is_some()
             || self.extensions.take().is_some()
             || self.cancel_rename()
-            || self.cancel_new_context()
+            || self.cancel_tab_rename(cx)
+            || self.cancel_new_workspace()
         {
             return cx.notify();
         }

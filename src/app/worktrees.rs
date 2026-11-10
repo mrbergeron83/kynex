@@ -1,6 +1,6 @@
 //! The project's git worktrees, kept up to date in the background: their
-//! branch, changed files and distance from main, for the contexts section of the
-//! sessions panel (`contexts.rs`) and the session header. A worktree can also be
+//! branch, changed files and distance from main, for the workspaces section of the
+//! sessions panel (`workspaces.rs`) and the session header. A worktree can also be
 //! opened as a project tab, on its Git view.
 
 use kynex_core::live::Key;
@@ -155,7 +155,7 @@ impl KynexApp {
             })
             .take(300)
             .collect();
-        let project = self.context_project().unwrap_or_else(|| cwd.clone());
+        let project = self.workspace_project().unwrap_or_else(|| cwd.clone());
         let list = self.worktrees(&project, cx).read(cx).list.clone();
         inputs.iter().find_map(|input| git::worktree_in(input, &list)).filter(|w| w.path != cwd).cloned()
     }
@@ -169,11 +169,11 @@ impl KynexApp {
         }
     }
 
-    /// Opens a worktree to look at its changes: its project's context when it has
+    /// Opens a worktree to look at its changes: its project's workspace when it has
     /// one, else a tab on its Git view.
     pub(super) fn open_worktree_changes(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        // A worktree of an open project is one of its contexts: switch to it.
-        if self.open_as_context(&path, cx) {
+        // A worktree of an open project is one of its workspaces: switch to it.
+        if self.open_as_workspace(&path, cx) {
             return cx.notify();
         }
         self.add_project(path);
