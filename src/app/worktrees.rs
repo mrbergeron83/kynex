@@ -101,7 +101,8 @@ impl KynexApp {
             })
             .take(300)
             .collect();
-        let list = self.worktrees(&cwd, cx).read(cx).list.clone();
+        let project = self.context_project().unwrap_or_else(|| cwd.clone());
+        let list = self.worktrees(&project, cx).read(cx).list.clone();
         inputs.iter().find_map(|input| git::worktree_in(input, &list)).filter(|w| w.path != cwd).cloned()
     }
 

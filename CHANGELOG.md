@@ -19,6 +19,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Everything follows the context you're in: switching context switches the sessions, the
+  terminal (each checkout keeps its own shells), the Git view, the path and open-in buttons and
+  the session header together, and switching back finds each as you left it. The header's
+  "working in <worktree>" chip now switches to that context.
 - A git worktree is a context of its project, no longer a project tab of its own: "Open as tab"
   in a worktree's Git view switches to that context, and worktrees open as tabs by an earlier
   version fold into their project when Kynex starts.

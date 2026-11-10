@@ -166,6 +166,9 @@ impl KynexApp {
             let closed = live.close_where(|s| context::same_folder(&s.cwd, &path));
             self.forget(&closed);
         }
+        // Its shells and Git view too: a shell standing in the folder blocks removing it.
+        self.terminals.retain(|f, _| !context::same_folder(f, &path));
+        self.git.retain(|f, _| !context::same_folder(f, &path));
         if shown_there {
             self.select_context(&project, cx);
         }

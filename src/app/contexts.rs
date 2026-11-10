@@ -14,6 +14,7 @@ use kynex_core::toasts::Toast;
 use super::KynexApp;
 use super::menus::Menu;
 use super::session_header::git_stats;
+use super::state::{Active, View};
 use crate::theme::{mono, theme};
 use crate::ui::wash::row_wash;
 use crate::ui::{Icon, Lamp, Tooltip, icon_button, lamp, px, section_label};
@@ -48,6 +49,27 @@ impl KynexApp {
         self.active_project().map(|p| p.path.clone())
     }
 
+    /// The folder you're in: the shown session's, which is the selected context's.
+    /// The terminal, the Git view and the toolbar's path follow it.
+    pub(super) fn context_cwd(&self) -> Option<PathBuf> {
+        let p = self.active_project()?;
+        Some(self.code.get(&p.path).and_then(|l| l.current()).map_or_else(|| p.path.clone(), |s| s.cwd.clone()))
+    }
+
+    /// A closed project's terminals and Git views, in each of its contexts' folders.
+    /// `cwds` are the folders its sessions ran in.
+    pub(super) fn drop_context_views(&mut self, project: &Path, cwds: &[PathBuf]) {
+        let made_here = context::worktrees_dir(project);
+        let ours = |f: &Path| {
+            context::same_folder(f, project)
+                || f.starts_with(&made_here)
+                || cwds.iter().any(|c| context::same_folder(c, f))
+        };
+        self.git.retain(|f, _| !ours(f));
+        // Dropping a panel ends its shells.
+        self.terminals.retain(|f, _| !ours(f));
+    }
+
     /// Shows a context: its open session, else the one it last had, else a new one.
     pub(super) fn select_context(&mut self, target: &Path, cx: &mut Context<Self>) {
         let Some(project) = self.context_project() else { return };
@@ -65,6 +87,8 @@ impl KynexApp {
         if let Err(e) = contexts.save(&project) {
             self.toast(Toast::error(e));
         }
+        // Sessions are reached through the Code view; the view you were in comes back after.
+        let was_git = self.active_project().is_some_and(|p| p.view == View::Git);
         self.show_code_view();
         let there = |s: &Session| s.kind == Kind::Code && context::same_folder(&s.cwd, target);
         // The context's remembered session if it's open, else any session there.
@@ -75,6 +99,13 @@ impl KynexApp {
                 Some(id) => Session::resume(Kind::Code, cwd, id, self.wake.clone()),
                 None => Session::new(Kind::Code, cwd),
             });
+        }
+        if was_git
+            && let Active::Project(i) = self.saved.active
+            && let Some(p) = self.saved.projects.get_mut(i)
+        {
+            p.view = View::Git;
+            self.save();
         }
         cx.notify();
     }
