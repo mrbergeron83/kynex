@@ -34,6 +34,10 @@ pub enum Menu {
     SessionsPanel,
     /// A workspace's right-click menu, by its folder.
     Workspace(std::path::PathBuf),
+    /// A pane's right-click menu.
+    Pane(kynex_core::layout::PaneId),
+    /// A pane tab's right-click menu.
+    PaneTab(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -398,6 +402,8 @@ impl KynexApp {
             Menu::Group(i) => items = self.group_menu_items(*i, cx),
             Menu::Sessions(ids) => items = self.sessions_menu_items(ids, cx),
             Menu::SessionsPanel => items = self.sessions_panel_menu_items(cx),
+            Menu::Pane(pane) => items = self.pane_menu_items(*pane, cx),
+            Menu::PaneTab(tab) => items = self.pane_tab_menu_items(*tab, cx),
             Menu::Workspace(path) => {
                 for (n, (label, opener)) in [
                     ("Open in VS Code", Opener::Code),

@@ -15,6 +15,18 @@ use crate::ui::{Icon, Tooltip, icon};
 
 impl KynexApp {
     pub(super) fn render_session_header(&mut self, key: Key, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.render_session_header_with(key, None, Vec::new(), cx)
+    }
+
+    /// The header with `lead` before the title and `tail` after everything else (a pane's
+    /// lamp and its zoom / close buttons).
+    pub(super) fn render_session_header_with(
+        &mut self,
+        key: Key,
+        lead: Option<AnyElement>,
+        tail: Vec<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let t = theme(cx).clone();
         let s = self.session_by_key(key)?;
         // Its name; until that comes, the first words of its first message,
@@ -210,6 +222,7 @@ impl KynexApp {
                 .px_3()
                 .border_b_1()
                 .border_color(t.border_variant)
+                .children(lead)
                 .child(match field {
                     Some(field) => field.flex_1().into_any_element(),
                     None => {
@@ -248,6 +261,7 @@ impl KynexApp {
                             .child(stats.join(" · ")),
                     )
                 })
+                .children(tail)
                 .into_any_element(),
         )
     }

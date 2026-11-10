@@ -114,7 +114,7 @@ impl KynexApp {
 
     /// Double-click: the tab's name becomes a field. Enter or clicking away keeps what's
     /// typed, Esc doesn't.
-    fn start_tab_rename(&mut self, i: usize, name: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn start_tab_rename(&mut self, i: usize, name: String, window: &mut Window, cx: &mut Context<Self>) {
         let input = cx.new(|cx| TextInput::new(cx).placeholder("Name"));
         input.update(cx, |f, cx| f.set_text(name, cx));
         cx.subscribe(&input, |this, _, ev, cx| {
@@ -223,6 +223,12 @@ impl KynexApp {
                     .on_mouse_down(
                         MouseButton::Middle,
                         cx.listener(move |this, _, window, cx| this.close_pane_tab(n, window, cx)),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
+                            this.open_menu(super::menus::Menu::PaneTab(n), ev.position, gpui::Anchor::TopLeft, cx)
+                        }),
                     )
                     .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
                     .drag_over::<DraggedPaneTab>(move |style, _, _, _| style.bg(t.hover))

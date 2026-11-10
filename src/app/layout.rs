@@ -53,10 +53,18 @@ impl KynexApp {
         let pane_tabs = self.render_pane_tabs(cx);
         let tiled = self.render_panes(window, cx);
         let single = tiled.is_none();
-        let header = key.filter(|_| single).and_then(|key| self.render_session_header(key, cx));
+        // A project's single pane has the pane menu on its header; chat and KNX Ops don't.
+        let header = match key.filter(|_| single) {
+            Some(key) if self.tiling_scope().is_some() => self.render_tile_header(self.pane_id, Some(key), false, cx),
+            Some(key) => self.render_session_header(key, cx),
+            None => None,
+        };
         let body = match tiled {
             Some(tiles) => tiles,
-            None => self.render_pane_body(key, true, window, cx),
+            None => {
+                let body = self.render_pane_body(key, true, window, cx);
+                self.single_pane_drop(body, cx)
+            }
         };
         div()
             .flex()

@@ -17,6 +17,7 @@ use kynex_core::tile_style::TileStyle;
 use kynex_core::tiling::Tiling;
 
 use super::KynexApp;
+use super::session_groups::DraggedSession;
 use super::state::{Active, View};
 use crate::pane::SessionPane;
 use crate::theme::theme;
@@ -74,7 +75,7 @@ impl KynexApp {
     /// The workspace's tiling when it has several panes on screen.
     fn tiled(&self) -> Option<&Tiling> {
         let (_, cwd, _) = self.tiling_scope()?;
-        self.tiles.get(&cwd).filter(|t| t.visible().len() > 1)
+        self.tiles.get(&cwd).filter(|t| t.visible().len() > 1 || t.zoomed().is_some())
     }
 
     /// Runs `f` with pane `id`'s state as `self.pane`.
@@ -143,7 +144,7 @@ impl KynexApp {
     }
 
     /// The area the panes fill, in logical pixels (what the layout works in).
-    fn tile_bounds(&self) -> Rect {
+    pub(super) fn tile_bounds(&self) -> Rect {
         match self.tile_area.get() {
             Some(b) => {
                 let z = self.saved.zoom;
@@ -383,7 +384,7 @@ impl KynexApp {
                         .size_full()
                         .flex()
                         .flex_col()
-                        .children(key.and_then(|k| this.render_session_header(k, cx)))
+                        .children(this.render_tile_header(id, key, true, cx))
                         .child(this.render_pane_body(key, focused, window, cx))
                 });
                 let width = if focused { fw } else { bw };
@@ -391,6 +392,7 @@ impl KynexApp {
                     .border_color(if focused { focus_colour } else { t.border })
                     .rounded(px(radius))
                     .child(body);
+                let tile = Rect::new(r.x + half, r.y + half, (r.w - style.gap).max(0.0), (r.h - style.gap).max(0.0));
                 children.push(
                     div()
                         .absolute()
@@ -402,6 +404,11 @@ impl KynexApp {
                         // The click that focuses a pane comes before what it lands on.
                         .capture_any_mouse_down(cx.listener(move |this, _, window, cx| {
                             this.focus_pane(id, window, cx);
+                        }))
+                        // A session row let go here: on an edge it splits, in the middle it opens.
+                        .drag_over::<DraggedSession>(|style, _, _, _| style.opacity(0.7))
+                        .on_drop(cx.listener(move |this, d: &DraggedSession, window, cx| {
+                            this.drop_session_on_pane(d, id, Some(tile), window, cx)
                         }))
                         .child(surface)
                         .into_any_element(),

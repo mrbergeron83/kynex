@@ -16,6 +16,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   for its sessions. New pane tab (palette) or the + opens one with a new session; click a tab to
   show it, double-click to rename it, drag to reorder, × or middle-click to close. With one tab
   the row is hidden.
+- Panes from the sidebar and by hand: right-click a past session → "Open to the side" or "Open
+  below" puts it in a pane of its own, and dragging a session onto a pane's edge splits there
+  (onto its middle, it opens in that pane). Right-click a pane's header to split it, zoom it to
+  fill the tab, move it to another tab or close it; each tile's header has its lamp, model, and
+  zoom and close buttons. Right-click a pane tab to rename or close it.
 - Workspaces: the sidebar lists a project's workspaces (its main tree, git worktrees and added
   folders), each with its branch, a lamp for the sessions working in it, its changes on hover and
   the sessions open in it, each with a lamp of its own. Pick a workspace to switch to it, or a

@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use crate::layout::{Axis, Layout, PaneId, Rect, Rects};
+use crate::layout::{Axis, Direction, Layout, PaneId, Rect, Rects};
 use crate::live::Key;
 
 /// One tab of a workspace, for the tab bar.
@@ -82,8 +82,7 @@ impl Tiling {
         if self.keys.values().any(|k| *k == key) {
             return false;
         }
-        let numbers = self.layout.tabs().iter().filter_map(|t| t.name.parse::<usize>().ok());
-        let name = (numbers.max().unwrap_or(0).max(self.layout.tabs().len()) + 1).to_string();
+        let name = self.next_tab_name();
         if !self.layout.new_tab(name, pane) {
             return false;
         }
@@ -152,17 +151,91 @@ impl Tiling {
         true
     }
 
+    /// The pane showing session `key`, in any tab.
+    pub fn pane_of(&self, key: Key) -> Option<PaneId> {
+        self.layout.panes().into_iter().find(|p| self.key_of(*p) == Some(key))
+    }
+
+    /// Puts a new pane (showing `key`) at `side` of pane `target`, and focuses it. False if
+    /// it would leave a pane too small for `bounds`, `target` isn't here or `key` is on show.
+    pub fn split_at(&mut self, target: PaneId, side: Direction, pane: PaneId, key: Key, bounds: Rect) -> bool {
+        if self.keys.values().any(|k| *k == key) {
+            return false;
+        }
+        let axis = match side {
+            Direction::Left | Direction::Right => Axis::Row,
+            Direction::Up | Direction::Down => Axis::Column,
+        };
+        if !self.layout.split(target, axis, pane, bounds) {
+            return false;
+        }
+        // A split puts the new pane after its target; before it is the two swapped.
+        if matches!(side, Direction::Left | Direction::Up)
+            && let Some(t) = self.layout.tab_mut()
+        {
+            t.swap(target, pane);
+        }
+        self.keys.insert(pane, key);
+        true
+    }
+
+    /// Shows session `key` in pane `pane` in place of what it had. False if the pane isn't
+    /// here or the session is in another pane.
+    pub fn show_in(&mut self, pane: PaneId, key: Key) -> bool {
+        if !self.has(pane) || self.pane_of(key).is_some_and(|p| p != pane) {
+            return false;
+        }
+        self.keys.insert(pane, key);
+        true
+    }
+
+    /// The pane filling the active tab, if one is zoomed.
+    pub fn zoomed(&self) -> Option<PaneId> {
+        self.layout.tab().and_then(|t| t.zoomed())
+    }
+
+    /// Zooms the focused pane to fill its tab, or puts the others back.
+    pub fn toggle_zoom(&mut self) {
+        if let Some(t) = self.layout.tab_mut() {
+            t.toggle_zoom();
+        }
+    }
+
+    /// Closes `pane` when the window has others to keep (its session stays open, off
+    /// screen). Returns the session it showed.
+    pub fn close_pane(&mut self, pane: PaneId) -> Option<Key> {
+        if self.layout.panes().len() < 2 || !self.layout.close_pane(pane) {
+            return None;
+        }
+        self.keys.remove(&pane)
+    }
+
+    /// Moves `pane` to tab `tab`, beside that tab's focused pane. False if it is there
+    /// already or has no room.
+    pub fn move_to_tab(&mut self, pane: PaneId, tab: usize, bounds: Rect) -> bool {
+        self.layout.move_to_tab(pane, tab, bounds)
+    }
+
+    /// Moves `pane` to a new tab of its own. False if it is alone in its tab already.
+    pub fn move_to_new_tab(&mut self, pane: PaneId) -> bool {
+        let Some(from) = self.layout.tab_of(pane) else { return false };
+        if self.layout.tabs()[from].panes().len() < 2 {
+            return false;
+        }
+        let name = self.next_tab_name();
+        self.layout.take(pane) && self.layout.new_tab(name, pane)
+    }
+
+    fn next_tab_name(&self) -> String {
+        let numbers = self.layout.tabs().iter().filter_map(|t| t.name.parse::<usize>().ok());
+        (numbers.max().unwrap_or(0).max(self.layout.tabs().len()) + 1).to_string()
+    }
+
     /// Closes the focused pane when the window has others to keep (its session stays open,
     /// off screen). Returns the pane that closed.
     pub fn close_focused(&mut self) -> Option<PaneId> {
-        if self.layout.panes().len() < 2 {
-            return None;
-        }
         let pane = self.focus()?;
-        self.layout.close_pane(pane).then(|| {
-            self.keys.remove(&pane);
-            pane
-        })
+        self.close_pane(pane).map(|_| pane)
     }
 
     /// Brings the panes in line with the sessions: a pane whose session closed goes (the
@@ -190,6 +263,18 @@ impl Tiling {
         }
         gone
     }
+}
+
+/// Which side of the pane at `r` a drop at (`x`, `y`) is for: the nearest edge when it is
+/// within the outer 30%, else `None` (the middle: the pane itself).
+pub fn drop_side(r: Rect, x: f32, y: f32) -> Option<Direction> {
+    if r.w <= 0.0 || r.h <= 0.0 {
+        return None;
+    }
+    let (fx, fy) = ((x - r.x) / r.w, (y - r.y) / r.h);
+    let sides = [(fx, Direction::Left), (1.0 - fx, Direction::Right), (fy, Direction::Up), (1.0 - fy, Direction::Down)];
+    let (near, side) = sides.into_iter().min_by(|a, b| a.0.total_cmp(&b.0))?;
+    (near < 0.3).then_some(side)
 }
 
 #[cfg(test)]
@@ -316,5 +401,72 @@ mod tests {
         let tabs = t.tabs();
         assert_eq!(tabs.iter().map(|t| t.name.clone()).collect::<Vec<_>>(), ["2", "agents"]);
         assert!(tabs[0].active, "the active tab is still the same tab");
+    }
+
+    #[test]
+    fn a_pane_goes_at_any_side_of_another() {
+        let mut t = Tiling::new(1, 10);
+        assert!(t.split_at(1, Direction::Left, 2, 20, BIG));
+        assert_eq!(t.visible(), [(2, 20), (1, 10)], "left of it comes first");
+        assert_eq!(t.focus(), Some(2));
+        assert!(t.split_at(1, Direction::Down, 3, 30, BIG));
+        assert_eq!(t.visible(), [(2, 20), (1, 10), (3, 30)]);
+        assert!(t.split_at(1, Direction::Up, 4, 40, BIG));
+        assert_eq!(t.visible(), [(2, 20), (4, 40), (1, 10), (3, 30)]);
+        // Not a session that's on show, nor beside a pane that isn't there.
+        assert!(!t.split_at(1, Direction::Right, 5, 20, BIG));
+        assert!(!t.split_at(9, Direction::Right, 5, 50, BIG));
+        assert_eq!(t.pane_of(40), Some(4));
+    }
+
+    #[test]
+    fn a_session_takes_a_panes_place() {
+        let mut t = three();
+        assert!(t.show_in(2, 40));
+        assert_eq!(t.visible(), [(1, 10), (2, 40), (3, 30)]);
+        assert!(!t.show_in(2, 10), "10 is in another pane");
+        assert!(t.show_in(2, 40), "showing what it shows is fine");
+        assert!(!t.show_in(9, 50));
+    }
+
+    #[test]
+    fn zoom_shows_one_pane_and_back() {
+        let mut t = three();
+        t.toggle_zoom();
+        assert_eq!(t.zoomed(), Some(3));
+        assert_eq!(t.visible(), [(3, 30)]);
+        t.toggle_zoom();
+        assert_eq!((t.zoomed(), t.visible().len()), (None, 3));
+    }
+
+    #[test]
+    fn any_pane_closes_but_the_last() {
+        let mut t = three();
+        assert_eq!(t.close_pane(1), Some(10));
+        assert_eq!(t.close_pane(1), None);
+        assert_eq!(t.close_pane(2), Some(20));
+        assert_eq!(t.close_pane(3), None, "the last pane stays");
+    }
+
+    #[test]
+    fn panes_move_between_tabs() {
+        let mut t = three();
+        assert!(t.move_to_new_tab(3));
+        assert_eq!(t.tabs().iter().map(|t| t.sessions.clone()).collect::<Vec<_>>(), [vec![10, 20], vec![30]]);
+        assert!(!t.move_to_new_tab(3), "alone in its tab already");
+        assert!(t.move_to_tab(2, 1, BIG));
+        assert_eq!(t.tabs().iter().map(|t| t.sessions.clone()).collect::<Vec<_>>(), [vec![10], vec![30, 20]]);
+        assert!(!t.move_to_tab(2, 1, BIG));
+    }
+
+    #[test]
+    fn a_drop_near_an_edge_is_for_that_side() {
+        let r = Rect::new(100.0, 50.0, 400.0, 200.0);
+        assert_eq!(drop_side(r, 120.0, 150.0), Some(Direction::Left));
+        assert_eq!(drop_side(r, 480.0, 150.0), Some(Direction::Right));
+        assert_eq!(drop_side(r, 300.0, 60.0), Some(Direction::Up));
+        assert_eq!(drop_side(r, 300.0, 240.0), Some(Direction::Down));
+        assert_eq!(drop_side(r, 300.0, 150.0), None, "the middle is the pane itself");
+        assert_eq!(drop_side(Rect::new(0.0, 0.0, 0.0, 0.0), 1.0, 1.0), None);
     }
 }

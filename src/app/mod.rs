@@ -11,6 +11,7 @@
 //! | `title_bar.rs`      | title bar and project tabs                           |
 //! | `footer.rs`         | status footer: Kynex's CPU / memory, meters, update  |
 //! | `status.rs`         | the footer's usage-limits meter and update pill      |
+//! | `pane_actions.rs`  | a pane's header buttons and menus, opening a session beside one |
 //! | `pane_tabs.rs`     | the selected workspace's tab bar: new, close, rename, reorder |
 //! | `tiles.rs`          | the split panes of a workspace: layouts, focus, drawing |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
@@ -104,6 +105,7 @@ pub(crate) mod mentions;
 mod menus;
 mod models;
 mod palette;
+mod pane_actions;
 mod pane_tabs;
 mod project_setup;
 mod projects;
