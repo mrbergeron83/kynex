@@ -216,6 +216,7 @@ impl KynexApp {
     /// they're working; idle ones close.
     pub(super) fn open_session(&mut self, mut s: Session) {
         let _t = kynex_core::trace::span("open_session");
+        self.adopt_project_settings(&mut s);
         {
             let _t = kynex_core::trace::span("open_session: start_model (settings, provider)");
             self.start_model(&mut s);

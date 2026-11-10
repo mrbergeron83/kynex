@@ -52,6 +52,39 @@ impl KynexApp {
         self.active_project().map(|p| p.path.clone())
     }
 
+    /// Whose Kynex settings (rules, mode, effort, models) apply in `cwd`: the project
+    /// whose tab holds a session there, or that added it as a context folder; otherwise
+    /// `cwd` itself. A context (a worktree, a folder) is part of its project, so it runs
+    /// under the project's settings, not under settings of its own that nobody set.
+    pub(super) fn settings_dir(&self, cwd: &Path) -> PathBuf {
+        let here = |p: &Path| context::same_folder(p, cwd);
+        if let Some(p) = self.saved.projects.iter().find(|p| here(&p.path)) {
+            return p.path.clone();
+        }
+        for p in &self.saved.projects {
+            let open_there = self.code.get(&p.path).is_some_and(|l| l.sessions.iter().any(|s| here(&s.cwd)));
+            if open_there || self.contexts.get(&p.path).is_some_and(|c| c.is_folder(cwd)) {
+                return p.path.clone();
+            }
+        }
+        cwd.to_path_buf()
+    }
+
+    /// A session about to be shown in the active project's tab runs under that project's
+    /// settings when it's in another folder of it (a context): its mode too, which a new
+    /// session read from its own folder's.
+    pub(super) fn adopt_project_settings(&mut self, s: &mut Session) {
+        if s.kind != Kind::Code || self.in_chief() {
+            return;
+        }
+        let Some(project) = self.active_project().map(|p| p.path.clone()) else { return };
+        if context::same_folder(&project, &s.cwd) {
+            return;
+        }
+        s.mode = self.claude_settings(&project).mode;
+        s.settings_dir = Some(project);
+    }
+
     /// Writes the project's contexts file off the UI thread; a failure shows as a notice.
     pub(super) fn save_contexts(&mut self, project: &Path, cx: &mut Context<Self>) {
         let Some(contexts) = self.contexts.get(project).cloned() else { return };

@@ -27,9 +27,11 @@ impl KynexApp {
         if rules.is_empty() {
             return;
         }
-        let mut perms = Permissions::load(cwd);
+        // A session in a context allows its project's rules, not its folder's own.
+        let dir = self.settings_dir(cwd);
+        let mut perms = Permissions::load(&dir);
         if perms.allow(rules) {
-            if let Err(e) = perms.save(cwd) {
+            if let Err(e) = perms.save(&dir) {
                 self.toast(Toast::error(e));
             }
             if let Some(s) = &mut self.settings {

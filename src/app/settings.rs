@@ -51,6 +51,8 @@ impl KynexApp {
     /// Opens a project's Claude settings on `section`. Blocks briefly, reading
     /// the settings files and the folder's top level.
     pub(super) fn open_project_settings_on(&mut self, path: PathBuf, section: usize, cx: &mut Context<Self>) {
+        // A context's settings are its project's.
+        let path = self.settings_dir(&path);
         self.app_settings = None;
         self.extensions = None;
         let (files, file_errors) = kynex_core::rules::load_files(&path);
@@ -115,9 +117,11 @@ impl KynexApp {
     }
 
     /// A project's Claude settings, from the cache; read from disk only for a
-    /// project that isn't open.
+    /// project that isn't open. A folder that belongs to a project (a worktree, a
+    /// folder added as a context) has its project's.
     pub(super) fn claude_settings(&self, path: &Path) -> ClaudeSettings {
-        self.claude_settings.get(path).cloned().unwrap_or_else(|| ClaudeSettings::load(path))
+        let dir = self.settings_dir(path);
+        self.claude_settings.get(&dir).cloned().unwrap_or_else(|| ClaudeSettings::load(&dir))
     }
 
     /// The model the shown session runs on: its own, if one is pinned to it,
@@ -201,6 +205,7 @@ impl KynexApp {
     /// Sets a folder's model, from the modal or the composer's picker. Its
     /// sessions without a pin start on it from their next start.
     pub(super) fn set_project_model(&mut self, path: PathBuf, model: String, cx: &mut Context<Self>) {
+        let path = self.settings_dir(&path);
         if self.settings.as_ref().is_some_and(|s| s.path == path) {
             return self.edit_settings(cx, |v| v.claude.model = model);
         }
@@ -220,6 +225,7 @@ impl KynexApp {
     /// Sets the OpenRouter model a folder's new OpenRouter sessions start on;
     /// the shown session, if it follows its folder, from its next start.
     pub(super) fn set_project_openrouter_model(&mut self, path: PathBuf, model: String, cx: &mut Context<Self>) {
+        let path = self.settings_dir(&path);
         let mut claude = self.claude_settings(&path);
         if claude.openrouter_model != model {
             claude.openrouter_model = model.clone();
@@ -236,6 +242,7 @@ impl KynexApp {
 
     /// Sets the model a folder's new Grok sessions start on.
     pub(super) fn set_project_grok_model(&mut self, path: PathBuf, model: String, cx: &mut Context<Self>) {
+        let path = self.settings_dir(&path);
         let mut claude = self.claude_settings(&path);
         if claude.grok_model != model {
             claude.grok_model = model.clone();
@@ -253,6 +260,7 @@ impl KynexApp {
     /// Sets the model a folder's new Chat sessions (OpenRouter chat) start on;
     /// the shown session, if it follows its folder, from its next start.
     pub(super) fn set_project_openrouter_chat_model(&mut self, path: PathBuf, model: String, cx: &mut Context<Self>) {
+        let path = self.settings_dir(&path);
         let mut claude = self.claude_settings(&path);
         if claude.openrouter_chat_model != model {
             claude.openrouter_chat_model = model.clone();
@@ -289,6 +297,7 @@ impl KynexApp {
 
     /// Sets a project's effort, from the modal or the composer's picker.
     pub(super) fn set_effort(&mut self, path: PathBuf, id: String, cx: &mut Context<Self>) {
+        let path = self.settings_dir(&path);
         if self.settings.is_some() {
             return self.edit_settings(cx, |v| v.claude.effort = id);
         }

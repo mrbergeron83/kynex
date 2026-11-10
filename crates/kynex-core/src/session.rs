@@ -287,6 +287,10 @@ pub struct Session {
     pub uid: u64,
     pub kind: Kind,
     pub cwd: PathBuf,
+    /// The folder whose Kynex settings (permission rules, mode, effort, extra folders…)
+    /// it runs under, when that isn't `cwd`: a session in a worktree or another folder of
+    /// a project runs under the project's, not under settings of its own folder.
+    pub settings_dir: Option<PathBuf>,
     /// The model its process starts on (`--model`); empty is the CLI's default.
     pub model: String,
     /// A model pinned to this session in the picker, over its project's.
@@ -488,6 +492,7 @@ impl Session {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             kind,
             cwd,
+            settings_dir: None,
             model: String::new(),
             own_model: None,
             provider: Default::default(),
@@ -750,6 +755,11 @@ impl Session {
         self.finished || self.waiting()
     }
 
+    /// Where its Kynex settings are read from: [`Self::settings_dir`], else its own folder.
+    pub fn settings_folder(&self) -> &std::path::Path {
+        self.settings_dir.as_deref().unwrap_or(&self.cwd)
+    }
+
     /// The conversation a new process continues, if there is one to continue.
     fn resume_id(&self) -> Option<&str> {
         self.session_id.as_deref().filter(|_| self.conversation)
@@ -764,6 +774,7 @@ impl Session {
         let spec = launch::Spec {
             kind: self.kind,
             cwd: self.cwd.clone(),
+            settings_dir: self.settings_folder().to_path_buf(),
             model: self.model.clone(),
             provider: self.provider.clone(),
             worker: self.worker,
@@ -785,7 +796,7 @@ impl Session {
             let model = self.provider.with_model(&self.model).model().unwrap_or("").to_string();
             let resume = self.resume_id().map(str::to_string);
             let effort = match self.kind {
-                Kind::Code => project::ClaudeSettings::load(&self.cwd).effort,
+                Kind::Code => project::ClaudeSettings::load(self.settings_folder()).effort,
                 Kind::Chat => String::new(),
             };
             let mut acp =
@@ -1224,7 +1235,7 @@ impl Session {
             self.set_mode(mode);
         } else if approves_plan && self.mode == project::Mode::Plan {
             let default = match self.kind {
-                Kind::Code => project::ClaudeSettings::load(&self.cwd).mode,
+                Kind::Code => project::ClaudeSettings::load(self.settings_folder()).mode,
                 Kind::Chat => project::Mode::default(),
             };
             self.set_mode(if default == project::Mode::Plan { project::Mode::Auto } else { default });
@@ -2170,6 +2181,16 @@ fn tool_result_text(content: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_session_in_a_context_runs_under_its_projects_settings() {
+        let mut s = Session::new(Kind::Code, PathBuf::from("/work/app-feat"));
+        assert_eq!(s.settings_folder(), std::path::Path::new("/work/app-feat"), "its own folder by default");
+        s.settings_dir = Some(PathBuf::from("/work/app"));
+        assert_eq!(s.settings_folder(), std::path::Path::new("/work/app"));
+        // Its transcripts stay under the folder it runs in.
+        assert_eq!(s.cwd, PathBuf::from("/work/app-feat"));
+    }
+
     use super::*;
     use std::time::{Duration, Instant};
 
