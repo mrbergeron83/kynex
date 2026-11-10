@@ -54,11 +54,25 @@ pub struct Live {
     pub active: usize,
     /// Sessions in the order they were last shown, latest last.
     shown: Vec<Key>,
+    /// The sessions on screen, one per visible pane. The focused one is [`Self::current`].
+    visible: Vec<Key>,
 }
+
+/// How many `claude` processes run at once: every visible pane holds one, so this also
+/// bounds how many panes can be up.
+pub const MAX_RUNNING: usize = 8;
 
 /// Idle sessions left behind that stay open, latest first: switching back to
 /// one costs nothing, and its process (if warmed up) is still there (#157).
 const KEEP_IDLE: usize = 2;
+
+/// The rule behind [`Live::room_for`]: a session with a process already always has room.
+fn check_room(has_process: bool, running: usize, cap: usize) -> Result<(), String> {
+    if has_process || running < cap {
+        return Ok(());
+    }
+    Err(format!("{cap} sessions are running already. Close a pane or wait for one to finish to start another."))
+}
 
 impl Live {
     /// Just `s`, shown.
@@ -87,6 +101,37 @@ impl Live {
     /// A session here finished a turn you haven't seen.
     pub fn finished(&self) -> bool {
         self.sessions.iter().any(|s| s.finished)
+    }
+
+    /// Sets which sessions are on screen (one per pane). They are never pruned.
+    /// Keys that aren't open here are dropped.
+    pub fn set_visible(&mut self, keys: &[Key]) {
+        self.visible = keys.iter().copied().filter(|k| self.sessions.iter().any(|s| s.uid == *k)).collect();
+    }
+
+    pub fn visible(&self) -> &[Key] {
+        &self.visible
+    }
+
+    pub fn is_visible(&self, key: Key) -> bool {
+        self.visible.contains(&key)
+    }
+
+    /// Focuses the open session `key` (the one the composer talks to). False if it isn't open.
+    pub fn focus(&mut self, key: Key) -> bool {
+        self.show_where(|s| s.uid == key)
+    }
+
+    /// How many sessions have a `claude` process, or are starting one.
+    pub fn running(&self) -> usize {
+        self.sessions.iter().filter(|s| s.is_running()).count()
+    }
+
+    /// Whether the session `key` may start a process: it has one already, or there is
+    /// room under [`MAX_RUNNING`]. The error is fit to show as it is.
+    pub fn room_for(&self, key: Key) -> Result<(), String> {
+        let has = self.sessions.iter().any(|s| s.uid == key && s.is_running());
+        check_room(has, self.running(), MAX_RUNNING)
     }
 
     /// Shows the first open session that matches, if any.
@@ -125,7 +170,11 @@ impl Live {
             self.shown.iter().rev().filter(|k| Some(**k) != active).take(KEEP_IDLE).copied().collect();
         let mut closed = Vec::new();
         self.sessions.retain(|s| {
-            let keep = Some(s.uid) == active || recent.contains(&s.uid) || s.finished || !s.can_sleep();
+            let keep = Some(s.uid) == active
+                || recent.contains(&s.uid)
+                || self.visible.contains(&s.uid)
+                || s.finished
+                || !s.can_sleep();
             if !keep {
                 closed.push(s.uid);
             }
@@ -134,6 +183,7 @@ impl Live {
         self.active = self.sessions.iter().position(|s| Some(s.uid) == active).unwrap_or(0);
         let open: Vec<Key> = self.sessions.iter().map(|s| s.uid).collect();
         self.shown.retain(|k| open.contains(k));
+        self.visible.retain(|k| open.contains(k));
         closed
     }
 
@@ -150,6 +200,7 @@ impl Live {
             !gone
         });
         self.shown.retain(|k| !closed.contains(k));
+        self.visible.retain(|k| !closed.contains(k));
         self.active = self.sessions.iter().position(|s| Some(s.uid) == shown).unwrap_or(0);
         closed
     }
@@ -161,6 +212,7 @@ impl Live {
         let shown = self.current().map(|s| s.uid);
         self.sessions.remove(i);
         self.shown.retain(|k| *k != key);
+        self.visible.retain(|k| *k != key);
         self.active = self.sessions.iter().position(|s| Some(s.uid) == shown).unwrap_or(0);
         true
     }
@@ -248,6 +300,61 @@ mod tests {
             assert!(live.show(session()).is_empty());
         }
         assert_eq!(live.sessions[0].uid, a_uid);
+    }
+
+    #[test]
+    fn visible_sessions_are_never_pruned() {
+        let mut live = Live::default();
+        let first: Vec<Session> = (0..3).map(|_| session()).collect();
+        let uids: Vec<Key> = first.iter().map(|s| s.uid).collect();
+        for s in first {
+            assert!(live.show(s).is_empty());
+        }
+        // Idle and about to fall out of the last shown: the first would go, but it is on screen.
+        live.set_visible(&[uids[0], uids[2]]);
+        assert!(live.is_visible(uids[0]));
+        assert!(live.prune().is_empty());
+        assert!(live.show(session()).iter().all(|k| *k != uids[0]));
+        assert!(live.sessions.iter().any(|s| s.uid == uids[0]));
+        assert_eq!(live.visible(), [uids[0], uids[2]]);
+        // Off screen, it goes at the next prune.
+        live.set_visible(&[uids[2]]);
+        assert!(live.prune().contains(&uids[0]));
+        assert!(!live.is_visible(uids[0]));
+    }
+
+    #[test]
+    fn set_visible_drops_unknown_keys_and_focus_picks_the_current() {
+        let mut live = Live::default();
+        let (a, b) = (session(), session());
+        let (ak, bk) = (a.uid, b.uid);
+        live.show(a);
+        live.show(b);
+        live.set_visible(&[ak, bk, 12345]);
+        assert_eq!(live.visible(), [ak, bk]);
+        assert!(live.focus(ak));
+        assert_eq!(live.current().map(|s| s.uid), Some(ak));
+        assert!(!live.focus(12345));
+        assert!(live.close_where(|s| s.uid == bk) == [bk]);
+        assert_eq!(live.visible(), [ak]);
+    }
+
+    #[test]
+    fn the_cap_refuses_a_new_process_with_a_message() {
+        assert!(check_room(false, MAX_RUNNING - 1, MAX_RUNNING).is_ok());
+        let err = check_room(false, MAX_RUNNING, MAX_RUNNING).unwrap_err();
+        assert!(err.contains(&MAX_RUNNING.to_string()) && err.contains("Close a pane"));
+        assert!(check_room(true, MAX_RUNNING, MAX_RUNNING).is_ok(), "one that runs already keeps its process");
+    }
+
+    #[test]
+    fn room_for_is_open_with_no_processes() {
+        let mut live = Live::default();
+        let s = session();
+        let key = s.uid;
+        live.show(s);
+        assert_eq!(live.running(), 0);
+        assert!(live.room_for(key).is_ok());
     }
 
     #[test]
