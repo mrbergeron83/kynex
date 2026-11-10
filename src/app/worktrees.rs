@@ -73,6 +73,7 @@ impl Worktrees {
             let at = root.clone();
             let mut list = cx.background_spawn(async move { git::list_worktrees_quick(&at).unwrap_or_default() }).await;
             this.update(cx, |this, cx| {
+                let _t = kynex_core::trace::span("worktrees: publish the list (UI thread)");
                 // Until its numbers are in, a worktree keeps the last ones.
                 let known: Vec<Worktree> = list
                     .iter()
@@ -100,6 +101,7 @@ impl Worktrees {
                 })
                 .await;
             this.update(cx, |this, cx| {
+                let _t = kynex_core::trace::span("worktrees: publish the numbers (UI thread)");
                 this.reading = false;
                 // `worktrees` appears with the first linked worktree and goes with the last.
                 if let Some(w) = &mut this.watch {

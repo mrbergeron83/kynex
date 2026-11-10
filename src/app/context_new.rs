@@ -124,11 +124,13 @@ impl KynexApp {
             let root = project.clone();
             let made = cx
                 .background_spawn(async move {
+                    let _t = kynex_core::trace::span("new context: default branch + git worktree add (background)");
                     let base = git::default_branch(&root);
                     context::create(&root, &name, base.as_deref())
                 })
                 .await;
             this.update(cx, |this, cx| {
+                let _t = kynex_core::trace::span("new context: showing it (UI thread)");
                 this.context_ui.busy = false;
                 match made {
                     Ok(path) => {

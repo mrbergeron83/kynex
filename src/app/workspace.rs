@@ -215,7 +215,11 @@ impl KynexApp {
     /// Shows `s` in the active tab. Sessions it replaces keep running if
     /// they're working; idle ones close.
     pub(super) fn open_session(&mut self, mut s: Session) {
-        self.start_model(&mut s);
+        let _t = kynex_core::trace::span("open_session");
+        {
+            let _t = kynex_core::trace::span("open_session: start_model (settings, provider)");
+            self.start_model(&mut s);
+        }
         s.wake = self.wake.clone();
         let Some(live) = self.live_mut() else { return };
         let closed = live.show(s);

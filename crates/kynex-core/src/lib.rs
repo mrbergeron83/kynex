@@ -72,6 +72,7 @@ pub mod terminal;
 pub mod timeline;
 pub mod titles;
 pub mod toasts;
+pub mod trace;
 pub mod transcript;
 pub mod tray;
 pub mod trust;

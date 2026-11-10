@@ -613,10 +613,12 @@ impl KynexApp {
     }
 
     fn save(&self) {
+        let _t = kynex_core::trace::span("save state.json");
         self.saved.write();
     }
 
     fn poll(&mut self, cx: &mut Context<Self>) {
+        let _t = kynex_core::trace::span("poll (draining sessions)");
         // A session that starts wanting you (turn done, prompt up) while Kynex is
         // in the background flashes the taskbar / bounces the Dock icon.
         let mut called = false;
@@ -741,6 +743,7 @@ impl Focusable for KynexApp {
 
 impl Render for KynexApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _t = kynex_core::trace::span("render (building the frame)");
         // The UI zoom: everything sized in rems scales with it.
         window.set_rem_size(gpui::px(16.) * self.saved.zoom);
         let t = theme(cx).clone();

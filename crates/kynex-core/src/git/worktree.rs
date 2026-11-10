@@ -48,6 +48,7 @@ pub fn list_worktrees(root: &Path) -> Result<Vec<Worktree>, String> {
 /// distances: for showing the list at once while [`fill_worktrees`] works out the
 /// rest. Read in-process; when that can't answer, one `git` call.
 pub fn list_worktrees_quick(root: &Path) -> Result<Vec<Worktree>, String> {
+    let _t = crate::trace::span("list_worktrees_quick (background)");
     match super::native::worktrees(root) {
         Ok(Some(list)) => Ok(list),
         Ok(None) => Err("Not a git repository".into()),
@@ -58,6 +59,7 @@ pub fn list_worktrees_quick(root: &Path) -> Result<Vec<Worktree>, String> {
 /// Works out each worktree's changes and distances, one thread per worktree (each
 /// is several `git` calls, and starting a process can take a while). Blocking.
 pub fn fill_worktrees(root: &Path, list: &mut [Worktree]) {
+    let _t = crate::trace::span("fill_worktrees (background)");
     let base = list.first().and_then(|w| w.branch.clone());
     std::thread::scope(|scope| {
         for w in list.iter_mut() {

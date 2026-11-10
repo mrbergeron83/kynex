@@ -31,6 +31,7 @@ impl KynexApp {
     /// The project's contexts in their saved order, from the worktree list kept
     /// up to date in the background.
     pub(super) fn contexts_of(&mut self, project: &Path, cx: &mut Context<Self>) -> Vec<Entry> {
+        let _t = kynex_core::trace::span("contexts_of");
         let list = self.worktrees(project, cx).read(cx).list.clone();
         let saved = self.saved_contexts(project);
         let ordered = saved.ordered(saved.with_folders(context::from_worktrees(project, &list)));
@@ -90,6 +91,7 @@ impl KynexApp {
 
     /// Shows a context: its open session, else the one it last had, else a new one.
     pub(super) fn select_context(&mut self, target: &Path, cx: &mut Context<Self>) {
+        let _t = kynex_core::trace::span("select_context");
         let Some(project) = self.context_project() else { return };
         if !target.is_dir() {
             self.toast(Toast::error(format!("{} isn't there any more", target.display())));
@@ -146,6 +148,7 @@ impl KynexApp {
     /// The section: a header with "New context" (git repositories) and "Add folder",
     /// and a row per context.
     pub(super) fn render_contexts(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let _t = kynex_core::trace::span("render_contexts");
         let project = self.context_project()?;
         // A git repository, where a worktree can be made: git read it once the worktree
         // list isn't empty. Any project can add plain folders.
