@@ -235,6 +235,7 @@ impl KynexApp {
             this.update(cx, |this, cx| {
                 match removed {
                     Ok(()) => {
+                        this.drop_tiles_of(&path);
                         this.workspaces.entry(project.clone()).or_default().forget(&path);
                         this.save_workspaces(&project, cx);
                     }

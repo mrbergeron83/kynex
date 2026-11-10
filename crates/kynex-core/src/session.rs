@@ -1829,6 +1829,12 @@ pub(crate) fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
     std::fs::read_dir(projects_dir()?).ok()?.filter_map(Result::ok).map(|d| d.path().join(&file)).find(|p| p.is_file())
 }
 
+/// Whether session `id` of `cwd` can still be reopened: Claude Code's log for it is
+/// there, or Grok has a record of it. Blocks on a few file system lookups.
+pub fn session_exists(cwd: &Path, id: &str) -> bool {
+    !id.is_empty() && (find_transcript(cwd, id).is_some() || crate::grok::log::session_dir(cwd, id).is_some())
+}
+
 /// A user-role log entry the CLI wrote itself, like the `<task-notification>`
 /// it sends Claude when a background command ends: Claude reads it, but it
 /// isn't something the user said.
@@ -2176,6 +2182,14 @@ fn tool_result_text(content: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_session_nobody_logged_does_not_exist() {
+        let cwd = std::env::temp_dir().join("kynex-no-such-folder");
+        assert!(!session_exists(&cwd, "00000000-dead-beef-0000-000000000000"));
+        assert!(!session_exists(&cwd, ""));
+        assert!(!session_exists(&cwd, "../escape"));
+    }
+
     #[test]
     fn a_session_in_a_workspace_runs_under_its_projects_settings() {
         let mut s = Session::new(Kind::Code, PathBuf::from("/work/app-feat"));

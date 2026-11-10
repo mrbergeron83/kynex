@@ -311,6 +311,7 @@ impl KynexApp {
         let closed: Vec<Key> = sessions.iter().map(|s| s.uid).collect();
         drop(sessions);
         self.forget(&closed);
+        self.drop_project_tiles(&p.path);
         self.worktrees.remove(&p.path);
         // Its Git views and terminals, in every workspace's folder (dropping a panel ends its shells).
         self.drop_workspace_views(&p.path, &cwds);

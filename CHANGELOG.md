@@ -7,6 +7,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Each workspace's panes and tabs are saved, and every session in them comes back after a
+  restart (a session's process starts when you focus or use its pane).
 - Panes: split a workspace into several sessions side by side (Split pane right / down in the
   palette, Ctrl+K), each a tile with its own conversation, message box and prompts. Drag the gap
   between tiles to resize them, both ways at once where a row and a column meet; double-click a

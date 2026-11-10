@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::git::{self, Worktree};
 use crate::paths::data_dir;
 use crate::project::{self, normalize};
+use crate::tiling::SavedLayout;
 
 /// One checkout of a project.
 #[derive(Clone, Debug, PartialEq)]
@@ -159,6 +160,20 @@ pub struct Workspaces {
     pub order: Vec<PathBuf>,
     /// Plain folders added as workspaces by hand, beside the project's checkouts.
     pub folders: Vec<PathBuf>,
+    /// Each workspace's panes and the sessions in them, keyed like `sessions`. An entry
+    /// that can't be read is skipped, so one bad layout doesn't cost the rest of the file.
+    #[serde(deserialize_with = "lenient_layouts")]
+    pub layouts: BTreeMap<String, SavedLayout>,
+}
+
+/// The `layouts` map, less the entries that don't parse or don't hold together.
+fn lenient_layouts<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeMap<String, SavedLayout>, D::Error> {
+    let raw: BTreeMap<String, serde_json::Value> = BTreeMap::deserialize(d)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|(k, v)| Some((k, serde_json::from_value::<SavedLayout>(v).ok()?)))
+        .filter(|(_, l)| l.is_valid())
+        .collect())
 }
 
 impl Workspaces {
@@ -271,11 +286,31 @@ impl Workspaces {
         }
     }
 
+    /// The panes the workspace at `path` last had.
+    pub fn layout(&self, path: &Path) -> Option<&SavedLayout> {
+        self.layouts.get(&normalize(path))
+    }
+
+    /// Remembers (or, with `None`, forgets) the workspace's panes. Returns whether that
+    /// changed anything.
+    pub fn set_layout(&mut self, path: &Path, layout: Option<SavedLayout>) -> bool {
+        let key = normalize(path);
+        match layout {
+            Some(l) if self.layouts.get(&key) != Some(&l) => {
+                self.layouts.insert(key, l);
+                true
+            }
+            Some(_) => false,
+            None => self.layouts.remove(&key).is_some(),
+        }
+    }
+
     /// Drops everything saved about the workspace at `path`, once it was removed on
     /// purpose. (Not done on its own when a worktree isn't listed: a failed `git`
     /// call must not cost the sessions.)
     pub fn forget(&mut self, path: &Path) {
         self.sessions.remove(&normalize(path));
+        self.layouts.remove(&normalize(path));
         self.order.retain(|p| normalize(p) != normalize(path));
         self.folders.retain(|p| normalize(p) != normalize(path));
         if self.selected.as_deref().is_some_and(|s| normalize(s) == normalize(path)) {
@@ -511,6 +546,47 @@ mod tests {
         let json = serde_json::to_string(&c).unwrap();
         assert_eq!(serde_json::from_str::<Workspaces>(&json).unwrap(), c);
         assert_eq!(serde_json::from_str::<Workspaces>("{}").unwrap(), Workspaces::default());
+    }
+
+    fn saved_two_panes() -> SavedLayout {
+        let mut layout = crate::layout::Layout::new("1", 1);
+        layout.split(1, crate::layout::Axis::Row, 2, crate::layout::Rect::new(0.0, 0.0, 2000.0, 1000.0));
+        SavedLayout { layout, sessions: BTreeMap::from([(1, "a".to_string())]) }
+    }
+
+    #[test]
+    fn a_layout_is_remembered_per_workspace_and_round_trips() {
+        let mut c = Workspaces::default();
+        let (a, b) = (Path::new("/work/app"), Path::new("/data/wt/x"));
+        let l = saved_two_panes();
+        assert!(c.set_layout(a, Some(l.clone())));
+        assert!(!c.set_layout(a, Some(l.clone())));
+        assert_eq!(c.layout(a), Some(&l));
+        assert_eq!(c.layout(b), None);
+        let back: Workspaces = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back, c);
+        assert!(c.set_layout(a, None));
+        assert!(!c.set_layout(a, None));
+        c.set_layout(b, Some(l));
+        c.forget(b);
+        assert_eq!(c, Workspaces::default());
+    }
+
+    #[test]
+    fn an_unreadable_layout_does_not_cost_the_file() {
+        let good = serde_json::to_value(saved_two_panes()).unwrap();
+        let broken_shape = serde_json::json!({"layout": 5});
+        let mut twice = good.clone();
+        twice["layout"]["tabs"][0]["focus"] = 99.into();
+        let json = serde_json::json!({
+            "selected": "/work/app",
+            "sessions": { "k": "s1" },
+            "layouts": { "good": good, "shape": broken_shape, "focus": twice, "null": null },
+        });
+        let c: Workspaces = serde_json::from_value(json).unwrap();
+        assert_eq!(c.selected, Some(PathBuf::from("/work/app")));
+        assert_eq!(c.sessions.len(), 1);
+        assert_eq!(c.layouts.keys().collect::<Vec<_>>(), ["good"]);
     }
 
     #[test]

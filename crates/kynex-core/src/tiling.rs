@@ -4,7 +4,9 @@
 //! somewhere else (the sessions panel, a workspace) shows it in the focused pane, or
 //! focuses the pane that already holds it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+
+use serde::{Deserialize, Serialize};
 
 use crate::layout::{Axis, Direction, Layout, PaneId, Rect, Rects};
 use crate::live::Key;
@@ -18,12 +20,86 @@ pub struct TabInfo {
     pub active: bool,
 }
 
+/// A [`Tiling`] as it is saved: the layout, and the Claude session id each pane held
+/// (a pane with no entry was a new session with nothing said yet). Session keys are
+/// process-local, so ids are what survive a restart.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SavedLayout {
+    pub layout: Layout,
+    pub sessions: BTreeMap<PaneId, String>,
+}
+
+impl SavedLayout {
+    /// Whether it can be restored: a layout that holds together and has a pane.
+    pub fn is_valid(&self) -> bool {
+        !self.layout.is_empty() && self.layout.is_valid()
+    }
+}
+
 pub struct Tiling {
     layout: Layout,
     keys: HashMap<PaneId, Key>,
 }
 
 impl Tiling {
+    /// What to save: the layout and, from `id_of`, each pane's session id (`None` for a
+    /// session that has none to resume).
+    pub fn save(&self, id_of: impl Fn(Key) -> Option<String>) -> SavedLayout {
+        let sessions = self.layout.panes().into_iter().filter_map(|p| Some((p, id_of(self.key_of(p)?)?))).collect();
+        SavedLayout { layout: self.layout.clone(), sessions }
+    }
+
+    /// Brings a saved layout back. Its panes get fresh ids from `*next_pane` up (advancing
+    /// it), so they can't collide with panes in use. `key_for` gives the session for a
+    /// pane's saved id (`None` id: a new session); `None` back means it is gone and its
+    /// pane closes, as does a pane whose session another pane has. `None` if the layout
+    /// is broken or no pane is left. With `keep`, the pane that was focused takes that id
+    /// instead (one the caller knows is free), for state the caller holds under it.
+    pub fn restore(
+        saved: &SavedLayout,
+        next_pane: &mut PaneId,
+        keep: Option<PaneId>,
+        mut key_for: impl FnMut(Option<&str>) -> Option<Key>,
+    ) -> Option<Self> {
+        if !saved.is_valid() {
+            return None;
+        }
+        let old = saved.layout.panes();
+        let start = *next_pane;
+        let renamed: HashMap<PaneId, PaneId> = old.iter().zip(start..).map(|(p, n)| (*p, n)).collect();
+        *next_pane = start + old.len() as PaneId;
+        let mut layout = saved.layout.clone();
+        layout.renumber(|p| renamed[&p]);
+        let mut keys: HashMap<PaneId, Key> = HashMap::new();
+        let mut seen: Vec<&str> = Vec::new();
+        for p in old {
+            let id = saved.sessions.get(&p).map(String::as_str);
+            let repeat = id.is_some_and(|id| seen.contains(&id));
+            seen.extend(id);
+            let key = if repeat { None } else { key_for(id) };
+            let pane = renamed[&p];
+            match key {
+                Some(k) if !keys.values().any(|x| *x == k) => {
+                    keys.insert(pane, k);
+                }
+                _ => {
+                    layout.close_pane(pane);
+                }
+            }
+        }
+        // Whichever pane is focused once the missing ones are gone takes `keep`.
+        if let Some(k) = keep
+            && let Some(focus) = layout.focus()
+            && !layout.panes().contains(&k)
+        {
+            layout.renumber(|p| if p == focus { k } else { p });
+            if let Some(key) = keys.remove(&focus) {
+                keys.insert(k, key);
+            }
+        }
+        (!layout.is_empty()).then_some(Self { layout, keys })
+    }
+
     /// One tab with one pane `pane`, showing session `key`.
     pub fn new(pane: PaneId, key: Key) -> Self {
         Self { layout: Layout::new("1", pane), keys: HashMap::from([(pane, key)]) }
@@ -457,6 +533,120 @@ mod tests {
         assert!(t.move_to_tab(2, 1, BIG));
         assert_eq!(t.tabs().iter().map(|t| t.sessions.clone()).collect::<Vec<_>>(), [vec![10], vec![30, 20]]);
         assert!(!t.move_to_tab(2, 1, BIG));
+    }
+
+    /// Session ids as the app would know them: key 10 is "s10".
+    fn id_of(key: Key) -> Option<String> {
+        Some(format!("s{key}"))
+    }
+
+    fn key_of_id(id: Option<&str>) -> Option<Key> {
+        id.map(|i| i[1..].parse().unwrap())
+    }
+
+    #[test]
+    fn a_saved_layout_comes_back_with_new_pane_ids() {
+        let mut t = three();
+        t.new_tab(4, 40);
+        t.select_tab(0);
+        t.focus_pane(2);
+        let saved = t.save(id_of);
+        assert_eq!(saved.sessions.len(), 4);
+        let saved: SavedLayout = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+        let mut next = 100;
+        let back = Tiling::restore(&saved, &mut next, None, key_of_id).unwrap();
+        assert_eq!(next, 104, "four panes took four ids");
+        assert_eq!(back.panes(), [100, 101, 102, 103]);
+        assert_eq!(back.sessions(), [10, 20, 30, 40]);
+        assert_eq!(back.tabs().iter().map(|t| t.sessions.clone()).collect::<Vec<_>>(), [vec![10, 20, 30], vec![40]]);
+        assert_eq!(back.focus(), Some(101), "the focus came along");
+        assert_eq!(back.key_of(back.focus().unwrap()), Some(20));
+    }
+
+    #[test]
+    fn a_pane_without_an_id_is_a_new_session() {
+        let mut t = three();
+        t.show_in(2, 99);
+        let saved = t.save(|k| (k != 99).then(|| format!("s{k}")));
+        assert_eq!(saved.sessions.len(), 2);
+        let mut next = 1;
+        let back =
+            Tiling::restore(&saved, &mut next, None, |id| Some(id.map_or(500, |i| i[1..].parse().unwrap()))).unwrap();
+        assert_eq!(back.sessions(), [10, 500, 30]);
+    }
+
+    #[test]
+    fn a_missing_session_closes_its_pane() {
+        let saved = three().save(id_of);
+        let mut next = 1;
+        let back = Tiling::restore(&saved, &mut next, None, |id| key_of_id(id).filter(|k| *k != 20)).unwrap();
+        assert_eq!(back.sessions(), [10, 30]);
+        assert_eq!(back.panes().len(), 2);
+        assert!(back.layout().is_valid());
+        assert!(back.focus().is_some());
+    }
+
+    #[test]
+    fn no_session_left_is_no_tiling() {
+        let saved = three().save(id_of);
+        assert!(Tiling::restore(&saved, &mut 1, None, |_| None).is_none());
+    }
+
+    #[test]
+    fn a_session_in_two_panes_keeps_the_first() {
+        let mut saved = three().save(id_of);
+        saved.sessions.insert(2, "s10".into());
+        let mut asked = Vec::new();
+        let back = Tiling::restore(&saved, &mut 1, None, |id| {
+            asked.push(id.map(str::to_string));
+            key_of_id(id)
+        })
+        .unwrap();
+        assert_eq!(back.sessions(), [10, 30]);
+        assert_eq!(asked.len(), 2, "the repeat wasn't asked for twice");
+    }
+
+    #[test]
+    fn a_corrupt_layout_is_not_restored() {
+        let saved = three().save(id_of);
+        let mut next = 7;
+        let json = serde_json::to_string(&saved).unwrap().replace("\"Pane\":3", "\"Pane\":1");
+        let bad: SavedLayout = serde_json::from_str(&json).unwrap();
+        assert!(Tiling::restore(&bad, &mut next, None, key_of_id).is_none());
+        assert_eq!(next, 7, "nothing was taken");
+        assert!(Tiling::restore(&SavedLayout::default(), &mut next, None, key_of_id).is_none());
+    }
+
+    #[test]
+    fn the_focused_pane_can_keep_an_id_and_reconcile_keeps_every_restored_session() {
+        let mut t = three();
+        t.focus_pane(2);
+        let saved = t.save(id_of);
+        let mut next = 50;
+        let back = Tiling::restore(&saved, &mut next, Some(7), key_of_id);
+        let mut back = back.unwrap();
+        assert_eq!(back.focus(), Some(7));
+        assert_eq!(back.key_of(7), Some(20));
+        assert_eq!(back.panes().len(), 3);
+        assert_eq!(next, 53, "every pane took a fresh id before the focused one was renamed");
+        assert!(back.panes().iter().filter(|p| **p != 7).all(|p| (50..53).contains(p)));
+        // The focused pane's session is gone: the pane that is focused after that keeps the id.
+        let gone = Tiling::restore(&saved, &mut 50, Some(7), |id| key_of_id(id).filter(|k| *k != 20)).unwrap();
+        assert_eq!(gone.panes().len(), 2);
+        assert!(gone.focus() == Some(7) && gone.key_of(7).is_some_and(|k| k != 20));
+        assert_eq!(gone.sessions().len(), 2);
+        // The window talks to the focused pane's session: nothing is replaced.
+        assert!(back.reconcile(&[10, 20, 30], 20).is_empty());
+        assert_eq!(back.sessions(), [10, 20, 30]);
+    }
+
+    #[test]
+    fn renumbered_panes_do_not_collide_with_ones_in_use() {
+        let saved = three().save(id_of);
+        let mut next = 1;
+        let a = Tiling::restore(&saved, &mut next, None, key_of_id).unwrap();
+        let b = Tiling::restore(&saved, &mut next, None, key_of_id).unwrap();
+        assert!(a.panes().iter().all(|p| !b.panes().contains(p)));
     }
 
     #[test]

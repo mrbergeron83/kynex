@@ -181,6 +181,16 @@ impl Node {
         }
     }
 
+    fn renumber(&mut self, f: &mut impl FnMut(PaneId) -> PaneId) {
+        match self {
+            Self::Pane(id) => *id = f(*id),
+            Self::Split { a, b, .. } => {
+                a.renumber(f);
+                b.renumber(f);
+            }
+        }
+    }
+
     fn valid(&self) -> bool {
         match self {
             Self::Pane(_) => true,
@@ -485,6 +495,12 @@ impl Tab {
         found
     }
 
+    fn renumber(&mut self, f: &mut impl FnMut(PaneId) -> PaneId) {
+        self.root.renumber(f);
+        self.focus = f(self.focus);
+        self.zoomed = self.zoomed.map(&mut *f);
+    }
+
     fn valid(&self) -> bool {
         self.root.valid() && self.contains(self.focus) && self.zoomed.is_none_or(|z| self.contains(z))
     }
@@ -693,14 +709,28 @@ impl Layout {
     /// a pane twice).
     pub fn from_json(json: &str) -> Option<Self> {
         let layout: Self = serde_json::from_str(json).ok()?;
-        let panes = layout.panes();
+        layout.is_valid().then_some(layout)
+    }
+
+    /// Whether the layout holds together: no pane twice, every tab's focus (and zoom) in
+    /// it, the active tab there. What a layout read from a file has to pass.
+    pub fn is_valid(&self) -> bool {
+        let panes = self.panes();
         let mut seen = panes.clone();
         seen.sort_unstable();
         seen.dedup();
-        let ok = seen.len() == panes.len()
-            && layout.tabs.iter().all(Tab::valid)
-            && (layout.tabs.is_empty() && layout.active == 0 || layout.active < layout.tabs.len());
-        ok.then_some(layout)
+        seen.len() == panes.len()
+            && self.tabs.iter().all(Tab::valid)
+            && (self.tabs.is_empty() && self.active == 0 || self.active < self.tabs.len())
+    }
+
+    /// Gives every pane the id `f` returns for it (focus and zoom included), for panes
+    /// read from a file whose ids may collide with ones in use. `f` must answer the same
+    /// for the same id, and different ids must get different answers.
+    pub fn renumber(&mut self, mut f: impl FnMut(PaneId) -> PaneId) {
+        for tab in &mut self.tabs {
+            tab.renumber(&mut f);
+        }
     }
 }
 
@@ -1045,6 +1075,33 @@ mod tests {
         assert_eq!(Layout::from_json(&twice), None);
         assert_eq!(Layout::from_json(r#"{"tabs":[],"active":3}"#), None);
         assert!(Layout::from_json(r#"{"tabs":[],"active":0}"#).is_some());
+    }
+
+    #[test]
+    fn renumber_rewrites_panes_focus_and_zoom() {
+        let mut l = Layout::new("a", 1);
+        l.split(1, Axis::Row, 2, B);
+        l.split(2, Axis::Column, 3, B);
+        l.tab_mut().unwrap().toggle_zoom();
+        l.new_tab("b", 4);
+        l.select(0);
+        l.renumber(|p| p + 100);
+        assert_eq!(l.panes(), vec![101, 102, 103, 104]);
+        let t = &l.tabs()[0];
+        assert_eq!((t.focus(), t.zoomed()), (103, Some(103)));
+        assert!(l.is_valid());
+        assert_eq!(l.focus(), Some(103));
+    }
+
+    #[test]
+    fn a_pane_drops_out_of_a_loaded_layout() {
+        let mut l = Layout::new("a", 1);
+        l.split(1, Axis::Row, 2, B);
+        l.new_tab("b", 3);
+        assert!(l.close_pane(2));
+        assert!(l.close_pane(3));
+        assert_eq!(l.panes(), vec![1]);
+        assert!(l.is_valid());
     }
 
     /// A tiny deterministic generator, so the property test needs no dependency.
