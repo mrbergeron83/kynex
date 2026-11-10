@@ -5,6 +5,17 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A `reviewer` agent among the built-in ones: read-only, on Sonnet, it gives a finished change a
+  second read against its task and reports only real problems. If you've edited your agents,
+  "Restore defaults" in Settings → Agents brings it in.
+
+### Fixed
+
+- The `checker` agent can use PowerShell on Windows, so it runs a project's `.ps1` checks
+  directly instead of through Bash.
+
 ## [0.0.25] - 2026-11-09
 
 ### Added
