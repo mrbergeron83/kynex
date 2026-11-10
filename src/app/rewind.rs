@@ -14,7 +14,7 @@ use super::KynexApp;
 use crate::ui::completions::{Completion, completions};
 
 /// The open rewind popup.
-pub(super) struct RewindMenu {
+pub(crate) struct RewindMenu {
     /// The session it's for; it closes if another is shown.
     key: Key,
     /// Newest first.
@@ -86,20 +86,20 @@ impl KynexApp {
         };
         let (key, cwd) = (s.uid, s.cwd.clone());
         // Already reading them.
-        if self.rewind.as_ref().is_some_and(|r| r.key == key && r.loading) {
+        if self.pane.rewind.as_ref().is_some_and(|r| r.key == key && r.loading) {
             return;
         }
         // Up at once, saying it's reading, until the messages are in.
-        self.rewind = Some(RewindMenu { key, points: Vec::new(), selected: 0, picked: None, loading: true });
+        self.pane.rewind = Some(RewindMenu { key, points: Vec::new(), selected: 0, picked: None, loading: true });
         cx.notify();
         cx.spawn(async move |this, cx| {
             let points = cx.background_spawn(async move { rewind::points(&cwd, &id) }).await;
             this.update(cx, |this, cx| {
                 // Closed meanwhile, or another session is shown.
-                if !this.rewind.as_ref().is_some_and(|r| r.key == key && r.loading) {
+                if !this.pane.rewind.as_ref().is_some_and(|r| r.key == key && r.loading) {
                     return;
                 }
-                this.rewind = None;
+                this.pane.rewind = None;
                 match points {
                     Ok(p) if p.is_empty() => {
                         this.toast(Toast::info("Nothing to rewind to yet."));
@@ -111,7 +111,7 @@ impl KynexApp {
                         if message.is_some() && picked.is_none() {
                             this.toast(Toast::warning("Can't rewind to that message; pick it from the list."));
                         }
-                        this.rewind = Some(RewindMenu { key, points, selected: 0, picked, loading: false });
+                        this.pane.rewind = Some(RewindMenu { key, points, selected: 0, picked, loading: false });
                     }
                     Err(e) => {
                         this.toast(Toast::error(e));
@@ -125,12 +125,12 @@ impl KynexApp {
     }
 
     pub(super) fn rewinding(&self) -> bool {
-        self.rewind.is_some()
+        self.pane.rewind.is_some()
     }
 
     /// ↑ / ↓ in the popup; false if it isn't open.
     pub(super) fn rewind_move(&mut self, down: bool, cx: &mut Context<Self>) -> bool {
-        let Some(r) = &mut self.rewind else { return false };
+        let Some(r) = &mut self.pane.rewind else { return false };
         let n = match r.picked {
             Some(i) => choices(&r.points[i]).len(),
             None => r.points.len(),
@@ -144,7 +144,7 @@ impl KynexApp {
 
     /// Enter / Tab: picks the message, then the choice. False if it isn't open.
     pub(super) fn rewind_accept(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(r) = &mut self.rewind else { return false };
+        let Some(r) = &mut self.pane.rewind else { return false };
         if r.points.is_empty() {
             return true;
         }
@@ -157,7 +157,7 @@ impl KynexApp {
                 let point = r.points[i].clone();
                 let restore = choices(&point).get(r.selected).copied().unwrap_or(Restore::Conversation);
                 let key = r.key;
-                self.rewind = None;
+                self.pane.rewind = None;
                 self.restore(key, point, restore, cx);
             }
         }
@@ -167,10 +167,10 @@ impl KynexApp {
 
     /// Esc: from the choices back to the messages, then closed. False if it isn't open.
     pub(super) fn rewind_back(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(r) = &mut self.rewind else { return false };
+        let Some(r) = &mut self.pane.rewind else { return false };
         match r.picked.take() {
             Some(i) => r.selected = i,
-            None => self.rewind = None,
+            None => self.pane.rewind = None,
         }
         cx.notify();
         true
@@ -222,10 +222,10 @@ impl KynexApp {
 
     /// The popup above the composer: the messages, or what to restore.
     pub(super) fn render_rewind(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.rewind.as_ref().is_some_and(|r| self.focused_key() != Some(r.key)) {
-            self.rewind = None;
+        if self.pane.rewind.as_ref().is_some_and(|r| self.focused_key() != Some(r.key)) {
+            self.pane.rewind = None;
         }
-        let r = self.rewind.as_ref()?;
+        let r = self.pane.rewind.as_ref()?;
         let (items, empty): (Vec<Completion>, _) = match r.picked {
             None => (
                 r.points
@@ -263,7 +263,7 @@ impl KynexApp {
         let this = cx.entity().downgrade();
         let list = completions(&items, r.selected, empty, cx, move |i, _, cx| {
             this.update(cx, |this, cx| {
-                if let Some(r) = &mut this.rewind {
+                if let Some(r) = &mut this.pane.rewind {
                     r.selected = i;
                 }
                 this.rewind_accept(cx);

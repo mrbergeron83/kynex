@@ -19,7 +19,7 @@ use crate::ui::input::{self, TextInput};
 use crate::ui::motion::{self, fade_in};
 use crate::ui::{Icon, Tooltip, find_marks, icon, icon_button};
 
-pub(super) struct FindBar {
+pub(crate) struct FindBar {
     input: Entity<TextInput>,
     /// What `hits` were found for: the query, session and its revision.
     query: String,
@@ -35,11 +35,11 @@ impl KynexApp {
         if self.focused_key().and_then(|k| self.session_by_key(k)).is_none_or(|s| s.items.is_empty()) {
             return cx.propagate();
         }
-        let input = match &self.find {
+        let input = match &self.pane.find {
             Some(f) => f.input.clone(),
             None => {
                 let input = cx.new(|cx| TextInput::new(cx).placeholder("Find in conversation"));
-                self.find = Some(FindBar {
+                self.pane.find = Some(FindBar {
                     input: input.clone(),
                     query: String::new(),
                     key: None,
@@ -55,7 +55,7 @@ impl KynexApp {
     }
 
     fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.find = None;
+        self.pane.find = None;
         find_marks::clear(cx);
         self.focus_input(window, cx);
         cx.notify();
@@ -71,14 +71,14 @@ impl KynexApp {
             let row = th.list.logical_scroll_top().item_ix;
             th.rows.get(row).map_or(0, first_item)
         });
-        let Some(bar) = &mut self.find else { return };
+        let Some(bar) = &mut self.pane.find else { return };
         let query = bar.input.read(cx).text().to_string();
         let new_query = bar.query != query || bar.key != key;
         if !new_query && bar.revision == (count, revision) {
             return;
         }
         let hits = Rc::new(find::find(self.code_items(key), &query));
-        let bar = self.find.as_mut().unwrap();
+        let bar = self.pane.find.as_mut().unwrap();
         bar.hits = hits;
         bar.revision = (count, revision);
         bar.key = key;
@@ -101,7 +101,7 @@ impl KynexApp {
 
     /// Goes `by` matches on (back if negative), round the ends.
     fn find_step(&mut self, by: isize, cx: &mut Context<Self>) {
-        let Some(bar) = &mut self.find else { return };
+        let Some(bar) = &mut self.pane.find else { return };
         let n = bar.hits.len() as isize;
         if n == 0 {
             return;
@@ -135,11 +135,11 @@ impl KynexApp {
 
     /// The bar, while it's open over a conversation.
     pub(super) fn render_find(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        self.find.as_ref()?;
+        self.pane.find.as_ref()?;
         self.refresh_find(cx);
         let t = theme(cx).clone();
         let key = self.focused_key();
-        let bar = self.find.as_ref()?;
+        let bar = self.pane.find.as_ref()?;
         let (n, current) = (bar.hits.len(), bar.current);
         let current_hit = bar.hits.get(current).map(|h| (h.item, h.nth));
         let colors = (t.warning.opacity(0.25), t.warning.opacity(0.6));

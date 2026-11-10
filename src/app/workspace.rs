@@ -270,7 +270,7 @@ impl KynexApp {
     pub(super) fn focus_input(&self, window: &mut Window, cx: &mut Context<Self>) {
         match &self.prompt {
             Some(p) if Some(p.key) == self.focused_key() => p.view.read(cx).focus_handle(cx).focus(window, cx),
-            _ => self.composer.read(cx).focus_handle(cx).focus(window, cx),
+            _ => self.pane.composer.read(cx).focus_handle(cx).focus(window, cx),
         }
     }
 
@@ -297,7 +297,7 @@ impl KynexApp {
             self.saved.active = a;
             self.menu = None;
             self.save();
-            self.composer.read(cx).focus_handle(cx).focus(window, cx);
+            self.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
         }
         cx.notify();
     }

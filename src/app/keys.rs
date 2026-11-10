@@ -482,7 +482,7 @@ impl KynexApp {
 
     /// Claude Code's Ctrl+O: every tool call in the transcript open, or all closed again.
     pub(super) fn expand_tools(&mut self, _: &ExpandTools, _: &mut Window, cx: &mut Context<Self>) {
-        self.expand_tools = !self.expand_tools;
+        self.pane.expand_tools = !self.pane.expand_tools;
         for th in self.threads.values() {
             th.list.remeasure();
         }

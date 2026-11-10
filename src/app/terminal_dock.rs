@@ -57,7 +57,7 @@ impl KynexApp {
                 p.focus_active(window, cx);
             });
         } else {
-            self.composer.read(cx).focus_handle(cx).focus(window, cx);
+            self.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
         }
         cx.notify();
     }

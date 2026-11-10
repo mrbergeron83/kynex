@@ -23,7 +23,7 @@ const LISTED: usize = 50;
 
 /// The popup's state, and each folder's files.
 #[derive(Default)]
-pub(super) struct Mentions {
+pub(crate) struct Mentions {
     files: HashMap<PathBuf, Known>,
     /// The last matches, so the popup filters once per keystroke.
     matches: Option<Matches>,
@@ -60,8 +60,8 @@ struct Typing {
 impl KynexApp {
     fn mention_typed(&self, cx: &Context<Self>) -> Option<Typing> {
         let session = self.focused_key().and_then(|k| self.session_by_key(k)).filter(|s| s.kind == Kind::Code)?;
-        let input = self.composer.read(cx);
-        if self.prompt.is_some() || self.mentions.dismissed.as_deref() == Some(input.text()) {
+        let input = self.pane.composer.read(cx);
+        if self.prompt.is_some() || self.pane.mentions.dismissed.as_deref() == Some(input.text()) {
             return None;
         }
         let (token, query) = mentions::at_cursor(input.text(), input.cursor()?)?;
@@ -72,8 +72,8 @@ impl KynexApp {
     /// when no mention is.
     fn mention_matches(&mut self, cx: &mut Context<Self>) -> Option<(Rc<Files>, Rc<Vec<Match>>)> {
         let typing = self.mention_typed(cx)?;
-        let files = self.mentions.files.get(&typing.cwd).map(|k| k.files.clone()).unwrap_or_default();
-        if let Some(m) = &self.mentions.matches
+        let files = self.pane.mentions.files.get(&typing.cwd).map(|k| k.files.clone()).unwrap_or_default();
+        if let Some(m) = &self.pane.mentions.matches
             && m.cwd == typing.cwd
             && m.query == typing.query
             && Rc::ptr_eq(&m.files, &files)
@@ -82,7 +82,7 @@ impl KynexApp {
         }
         let found = Rc::new(files.matching(&typing.query, LISTED));
         let Typing { cwd, query, .. } = typing;
-        self.mentions.matches = Some(Matches { cwd, files: files.clone(), query, found: found.clone() });
+        self.pane.mentions.matches = Some(Matches { cwd, files: files.clone(), query, found: found.clone() });
         Some((files, found))
     }
 
@@ -93,7 +93,7 @@ impl KynexApp {
 
     /// Reads `cwd`'s files in the background, unless that's already under way.
     fn load_files(&mut self, cwd: PathBuf, cx: &mut Context<Self>) {
-        let known = self.mentions.files.entry(cwd.clone()).or_default();
+        let known = self.pane.mentions.files.entry(cwd.clone()).or_default();
         if known.loading {
             return;
         }
@@ -102,7 +102,7 @@ impl KynexApp {
             let dir = cwd.clone();
             let files = cx.background_spawn(async move { Files::new(mentions::list(&dir)) }).await;
             this.update(cx, |this, cx| {
-                let known = this.mentions.files.entry(cwd).or_default();
+                let known = this.pane.mentions.files.entry(cwd).or_default();
                 known.files = Rc::new(files);
                 known.loading = false;
                 cx.notify();
@@ -115,22 +115,22 @@ impl KynexApp {
     /// The popup above the composer, while an `@path` is being typed.
     pub(super) fn render_mentions(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let typing = self.mention_typed(cx);
-        let started = typing.is_some() && !self.mentions.typing;
-        self.mentions.typing = typing.is_some();
+        let started = typing.is_some() && !self.pane.mentions.typing;
+        self.pane.mentions.typing = typing.is_some();
         let typing = typing?;
         if started {
             self.load_files(typing.cwd.clone(), cx);
         }
-        if self.mentions.query != typing.query {
-            self.mentions.query = typing.query.clone();
-            self.mentions.selected = 0;
+        if self.pane.mentions.query != typing.query {
+            self.pane.mentions.query = typing.query.clone();
+            self.pane.mentions.selected = 0;
         }
         let (files, found) = self.mention_matches(cx)?;
-        let loading = self.mentions.files.get(&typing.cwd).is_some_and(|k| k.loading);
+        let loading = self.pane.mentions.files.get(&typing.cwd).is_some_and(|k| k.loading);
         if found.is_empty() && !loading {
             return None;
         }
-        self.mentions.selected = self.mentions.selected.min(found.len().saturating_sub(1));
+        self.pane.mentions.selected = self.pane.mentions.selected.min(found.len().saturating_sub(1));
         let items: Rc<Vec<Completion>> = found
             .iter()
             .map(|m| Completion {
@@ -141,9 +141,9 @@ impl KynexApp {
             .collect::<Vec<_>>()
             .into();
         // Shares the slash list's slot, so it plays out the same way when it closes.
-        self.slash.shown = Some((items.clone(), self.mentions.selected));
+        self.pane.slash.shown = Some((items.clone(), self.pane.mentions.selected));
         let this = cx.entity().downgrade();
-        let list = completions(&items, self.mentions.selected, "Listing files…", cx, move |i, window, cx| {
+        let list = completions(&items, self.pane.mentions.selected, "Listing files…", cx, move |i, window, cx| {
             this.update(cx, |this, cx| this.take_mention(i, window, cx)).ok();
         });
         Some(list.w_full().max_w(px(560.)).into_any_element())
@@ -152,8 +152,8 @@ impl KynexApp {
     /// Moves the selection; false if the popup is closed.
     pub(super) fn mention_move(&mut self, down: bool, cx: &mut Context<Self>) -> bool {
         let Some(n) = self.mention_open(cx) else { return false };
-        let s = self.mentions.selected;
-        self.mentions.selected = if down { (s + 1) % n } else { (s + n - 1) % n };
+        let s = self.pane.mentions.selected;
+        self.pane.mentions.selected = if down { (s + 1) % n } else { (s + n - 1) % n };
         cx.notify();
         true
     }
@@ -163,7 +163,7 @@ impl KynexApp {
         if self.mention_open(cx).is_none() {
             return false;
         }
-        self.take_mention(self.mentions.selected, window, cx);
+        self.take_mention(self.pane.mentions.selected, window, cx);
         true
     }
 
@@ -172,7 +172,7 @@ impl KynexApp {
         if self.mention_open(cx).is_none() {
             return false;
         }
-        self.mentions.dismissed = Some(self.composer.read(cx).text().to_string());
+        self.pane.mentions.dismissed = Some(self.pane.composer.read(cx).text().to_string());
         cx.notify();
         true
     }
@@ -183,9 +183,9 @@ impl KynexApp {
         let Some((files, found)) = self.mention_matches(cx) else { return };
         let Some(m) = found.get(i) else { return };
         let insert = mentions::insert_text(&files.entries[m.index]);
-        let range = mentions::replace_range(self.composer.read(cx).text(), typing.token);
-        self.composer.update(cx, |input, cx| input.replace(range, &insert, cx));
-        self.composer.read(cx).focus_handle(cx).focus(window, cx);
+        let range = mentions::replace_range(self.pane.composer.read(cx).text(), typing.token);
+        self.pane.composer.update(cx, |input, cx| input.replace(range, &insert, cx));
+        self.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 }

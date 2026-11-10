@@ -25,7 +25,7 @@ use crate::ui::completions::{Completion, completions};
 
 /// The popup's state, and each folder's commands.
 #[derive(Default)]
-pub(super) struct Slash {
+pub(crate) struct Slash {
     commands: HashMap<PathBuf, Known>,
     /// The last matches, so the popup filters once per keystroke rather than on
     /// every render and key handler.
@@ -61,11 +61,11 @@ struct Matches {
 impl KynexApp {
     /// What's typed after the slash, while the composer holds just `/name`.
     fn slash_query(&self, cx: &Context<Self>) -> Option<String> {
-        let text = self.composer.read(cx).text();
+        let text = self.pane.composer.read(cx).text();
         let query = text.strip_prefix('/')?;
         let open = self.prompt.is_none()
             && !query.contains(char::is_whitespace)
-            && self.slash.dismissed.as_deref() != Some(text)
+            && self.pane.slash.dismissed.as_deref() != Some(text)
             && self.focused_key().is_some();
         open.then(|| query.to_string())
     }
@@ -75,8 +75,8 @@ impl KynexApp {
         let query = self.slash_query(cx)?;
         let cwd = self.focused_key().and_then(|k| self.session_by_key(k))?.cwd.clone();
         self.load_commands(&cwd, cx);
-        let commands = self.slash.commands.get(&cwd).map(|k| k.commands.clone()).unwrap_or_default();
-        if let Some(m) = &self.slash.matches
+        let commands = self.pane.slash.commands.get(&cwd).map(|k| k.commands.clone()).unwrap_or_default();
+        if let Some(m) = &self.pane.slash.matches
             && m.cwd == cwd
             && m.query == query
             && Rc::ptr_eq(&m.commands, &commands)
@@ -84,18 +84,18 @@ impl KynexApp {
             return Some(m.found.clone());
         }
         let found = Rc::new(commands.matching(&query).into_iter().map(|i| commands.list[i].clone()).collect());
-        self.slash.matches = Some(Matches { cwd, commands, query, found: Rc::clone(&found) });
+        self.pane.slash.matches = Some(Matches { cwd, commands, query, found: Rc::clone(&found) });
         Some(found)
     }
 
     /// Loads a folder's saved commands the first time it's shown, or for a
     /// folder never seen, asks the CLI.
     fn load_commands(&mut self, cwd: &Path, cx: &mut Context<Self>) {
-        if self.slash.commands.contains_key(cwd) {
+        if self.pane.slash.commands.contains_key(cwd) {
             return;
         }
         let known = Known { commands: Rc::default(), loading: true, fresh: false };
-        self.slash.commands.insert(cwd.to_path_buf(), known);
+        self.pane.slash.commands.insert(cwd.to_path_buf(), known);
         let cwd = cwd.to_path_buf();
         cx.spawn(async move |this, cx| {
             let dir = cwd.clone();
@@ -111,13 +111,13 @@ impl KynexApp {
                 match result {
                     Ok((list, fresh)) if fresh => this.commands_reported(cwd.clone(), list, cx),
                     Ok((list, _)) => {
-                        if let Some(k) = this.slash.commands.get_mut(&cwd).filter(|k| !k.fresh) {
+                        if let Some(k) = this.pane.slash.commands.get_mut(&cwd).filter(|k| !k.fresh) {
                             k.commands = Rc::new(Commands::new(commands::with_kynex_commands(list)));
                         }
                     }
                     Err(e) => eprintln!("kynex: couldn't list slash commands: {e}"),
                 }
-                if let Some(k) = this.slash.commands.get_mut(&cwd) {
+                if let Some(k) = this.pane.slash.commands.get_mut(&cwd) {
                     k.loading = false;
                 }
                 cx.notify();
@@ -134,7 +134,7 @@ impl KynexApp {
             return;
         }
         let shown = commands::with_kynex_commands(list.clone());
-        let same = self.slash.commands.get(&cwd).is_some_and(|k| k.commands.list == shown);
+        let same = self.pane.slash.commands.get(&cwd).is_some_and(|k| k.commands.list == shown);
         if !same {
             let dir = cwd.clone();
             let to_save = list.clone();
@@ -145,8 +145,11 @@ impl KynexApp {
             })
             .detach();
         }
-        let k =
-            self.slash.commands.entry(cwd).or_insert(Known { commands: Rc::default(), loading: false, fresh: true });
+        let k = self.pane.slash.commands.entry(cwd).or_insert(Known {
+            commands: Rc::default(),
+            loading: false,
+            fresh: true,
+        });
         k.fresh = true;
         if !same {
             k.commands = Rc::new(Commands::new(shown));
@@ -157,20 +160,20 @@ impl KynexApp {
     pub(super) fn render_slash(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         // Load the shown folder's commands before the first `/`, so it opens full.
         let shown = self.focused_key().and_then(|k| self.session_by_key(k));
-        if let Some(cwd) = shown.map(|s| s.cwd.clone()).filter(|c| !self.slash.commands.contains_key(c)) {
+        if let Some(cwd) = shown.map(|s| s.cwd.clone()).filter(|c| !self.pane.slash.commands.contains_key(c)) {
             self.load_commands(&cwd, cx);
         }
         let matches = self.slash_matches(cx)?;
         let query = self.slash_query(cx).unwrap_or_default();
-        if self.slash.query != query {
-            self.slash.query = query;
-            self.slash.selected = 0;
+        if self.pane.slash.query != query {
+            self.pane.slash.query = query;
+            self.pane.slash.selected = 0;
         }
-        self.slash.selected = self.slash.selected.min(matches.len().saturating_sub(1));
+        self.pane.slash.selected = self.pane.slash.selected.min(matches.len().saturating_sub(1));
         let loading = self
             .focused_key()
             .and_then(|k| self.session_by_key(k))
-            .and_then(|s| self.slash.commands.get(&s.cwd))
+            .and_then(|s| self.pane.slash.commands.get(&s.cwd))
             .is_some_and(|f| f.loading);
         if matches.is_empty() && !loading {
             return None;
@@ -185,9 +188,9 @@ impl KynexApp {
             })
             .collect::<Vec<_>>()
             .into();
-        self.slash.shown = Some((items.clone(), self.slash.selected));
+        self.pane.slash.shown = Some((items.clone(), self.pane.slash.selected));
         let this = cx.entity().downgrade();
-        let list = completions(&items, self.slash.selected, "Loading commands…", cx, move |i, window, cx| {
+        let list = completions(&items, self.pane.slash.selected, "Loading commands…", cx, move |i, window, cx| {
             this.update(cx, |this, cx| this.take_slash(i, false, window, cx)).ok();
         });
         Some(list.w_full().max_w(px(560.)).into_any_element())
@@ -196,7 +199,8 @@ impl KynexApp {
     /// Moves the selection; false if the popup is closed.
     pub(super) fn slash_move(&mut self, down: bool, cx: &mut Context<Self>) -> bool {
         let Some(n) = self.slash_matches(cx).map(|m| m.len()).filter(|&n| n > 0) else { return false };
-        self.slash.selected = if down { (self.slash.selected + 1) % n } else { (self.slash.selected + n - 1) % n };
+        self.pane.slash.selected =
+            if down { (self.pane.slash.selected + 1) % n } else { (self.pane.slash.selected + n - 1) % n };
         cx.notify();
         true
     }
@@ -206,7 +210,7 @@ impl KynexApp {
         if self.slash_matches(cx).is_none_or(|m| m.is_empty()) {
             return false;
         }
-        self.take_slash(self.slash.selected, run, window, cx);
+        self.take_slash(self.pane.slash.selected, run, window, cx);
         true
     }
 
@@ -215,7 +219,7 @@ impl KynexApp {
         if self.slash_matches(cx).is_none() {
             return false;
         }
-        self.slash.dismissed = Some(self.composer.read(cx).text().to_string());
+        self.pane.slash.dismissed = Some(self.pane.composer.read(cx).text().to_string());
         cx.notify();
         true
     }
@@ -225,10 +229,10 @@ impl KynexApp {
     fn take_slash(&mut self, i: usize, run: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(c) = self.slash_matches(cx).and_then(|m| m.get(i).cloned()) else { return };
         let text = if c.argument_hint.is_empty() { format!("/{}", c.name) } else { format!("/{} ", c.name) };
-        self.composer.update(cx, |input, cx| input.set_text(text.clone(), cx));
+        self.pane.composer.update(cx, |input, cx| input.set_text(text.clone(), cx));
         // Typing a space closes it anyway; a complete `/name` would keep it open.
-        self.slash.dismissed = Some(text);
-        self.composer.read(cx).focus_handle(cx).focus(window, cx);
+        self.pane.slash.dismissed = Some(text);
+        self.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
         if run && c.argument_hint.is_empty() {
             self.send(window, cx);
         }
@@ -332,10 +336,10 @@ impl KynexApp {
 
     /// Opens a composer menu without a click to anchor it: above the composer's left edge.
     fn open_menu_at_composer(&mut self, which: Menu, cx: &mut Context<Self>) {
-        let at = self
-            .slash
-            .composer
-            .map_or(point(gpui::px(200.), gpui::px(400.)), |b| point(b.left() + gpui::px(12.), b.top() - gpui::px(4.)));
+        let at =
+            self.pane.slash.composer.map_or(point(gpui::px(200.), gpui::px(400.)), |b| {
+                point(b.left() + gpui::px(12.), b.top() - gpui::px(4.))
+            });
         self.open_menu(which, at, Anchor::BottomLeft, cx);
     }
 }

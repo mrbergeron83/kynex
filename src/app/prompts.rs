@@ -63,7 +63,7 @@ impl KynexApp {
             self.save_rules(&cwd, rules);
         }
         self.prompt = None;
-        self.composer.read(cx).focus_handle(cx).focus(window, cx);
+        self.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
         cx.notify();
     }
 
@@ -109,7 +109,7 @@ impl KynexApp {
                     Some(n) => {
                         this.answer_ask(n, answer);
                         this.prompt = None;
-                        this.composer.read(cx).focus_handle(cx).focus(window, cx);
+                        this.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
                         cx.notify();
                     }
                     None => this.answer(key, id.clone(), answer.clone(), comment, window, cx),

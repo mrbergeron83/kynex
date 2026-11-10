@@ -20,7 +20,7 @@ use crate::ui::completions::{Completion, completions};
 const DOUBLE_ESC: Duration = Duration::from_millis(600);
 
 /// Ctrl+R: the composer's text is the query while it's open.
-pub(super) struct HistorySearch {
+pub(crate) struct HistorySearch {
     /// The draft from before, back on Esc.
     draft: String,
     selected: usize,
@@ -54,7 +54,7 @@ impl KynexApp {
     }
 
     pub(super) fn set_composer(&mut self, text: String, cx: &mut Context<Self>) {
-        self.composer.update(cx, |c, cx| c.set_text(text, cx));
+        self.pane.composer.update(cx, |c, cx| c.set_text(text, cx));
         cx.notify();
     }
 
@@ -64,7 +64,7 @@ impl KynexApp {
         if self.take_back_queue(cx) {
             return true;
         }
-        let current = self.composer.read(cx).text().to_string();
+        let current = self.pane.composer.read(cx).text().to_string();
         let Some(text) = self.history().and_then(|(_, h)| h.older(&current).map(str::to_string)) else {
             return false;
         };
@@ -81,7 +81,7 @@ impl KynexApp {
 
     /// Ctrl+S: puts the draft aside, or brings it back into an empty composer.
     pub(super) fn toggle_stash(&mut self, cx: &mut Context<Self>) {
-        let current = self.composer.read(cx).text().to_string();
+        let current = self.pane.composer.read(cx).text().to_string();
         let Some((_, h)) = self.history() else { return };
         match h.toggle_stash(&current) {
             Stash::Stashed => {
@@ -104,7 +104,7 @@ impl KynexApp {
     /// in ↑'s list), or on an empty composer opens the rewind menu, unless
     /// `keymap.json` moved rewind to other keys. False if this Esc wasn't one of those.
     pub(super) fn double_esc(&mut self, cx: &mut Context<Self>) -> bool {
-        let text = self.composer.read(cx).text().to_string();
+        let text = self.pane.composer.read(cx).text().to_string();
         // Esc closes a menu or modal first; that press isn't for the draft.
         let covered = self.menu.is_some()
             || self.settings.is_some()
@@ -118,10 +118,10 @@ impl KynexApp {
             || (empty && !super::keys::esc_esc_rewinds())
             || self.focused_key().and_then(|k| self.session_by_key(k)).is_some_and(|s| s.busy)
         {
-            self.last_esc = None;
+            self.pane.last_esc = None;
             return false;
         }
-        if self.last_esc.take().is_some_and(|t| t.elapsed() < DOUBLE_ESC) {
+        if self.pane.last_esc.take().is_some_and(|t| t.elapsed() < DOUBLE_ESC) {
             if empty {
                 self.open_rewind(cx);
             } else {
@@ -129,7 +129,7 @@ impl KynexApp {
                 self.set_composer(String::new(), cx);
             }
         } else {
-            self.last_esc = Some(Instant::now());
+            self.pane.last_esc = Some(Instant::now());
         }
         true
     }
@@ -140,7 +140,7 @@ impl KynexApp {
         if self.editing_outside.is_some() {
             return;
         }
-        let text = self.composer.read(cx).text().to_string();
+        let text = self.pane.composer.read(cx).text().to_string();
         let sent = text.clone();
         let progress = self.toast(Toast::progress("Editing in your editor; close it to bring the message back")).id;
         self.editing_outside = Some(progress);
@@ -153,7 +153,7 @@ impl KynexApp {
                     Ok(text) => {
                         this.toasts.finish(progress, None);
                         // Typed here meanwhile: kept, after the editor's text.
-                        let now = this.composer.read(cx).text().to_string();
+                        let now = this.pane.composer.read(cx).text().to_string();
                         let text = match now.strip_prefix(sent.as_str()) {
                             _ if now == sent => text,
                             Some(added) => format!("{text}{added}"),
@@ -172,26 +172,26 @@ impl KynexApp {
 
     /// Ctrl+R: opens the search, or with it open, takes the selected match.
     pub(super) fn start_history_search(&mut self, cx: &mut Context<Self>) {
-        if self.history_search.is_some() {
+        if self.pane.history_search.is_some() {
             return self.take_history_match(cx);
         }
-        let draft = self.composer.read(cx).text().to_string();
-        self.history_search = Some(HistorySearch { draft, selected: 0 });
+        let draft = self.pane.composer.read(cx).text().to_string();
+        self.pane.history_search = Some(HistorySearch { draft, selected: 0 });
         self.set_composer(String::new(), cx);
     }
 
     fn history_matches(&mut self, cx: &mut Context<Self>) -> Vec<String> {
-        let query = self.composer.read(cx).text().to_string();
+        let query = self.pane.composer.read(cx).text().to_string();
         self.history().map(|(_, h)| h.search(&query).into_iter().map(str::to_string).collect()).unwrap_or_default()
     }
 
     /// ↑ / ↓ while searching; false if the search isn't open.
     pub(super) fn history_search_move(&mut self, down: bool, cx: &mut Context<Self>) -> bool {
-        if self.history_search.is_none() {
+        if self.pane.history_search.is_none() {
             return false;
         }
         let n = self.history_matches(cx).len();
-        if let Some(s) = &mut self.history_search
+        if let Some(s) = &mut self.pane.history_search
             && n > 0
         {
             // The list reads newest first, top down, like the slash popup.
@@ -203,27 +203,27 @@ impl KynexApp {
 
     /// Enter / Tab while searching: the selected message into the composer.
     pub(super) fn take_history_match(&mut self, cx: &mut Context<Self>) {
-        let Some(s) = self.history_search.take() else { return };
+        let Some(s) = self.pane.history_search.take() else { return };
         let text = self.history_matches(cx).into_iter().nth(s.selected).unwrap_or(s.draft);
         self.set_composer(text, cx);
     }
 
     /// Esc while searching: back to the draft. False if the search isn't open.
     pub(super) fn cancel_history_search(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(s) = self.history_search.take() else { return false };
+        let Some(s) = self.pane.history_search.take() else { return false };
         self.set_composer(s.draft, cx);
         true
     }
 
     pub(super) fn history_searching(&self) -> bool {
-        self.history_search.is_some()
+        self.pane.history_search.is_some()
     }
 
     /// The search's popup above the composer.
     pub(super) fn render_history_search(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        self.history_search.as_ref()?;
+        self.pane.history_search.as_ref()?;
         let matches = self.history_matches(cx);
-        let s = self.history_search.as_mut()?;
+        let s = self.pane.history_search.as_mut()?;
         s.selected = s.selected.min(matches.len().saturating_sub(1));
         let selected = s.selected;
         let items: Vec<Completion> = matches
@@ -243,7 +243,7 @@ impl KynexApp {
         let this = cx.entity().downgrade();
         let list = completions(&items, selected, "No earlier message matches", cx, move |i, _, cx| {
             this.update(cx, |this, cx| {
-                if let Some(s) = &mut this.history_search {
+                if let Some(s) = &mut this.pane.history_search {
                     s.selected = i;
                 }
                 this.take_history_match(cx);
@@ -255,6 +255,6 @@ impl KynexApp {
 
     /// Whether the composer has focus, for keys that only mean something there.
     pub(super) fn composer_focused(&self, window: &Window, cx: &Context<Self>) -> bool {
-        self.composer.read(cx).is_focused(window)
+        self.pane.composer.read(cx).is_focused(window)
     }
 }
