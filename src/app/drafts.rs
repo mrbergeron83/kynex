@@ -27,8 +27,8 @@ impl KynexApp {
     /// Swaps the composer's contents when the shown session changes. Called
     /// every render, so every way of switching (tabs, the sessions panel,
     /// new, close) is covered.
-    pub(super) fn sync_draft(&mut self, cx: &mut Context<Self>) {
-        let Some(s) = self.active_session() else { return };
+    pub(super) fn sync_draft(&mut self, key: Option<Key>, cx: &mut Context<Self>) {
+        let Some(s) = key.and_then(|k| self.session_by_key(k)) else { return };
         let (uid, key) = (s.uid, draft_key(s));
         match &mut self.draft_for {
             // Same session; it may just have got its CLI id.

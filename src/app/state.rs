@@ -131,11 +131,19 @@ pub struct Saved {
     /// A setup check has passed here before, so the next launch shows the
     /// workspace while it checks again, rather than "Checking Claude Code…".
     pub setup_checked: bool,
+    /// The file's format version (`kynex_core::migrate`).
+    pub version: u32,
+    /// `state.json` was written by a newer Kynex, which version it was; this
+    /// session then leaves the file alone.
+    #[serde(skip)]
+    pub newer_than_us: Option<u32>,
 }
 
 impl Default for Saved {
     fn default() -> Self {
         Self {
+            version: kynex_core::migrate::CURRENT,
+            newer_than_us: None,
             projects: Vec::new(),
             active: Active::Chat,
             chat_session_id: None,
@@ -181,10 +189,8 @@ impl Default for Saved {
 
 impl Saved {
     pub fn load() -> Self {
-        let mut saved: Saved = std::fs::read_to_string(data_dir().join("state.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
+        let (mut saved, newer): (Saved, _) = kynex_core::migrate::read(&data_dir().join("state.json"));
+        saved.newer_than_us = newer;
         if matches!(saved.active, Active::Project(i) if i >= saved.projects.len()) {
             saved.active = Active::Chat;
         }
@@ -195,7 +201,11 @@ impl Saved {
     }
 
     pub fn write(&self) {
-        if let Ok(s) = serde_json::to_string_pretty(self) {
+        // A file from a newer Kynex stays as it is; this session doesn't know its format.
+        if self.newer_than_us.is_some() {
+            return;
+        }
+        if let Ok(s) = kynex_core::migrate::stamp(self) {
             let _ = std::fs::write(data_dir().join("state.json"), s);
         }
     }

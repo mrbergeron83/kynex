@@ -66,14 +66,14 @@ impl KynexApp {
         let open = self.prompt.is_none()
             && !query.contains(char::is_whitespace)
             && self.slash.dismissed.as_deref() != Some(text)
-            && self.active_session().is_some();
+            && self.focused_key().is_some();
         open.then(|| query.to_string())
     }
 
     /// The commands matching what's typed, or `None` when the popup is closed.
     fn slash_matches(&mut self, cx: &mut Context<Self>) -> Option<Rc<Vec<SlashCommand>>> {
         let query = self.slash_query(cx)?;
-        let cwd = self.active_session()?.cwd.clone();
+        let cwd = self.focused_key().and_then(|k| self.session_by_key(k))?.cwd.clone();
         self.load_commands(&cwd, cx);
         let commands = self.slash.commands.get(&cwd).map(|k| k.commands.clone()).unwrap_or_default();
         if let Some(m) = &self.slash.matches
@@ -156,8 +156,8 @@ impl KynexApp {
     /// The popup above the composer, while a `/name` is being typed.
     pub(super) fn render_slash(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         // Load the shown folder's commands before the first `/`, so it opens full.
-        if let Some(cwd) = self.active_session().map(|s| s.cwd.clone()).filter(|c| !self.slash.commands.contains_key(c))
-        {
+        let shown = self.focused_key().and_then(|k| self.session_by_key(k));
+        if let Some(cwd) = shown.map(|s| s.cwd.clone()).filter(|c| !self.slash.commands.contains_key(c)) {
             self.load_commands(&cwd, cx);
         }
         let matches = self.slash_matches(cx)?;
@@ -167,7 +167,11 @@ impl KynexApp {
             self.slash.selected = 0;
         }
         self.slash.selected = self.slash.selected.min(matches.len().saturating_sub(1));
-        let loading = self.active_session().and_then(|s| self.slash.commands.get(&s.cwd)).is_some_and(|f| f.loading);
+        let loading = self
+            .focused_key()
+            .and_then(|k| self.session_by_key(k))
+            .and_then(|s| self.slash.commands.get(&s.cwd))
+            .is_some_and(|f| f.loading);
         if matches.is_empty() && !loading {
             return None;
         }
@@ -235,10 +239,15 @@ impl KynexApp {
     /// isn't one, which is sent to Claude as usual.
     pub(super) fn run_command(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
         let Some((name, args)) = commands::parse(text) else { return false };
+        let focused = self.focused_key();
+        let key = match commands::action(name, args) {
+            Action::NewSession | Action::Reconnect(_) => self.composer_key(),
+            _ => focused,
+        };
         match commands::action(name, args) {
             Action::Send => return false,
             Action::NewSession => {
-                if let Some(s) = self.session_mut().filter(|s| s.session_id.is_some()) {
+                if let Some(s) = key.and_then(|k| self.session_for(k)).filter(|s| s.session_id.is_some()) {
                     let (kind, cwd) = (s.kind, s.cwd.clone());
                     self.open_session(Session::new(kind, cwd));
                 }
@@ -252,7 +261,8 @@ impl KynexApp {
                 self.set_model(if value == "default" { String::new() } else { value }, cx);
             }
             Action::Effort(e) => {
-                let project = self.active_session().filter(|s| s.kind == Kind::Code).map(|s| s.cwd.clone());
+                let project =
+                    key.and_then(|k| self.session_by_key(k)).filter(|s| s.kind == Kind::Code).map(|s| s.cwd.clone());
                 match project {
                     None => {
                         self.toast(Toast::warning("Effort is set per project; chat has none."));
@@ -273,7 +283,7 @@ impl KynexApp {
                     }
                 }
             }
-            Action::Rewind => self.open_rewind(cx),
+            Action::Rewind => self.open_rewind_at(key, None, cx),
             Action::Extensions(section) => {
                 let i = match section {
                     Section::Mcp => 0,
@@ -284,7 +294,7 @@ impl KynexApp {
                 };
                 self.open_extensions(i, cx);
             }
-            Action::Reconnect(server) => match self.session_mut() {
+            Action::Reconnect(server) => match key.and_then(|k| self.session_for(k)) {
                 Some(s) if s.is_running() => {
                     s.reconnect_mcp(&server);
                     self.toast(Toast::info(format!("Restarting {server}…")));
@@ -294,7 +304,7 @@ impl KynexApp {
                 }
             },
             Action::Permissions => {
-                match self.active_session().filter(|s| s.kind == Kind::Code).map(|s| s.cwd.clone()) {
+                match key.and_then(|k| self.session_by_key(k)).filter(|s| s.kind == Kind::Code).map(|s| s.cwd.clone()) {
                     Some(cwd) => self.open_settings(cwd, cx),
                     None => {
                         self.toast(Toast::warning("Chat has no permission rules; they're set per project."));

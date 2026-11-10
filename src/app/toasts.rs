@@ -30,7 +30,7 @@ impl KynexApp {
     /// clock runs while there's anything in it, paused while the pointer is on
     /// it or the window is in the background.
     pub(super) fn sync_toasts(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if let Some(key) = self.active_key() {
+        if let Some(key) = self.focused_key() {
             self.toasts.seen(key);
         }
         self.toasts_paused = self.toast_hover || !window.is_window_active();

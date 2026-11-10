@@ -128,7 +128,7 @@ impl KynexApp {
 
     /// The model pinned to the shown session, if any.
     pub(super) fn session_model(&self) -> Option<String> {
-        self.active_session().and_then(|s| s.own_model.clone())
+        self.focused_key().and_then(|k| self.session_by_key(k)).and_then(|s| s.own_model.clone())
     }
 
     /// The model the active folder's sessions start on unless pinned
@@ -153,7 +153,9 @@ impl KynexApp {
 
     /// Who answers the shown session, or the active folder's new ones.
     pub(super) fn active_provider(&self) -> kynex_core::provider::Provider {
-        self.active_session().map_or_else(|| self.new_session_provider(&self.active_dir()), |s| s.provider().provider())
+        self.focused_key()
+            .and_then(|k| self.session_by_key(k))
+            .map_or_else(|| self.new_session_provider(&self.active_dir()), |s| s.provider().provider())
     }
 
     /// The model dir's sessions start on: its own, or Haiku for the chief.

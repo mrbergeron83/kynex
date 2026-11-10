@@ -46,63 +46,77 @@ impl KynexApp {
 
     /// Jumps to the turn after (or before) the one in view.
     fn step_turn(&mut self, forward: bool, cx: &mut Context<Self>) {
-        let Some(key) = self.update_turns() else { return };
+        let Some(key) = self.focused_key() else { return };
+        if !self.update_turns(key) {
+            return;
+        }
         let turns = self.timelines[&key].turns();
         if turns.is_empty() {
             return;
         }
-        let current = self.turn_in_view(turns);
+        let current = self.turn_in_view(key, turns);
         let target = match (current, forward) {
             (None, _) => 0,
             (Some(t), true) => (t + 1).min(turns.len() - 1),
             (Some(t), false) => t.saturating_sub(1),
         };
-        self.jump_to_item(turns[target].item, cx);
+        self.jump_to(key, turns[target].item, cx);
     }
 
-    /// Brings the shown session's turns up to date with its items, walking
-    /// only what changed; they're in `timelines` under the key returned.
-    fn update_turns(&mut self) -> Option<Key> {
-        let key = self.active_key()?;
+    /// Brings session `key`'s turns up to date with its items, walking only
+    /// what changed; they're in `timelines` under `key`. False if it's gone.
+    fn update_turns(&mut self, key: Key) -> bool {
+        if self.session_by_key(key).is_none() {
+            return false;
+        }
         let mut cache = self.timelines.remove(&key).unwrap_or_default();
-        cache.update(&self.active_session()?.items);
+        if let Some(session) = self.session_by_key(key) {
+            cache.update(&session.items);
+        }
         self.timelines.insert(key, cache);
-        Some(key)
+        true
     }
 
     /// The turn whose message (or steps) is at the top of the transcript.
-    fn turn_in_view(&self, turns: &[Turn]) -> Option<usize> {
-        self.item_in_view().and_then(|i| timeline::locate(turns, i)).map(|(t, _)| t)
+    fn turn_in_view(&self, key: Key, turns: &[Turn]) -> Option<usize> {
+        self.item_in_view(key).and_then(|i| timeline::locate(turns, i)).map(|(t, _)| t)
     }
 
-    /// Opens or folds turn `n` of the shown session's timeline.
-    fn toggle_turn(&mut self, n: usize, cx: &mut Context<Self>) {
-        let Some(key) = self.update_turns() else { return };
+    /// Opens or folds turn `n` of session `key`'s timeline.
+    fn toggle_turn(&mut self, key: Key, n: usize, cx: &mut Context<Self>) {
+        if !self.update_turns(key) {
+            return;
+        }
         let turns = self.timelines[&key].turns();
-        let current = self.turn_in_view(turns);
+        let current = self.turn_in_view(key, turns);
         self.folds.entry(key).or_default().toggle(turns, n, current);
         cx.notify();
     }
 
     /// Collapse all / Expand all.
-    fn fold_all(&mut self, open: bool, cx: &mut Context<Self>) {
-        let Some(key) = self.active_key() else { return };
+    fn fold_all(&mut self, key: Key, open: bool, cx: &mut Context<Self>) {
         self.folds.entry(key).or_default().set_all(open);
         cx.notify();
     }
 
-    /// The first item drawn at the top of the shown transcript.
-    fn item_in_view(&self) -> Option<usize> {
-        let th = self.threads.get(&self.active_key()?)?;
+    /// The first item drawn at the top of session `key`'s transcript.
+    fn item_in_view(&self, key: Key) -> Option<usize> {
+        let th = self.threads.get(&key)?;
         let row = th.list.logical_scroll_top().item_ix;
         th.rows.get(row.min(th.rows.len().checked_sub(1)?)).map(|r| r.first_item())
     }
 
+    /// `jump_to` on the shown session.
+    pub(super) fn jump_to_item(&mut self, item: usize, cx: &mut Context<Self>) {
+        if let Some(key) = self.focused_key() {
+            self.jump_to(key, item, cx);
+        }
+    }
+
     /// Scrolls the transcript to the row drawing `item`, puts it at the top
     /// and flashes it. Glides there when it can, as the wheel does.
-    pub(super) fn jump_to_item(&mut self, item: usize, cx: &mut Context<Self>) {
+    fn jump_to(&mut self, key: Key, item: usize, cx: &mut Context<Self>) {
         let reduce = cx.reduce_motion();
-        let Some(key) = self.active_key() else { return };
         let Some(th) = self.threads.get_mut(&key) else { return };
         let Some(row) = row_of(&th.rows, item) else { return };
         if reduce || !th.glide_to_row(row) {
@@ -130,15 +144,17 @@ impl KynexApp {
     }
 
     /// The panel, when it's open and there's a conversation to outline.
-    pub(super) fn render_timeline(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn render_timeline(&mut self, key: Key, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.saved.timeline_open {
             return None;
         }
         let t = theme(cx).clone();
-        let key = self.update_turns()?;
-        let busy = self.active_session().is_some_and(|s| s.busy);
+        if !self.update_turns(key) {
+            return None;
+        }
+        let busy = self.session_by_key(key).is_some_and(|s| s.busy);
         let turns = self.timelines[&key].turns();
-        let here = self.item_in_view().and_then(|i| timeline::locate(turns, i));
+        let here = self.item_in_view(key).and_then(|i| timeline::locate(turns, i));
         let fold = self.folds.get(&key).cloned().unwrap_or_default();
         let current = here.map(|(t, _)| t);
         let at_latest = self.threads.get(&key).is_none_or(|th| th.at_latest());
@@ -168,7 +184,7 @@ impl KynexApp {
                 d.child(
                     icon_button("timeline-fold-all", which, cx)
                         .tooltip(Tooltip::text(label))
-                        .on_click(cx.listener(move |this, _, _, cx| this.fold_all(!any_open, cx))),
+                        .on_click(cx.listener(move |this, _, _, cx| this.fold_all(key, !any_open, cx))),
                 )
             })
             .child(
@@ -195,7 +211,7 @@ impl KynexApp {
                 .map(|(n, turn)| {
                     let in_view = here.filter(|(t, _)| *t == n).map(|(_, step)| step);
                     let open = fold.is_open(turns, n, current);
-                    self.render_turn(n, turn, in_view, open, busy && n == last, cx)
+                    self.render_turn(key, n, turn, in_view, open, busy && n == last, cx)
                 })
                 .collect()
         };
@@ -225,6 +241,7 @@ impl KynexApp {
     /// is set when the transcript is in this turn, with the step in view if any.
     fn render_turn(
         &self,
+        key: Key,
         n: usize,
         turn: &Turn,
         current: Option<Option<usize>>,
@@ -250,7 +267,7 @@ impl KynexApp {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    this.toggle_turn(n, cx);
+                    this.toggle_turn(key, n, cx);
                 }))
                 .into_any_element()
         };
@@ -307,10 +324,10 @@ impl KynexApp {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         cx.stop_propagation();
-                        this.open_rewind_at(Some(text.clone()), cx);
+                        this.open_rewind_at(Some(key), Some(text.clone()), cx);
                     })),
             )
-            .on_click(cx.listener(move |this, _, _, cx| this.jump_to_item(item, cx)));
+            .on_click(cx.listener(move |this, _, _, cx| this.jump_to(key, item, cx)));
 
         let steps = turn.steps.iter().enumerate().map(|(i, step)| {
             let (item, selected) = (step.item, current == Some(Some(i)));
@@ -341,7 +358,7 @@ impl KynexApp {
                 .when(selected, |d| d.bg(t.active))
                 .child(icon(which, colour).size_3().flex_none())
                 .child(div().flex_1().min_w_0().truncate().child(step.label.clone()))
-                .on_click(cx.listener(move |this, _, _, cx| this.jump_to_item(item, cx)))
+                .on_click(cx.listener(move |this, _, _, cx| this.jump_to(key, item, cx)))
         });
 
         // Folding open or shut eases, rather than shoving the turns below.

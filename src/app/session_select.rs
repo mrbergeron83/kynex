@@ -68,7 +68,7 @@ impl KynexApp {
     /// shows a new session in its place if it's shown, closes it if it's open,
     /// and drops its draft and its place in the groups.
     pub(super) fn forget_past_session(&mut self, kind: Kind, cwd: &Path, id: &str) {
-        if self.active_session().and_then(|s| s.session_id.as_deref()) == Some(id) {
+        if self.focused_key().and_then(|k| self.session_by_key(k)).and_then(|s| s.session_id.as_deref()) == Some(id) {
             self.open_session(Session::new(kind, cwd.to_path_buf()));
         }
         let open = self

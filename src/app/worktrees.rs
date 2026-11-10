@@ -2,6 +2,7 @@
 //! per worktree with its branch, changed files, distance from main, and
 //! whether a session is working in it. Clicking one opens it as a project tab.
 
+use kynex_core::live::Key;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -86,8 +87,8 @@ impl KynexApp {
     /// The linked worktree the shown session is working in, judging by its most
     /// recent tool call that points into one (Claude often works in a worktree
     /// by path while the session itself runs in the main folder).
-    pub(super) fn working_worktree(&mut self, cx: &mut Context<Self>) -> Option<Worktree> {
-        let s = self.active_session().filter(|s| s.kind == Kind::Code)?;
+    pub(super) fn working_worktree(&mut self, key: Key, cx: &mut Context<Self>) -> Option<Worktree> {
+        let s = self.session_by_key(key).filter(|s| s.kind == Kind::Code)?;
         let cwd = s.cwd.clone();
         let inputs: Vec<String> = s
             .items

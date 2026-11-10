@@ -7,7 +7,7 @@ use gpui::{
     Anchor, AnyElement, ClickEvent, Context, DragMoveEvent, FontWeight, Hsla, MouseButton, SharedString, Window,
     canvas, div, prelude::*,
 };
-use kynex_core::live::Live;
+use kynex_core::live::{Key, Live};
 use kynex_core::paths::project_name;
 use kynex_core::tab_order;
 
@@ -54,11 +54,17 @@ impl Render for DraggedTab {
 }
 
 impl KynexApp {
-    pub(super) fn render_title_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub(super) fn render_title_bar(
+        &mut self,
+        key: Option<Key>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         // The mark's lamp shows the shown session.
         let hover = t.hover;
-        let shown = self.active_session().map_or(Lamp::Idle, |s| Lamp::of(s.busy, s.waiting(), s.finished));
+        let shown =
+            key.and_then(|k| self.session_by_key(k)).map_or(Lamp::Idle, |s| Lamp::of(s.busy, s.waiting(), s.finished));
         let status = |l: &Live| (l.busy(), l.waiting(), l.finished());
         // A drag let go outside the window, or cancelled, never drops.
         if self.tab_drag.is_some() && !cx.has_active_drag() {

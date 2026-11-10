@@ -206,7 +206,7 @@ impl KynexApp {
 
     /// The menu for a session row: rename or pin it, move it between groups, archive it.
     pub(super) fn session_menu_items(&mut self, id: &str, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let Some(cwd) = self.active_session().map(|s| s.cwd.clone()) else { return Vec::new() };
+        let Some(cwd) = self.panel_folder().map(|(_, c)| c) else { return Vec::new() };
         let groups = self.groups_for(&cwd).clone();
         let current = groups.group_of(id);
         let mut items = Vec::new();
@@ -299,7 +299,7 @@ impl KynexApp {
 
     /// The menu for a group header: rename or delete it.
     pub(super) fn group_menu_items(&mut self, i: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let Some(cwd) = self.active_session().map(|s| s.cwd.clone()) else { return Vec::new() };
+        let Some(cwd) = self.panel_folder().map(|(_, c)| c) else { return Vec::new() };
         let t = theme(cx).clone();
         let (rename_cwd, archive_cwd) = (cwd.clone(), cwd.clone());
         vec![

@@ -96,9 +96,21 @@ impl KynexApp {
         self.active_project().map_or_else(chat_dir, |p| p.path.clone())
     }
 
-    /// The shown session's uid.
-    pub(super) fn active_key(&self) -> Option<Key> {
+    /// The shown session's uid. The one place that decides which session the root draws. Callers
+    /// outside key handlers get the key from here and pass it down.
+    pub(super) fn focused_key(&self) -> Option<Key> {
         self.active_session().map(|s| s.uid)
+    }
+
+    /// The key of the session the composer talks to: like `focused_key()`, but
+    /// `None` in the Git view and while KNX Ops is off, and a folder with no
+    /// session gets one. For actions that used to go through `session_mut()`.
+    pub(super) fn composer_key(&mut self) -> Option<Key> {
+        self.session_mut().map(|s| s.uid)
+    }
+
+    pub(super) fn session_by_key(&self, key: Key) -> Option<&Session> {
+        self.all_sessions().find(|s| s.uid == key)
     }
 
     pub(super) fn session_for(&mut self, key: Key) -> Option<&mut Session> {
@@ -113,7 +125,7 @@ impl KynexApp {
         }
     }
 
-    pub(super) fn active_session(&self) -> Option<&Session> {
+    fn active_session(&self) -> Option<&Session> {
         self.active_live().and_then(Live::current)
     }
 
@@ -241,7 +253,7 @@ impl KynexApp {
     /// view yet; the one made for it on the next frame takes focus itself.
     pub(super) fn focus_input(&self, window: &mut Window, cx: &mut Context<Self>) {
         match &self.prompt {
-            Some(p) if Some(p.key) == self.active_key() => p.view.read(cx).focus_handle(cx).focus(window, cx),
+            Some(p) if Some(p.key) == self.focused_key() => p.view.read(cx).focus_handle(cx).focus(window, cx),
             _ => self.composer.read(cx).focus_handle(cx).focus(window, cx),
         }
     }

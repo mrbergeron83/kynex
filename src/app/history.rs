@@ -29,7 +29,7 @@ pub(super) struct HistorySearch {
 impl KynexApp {
     /// The shown project's history, loaded the first time it's needed.
     fn history(&mut self) -> Option<(PathBuf, &mut History)> {
-        let cwd = self.active_session()?.cwd.clone();
+        let cwd = self.focused_key().and_then(|k| self.session_by_key(k))?.cwd.clone();
         let h = self.histories.entry(cwd.clone()).or_insert_with(|| History::load(&cwd));
         Some((cwd, h))
     }
@@ -114,7 +114,10 @@ impl KynexApp {
             || self.git_modal.is_some()
             || self.viewer.is_some();
         let empty = text.trim().is_empty();
-        if covered || (empty && !super::keys::esc_esc_rewinds()) || self.active_session().is_some_and(|s| s.busy) {
+        if covered
+            || (empty && !super::keys::esc_esc_rewinds())
+            || self.focused_key().and_then(|k| self.session_by_key(k)).is_some_and(|s| s.busy)
+        {
             self.last_esc = None;
             return false;
         }

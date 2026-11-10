@@ -22,8 +22,8 @@ pub(super) const TIDY_AGES: [(u32, &str); 3] = [(30, "30 days"), (90, "90 days")
 
 impl KynexApp {
     /// The folder and kind of the sessions the panel lists.
-    fn panel_folder(&self) -> Option<(Kind, std::path::PathBuf)> {
-        self.active_session().map(|s| (s.kind, s.cwd.clone()))
+    pub(super) fn panel_folder(&self) -> Option<(Kind, std::path::PathBuf)> {
+        self.focused_key().and_then(|k| self.session_by_key(k)).map(|s| (s.kind, s.cwd.clone()))
     }
 
     /// The right-click menu for several picked sessions.
@@ -208,7 +208,9 @@ impl KynexApp {
     pub(super) fn list_open(&mut self, _: &ListOpen, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(id), Some((kind, cwd))) = (self.organize.cursor.clone(), self.panel_folder()) else { return };
         self.show_code_view();
-        if self.active_session().and_then(|s| s.session_id.as_deref()) != Some(id.as_str()) {
+        if self.focused_key().and_then(|k| self.session_by_key(k)).and_then(|s| s.session_id.as_deref())
+            != Some(id.as_str())
+        {
             self.switch_session(kind, cwd, id);
         }
         self.focus_input(window, cx);

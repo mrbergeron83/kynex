@@ -68,13 +68,14 @@ fn files(n: usize) -> String {
 impl KynexApp {
     /// Opens the popup for the shown session, once its messages are read.
     pub(super) fn open_rewind(&mut self, cx: &mut Context<Self>) {
-        self.open_rewind_at(None, cx);
+        let key = self.focused_key();
+        self.open_rewind_at(key, None, cx);
     }
 
     /// Opens the popup; with `message` (from the timeline), straight on that
     /// message's restore choices, else on the list of messages.
-    pub(super) fn open_rewind_at(&mut self, message: Option<String>, cx: &mut Context<Self>) {
-        let Some(s) = self.active_session() else { return };
+    pub(super) fn open_rewind_at(&mut self, key: Option<Key>, message: Option<String>, cx: &mut Context<Self>) {
+        let Some(s) = key.and_then(|k| self.session_by_key(k)) else { return };
         if s.busy {
             self.toast(Toast::warning("Stop Claude or let it finish before rewinding."));
             return cx.notify();
@@ -213,7 +214,7 @@ impl KynexApp {
         self.threads.remove(&key);
         self.expanded.retain(|(k, _)| *k != key);
         self.open_runs.retain(|(k, _)| *k != key);
-        if self.active_key() == Some(key) {
+        if self.focused_key() == Some(key) {
             self.set_composer(point.text.clone(), cx);
         }
         cx.notify();
@@ -221,7 +222,7 @@ impl KynexApp {
 
     /// The popup above the composer: the messages, or what to restore.
     pub(super) fn render_rewind(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.rewind.as_ref().is_some_and(|r| self.active_key() != Some(r.key)) {
+        if self.rewind.as_ref().is_some_and(|r| self.focused_key() != Some(r.key)) {
             self.rewind = None;
         }
         let r = self.rewind.as_ref()?;

@@ -10,6 +10,7 @@ use gpui::{
     PathPromptOptions, SharedString, Window, canvas, deferred, div, img, prelude::*,
 };
 use kynex_core::attach::{is_image, prepare_image};
+use kynex_core::live::Key;
 use kynex_core::project::{self, Mode};
 use kynex_core::session::{Attachment, Kind, Session};
 
@@ -26,8 +27,14 @@ use crate::ui::motion::{self, fade, fade_in, pop};
 use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, input, spinner};
 
 impl KynexApp {
-    pub(super) fn send(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let busy = self.session_mut().is_some_and(|s| s.busy);
+    /// Enter in the field: sends on the shown session.
+    pub(super) fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.send_to(self.focused_key(), window, cx);
+    }
+
+    /// Sends the composer's message on the session `key` (queued while it works).
+    fn send_to(&mut self, key: Option<Key>, _window: &mut Window, cx: &mut Context<Self>) {
+        let busy = key.and_then(|k| self.session_for(k)).is_some_and(|s| s.busy);
         let text = self.composer.read(cx).text().trim().to_string();
         self.slash.dismissed = None;
         self.mentions.dismissed = None;
@@ -42,11 +49,13 @@ impl KynexApp {
             return;
         }
         if busy {
-            return self.queue_message(text, cx);
+            return self.queue_message(key, text, cx);
         }
         let atts = std::mem::take(&mut self.attachments);
         let model = self.active_model();
-        if let Some(s) = self.session_mut() {
+        // A folder with no session yet gets one on its first send.
+        let key = key.or_else(|| self.session_mut().map(|s| s.uid));
+        if let Some(s) = key.and_then(|k| self.session_for(k)) {
             s.use_model(model);
             s.send(text, atts);
         }
@@ -56,9 +65,11 @@ impl KynexApp {
     }
 
     /// Has Claude summarize the conversation so far, freeing up its context.
-    pub(super) fn compact(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn compact(&mut self, key: Option<Key>, cx: &mut Context<Self>) {
         let model = self.active_model();
-        if let Some(s) = self.session_mut().filter(|s| !s.busy) {
+        // A folder with no session yet gets one, as on a first send.
+        let key = key.or_else(|| self.session_mut().map(|s| s.uid));
+        if let Some(s) = key.and_then(|k| self.session_for(k)).filter(|s| !s.busy) {
             s.use_model(model);
             s.send("/compact".into(), Vec::new());
         }
@@ -66,8 +77,13 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// Esc: interrupts the shown session.
     pub(super) fn interrupt(&mut self, cx: &mut Context<Self>) {
-        if let Some(s) = self.session_mut() {
+        self.interrupt_session(self.focused_key(), cx);
+    }
+
+    fn interrupt_session(&mut self, key: Option<Key>, cx: &mut Context<Self>) {
+        if let Some(s) = key.and_then(|k| self.session_for(k)) {
             s.interrupt();
         }
         cx.notify();
@@ -143,15 +159,20 @@ impl KynexApp {
         cx.notify();
     }
 
-    pub(super) fn render_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub(super) fn render_composer(
+        &mut self,
+        key: Option<Key>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         let update = self.render_cli_update(cx);
         let trust = self.render_trust(cx);
-        let queued = self.render_queue(cx);
-        let running = self.render_running_tasks(cx);
-        let agents = self.render_turn_agents(cx);
-        let handoff = self.render_handoff(cx);
-        let files_badge = self.scratch_badge(cx);
+        let queued = key.and_then(|k| self.render_queue(k, cx));
+        let running = key.and_then(|k| self.render_running_tasks(k, cx));
+        let agents = key.and_then(|k| self.render_turn_agents(k, cx));
+        let handoff = key.and_then(|k| self.render_handoff(k, cx));
+        let files_badge = key.and_then(|k| self.scratch_badge(k, cx));
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
         self.slash.shown = None;
         let popup = match () {
@@ -244,7 +265,7 @@ impl KynexApp {
             return shell(view.into_any_element(), focused, true);
         }
 
-        let session = self.active_session();
+        let session = key.and_then(|k| self.session_by_key(k));
         let busy = session.is_some_and(|s| s.busy);
         // A chief worker runs without prompts; its mode doesn't apply.
         let worker = session.is_some_and(|s| s.worker);
@@ -366,7 +387,7 @@ impl KynexApp {
                 .child(icon(Icon::ArrowUp, t.text_muted).size_3())
                 .child("Queue")
                 .tooltip(Tooltip::with_meta("Send when Claude finishes", "Enter"))
-                .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
+                .on_click(cx.listener(move |this, _, window, cx| this.send_to(key, window, cx)))
         });
         let send = if busy {
             div()
@@ -385,7 +406,7 @@ impl KynexApp {
                 .child(spinner("busy", t.accent, px(14.)))
                 .child("Stop")
                 .tooltip(Tooltip::with_meta("Interrupt Claude", "Esc · change it in keymap.json"))
-                .on_click(cx.listener(|this, _, _, cx| this.interrupt(cx)))
+                .on_click(cx.listener(move |this, _, _, cx| this.interrupt_session(key, cx)))
         } else {
             div()
                 .id("send")
@@ -398,7 +419,7 @@ impl KynexApp {
                 .when(can_send, |d| d.cursor_pointer().hover(|s| s.opacity(0.9)))
                 .child(icon(Icon::ArrowUp, if can_send { t.on_accent } else { t.text_placeholder }))
                 .tooltip(Tooltip::with_meta("Send", "Enter · Shift+Enter for a new line"))
-                .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)))
+                .on_click(cx.listener(move |this, _, window, cx| this.send_to(key, window, cx)))
         };
 
         // While the history search or a completion popup is open it takes the keys first.
@@ -456,7 +477,7 @@ impl KynexApp {
                     cx.stop_propagation();
                 }
             }))
-            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+            .capture_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
                 let k = &ev.keystroke;
                 if k.key == "tab" && !k.modifiers.modified() && this.rewind_accept(cx) {
                     return cx.stop_propagation();
@@ -474,7 +495,7 @@ impl KynexApp {
                 // Ctrl+Enter, Claude Code's "send now": the queue and the draft go right away.
                 let m = &k.modifiers;
                 if k.key == "enter" && m.control && !m.shift && !m.alt && !m.platform {
-                    this.send_queue_now(cx);
+                    this.send_queue_now(key, cx);
                     cx.stop_propagation();
                 }
             }))
@@ -508,7 +529,11 @@ impl KynexApp {
                                         "This session's files",
                                         "scratch folder, edited files, images, task output",
                                     ))
-                                    .on_click(cx.listener(|this, _, window, cx| this.open_session_scratch(window, cx))),
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if let Some(key) = key {
+                                            this.open_session_scratch(key, window, cx);
+                                        }
+                                    })),
                             )
                             .when(new > 0, |d| {
                                 d.child(
