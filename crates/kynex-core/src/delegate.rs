@@ -89,7 +89,7 @@ pub fn defaults() -> Vec<Agent> {
             "Run the checks you're asked to. Change nothing. Report PASS, or each failure as file:line and the error \
              in one line, grouped when many share a cause.",
             "haiku",
-            &["Bash", "Read", "Grep", "Glob"],
+            READ_AND_RUN,
         ),
         agent(
             "researcher",
@@ -99,8 +99,25 @@ pub fn defaults() -> Vec<Agent> {
             "haiku",
             &["WebSearch", "WebFetch", "Read"],
         ),
+        agent(
+            "reviewer",
+            "A second read of a finished change, before you call it done: give it the task and how to see the \
+             diff. It reports only real problems. Never edits.",
+            "Review the change you're pointed at against the task it was for. Read the diff and the code around it. \
+             Change nothing. Report only real problems, each as file:line and one line: bugs, things the task asked \
+             for that are missing, and things changed that it didn't ask for. No style notes. If there are none, \
+             say it's clean.",
+            "sonnet",
+            READ_AND_RUN,
+        ),
     ]
 }
+
+/// The tools of an agent that runs commands and reads, but never edits. Claude
+/// Code has a PowerShell tool on Windows only, where a project's checks are
+/// often `.ps1` scripts that Bash can't run directly.
+const READ_AND_RUN: &[&str] =
+    if cfg!(windows) { &["Bash", "PowerShell", "Read", "Grep", "Glob"] } else { &["Bash", "Read", "Grep", "Glob"] };
 
 fn file() -> PathBuf {
     crate::paths::data_dir().join("agents.json")
@@ -304,21 +321,28 @@ mod tests {
             let others: Vec<_> = all.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, a)| a.clone()).collect();
             assert_eq!(check(a, &others), Ok(()), "{}", a.name);
         }
-        for a in all.iter().filter(|a| a.name == "checker" || a.name == "researcher") {
+        for a in all.iter().filter(|a| ["checker", "researcher", "reviewer"].contains(&a.name.as_str())) {
             assert!(!a.tools.is_empty() && !a.tools.iter().any(|t| t == "Edit" || t == "Write"), "{}", a.name);
+        }
+        // The ones that run a project's checks reach PowerShell scripts where that tool exists.
+        for a in all.iter().filter(|a| a.name == "checker" || a.name == "reviewer") {
+            assert_eq!(a.tools.iter().any(|t| t == "PowerShell"), cfg!(windows), "{}", a.name);
         }
     }
 
     #[test]
     fn each_session_gets_the_agents_that_save_it_something() {
         let all = defaults();
-        let all_four = ["haiku-worker", "sonnet-worker", "checker", "researcher"].map(String::from).to_vec();
-        assert_eq!(names(&for_session(&all, &[], "opus")), all_four);
-        assert_eq!(names(&for_session(&all, &[], "")), all_four);
+        let every = ["haiku-worker", "sonnet-worker", "checker", "researcher", "reviewer"].map(String::from).to_vec();
+        assert_eq!(names(&for_session(&all, &[], "opus")), every);
+        assert_eq!(names(&for_session(&all, &[], "")), every);
         // A Sonnet session has no use for a Sonnet worker, nor Haiku for a Haiku one;
-        // the read-only Haiku helpers still keep logs and web pages out of its context.
-        assert!(!names(&for_session(&all, &[], "claude-sonnet-5-5")).contains(&"sonnet-worker".to_string()));
-        assert_eq!(names(&for_session(&all, &[], "haiku")), ["sonnet-worker", "checker", "researcher"]);
+        // the read-only helpers still keep logs, web pages and diffs out of its context.
+        assert_eq!(
+            names(&for_session(&all, &[], "claude-sonnet-5-5")),
+            ["haiku-worker", "checker", "researcher", "reviewer"]
+        );
+        assert_eq!(names(&for_session(&all, &[], "haiku")), ["sonnet-worker", "checker", "researcher", "reviewer"]);
     }
 
     #[test]
@@ -326,8 +350,8 @@ mod tests {
         let mut all = defaults();
         all[3].on = false;
         let mine = for_session(&all, &["checker".into()], "opus");
-        assert_eq!(names(&mine), ["haiku-worker", "sonnet-worker"]);
-        let off = ["haiku-worker", "sonnet-worker", "checker"].map(String::from);
+        assert_eq!(names(&mine), ["haiku-worker", "sonnet-worker", "reviewer"]);
+        let off = ["haiku-worker", "sonnet-worker", "checker", "reviewer"].map(String::from);
         assert!(cli_args(&all, &off, "opus", "").is_empty());
     }
 
