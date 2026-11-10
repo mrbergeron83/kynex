@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.26] - 2026-11-09
+
 ### Added
 
 - A `reviewer` agent among the built-in ones: read-only, on Sonnet, it gives a finished change a
@@ -796,7 +798,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.25...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.26...HEAD
+[0.0.26]: https://github.com/mrbergeron83/kynex/compare/v0.0.25...v0.0.26
 [0.0.25]: https://github.com/mrbergeron83/kynex/compare/v0.0.24...v0.0.25
 [0.0.24]: https://github.com/mrbergeron83/kynex/compare/v0.0.23...v0.0.24
 [0.0.23]: https://github.com/mrbergeron83/kynex/compare/v0.0.22...v0.0.23
