@@ -77,7 +77,13 @@ fn worktree(repo: &gix::Repository, path: std::path::PathBuf, main: bool, locked
     let head = repo.head_id().map_or_else(|_| "0000000".to_string(), |id| id.to_string().chars().take(7).collect());
     let branch = repo.head_name().ok().flatten().map(|name| name.shorten().to_string());
     // Git prints `/` everywhere; the rest of Kynex has paths the way the OS writes them.
-    let path = if cfg!(windows) { std::path::PathBuf::from(path.to_string_lossy().replace('/', "\\")) } else { path };
+    // Git reports the real path (`/private/var/…` for a `/var/…` that's a symlink on macOS),
+    // so the rest of Kynex, which compares these with paths git gave before, sees the same.
+    let path = if cfg!(windows) {
+        std::path::PathBuf::from(path.to_string_lossy().replace('/', "\\"))
+    } else {
+        path.canonicalize().unwrap_or(path)
+    };
     Worktree { path, branch, head, main, locked, prunable, ..Default::default() }
 }
 
@@ -527,7 +533,12 @@ mod tests {
         write(&repo, "c.txt", "main\n");
         git_in(&repo, &["commit", "-q", "-am", "main"]);
         // The merge stops on a conflict: git exits non-zero, which is the point.
-        let _ = Command::new("git").args(["merge", "other"]).current_dir(&repo).output().unwrap();
+        // (With an identity: CI machines have none, and a merge needs one.)
+        let _ = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com", "merge", "other"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
         let st = status(&repo).unwrap();
         assert!(st.has_conflicts(), "{st:?}");
         parity(&repo, "a merge conflict");

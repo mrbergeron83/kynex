@@ -99,12 +99,22 @@ pub fn watch_git(root: &Path, on_change: impl Fn() + Send + 'static) -> Option<G
         return None;
     }
     let (tx, rx) = mpsc::channel::<()>();
-    let dir = git_dir.clone();
+    // Events may name paths the way the OS resolves them (`/private/var/…` for a `/var/…`
+    // symlink on macOS), so a change counts under either spelling of the git folder.
+    let mut dirs = vec![git_dir.clone()];
+    if let Ok(real) = git_dir.canonicalize()
+        && real != git_dir
+    {
+        dirs.push(real);
+    }
     let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let ring = match event {
             // A lost event (the OS's buffer overflowed) or an error: look again.
             Err(_) => true,
-            Ok(e) => e.need_rescan() || (!e.kind.is_access() && e.paths.iter().any(|p| git_relevant(&dir, p))),
+            Ok(e) => {
+                e.need_rescan()
+                    || (!e.kind.is_access() && e.paths.iter().any(|p| dirs.iter().any(|d| git_relevant(d, p))))
+            }
         };
         if ring {
             let _ = tx.send(());
