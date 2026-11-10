@@ -306,8 +306,6 @@ pub struct Session {
     /// Tokens and cost of every turn this session object has seen, subagents included.
     pub spent: crate::spent::Spent,
     pub context: ContextUse,
-    /// A chief worker ([`crate::chief`]): it runs with no permission prompts.
-    pub worker: bool,
     /// The live permission mode: starts at the project's default, follows the
     /// CLI's reports, and is switched from the composer without a restart.
     pub mode: project::Mode,
@@ -503,7 +501,6 @@ impl Session {
             total_cost: 0.0,
             spent: Default::default(),
             context: ContextUse::default(),
-            worker: false,
             mode,
             queue: Queue::default(),
             reopened: false,
@@ -777,7 +774,6 @@ impl Session {
             settings_dir: self.settings_folder().to_path_buf(),
             model: self.model.clone(),
             provider: self.provider.clone(),
-            worker: self.worker,
             mode: self.mode,
             resume: self.resume_id().map(str::to_string),
             resume_at: if grok { None } else { self.resume_at.take() },
@@ -800,8 +796,7 @@ impl Session {
                 Kind::Chat => String::new(),
             };
             let mut acp =
-                crate::grok::acp::Acp::new(self.cwd.clone(), &model, self.mode, self.worker, resume.as_deref())
-                    .with_effort(&effort);
+                crate::grok::acp::Acp::new(self.cwd.clone(), &model, self.mode, resume.as_deref()).with_effort(&effort);
             for line in acp.start() {
                 self.write_line(&line);
             }
@@ -1834,6 +1829,12 @@ pub(crate) fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
     std::fs::read_dir(projects_dir()?).ok()?.filter_map(Result::ok).map(|d| d.path().join(&file)).find(|p| p.is_file())
 }
 
+/// Whether session `id` of `cwd` can still be reopened: Claude Code's log for it is
+/// there, or Grok has a record of it. Blocks on a few file system lookups.
+pub fn session_exists(cwd: &Path, id: &str) -> bool {
+    !id.is_empty() && (find_transcript(cwd, id).is_some() || crate::grok::log::session_dir(cwd, id).is_some())
+}
+
 /// A user-role log entry the CLI wrote itself, like the `<task-notification>`
 /// it sends Claude when a background command ends: Claude reads it, but it
 /// isn't something the user said.
@@ -2181,6 +2182,14 @@ fn tool_result_text(content: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_session_nobody_logged_does_not_exist() {
+        let cwd = std::env::temp_dir().join("kynex-no-such-folder");
+        assert!(!session_exists(&cwd, "00000000-dead-beef-0000-000000000000"));
+        assert!(!session_exists(&cwd, ""));
+        assert!(!session_exists(&cwd, "../escape"));
+    }
+
     #[test]
     fn a_session_in_a_workspace_runs_under_its_projects_settings() {
         let mut s = Session::new(Kind::Code, PathBuf::from("/work/app-feat"));

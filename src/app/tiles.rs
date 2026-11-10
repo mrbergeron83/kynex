@@ -61,11 +61,8 @@ impl KynexApp {
     }
 
     /// The code project's workspace you're in: (project folder, workspace folder, shown session).
-    /// `None` outside the Code view and in chat and KNX Ops, which stay a single pane.
+    /// `None` outside the Code view and in chat, which stays a single pane.
     pub(super) fn tiling_scope(&self) -> Option<(PathBuf, PathBuf, Key)> {
-        if self.in_chief() {
-            return None;
-        }
         let Active::Project(i) = self.saved.active else { return None };
         let p = self.saved.projects.get(i).filter(|p| p.view == View::Code)?;
         let s = self.code.get(&p.path)?.current()?;
@@ -227,16 +224,27 @@ impl KynexApp {
     pub(super) fn sync_tiles(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((project, cwd, current)) = self.tiling_scope() else { return };
         if !self.tiles.contains_key(&cwd) {
+            // Once per run: the panes it had last time, else one pane.
             // The first pane of a workspace takes the state that's up, if no workspace has it.
             let orphan = !self.tiles.values().any(|t| t.has(self.pane_id));
-            let id = if orphan {
-                self.pane_id
-            } else {
-                self.next_pane += 1;
-                self.next_pane - 1
+            let tiling = match self.restore_tiling(&project, &cwd, current, orphan.then_some(self.pane_id)) {
+                Some(t) => t,
+                None => {
+                    let id = if orphan {
+                        self.pane_id
+                    } else {
+                        self.next_pane += 1;
+                        self.next_pane - 1
+                    };
+                    Tiling::new(id, current)
+                }
             };
-            self.tiles.insert(cwd.clone(), Tiling::new(id, current));
+            self.tiles.insert(cwd.clone(), tiling);
+            self.tile_projects.insert(cwd.clone(), project.clone());
+            self.keep_restored_focus(&project, &cwd, current);
         }
+        // Restoring may have changed which session the window talks to.
+        let Some((_, _, current)) = self.tiling_scope() else { return };
         let open: Vec<Key> =
             self.code.get(&project).map(|l| l.sessions.iter().map(|s| s.uid).collect()).unwrap_or_default();
         let Some(t) = self.tiles.get_mut(&cwd) else { return };

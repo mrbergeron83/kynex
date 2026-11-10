@@ -14,6 +14,7 @@
 //! | `pane_actions.rs`  | a pane's header buttons and menus, opening a session beside one |
 //! | `pane_tabs.rs`     | the selected workspace's tab bar: new, close, rename, reorder |
 //! | `tiles.rs`          | the split panes of a workspace: layouts, focus, drawing |
+//! | `layouts.rs`        | saving each workspace's panes and bringing them back |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_groups.rs` | session groups and the archive, their menus          |
@@ -39,8 +40,6 @@
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
 //! | `handoff.rs`        | "waiting for you in the browser" banner, Continue    |
 //! | `trust.rs`          | "trust this folder?" strip, as the CLI's dialog       |
-//! | `chief.rs`          | the chief of staff: its tools, workers, their reports |
-//! | `chief_view.rs`     | its view: the warning, the reporter, Kynex's messages |
 //! | `attention.rs`      | OS notifications and the icon's "needs you" dot     |
 //! | `background.rs`     | close to tray / Dock, keep awake, `claude` started early, idle sessions sleep |
 //! | `history.rs`        | ↑ / ↓ history, Ctrl+R search, stash, Esc Esc, editor |
@@ -82,8 +81,6 @@ mod app_update;
 mod appearance;
 mod attention;
 mod background;
-mod chief;
-mod chief_view;
 mod composer;
 mod delegate_view;
 mod drafts;
@@ -100,6 +97,7 @@ mod handoff;
 pub(crate) mod history;
 mod keys;
 mod layout;
+mod layouts;
 mod leaving;
 pub(crate) mod mentions;
 mod menus;
@@ -184,8 +182,6 @@ pub struct KynexApp {
     saved: Saved,
     code: HashMap<PathBuf, Live>,
     chat: Live,
-    /// The chief of staff, its server and its workers (`chief.rs`).
-    chief: chief::Chief,
     git: HashMap<PathBuf, Entity<GitView>>,
     /// The folder whose Git view is open in a modal over the conversation.
     git_modal: Option<PathBuf>,
@@ -233,6 +229,8 @@ pub struct KynexApp {
     parked: HashMap<kynex_core::layout::PaneId, SessionPane>,
     /// Each workspace's panes, by the workspace's folder.
     tiles: HashMap<PathBuf, kynex_core::tiling::Tiling>,
+    /// The project each of `tiles` belongs to (where its layout is saved), by workspace folder.
+    tile_projects: HashMap<PathBuf, PathBuf>,
     /// The pane tab being renamed, and the field its name is typed in.
     pane_tab_rename: Option<(usize, Entity<TextInput>)>,
     /// Dividers held by the pointer, while the panes are being resized.
@@ -477,6 +475,7 @@ impl KynexApp {
         .detach();
         cx.on_app_quit(|this, cx| {
             this.stash_all_drafts(cx);
+            this.save_layouts_now();
             this.save();
             async {}
         })
@@ -499,7 +498,6 @@ impl KynexApp {
             saved,
             code: HashMap::new(),
             chat,
-            chief: Default::default(),
             git: HashMap::new(),
             git_modal: None,
             worktrees: HashMap::new(),
@@ -525,6 +523,7 @@ impl KynexApp {
             next_pane: 2,
             parked: HashMap::new(),
             tiles: HashMap::new(),
+            tile_projects: HashMap::new(),
             pane_tab_rename: None,
             tile_drag: None,
             tile_area: Default::default(),
@@ -698,10 +697,10 @@ impl KynexApp {
                     .ok();
             });
         }
-        self.poll_chief(cx);
         self.open_pending_setup(cx);
         self.restart_idle();
         self.sync_session_ids();
+        self.save_layouts(cx);
         self.sync_attention(cx);
         self.sync_awake();
         cx.notify();
@@ -742,15 +741,6 @@ impl Render for KynexApp {
             setup
         } else if view == Some(View::Git) {
             self.render_git_main(window, cx)
-        } else if self.in_chief() && !self.saved.chief_consented {
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_h_0()
-                .child(self.render_toolbar(cx))
-                .child(self.render_chief_consent(cx))
-                .into_any_element()
         } else {
             self.render_code_main(window, cx)
         };

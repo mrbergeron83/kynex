@@ -69,7 +69,7 @@ impl KynexApp {
     /// settings when it's in another folder of it (a workspace): its mode too, which a new
     /// session read from its own folder's.
     pub(super) fn adopt_project_settings(&mut self, s: &mut Session) {
-        if s.kind != Kind::Code || self.in_chief() {
+        if s.kind != Kind::Code {
             return;
         }
         let Some(project) = self.active_project().map(|p| p.path.clone()) else { return };

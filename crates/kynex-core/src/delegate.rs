@@ -9,8 +9,7 @@
 //! the command line, so nothing is written to the user's `.claude` folders.
 //! The list starts as [`defaults`]; Settings → Agents edits it. Delegating is
 //! on by default (App settings); a project can turn it, or single agents, off
-//! ([`crate::project::ClaudeSettings`]). KNX Ops workers have careful mode
-//! instead ([`crate::careful`]).
+//! ([`crate::project::ClaudeSettings`]).
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 

@@ -8,15 +8,40 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 /// The format this build writes.
-pub const CURRENT: u32 = 1;
+pub const CURRENT: u32 = 2;
 
 /// `MIGRATIONS[i]` turns a file at version `i` into version `i + 1`.
-const MIGRATIONS: &[fn(&mut Map<String, Value>)] = &[v0_to_v1];
+const MIGRATIONS: &[fn(&mut Map<String, Value>)] = &[v0_to_v1, v1_to_v2];
 
 const _: () = assert!(MIGRATIONS.len() == CURRENT as usize);
 
 /// Version 0 is every file written before versions existed; nothing to change yet.
 fn v0_to_v1(_: &mut Map<String, Value>) {}
+
+/// KNX Ops is gone (#353): a state saved with its view showing on the Chat tab opens on the
+/// first project instead, and its saved fields and the project settings it added are dropped.
+fn v1_to_v2(map: &mut Map<String, Value>) {
+    let on_chat = match map.get("active") {
+        Some(Value::String(s)) => s.eq_ignore_ascii_case("chat"),
+        _ => false,
+    };
+    let has_projects = map.get("projects").and_then(Value::as_array).is_some_and(|p| !p.is_empty());
+    if map.get("chief_view") == Some(&Value::Bool(true)) && on_chat && has_projects {
+        map.insert("active".into(), serde_json::json!({ "Project": 0 }));
+    }
+    for key in ["chief_view", "chief_consented", "chief_session_id", "chief_workers", "chief_spent", "chief_working"] {
+        map.remove(key);
+    }
+    // Project settings: `claude.json` holds the fields at the top level; accept a nested object too.
+    for key in ["worker_model", "careful"] {
+        map.remove(key);
+    }
+    if let Some(Value::Object(claude)) = map.get_mut("claude") {
+        for key in ["worker_model", "careful"] {
+            claude.remove(key);
+        }
+    }
+}
 
 pub enum Loaded {
     /// Migrated to `CURRENT`, with `"version"` set.
@@ -106,9 +131,47 @@ mod tests {
 
     #[test]
     fn current_file_is_left_as_it_is() {
-        let text = r#"{"version": 1, "zoom": 1.0}"#;
+        let text = r#"{"version": 2, "zoom": 1.0}"#;
         let Loaded::Ok(v) = migrate(text) else { panic!("expected Ok") };
-        assert_eq!(v, serde_json::json!({"version": 1, "zoom": 1.0}));
+        assert_eq!(v, serde_json::json!({"version": 2, "zoom": 1.0}));
+    }
+
+    fn migrated(text: &str) -> Value {
+        let Loaded::Ok(v) = migrate(text) else { panic!("expected Ok") };
+        v
+    }
+
+    #[test]
+    fn a_state_saved_on_knx_ops_opens_on_the_first_project() {
+        let v = migrated(
+            r#"{"version": 1, "active": "Chat", "chief_view": true, "projects": [{"path": "a"}, {"path": "b"}]}"#,
+        );
+        assert_eq!(v["active"], serde_json::json!({"Project": 0}));
+        assert_eq!(v["version"], CURRENT);
+    }
+
+    #[test]
+    fn knx_ops_with_no_projects_stays_on_chat() {
+        let v = migrated(r#"{"version": 1, "active": "Chat", "chief_view": true, "projects": []}"#);
+        assert_eq!(v["active"], "Chat");
+        // Chat itself, or another project, is left alone.
+        let v = migrated(r#"{"version": 1, "active": {"Project": 1}, "chief_view": true, "projects": [1, 2]}"#);
+        assert_eq!(v["active"], serde_json::json!({"Project": 1}));
+        let v = migrated(r#"{"version": 1, "active": "Chat", "chief_view": false, "projects": [1]}"#);
+        assert_eq!(v["active"], "Chat");
+    }
+
+    #[test]
+    fn knx_ops_keys_are_dropped() {
+        let v = migrated(
+            r#"{"version": 1, "zoom": 1.0, "chief_view": false, "chief_consented": true, "chief_session_id": "x",
+                "chief_workers": {}, "chief_spent": {}, "chief_working": [],
+                "claude": {"model": "m", "worker_model": "haiku", "careful": true}}"#,
+        );
+        assert_eq!(v, serde_json::json!({"version": 2, "zoom": 1.0, "claude": {"model": "m"}}));
+        // A project's settings file keeps them at the top level.
+        let v = migrated(r#"{"version": 1, "model": "m", "worker_model": "haiku", "careful": true}"#);
+        assert_eq!(v, serde_json::json!({"version": 2, "model": "m"}));
     }
 
     #[test]

@@ -60,7 +60,7 @@ impl KynexApp {
                 .child(label)
         };
         let Some((path, view)) = project else {
-            // Chat and KNX Ops are tabs in the title bar; here only the timeline.
+            // Chat is a tab in the title bar; here only the timeline.
             return bar.child(div().flex_1()).child(timeline);
         };
         // Where you are: the selected workspace's folder, for the path and open-in buttons.

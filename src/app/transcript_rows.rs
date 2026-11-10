@@ -88,10 +88,6 @@ impl KynexApp {
         });
 
         match item {
-            // Kynex's own messages to the chief.
-            Item::User { text, .. } if self.in_chief() && text.starts_with(kynex_core::chief::NOTICE) => {
-                self.render_chief_notice(text, cx)
-            }
             Item::User { text, images } => div()
                 .flex()
                 .flex_col()

@@ -121,10 +121,8 @@ impl KynexApp {
                     Some(stats) => format!("{}\n{stats}", c.path.display()),
                     None => c.path.display().to_string(),
                 };
-                // The branch, when the folder's name doesn't already say it; a KNX Ops worker's says so.
-                let branch = if c.worker() {
-                    Some("worker".to_string())
-                } else if c.folder {
+                // The branch, when the folder's name doesn't already say it.
+                let branch = if c.folder {
                     Some(if c.path.is_dir() { "folder" } else { "missing" }.to_string())
                 } else {
                     c.branch.clone().filter(|b| *b != c.label)
