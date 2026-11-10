@@ -13,7 +13,6 @@ pub mod chief;
 pub mod cli;
 pub mod column;
 pub mod commands;
-pub mod context;
 pub mod dates;
 pub mod delegate;
 pub mod edit_lines;
@@ -85,4 +84,5 @@ pub mod watch;
 pub mod why;
 #[cfg(windows)]
 pub mod win_shell;
+pub mod workspace;
 pub mod zoom;

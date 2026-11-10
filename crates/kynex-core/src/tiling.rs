@@ -1,7 +1,7 @@
-//! What one context shows: its [`Layout`] (tabs of split panes) and the session each pane
+//! What one workspace shows: its [`Layout`] (tabs of split panes) and the session each pane
 //! holds. The app keeps this in step with the sessions that are open and the one the
 //! window talks to ([`Live::current`](crate::live::Live::current)): picking a session
-//! somewhere else (the sessions panel, a context) shows it in the focused pane, or
+//! somewhere else (the sessions panel, a workspace) shows it in the focused pane, or
 //! focuses the pane that already holds it.
 
 use std::collections::HashMap;
@@ -40,6 +40,11 @@ impl Tiling {
     /// The panes in sight, with their sessions, in reading order.
     pub fn visible(&self) -> Vec<(PaneId, Key)> {
         self.layout.visible().into_iter().filter_map(|p| Some((p, self.key_of(p)?))).collect()
+    }
+
+    /// The sessions in the panes of every tab, in reading order.
+    pub fn sessions(&self) -> Vec<Key> {
+        self.layout.panes().into_iter().filter_map(|p| self.key_of(p)).collect()
     }
 
     /// Every pane in every tab.
@@ -131,6 +136,11 @@ mod tests {
         assert!(t.split(Axis::Row, 2, 20, BIG));
         assert!(t.split(Axis::Column, 3, 30, BIG));
         t
+    }
+
+    #[test]
+    fn the_sessions_are_those_of_every_pane() {
+        assert_eq!(three().sessions(), [10, 20, 30]);
     }
 
     #[test]

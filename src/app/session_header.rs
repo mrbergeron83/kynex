@@ -62,7 +62,7 @@ impl KynexApp {
         let field = id.as_deref().and_then(|id| self.session_name_field(id, true, cx));
 
         // The project's worktree list (one watcher per project, not per checkout).
-        let project = self.context_project().unwrap_or_else(|| cwd.clone());
+        let project = self.workspace_project().unwrap_or_else(|| cwd.clone());
         let place = if kind == Kind::Code { self.worktrees(&project, cx).read(cx).at(&cwd).cloned() } else { None };
         // Where a project session runs: its branch, flagged when it's a linked
         // worktree, and what's changed there. A click opens its Git view.
@@ -120,9 +120,9 @@ impl KynexApp {
                 .children(git_stats(&w, &t))
                 .tooltip(Tooltip::with_meta(
                     format!("Claude is editing the worktree at {}", w.path.display()),
-                    "Click to switch to that context",
+                    "Click to switch to that workspace",
                 ))
-                .on_click(cx.listener(move |this, _, _, cx| this.select_context(&path, cx)))
+                .on_click(cx.listener(move |this, _, _, cx| this.select_workspace(&path, cx)))
         });
 
         // How full the context is; past half, a click compacts it.

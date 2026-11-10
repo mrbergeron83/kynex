@@ -1,6 +1,6 @@
-//! The window's layout model, after herdr: a context holds **tabs**, and each tab holds
+//! The window's layout model, after herdr: a workspace holds **tabs**, and each tab holds
 //! one tree of **panes**. Leaves are pane ids (the caller says what a pane shows, say a
-//! session [`Key`](crate::live::Key); ids must be unique across the contexts it moves
+//! session [`Key`](crate::live::Key); ids must be unique across the workspaces it moves
 //! panes between), splits hold an [`Axis`] and a ratio. Splits are manual: split right or
 //! down from a pane, nothing is laid out for you.
 //!
@@ -494,7 +494,7 @@ fn overlap(a0: f32, a1: f32, b0: f32, b1: f32) -> f32 {
     a1.min(b1) - a0.max(b0)
 }
 
-/// What a context shows: tabs, one of them active.
+/// What a workspace shows: tabs, one of them active.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Layout {
     tabs: Vec<Tab>,
@@ -704,7 +704,7 @@ impl Layout {
     }
 }
 
-/// Moves `pane` from one context's layout into the active tab of another's.
+/// Moves `pane` from one workspace's layout into the active tab of another's.
 /// Nothing changes (false) if `to` has no room for it or already has that pane.
 pub fn move_between(from: &mut Layout, to: &mut Layout, pane: PaneId, name: &str, bounds: Rect) -> bool {
     if from.tab_of(pane).is_none() || to.tab_of(pane).is_some() {
@@ -1017,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pane_moves_to_another_context() {
+    fn a_pane_moves_to_another_workspace() {
         let mut a = Layout::new("a", 1);
         a.split(1, Axis::Row, 2, B);
         let mut b = Layout::default();

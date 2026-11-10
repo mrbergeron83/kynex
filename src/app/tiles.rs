@@ -1,4 +1,4 @@
-//! The split panes of a context: each context (a folder) has a [`Tiling`], its tabs of
+//! The split panes of a workspace: each workspace (a folder) has a [`Tiling`], its tabs of
 //! panes and the session in each. The focused pane's [`SessionPane`] is `self.pane`, so
 //! everything that talks to "the composer" keeps working; the others are parked in
 //! `self.parked` and swapped in to be drawn or focused.
@@ -59,7 +59,7 @@ impl KynexApp {
         composer
     }
 
-    /// The code project's context you're in: (project folder, context folder, shown session).
+    /// The code project's workspace you're in: (project folder, workspace folder, shown session).
     /// `None` outside the Code view and in chat and KNX Ops, which stay a single pane.
     fn tiling_scope(&self) -> Option<(PathBuf, PathBuf, Key)> {
         if self.in_chief() {
@@ -71,7 +71,7 @@ impl KynexApp {
         Some((p.path.clone(), s.cwd.clone(), s.uid))
     }
 
-    /// The context's tiling when it has several panes on screen.
+    /// The workspace's tiling when it has several panes on screen.
     fn tiled(&self) -> Option<&Tiling> {
         let (_, cwd, _) = self.tiling_scope()?;
         self.tiles.get(&cwd).filter(|t| t.visible().len() > 1)
@@ -109,7 +109,7 @@ impl KynexApp {
         }
     }
 
-    /// Focuses pane `id` of the context you're in, and the session in it.
+    /// Focuses pane `id` of the workspace you're in, and the session in it.
     pub(super) fn focus_pane(&mut self, id: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         if id == self.pane_id {
             return;
@@ -215,12 +215,12 @@ impl KynexApp {
         self.focus_input(window, cx);
     }
 
-    /// What each frame settles for the panes: the context's tiling follows the sessions,
+    /// What each frame settles for the panes: the workspace's tiling follows the sessions,
     /// the sessions on screen are kept open, prompts and drafts are kept for every pane.
     pub(super) fn sync_tiles(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((project, cwd, current)) = self.tiling_scope() else { return };
         if !self.tiles.contains_key(&cwd) {
-            // The first pane of a context takes the state that's up, if no context has it.
+            // The first pane of a workspace takes the state that's up, if no workspace has it.
             let orphan = !self.tiles.values().any(|t| t.has(self.pane_id));
             let id = if orphan {
                 self.pane_id
@@ -333,7 +333,7 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// The panes of the context, when it has several on screen: each a session view in a
+    /// The panes of the workspace, when it has several on screen: each a session view in a
     /// tile (a rounded, bordered surface with a gap round it; the focused tile's border is
     /// in the project's colour and a pixel thicker), with a handle on every divider to drag.
     /// With no gap the panes are flush, split by 1px dividers. `None` for one pane, which

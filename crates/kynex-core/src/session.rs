@@ -2182,7 +2182,7 @@ fn tool_result_text(content: &Value) -> String {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn a_session_in_a_context_runs_under_its_projects_settings() {
+    fn a_session_in_a_workspace_runs_under_its_projects_settings() {
         let mut s = Session::new(Kind::Code, PathBuf::from("/work/app-feat"));
         assert_eq!(s.settings_folder(), std::path::Path::new("/work/app-feat"), "its own folder by default");
         s.settings_dir = Some(PathBuf::from("/work/app"));

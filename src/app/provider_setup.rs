@@ -298,7 +298,7 @@ impl KynexApp {
     fn start_launch(&mut self, cwd: &Path, settings: &Path, id: Option<&str>) -> Launch {
         let provider = match id {
             Some(id) => self.groups_for(cwd).provider_of(id),
-            // A new one: its settings folder's pick (the project's, for a context).
+            // A new one: its settings folder's pick (the project's, for a workspace).
             None => self.new_session_provider(settings),
         };
         self.launch_in(cwd, provider)

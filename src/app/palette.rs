@@ -65,8 +65,8 @@ enum Target {
         id: String,
     },
     Tab(Active),
-    /// One of a project's contexts (checkouts).
-    Context {
+    /// One of a project's workspaces (checkouts).
+    Workspace {
         project: PathBuf,
         path: PathBuf,
     },
@@ -83,8 +83,8 @@ enum Cmd {
     CloseTab,
     NextTab,
     PrevTab,
-    NextContext,
-    PrevContext,
+    NextWorkspace,
+    PrevWorkspace,
     SplitRight,
     SplitDown,
     ClosePane,
@@ -126,8 +126,8 @@ impl Cmd {
             Cmd::CloseTab => Box::new(keys::CloseTab),
             Cmd::NextTab => Box::new(keys::NextTab),
             Cmd::PrevTab => Box::new(keys::PrevTab),
-            Cmd::NextContext => Box::new(keys::NextContext),
-            Cmd::PrevContext => Box::new(keys::PrevContext),
+            Cmd::NextWorkspace => Box::new(keys::NextWorkspace),
+            Cmd::PrevWorkspace => Box::new(keys::PrevWorkspace),
             Cmd::ToggleSessions => Box::new(keys::ToggleSessions),
             Cmd::ToggleTerminal => Box::new(keys::ToggleTerminal),
             Cmd::ToggleTimeline => Box::new(keys::ToggleTimeline),
@@ -156,8 +156,8 @@ fn commands() -> Vec<(Cmd, String, &'static str)> {
         (Cmd::CloseTab, "Close tab", "project"),
         (Cmd::NextTab, "Next tab", "project"),
         (Cmd::PrevTab, "Previous tab", "project"),
-        (Cmd::NextContext, "Next context", "worktree checkout branch"),
-        (Cmd::PrevContext, "Previous context", "worktree checkout branch"),
+        (Cmd::NextWorkspace, "Next workspace", "worktree checkout branch"),
+        (Cmd::PrevWorkspace, "Previous workspace", "worktree checkout branch"),
         (Cmd::SplitRight, "Split pane right", "tile side by side new session"),
         (Cmd::SplitDown, "Split pane down", "tile below new session"),
         (Cmd::ClosePane, "Close pane", "tile split"),
@@ -279,21 +279,21 @@ impl KynexApp {
         // A project's other checkouts, once it has any.
         for p in &self.saved.projects {
             let Some(w) = self.worktrees.get(&p.path) else { continue };
-            let contexts = kynex_core::context::from_worktrees(&p.path, &w.read(cx).list);
-            if contexts.len() < 2 {
+            let workspaces = kynex_core::workspace::from_worktrees(&p.path, &w.read(cx).list);
+            if workspaces.len() < 2 {
                 continue;
             }
             let name = project_name(&p.path);
-            for c in contexts {
+            for c in workspaces {
                 rows.push(Row {
-                    target: Target::Context { project: p.path.clone(), path: c.path.clone() },
-                    detail: format!("{name} · context").into(),
+                    target: Target::Workspace { project: p.path.clone(), path: c.path.clone() },
+                    detail: format!("{name} · workspace").into(),
                     hint: "".into(),
                 });
                 entries.push(Entry {
                     kind: Kind::Project,
                     title: format!("{name}: {}", c.label),
-                    keywords: format!("context worktree checkout {}", c.branch.unwrap_or_default()),
+                    keywords: format!("workspace worktree checkout {}", c.branch.unwrap_or_default()),
                     when: None,
                 });
             }
@@ -374,10 +374,10 @@ impl KynexApp {
                 }
                 self.focus_input(window, cx);
             }
-            Target::Context { project, path } => {
+            Target::Workspace { project, path } => {
                 if let Some(i) = self.saved.projects.iter().position(|p| p.path == project) {
                     self.select(Active::Project(i), window, cx);
-                    self.select_context(&path, cx);
+                    self.select_workspace(&path, cx);
                 }
                 self.focus_input(window, cx);
             }

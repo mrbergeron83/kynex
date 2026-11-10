@@ -28,7 +28,7 @@ impl KynexApp {
         if rules.is_empty() {
             return;
         }
-        // A session in a context allows its project's rules, not its folder's own.
+        // A session in a workspace allows its project's rules, not its folder's own.
         let dir = self.settings_dir(cwd);
         let mut perms = Permissions::load(&dir);
         if perms.allow(rules) {

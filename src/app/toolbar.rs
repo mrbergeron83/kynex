@@ -63,8 +63,8 @@ impl KynexApp {
             // Chat and KNX Ops are tabs in the title bar; here only the timeline.
             return bar.child(div().flex_1()).child(timeline);
         };
-        // Where you are: the selected context's folder, for the path and open-in buttons.
-        let here = self.context_cwd().unwrap_or_else(|| path.clone());
+        // Where you are: the selected workspace's folder, for the path and open-in buttons.
+        let here = self.workspace_cwd().unwrap_or_else(|| path.clone());
         let segment = |id: &'static str, label: &'static str, which: Icon, v: View, cx: &mut Context<Self>| {
             tab(id, label, which, view == v).on_click(cx.listener(move |this, _, _, cx| {
                 if let Active::Project(i) = this.saved.active

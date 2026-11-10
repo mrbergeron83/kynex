@@ -7,11 +7,11 @@
 //! | `state.rs`          | `Saved`: what persists to `state.json`               |
 //! | `keys.rs`           | actions, `keymap.json`, tab / Esc / mode shortcuts   |
 //! | `layout.rs`         | Code and Git layouts, overlays, shortcuts, resize drags |
-//! | `workspace.rs`      | tabs, projects, and which session is shown           |
+//! | `projects.rs`       | tabs, projects, and which session is shown           |
 //! | `title_bar.rs`      | title bar and project tabs                           |
 //! | `footer.rs`         | status footer: Kynex's CPU / memory, meters, update  |
 //! | `status.rs`         | the footer's usage-limits meter and update pill      |
-//! | `tiles.rs`          | The split panes of a context: layouts, focus, drawing |
+//! | `tiles.rs`          | the split panes of a workspace: layouts, focus, drawing |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_groups.rs` | session groups and the archive, their menus          |
@@ -27,8 +27,9 @@
 //! | `find.rs`           | find in the transcript (Ctrl+F)                      |
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
-//! | `contexts.rs`       | the contexts section of the sessions column          |
-//! | `context_new.rs`    | making and removing contexts, folding worktree tabs  |
+//! | `workspaces.rs`     | workspaces: listing, selecting, their folders        |
+//! | `workspace_list.rs` | the workspaces and their open sessions in the sidebar |
+//! | `workspace_new.rs`  | making and removing workspaces, folding worktree tabs |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, from the header    |
 //! | `scratch_modal.rs`  | the file explorer in a modal: session or project     |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
@@ -82,8 +83,6 @@ mod background;
 mod chief;
 mod chief_view;
 mod composer;
-mod context_new;
-mod contexts;
 mod delegate_view;
 mod drafts;
 mod extensions;
@@ -105,6 +104,7 @@ mod menus;
 mod models;
 mod palette;
 mod project_setup;
+mod projects;
 pub(crate) mod prompts;
 mod provider_setup;
 mod providers;
@@ -137,7 +137,9 @@ mod transcript;
 mod transcript_rows;
 mod trust;
 mod viewer;
-mod workspace;
+mod workspace_list;
+mod workspace_new;
+mod workspaces;
 mod worktrees;
 
 use std::collections::{HashMap, HashSet};
@@ -185,9 +187,9 @@ pub struct KynexApp {
     git_modal: Option<PathBuf>,
     /// Each open project's git worktrees, kept fresh in the background.
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
-    /// Each project's saved contexts (selection, sessions, order), read on first use.
-    contexts: HashMap<PathBuf, kynex_core::context::Contexts>,
-    context_ui: context_new::ContextUi,
+    /// Each project's saved workspaces (selection, sessions, order), read on first use.
+    workspaces: HashMap<PathBuf, kynex_core::workspace::Workspaces>,
+    workspace_ui: workspace_new::WorkspaceUi,
     /// Each open project's colour settings, read once.
     appearances: HashMap<PathBuf, kynex_core::project::Appearance>,
     /// Each open project's Claude settings (mode, effort, folders), read once and
@@ -225,7 +227,7 @@ pub struct KynexApp {
     pane_id: kynex_core::layout::PaneId,
     next_pane: kynex_core::layout::PaneId,
     parked: HashMap<kynex_core::layout::PaneId, SessionPane>,
-    /// Each context's panes, by the context's folder.
+    /// Each workspace's panes, by the workspace's folder.
     tiles: HashMap<PathBuf, kynex_core::tiling::Tiling>,
     /// Dividers held by the pointer, while the panes are being resized.
     tile_drag: Option<Vec<tiles::Resizing>>,
@@ -495,8 +497,8 @@ impl KynexApp {
             git: HashMap::new(),
             git_modal: None,
             worktrees: HashMap::new(),
-            contexts: HashMap::new(),
-            context_ui: Default::default(),
+            workspaces: HashMap::new(),
+            workspace_ui: Default::default(),
             terminals: HashMap::new(),
             appearances: HashMap::new(),
             claude_settings: HashMap::new(),

@@ -42,16 +42,18 @@ impl KynexApp {
         }
         for p in &mut self.saved.projects {
             let Some(s) = self.code.get(&p.path).and_then(Live::current) else { continue };
-            if kynex_core::context::same_folder(&s.cwd, &p.path) {
+            if kynex_core::workspace::same_folder(&s.cwd, &p.path) {
                 if p.session_id != started(s) {
                     p.session_id = started(s);
                     changed = true;
                 }
             } else if let Some(id) = started(s) {
-                // A session in another context (a worktree) can't be resumed from the
-                // project's folder: it's remembered for its own context instead.
-                let c =
-                    self.contexts.entry(p.path.clone()).or_insert_with(|| kynex_core::context::Contexts::load(&p.path));
+                // A session in another workspace (a worktree) can't be resumed from the
+                // project's folder: it's remembered for its own workspace instead.
+                let c = self
+                    .workspaces
+                    .entry(p.path.clone())
+                    .or_insert_with(|| kynex_core::workspace::Workspaces::load(&p.path));
                 if c.remember(&s.cwd, Some(&id))
                     && let Err(e) = c.save(&p.path)
                 {
@@ -326,8 +328,8 @@ impl KynexApp {
         drop(sessions);
         self.forget(&closed);
         self.worktrees.remove(&p.path);
-        // Its Git views and terminals, in every context's folder (dropping a panel ends its shells).
-        self.drop_context_views(&p.path, &cwds);
+        // Its Git views and terminals, in every workspace's folder (dropping a panel ends its shells).
+        self.drop_workspace_views(&p.path, &cwds);
         self.saved.active = match self.saved.active {
             Active::Project(a) if a > i => Active::Project(a - 1),
             Active::Project(a) if a == i && i > 0 => Active::Project(i - 1),

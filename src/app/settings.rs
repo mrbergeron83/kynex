@@ -51,7 +51,7 @@ impl KynexApp {
     /// Opens a project's Claude settings on `section`. Blocks briefly, reading
     /// the settings files and the folder's top level.
     pub(super) fn open_project_settings_on(&mut self, path: PathBuf, section: usize, cx: &mut Context<Self>) {
-        // A context's settings are its project's.
+        // A workspace's settings are its project's.
         let path = self.settings_dir(&path);
         self.app_settings = None;
         self.extensions = None;
@@ -118,7 +118,7 @@ impl KynexApp {
 
     /// A project's Claude settings, from the cache; read from disk only for a
     /// project that isn't open. A folder that belongs to a project (a worktree, a
-    /// folder added as a context) has its project's.
+    /// folder added as a workspace) has its project's.
     pub(super) fn claude_settings(&self, path: &Path) -> ClaudeSettings {
         let dir = self.settings_dir(path);
         self.claude_settings.get(&dir).cloned().unwrap_or_else(|| ClaudeSettings::load(&dir))
