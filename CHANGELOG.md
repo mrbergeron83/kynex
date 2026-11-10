@@ -17,6 +17,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
   worktree (the branch stays); Kynex asks first when it has changes or a session still working.
   KNX Ops workers' worktrees show as contexts, marked "worker".
 
+- Folders as contexts: the folder button beside Contexts adds any folder (scripts, notes, tools)
+  as a context of the project, with its own sessions and terminal. It's marked "folder", and
+  right-click → "Remove folder from contexts" takes it out of the list without touching the disk.
+  A project that isn't a git repository can add folders too.
+
 ### Changed
 
 - Everything follows the context you're in: switching context switches the sessions, the

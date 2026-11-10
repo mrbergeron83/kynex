@@ -420,17 +420,26 @@ impl KynexApp {
                 }
                 // The project's own tree can't be removed; a linked worktree can (its branch stays).
                 if self.active_project().is_some_and(|p| !kynex_core::context::same_folder(&p.path, path)) {
+                    let folder = self
+                        .active_project()
+                        .and_then(|p| self.contexts.get(&p.path))
+                        .is_some_and(|c| c.is_folder(path));
                     let path = path.clone();
                     items.push(div().my_1().child(divider(cx)).into_any_element());
                     items.push(
-                        menu_item("context-remove", "Remove context", false, cx)
-                            .text_color(t.error)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.menu = None;
-                                this.remove_context(path.clone(), cx);
-                                cx.notify();
-                            }))
-                            .into_any_element(),
+                        menu_item(
+                            "context-remove",
+                            if folder { "Remove folder from contexts" } else { "Remove context" },
+                            false,
+                            cx,
+                        )
+                        .text_color(t.error)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = None;
+                            this.remove_context(path.clone(), cx);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
                     );
                 }
             }

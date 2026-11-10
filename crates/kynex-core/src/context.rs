@@ -25,11 +25,13 @@ pub struct Context {
     pub main: bool,
     /// What the sidebar calls it: the folder's name.
     pub label: String,
+    /// A plain folder added by hand (scripts, notes), not a checkout of the project.
+    pub folder: bool,
 }
 
 impl Context {
     fn main_tree(path: &Path) -> Self {
-        Self { path: path.to_path_buf(), branch: None, main: true, label: folder_label(path) }
+        Self { path: path.to_path_buf(), branch: None, main: true, label: folder_label(path), folder: false }
     }
 
     /// A KNX Ops worker's checkout (its own branch, made by the chief of staff).
@@ -60,7 +62,7 @@ pub fn from_worktrees(root: &Path, worktrees: &[Worktree]) -> Vec<Context> {
         .filter(|w| !w.prunable)
         .map(|w| {
             let label = if w.path.file_name().is_some() { folder_label(&w.path) } else { w.label().to_string() };
-            Context { path: w.path.clone(), branch: w.branch.clone(), main: w.main, label }
+            Context { path: w.path.clone(), branch: w.branch.clone(), main: w.main, label, folder: false }
         })
         .collect();
     if !out.iter().any(|c| c.main) {
@@ -160,6 +162,8 @@ pub struct Contexts {
     pub sessions: BTreeMap<String, String>,
     /// The sidebar order. Contexts not listed come after, in git's order.
     pub order: Vec<PathBuf>,
+    /// Plain folders added as contexts by hand, beside the project's checkouts.
+    pub folders: Vec<PathBuf>,
 }
 
 impl Contexts {
@@ -192,6 +196,41 @@ impl Contexts {
         }
         self.selected = Some(path.to_path_buf());
         true
+    }
+
+    /// Adds a plain folder as a context of `project`. Returns whether it was new: the
+    /// project's own folder and one already added aren't.
+    pub fn add_folder(&mut self, project: &Path, path: &Path) -> bool {
+        if same_folder(project, path) || self.is_folder(path) {
+            return false;
+        }
+        self.folders.push(path.to_path_buf());
+        true
+    }
+
+    /// Takes an added folder out of the list, keeping the session it had so adding
+    /// it again resumes. (Unlike [`Self::forget`], which drops that too.)
+    pub fn remove_folder(&mut self, path: &Path) {
+        self.folders.retain(|f| !same_folder(f, path));
+        self.order.retain(|p| !same_folder(p, path));
+        if self.selected.as_deref().is_some_and(|s| same_folder(s, path)) {
+            self.selected = None;
+        }
+    }
+
+    /// Whether `path` is one of the added folders.
+    pub fn is_folder(&self, path: &Path) -> bool {
+        self.folders.iter().any(|f| same_folder(f, path))
+    }
+
+    /// `list` with the added folders after it (one that is already a checkout stays that).
+    pub fn with_folders(&self, mut list: Vec<Context>) -> Vec<Context> {
+        for f in &self.folders {
+            if !list.iter().any(|c| c.at(f)) {
+                list.push(Context { path: f.clone(), branch: None, main: false, label: folder_label(f), folder: true });
+            }
+        }
+        list
     }
 
     /// `list` in the saved order.
@@ -231,6 +270,7 @@ impl Contexts {
     pub fn forget(&mut self, path: &Path) {
         self.sessions.remove(&normalize(path));
         self.order.retain(|p| normalize(p) != normalize(path));
+        self.folders.retain(|p| normalize(p) != normalize(path));
         if self.selected.as_deref().is_some_and(|s| normalize(s) == normalize(path)) {
             self.selected = None;
         }
@@ -415,6 +455,38 @@ mod tests {
         );
         assert!(!list[0].worker());
         assert!(list[1].worker());
+    }
+
+    #[test]
+    fn plain_folders_are_contexts_too() {
+        let project = Path::new("/work/app");
+        let mut c = Contexts::default();
+        assert!(c.add_folder(project, Path::new("/work/scripts")));
+        // The project itself and a repeat aren't new.
+        assert!(!c.add_folder(project, Path::new("/work/app/")));
+        assert!(!c.add_folder(project, Path::new("/work/scripts/")));
+        assert!(c.is_folder(Path::new("/work/scripts")));
+
+        let list = c.with_folders(sample());
+        assert_eq!(list.len(), 4);
+        let folder = &list[3];
+        assert!(folder.folder && !folder.main && folder.branch.is_none());
+        assert_eq!(folder.label, "scripts");
+        assert!(sample().iter().all(|c| !c.folder));
+        // A folder that's already a checkout stays a checkout.
+        let mut c2 = Contexts::default();
+        assert!(c2.add_folder(project, Path::new("/data/wt/feat-x")));
+        assert_eq!(c2.with_folders(sample()).len(), 3);
+
+        c.select(Path::new("/work/scripts"));
+        c.remember(Path::new("/work/scripts"), Some("s9"));
+        // Removing the folder keeps its session, for adding it again...
+        c.remove_folder(Path::new("/work/scripts"));
+        assert!(!c.is_folder(Path::new("/work/scripts")) && c.selected.is_none());
+        assert_eq!(c.session(Path::new("/work/scripts")), Some("s9"));
+        // ...and forgetting drops everything.
+        c.forget(Path::new("/work/scripts"));
+        assert_eq!(c, Contexts::default());
     }
 
     #[test]

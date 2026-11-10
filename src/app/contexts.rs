@@ -24,7 +24,7 @@ type Entry = (context::Context, Option<Worktree>);
 
 impl KynexApp {
     /// The project's saved contexts, read on first use.
-    fn saved_contexts(&mut self, project: &Path) -> &mut Contexts {
+    pub(super) fn saved_contexts(&mut self, project: &Path) -> &mut Contexts {
         self.contexts.entry(project.to_path_buf()).or_insert_with(|| Contexts::load(project))
     }
 
@@ -32,11 +32,13 @@ impl KynexApp {
     /// up to date in the background.
     pub(super) fn contexts_of(&mut self, project: &Path, cx: &mut Context<Self>) -> Vec<Entry> {
         let list = self.worktrees(project, cx).read(cx).list.clone();
-        let ordered = self.saved_contexts(project).ordered(context::from_worktrees(project, &list));
+        let saved = self.saved_contexts(project);
+        let ordered = saved.ordered(saved.with_folders(context::from_worktrees(project, &list)));
         ordered
             .into_iter()
             // A worktree whose folder is gone is no context to pick.
-            .filter(|c| c.main || c.path.is_dir())
+            // (An added folder that's gone stays, marked, so it can be removed.)
+            .filter(|c| c.main || c.folder || c.path.is_dir())
             .map(|c| {
                 let worktree = list.iter().find(|w| c.at(&w.path)).cloned();
                 (c, worktree)
@@ -73,6 +75,10 @@ impl KynexApp {
     /// Shows a context: its open session, else the one it last had, else a new one.
     pub(super) fn select_context(&mut self, target: &Path, cx: &mut Context<Self>) {
         let Some(project) = self.context_project() else { return };
+        if !target.is_dir() {
+            self.toast(Toast::error(format!("{} isn't there any more", target.display())));
+            return;
+        }
         let leaving = self
             .code
             .get(&project)
@@ -123,15 +129,13 @@ impl KynexApp {
         self.select_context(&list[next].0.path, cx);
     }
 
-    /// The section: a header with "New context" and a row per context. Nothing for a
-    /// folder that isn't a git repository.
+    /// The section: a header with "New context" (git repositories) and "Add folder",
+    /// and a row per context.
     pub(super) fn render_contexts(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let project = self.context_project()?;
-        // A git repository, which is where a context can be made; git read it once
-        // the worktree list isn't empty.
-        if self.worktrees(&project, cx).read(cx).list.is_empty() {
-            return None;
-        }
+        // A git repository, where a worktree can be made: git read it once the worktree
+        // list isn't empty. Any project can add plain folders.
+        let repo = !self.worktrees(&project, cx).read(cx).list.is_empty();
         let list = self.contexts_of(&project, cx);
         let t = theme(cx).clone();
         let cwd = self.code.get(&project)?.current()?.cwd.clone();
@@ -157,8 +161,13 @@ impl KynexApp {
                 let menu_path = c.path.clone();
                 let stats = worktree.as_ref().map(|w| git_stats(w, &t)).unwrap_or_default();
                 // The branch, when the folder's name doesn't already say it; a KNX Ops worker's says so.
-                let branch =
-                    if c.worker() { Some("worker".to_string()) } else { c.branch.clone().filter(|b| *b != c.label) };
+                let branch = if c.worker() {
+                    Some("worker".to_string())
+                } else if c.folder {
+                    Some(if c.path.is_dir() { "folder" } else { "missing" }.to_string())
+                } else {
+                    c.branch.clone().filter(|b| *b != c.label)
+                };
                 div()
                     .id(("context", n))
                     .flex()
@@ -229,10 +238,17 @@ impl KynexApp {
                         .items_center()
                         .child(section_label("Contexts", cx).flex_1().px_2().pt_1p5().pb_1())
                         .child(
-                            icon_button("new-context", Icon::Plus, cx)
-                                .tooltip(Tooltip::text("New context: a worktree on a branch"))
-                                .on_click(cx.listener(|this, _, window, cx| this.open_new_context(window, cx))),
-                        ),
+                            icon_button("add-context-folder", Icon::FolderPlus, cx)
+                                .tooltip(Tooltip::text("Add a folder as a context: scripts, notes"))
+                                .on_click(cx.listener(|this, _, _, cx| this.add_folder_context(cx))),
+                        )
+                        .when(repo, |d| {
+                            d.child(
+                                icon_button("new-context", Icon::Plus, cx)
+                                    .tooltip(Tooltip::text("New context: a worktree on a branch"))
+                                    .on_click(cx.listener(|this, _, window, cx| this.open_new_context(window, cx))),
+                            )
+                        }),
                 )
                 .children(rows)
                 .children(forms)

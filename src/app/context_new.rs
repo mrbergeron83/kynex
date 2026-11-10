@@ -71,6 +71,40 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// Asks for a folder and adds it as a context (scripts, notes: not a checkout), then shows it.
+    pub(super) fn add_folder_context(&mut self, cx: &mut Context<Self>) {
+        let Some(project) = self.context_project() else { return };
+        let picked = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Add folder".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = picked.await
+                && let Some(dir) = paths.into_iter().next()
+            {
+                this.update(cx, |this, cx| {
+                    // A checkout of the project is already a context: just show it.
+                    let checkout = this
+                        .worktrees
+                        .get(&project)
+                        .is_some_and(|w| w.read(cx).list.iter().any(|w| context::same_folder(&w.path, &dir)));
+                    let contexts = this.saved_contexts(&project);
+                    if !checkout
+                        && contexts.add_folder(&project, &dir)
+                        && let Err(e) = contexts.save(&project)
+                    {
+                        this.toast(Toast::error(e));
+                    }
+                    this.select_context(&dir, cx);
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     /// Esc: closes the new-context field or the removal question. Returns whether one was open.
     pub(super) fn cancel_new_context(&mut self) -> bool {
         let open = self.context_ui.form.is_some() || self.context_ui.removing.is_some();
@@ -121,12 +155,19 @@ impl KynexApp {
     /// session, otherwise goes at once.
     pub(super) fn remove_context(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let Some(project) = self.context_project() else { return };
+        // A folder added by hand leaves the list; a worktree is removed from disk.
+        let is_folder = self.saved_contexts(&project).is_folder(&path);
         let worktree = self.worktrees.get(&project).and_then(|w| w.read(cx).at(&path).cloned());
-        let Some(worktree) = worktree.filter(|w| !w.main) else { return };
         let mut why = Vec::new();
-        if let Some(n) = worktree.changes.filter(|n| *n > 0) {
-            why.push(format!("{n} changed file{}", if n == 1 { "" } else { "s" }));
-        }
+        let label = if is_folder {
+            path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
+        } else {
+            let Some(worktree) = worktree.filter(|w| !w.main) else { return };
+            if let Some(n) = worktree.changes.filter(|n| *n > 0) {
+                why.push(format!("{n} changed file{}", if n == 1 { "" } else { "s" }));
+            }
+            worktree.label().to_string()
+        };
         let running = self
             .code
             .get(&project)
@@ -137,7 +178,6 @@ impl KynexApp {
         if why.is_empty() {
             return self.confirm_remove_context(path, false, cx);
         }
-        let label = worktree.label().to_string();
         self.context_ui = ContextUi { removing: Some(Removal { path, label, why }), ..ContextUi::default() };
         cx.notify();
     }
@@ -171,6 +211,15 @@ impl KynexApp {
         self.git.retain(|f, _| !context::same_folder(f, &path));
         if shown_there {
             self.select_context(&project, cx);
+        }
+        // A folder added by hand only leaves the list; nothing on disk goes.
+        if self.saved_contexts(&project).is_folder(&path) {
+            let contexts = self.saved_contexts(&project);
+            contexts.remove_folder(&path);
+            if let Err(e) = contexts.save(&project) {
+                self.toast(Toast::error(e));
+            }
+            return cx.notify();
         }
         let root = project.clone();
         let gone = path.clone();
