@@ -14,7 +14,6 @@ use super::menus::OpenMenu;
 use super::palette::PaletteView;
 use super::scratch_modal::ScratchModal;
 use super::settings::SettingsView;
-use crate::prompt::PromptView;
 use crate::ui::completions::Completion;
 use crate::ui::image_viewer::ImageViewer;
 use crate::ui::motion::{Leaving, NORMAL, QUICK};
@@ -32,8 +31,6 @@ pub(super) struct Exits {
     pub viewer: Leaving<Entity<ImageViewer>>,
     pub sessions: Leaving<()>,
     pub terminal: Leaving<()>,
-    /// The prompt that had the composer's place.
-    pub prompt: Leaving<Entity<PromptView>>,
     /// The slash-command list and its selection.
     pub slash: Leaving<(Rc<Vec<Completion>>, usize)>,
 }
@@ -52,7 +49,6 @@ impl Default for Exits {
             viewer: Leaving::new(QUICK),
             sessions: Leaving::new(NORMAL),
             terminal: Leaving::new(NORMAL),
-            prompt: Leaving::new(QUICK),
             slash: Leaving::new(QUICK),
         }
     }

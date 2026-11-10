@@ -104,7 +104,7 @@ mod menus;
 mod models;
 mod palette;
 mod project_setup;
-mod prompts;
+pub(crate) mod prompts;
 mod provider_setup;
 mod providers;
 mod queue;
@@ -153,7 +153,6 @@ use drafts::Draft;
 pub use keys::{SHELL_KEYS, ToggleTerminal, bind_keys};
 use menus::OpenMenu;
 use palette::PaletteView;
-use prompts::ActivePrompt;
 use scratch_modal::ScratchModal;
 use session_groups::Organize;
 use sessions_panel::{ListRead, SessionList};
@@ -261,7 +260,6 @@ pub struct KynexApp {
     app_settings: Option<app_settings::AppSettingsView>,
     /// The Extensions modal: MCP servers and plugins in the active folder.
     extensions: Option<extensions::ExtensionsView>,
-    prompt: Option<ActivePrompt>,
     menu: Option<OpenMenu>,
     /// What's animating out after it closed: menus, modals, panels.
     exits: leaving::Exits,
@@ -539,7 +537,6 @@ impl KynexApp {
             settings: None,
             app_settings: None,
             extensions: None,
-            prompt: None,
             menu: None,
             exits: Default::default(),
             resizing_sessions: false,

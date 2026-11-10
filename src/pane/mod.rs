@@ -13,10 +13,13 @@ use kynex_core::session::Attachment;
 use crate::app::find::FindBar;
 use crate::app::history::HistorySearch;
 use crate::app::mentions::Mentions;
+use crate::app::prompts::ActivePrompt;
 use crate::app::rewind::RewindMenu;
 use crate::app::slash::Slash;
 use crate::app::timeline::Flash;
+use crate::prompt::PromptView;
 use crate::ui::input::TextInput;
+use crate::ui::motion::{Leaving, QUICK};
 
 pub struct SessionPane {
     /// The message box.
@@ -42,6 +45,10 @@ pub struct SessionPane {
     /// The conversation's free area last frame (between its header and the composer),
     /// which the toasts stay clear of; `None` in other views.
     pub(crate) toast_room: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// The permission, plan or question prompt up in this pane, in the composer's place.
+    pub(crate) prompt: Option<ActivePrompt>,
+    /// The prompt that just closed, fading out.
+    pub(crate) prompt_exit: Leaving<Entity<PromptView>>,
     /// Ctrl+O: every tool call in the transcript shown open.
     pub(crate) expand_tools: bool,
 }
@@ -60,7 +67,38 @@ impl SessionPane {
             flash: None,
             last_esc: None,
             toast_room: Rc::default(),
+            prompt: None,
+            prompt_exit: Leaving::new(QUICK),
             expand_tools: false,
         }
+    }
+
+    /// The pane has a prompt waiting on you: its "needs you" state, whether or not you're in it.
+    pub fn needs_you(&self) -> bool {
+        self.prompt.is_some()
+    }
+
+    /// Where the keyboard belongs: the prompt, when it is for the session you're in, else
+    /// the composer. A prompt in another pane never pulls focus away.
+    pub fn prompt_has_focus(&self, focused: Option<Key>) -> bool {
+        self.prompt.as_ref().is_some_and(|p| prompt_focus(p.key, focused))
+    }
+}
+
+/// Whether a prompt for session `prompt` takes the keyboard when `focused` is the session
+/// being typed in.
+fn prompt_focus(prompt: Key, focused: Option<Key>) -> bool {
+    Some(prompt) == focused
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_prompt_in_another_pane_never_takes_focus() {
+        assert!(prompt_focus(1, Some(1)));
+        assert!(!prompt_focus(2, Some(1)), "it raises needs-you instead");
+        assert!(!prompt_focus(1, None));
     }
 }
