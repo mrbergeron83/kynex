@@ -90,16 +90,16 @@ mod extensions_add;
 mod extensions_catalog;
 mod extensions_plugins;
 mod extensions_servers;
-mod find;
+pub(crate) mod find;
 mod footer;
 mod git_modal;
 mod grok_setup;
 mod handoff;
-mod history;
+pub(crate) mod history;
 mod keys;
 mod layout;
 mod leaving;
-mod mentions;
+pub(crate) mod mentions;
 mod menus;
 mod models;
 mod palette;
@@ -108,7 +108,7 @@ mod prompts;
 mod provider_setup;
 mod providers;
 mod queue;
-mod rewind;
+pub(crate) mod rewind;
 mod rules_view;
 mod scratch_modal;
 mod session_groups;
@@ -118,14 +118,14 @@ mod session_tidy;
 mod sessions_panel;
 mod settings;
 mod setup;
-mod slash;
+pub(crate) mod slash;
 mod state;
 mod status;
 mod storage;
 mod storage_list;
 mod tasks;
 mod terminal_dock;
-mod timeline;
+pub(crate) mod timeline;
 mod title_bar;
 mod titles;
 mod toasts;
@@ -147,12 +147,10 @@ use kynex_core::cli::UpdateState;
 use kynex_core::live::{Key, Live};
 use kynex_core::paths::chat_dir;
 use kynex_core::project::ClaudeSettings;
-use kynex_core::session::{self, Attachment, Kind, Session};
+use kynex_core::session::{self, Kind, Session};
 
 use drafts::Draft;
-use find::FindBar;
 pub use keys::{SHELL_KEYS, ToggleTerminal, bind_keys};
-use mentions::Mentions;
 use menus::OpenMenu;
 use palette::PaletteView;
 use prompts::ActivePrompt;
@@ -161,7 +159,6 @@ use session_groups::Organize;
 use sessions_panel::{ListRead, SessionList};
 use settings::SettingsView;
 use setup::{CliCheck, Setup};
-use slash::Slash;
 pub use state::Saved;
 use state::{View, WindowState};
 use storage::StorageView;
@@ -169,6 +166,7 @@ use transcript::Thread;
 use worktrees::Worktrees;
 
 use crate::git::GitView;
+use crate::pane::SessionPane;
 use crate::terminal::TerminalPanel;
 use crate::theme::{theme, ui_font};
 use crate::ui::image_viewer::ImageViewer;
@@ -206,20 +204,10 @@ pub struct KynexApp {
     /// Calls auto mode refused that were allowed from their row since, with
     /// what was allowed ("Edge actions").
     unblocked: HashMap<(Key, usize), String>,
-    /// Ctrl+O: every tool call in the transcript shown open.
-    expand_tools: bool,
     /// Each project's sent messages and stash, loaded when first needed.
     histories: HashMap<PathBuf, kynex_core::history::History>,
-    history_search: Option<history::HistorySearch>,
-    /// The transcript row lit up after a jump from the timeline.
-    flash: Option<timeline::Flash>,
     /// Each session's timeline turns opened or folded.
     folds: HashMap<Key, kynex_core::timeline::Fold>,
-    /// The rewind popup (Esc Esc on an empty composer), while open.
-    rewind: Option<rewind::RewindMenu>,
-    /// When Esc last went to a draft, for Esc Esc.
-    last_esc: Option<std::time::Instant>,
-    composer: Entity<TextInput>,
     /// A project opened for the first time, whose setup checklist is yet to open.
     setup_for: Option<PathBuf>,
     new_rule: Entity<TextInput>,
@@ -227,15 +215,12 @@ pub struct KynexApp {
     rule_test: Entity<TextInput>,
     /// The project's own rule for what goes to its subagents (`delegate_view.rs`).
     delegate_rule: Entity<TextInput>,
-    attachments: Vec<Attachment>,
     /// Unsent messages of the sessions not shown, by draft key; and the shown
     /// session's uid and draft key, whose message is in the composer.
     drafts: HashMap<String, Draft>,
-    draft_for: Option<(Key, String)>,
-    slash: Slash,
-    mentions: Mentions,
+    /// The one pane: the message box and what goes with it (`src/pane/`).
+    pane: SessionPane,
     palette: Option<PaletteView>,
-    find: Option<FindBar>,
     scratch: Option<ScratchModal>,
     /// When each session's files were last opened, for the composer's badge,
     /// and how many scratch files changed since; what that count was taken at.
@@ -301,9 +286,6 @@ pub struct KynexApp {
     toast_hover: bool,
     toasts_paused: bool,
     toasts_ticking: bool,
-    /// The conversation's free area last frame (between its header and the
-    /// composer), which the toasts stay clear of; `None` in other views.
-    toast_room: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// What Kynex and its processes use, as last read (`footer.rs`).
     resources: Option<kynex_core::resources::Usage>,
     /// The shown session's clocks (thinking, calls, pulse) are repainted once a second.
@@ -526,25 +508,15 @@ impl KynexApp {
             expanded: HashSet::new(),
             open_runs: HashSet::new(),
             unblocked: HashMap::new(),
-            expand_tools: false,
             histories: HashMap::new(),
-            history_search: None,
-            flash: None,
             folds: HashMap::new(),
-            rewind: None,
-            last_esc: None,
-            composer,
             setup_for: None,
             new_rule,
             rule_test,
             delegate_rule,
-            attachments: Vec::new(),
             drafts: HashMap::new(),
-            draft_for: None,
-            slash: Slash::default(),
-            mentions: Mentions::default(),
+            pane: SessionPane::new(composer),
             palette: None,
-            find: None,
             scratch: None,
             scratch_seen: HashMap::new(),
             scratch_new: HashMap::new(),
@@ -583,7 +555,6 @@ impl KynexApp {
             toast_hover: false,
             toasts_paused: false,
             toasts_ticking: false,
-            toast_room: Default::default(),
             resources: None,
             clocks_ticking: false,
             wheel: SmoothWheel::default(),
@@ -754,7 +725,7 @@ impl Render for KynexApp {
         let toasts = self.render_toasts(window, cx);
         let in_conversation = self.workspace_ready() && view != Some(View::Git);
         if !in_conversation {
-            self.toast_room.set(None);
+            self.pane.toast_room.set(None);
         }
         let main = if let Some(setup) = self.render_setup(cx) {
             setup

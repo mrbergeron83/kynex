@@ -187,8 +187,8 @@ impl KynexApp {
     /// closes the settings, ready to send; a draft already there is kept.
     fn ask_claude(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
         cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
-        if self.composer.read(cx).text().trim().is_empty() {
-            self.composer.update(cx, |c, cx| c.set_text(text, cx));
+        if self.pane.composer.read(cx).text().trim().is_empty() {
+            self.pane.composer.update(cx, |c, cx| c.set_text(text, cx));
             self.settings = None;
             self.focus_input(window, cx);
             self.toast(Toast::info("The request is in the message box: send it, then paste the answer back here"));

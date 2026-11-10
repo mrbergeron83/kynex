@@ -8,6 +8,7 @@ mod chrome;
 mod file_links;
 mod git;
 mod markdown;
+mod pane;
 mod prompt;
 mod scratch;
 mod terminal;

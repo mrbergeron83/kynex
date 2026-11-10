@@ -75,7 +75,7 @@ impl KynexApp {
     /// Measures the conversation's free area, laid over it, for the toasts to
     /// stay clear of its header and composer; repaints if it moved.
     pub(super) fn toast_room_probe(&self) -> impl IntoElement + use<> {
-        let room = self.toast_room.clone();
+        let room = self.pane.toast_room.clone();
         canvas(
             move |bounds, window, _| {
                 if room.get() != Some(bounds) {
@@ -107,7 +107,7 @@ impl KynexApp {
         let footer = if self.saved.footer { f32::from(FOOTER_HEIGHT.to_pixels(rem)) } else { 0. };
         let (mut top, mut bottom) = (f32::from(TITLE_BAR_HEIGHT.to_pixels(rem)), footer);
         let (mut left, mut right) = (0., 0.);
-        if let Some(room) = self.toast_room.get() {
+        if let Some(room) = self.pane.toast_room.get() {
             top = top.max(f32::from(room.top()));
             bottom = bottom.max(height - f32::from(room.bottom()));
             left = f32::from(room.left()).max(0.);

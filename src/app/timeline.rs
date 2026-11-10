@@ -22,7 +22,7 @@ use crate::ui::{Icon, Tooltip, icon, icon_button, scrollbar, section_label};
 const WIDTH: f32 = 260.;
 
 /// A transcript row lit up after a jump, until its flash fades.
-pub(super) struct Flash {
+pub(crate) struct Flash {
     pub key: Key,
     pub row: usize,
     /// Bumped per jump, so jumping to the same row again flashes again.
@@ -122,14 +122,14 @@ impl KynexApp {
         if reduce || !th.glide_to_row(row) {
             th.list.scroll_to(ListOffset { item_ix: row, offset_in_item: gpui::px(0.) });
         }
-        let generation = self.flash.as_ref().map_or(0, |f| f.generation + 1);
-        self.flash = Some(Flash { key, row, generation });
+        let generation = self.pane.flash.as_ref().map_or(0, |f| f.generation + 1);
+        self.pane.flash = Some(Flash { key, row, generation });
         cx.notify();
     }
 
     /// A row's flash after a jump: the accent, fading out.
     pub(super) fn flash_row(&self, key: Key, row: usize, el: gpui::Stateful<gpui::Div>, t: &Palette) -> AnyElement {
-        match &self.flash {
+        match &self.pane.flash {
             Some(f) if f.key == key && f.row == row => {
                 let accent = t.accent;
                 el.with_animation(

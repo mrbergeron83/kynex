@@ -32,7 +32,7 @@ impl KynexApp {
         let Some(session) = self.session_by_key(key) else { return div().into_any_element() };
         let busy = session.busy;
         let first = run.first();
-        let open = self.expand_tools || self.open_runs.contains(&(key, first));
+        let open = self.pane.expand_tools || self.open_runs.contains(&(key, first));
         let pending = busy && run.calls.iter().any(|c| c.result.is_none());
         let failed = run
             .calls
@@ -137,7 +137,7 @@ impl KynexApp {
         });
         let running = session.busy && result.is_none();
         let failed = result.is_some_and(|(_, _, _, e)| e);
-        let expanded = self.expand_tools || self.expanded.contains(&(key, ix));
+        let expanded = self.pane.expand_tools || self.expanded.contains(&(key, ix));
         let parsed = serde_json::from_str::<serde_json::Value>(input).ok();
         // MCP tools by what they do, "Edge · Click", not `mcp__playwright-edge__browser_click`.
         let label =

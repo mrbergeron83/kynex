@@ -16,20 +16,20 @@ use crate::ui::{Icon, Tooltip, ghost_button, icon_button};
 impl KynexApp {
     /// Queues the composer's message on the session `key`.
     pub(super) fn queue_message(&mut self, key: Option<Key>, text: String, cx: &mut Context<Self>) {
-        let atts = std::mem::take(&mut self.attachments);
+        let atts = std::mem::take(&mut self.pane.attachments);
         if let Some(s) = key.and_then(|k| self.session_for(k)) {
             s.queue.push(text, atts);
         }
-        self.composer.update(cx, |c, cx| c.set_text("", cx));
+        self.pane.composer.update(cx, |c, cx| c.set_text("", cx));
         cx.notify();
     }
 
     /// Ctrl+Enter: the queue and the draft behind it go now, stopping Claude
     /// if it's working. With nothing queued and Claude idle, it just sends.
     pub(super) fn send_queue_now(&mut self, key: Option<Key>, cx: &mut Context<Self>) {
-        let text = self.composer.read(cx).text().trim().to_string();
+        let text = self.pane.composer.read(cx).text().trim().to_string();
         self.remember_sent(&text, cx);
-        if !text.is_empty() || !self.attachments.is_empty() {
+        if !text.is_empty() || !self.pane.attachments.is_empty() {
             self.queue_message(key, text, cx);
         }
         let model = self.active_model();
@@ -58,10 +58,10 @@ impl KynexApp {
     }
 
     fn take_back(&mut self, m: kynex_core::queue::Queued, cx: &mut Context<Self>) {
-        let current = self.composer.read(cx).text().to_string();
+        let current = self.pane.composer.read(cx).text().to_string();
         let text = if current.trim().is_empty() { m.text } else { format!("{}\n\n{current}", m.text) };
-        self.composer.update(cx, |c, cx| c.set_text(text, cx));
-        self.attachments.splice(0..0, m.attachments);
+        self.pane.composer.update(cx, |c, cx| c.set_text(text, cx));
+        self.pane.attachments.splice(0..0, m.attachments);
         cx.notify();
     }
 

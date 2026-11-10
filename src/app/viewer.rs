@@ -34,7 +34,7 @@ impl KynexApp {
 
     pub(super) fn close_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.viewer.take().is_some() {
-            self.composer.read(cx).focus_handle(cx).focus(window, cx);
+            self.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
             cx.notify();
         }
     }
