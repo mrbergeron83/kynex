@@ -61,6 +61,8 @@ advisories we accept from gpui's tree, each with an expiry; never add a real vul
 
 One-time setup: `cargo install dioxus-cli@0.7.10 --locked`, and `claude` logged in.
 
+`target/claude` is kept slim: dependencies build without debug info, our crates with line tables only, and `check.ps1` clears the folder when it passes 12 GB.
+
 **Done means `./scripts/check.ps1` passes.** Run it before saying a change is finished; formatting
 is `cargo fmt` (rustfmt.toml), not hand-tuned.
 
