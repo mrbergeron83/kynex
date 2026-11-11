@@ -69,10 +69,11 @@ impl KynexApp {
         Some((p.path.clone(), s.cwd.clone(), s.uid))
     }
 
-    /// The workspace's tiling when it has several panes on screen.
+    /// The workspace's tiling: a project's Code view always draws its panes as tiles, one
+    /// pane included.
     fn tiled(&self) -> Option<&Tiling> {
         let (_, cwd, _) = self.tiling_scope()?;
-        self.tiles.get(&cwd).filter(|t| t.visible_panes().len() > 1 || t.zoomed().is_some())
+        self.tiles.get(&cwd)
     }
 
     /// Runs `f` with pane `id`'s state as `self.pane`.
@@ -377,11 +378,11 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// The panes of the workspace, when it has several on screen: each a session view in a
-    /// tile (a rounded, bordered surface with a gap round it; the focused tile's border is
-    /// in the project's colour and a pixel thicker), with a handle on every divider to drag.
-    /// With no gap the panes are flush, split by 1px dividers. `None` for one pane, which
-    /// `render_code_main` draws as it always has.
+    /// The panes of a project's workspace, one or several: each in a tile (a rounded,
+    /// bordered surface with a gap round it; the focused tile's border is in the project's
+    /// colour and a pixel thicker), with a handle on every divider to drag. With no gap the
+    /// panes are flush, split by 1px dividers. `None` outside a project's Code view (chat),
+    /// which `render_code_main` draws as one plain pane.
     pub(super) fn render_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
         let style = self.tile_style(cx);
@@ -392,6 +393,8 @@ impl KynexApp {
         let panes: Vec<(PaneId, Option<Key>, Rect)> =
             rects.panes.iter().map(|(id, r)| (*id, tiling.key_of(*id), *r)).collect();
         let focus = tiling.focus();
+        // Zoom and close only mean something with other panes about.
+        let several = tiling.visible_panes().len() > 1 || tiling.zoomed().is_some();
         let focus_colour = self.active_colour(&t).unwrap_or(t.border_focused);
         let area = self.tile_area.clone();
         let probe = canvas(
@@ -434,7 +437,7 @@ impl KynexApp {
                             .size_full()
                             .flex()
                             .flex_col()
-                            .children(this.render_tile_header(id, key, true, cx))
+                            .children(this.render_tile_header(id, key, several, cx))
                             .child(this.render_pane_body(key, focused, window, cx))
                     }),
                 };
