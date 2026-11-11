@@ -21,6 +21,7 @@ use kynex_core::paths::project_name;
 use kynex_core::session::{self, SessionInfo};
 
 use super::KynexApp;
+use super::app_settings::{APPEARANCE_SECTION, KEYBOARD_SECTION, STORAGE_SECTION};
 use super::goto::Which;
 use super::keys;
 use super::palette_filters::filter_chips;
@@ -193,7 +194,7 @@ impl Cmd {
             Cmd::CloseWorkspace => Box::new(keys::CloseWorkspace),
             Cmd::PickProject => Box::new(keys::PickProject),
             Cmd::NextNeedsYou => Box::new(keys::NextNeedsYou),
-            Cmd::Settings(2) => Box::new(keys::KeyboardSettings),
+            Cmd::Settings(KEYBOARD_SECTION) => Box::new(keys::KeyboardSettings),
             Cmd::ToggleSessions => Box::new(keys::ToggleSessions),
             Cmd::ToggleTerminal => Box::new(keys::ToggleTerminal),
             Cmd::ToggleTimeline => Box::new(keys::ToggleTimeline),
@@ -264,9 +265,9 @@ fn commands() -> Vec<(Cmd, String, &'static str)> {
         (Cmd::ZoomOut, "Zoom out", "smaller scale"),
         (Cmd::ZoomReset, "Reset zoom", "100% scale"),
         (Cmd::Settings(0), "Settings", "preferences general cli shell"),
-        (Cmd::Settings(1), "Settings: Appearance", "theme font motion toasts footer"),
-        (Cmd::Settings(2), "Settings: Keyboard", "shortcuts keymap bindings"),
-        (Cmd::Settings(3), "Settings: Storage", "disk space size clean delete old sessions"),
+        (Cmd::Settings(APPEARANCE_SECTION), "Settings: Appearance", "theme font motion toasts footer"),
+        (Cmd::Settings(KEYBOARD_SECTION), "Settings: Keyboard", "shortcuts keymap bindings"),
+        (Cmd::Settings(STORAGE_SECTION), "Settings: Storage", "disk space size clean delete old sessions"),
         (Cmd::ProjectSettings, "Project settings", "rules permissions effort model directories"),
         (Cmd::Extensions, "Extensions", "mcp servers plugins"),
         (Cmd::SessionScratch, "Files of this session", "scratch scratchpad edited images screenshots output explorer"),
