@@ -15,6 +15,7 @@
 //! | `pane_keys.rs`     | the prefix keys (Ctrl+B …): panes, pane tabs, workspaces, projects, resize mode |
 //! | `pane_tabs.rs`     | the selected workspace's tab bar: new, close, rename, reorder |
 //! | `tiles.rs`          | the split panes of a workspace: layouts, focus, drawing |
+//! | `custom_themes.rs`  | themes from JSON files in the data dir: loading, watching, applying |
 //! | `control.rs`        | the control socket: `knx context / pane / session / events` |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
 //! | `layout_history.rs` | undo / redo of pane changes, reopening a pane, older layouts |
@@ -95,6 +96,7 @@ mod background;
 mod composer;
 mod control;
 mod custom_commands;
+mod custom_themes;
 mod delegate_view;
 mod drafts;
 mod extensions;
@@ -371,6 +373,10 @@ pub struct KynexApp {
     control_wait_for: Option<control::Wait>,
     /// What each session was doing at the last look, for the event listeners.
     control_seen: control::Seen,
+    /// Themes read from the data dir's `themes/` folder, the files that couldn't be used, and the watch on it.
+    custom_themes: Vec<kynex_core::themes::Custom>,
+    theme_errors: Vec<String>,
+    _theme_watch: Option<kynex_core::watch::Watch>,
     /// The notification-area icon, while closing the window hides Kynex there (Windows).
     tray: Option<kynex_core::tray::Tray>,
     /// The window's native handle, for the taskbar dot.
@@ -449,6 +455,7 @@ impl KynexApp {
             })
             .detach();
         }
+        let theme_watch = Self::watch_themes(cx);
         Self::watch_cli_updates(cx);
         Self::watch_app_updates(cx);
         Self::watch_usage(cx);
@@ -540,7 +547,7 @@ impl KynexApp {
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.sync_tray(cx))).detach();
         // The System theme follows the OS's light / dark setting as it changes.
         cx.observe_window_appearance(window, |this, _, cx| {
-            if this.saved.theme == crate::theme::Theme::System {
+            if this.saved.theme == crate::theme::Theme::System && !this.custom_theme_applied() {
                 crate::theme::set(this.saved.theme, cx);
                 cx.refresh_windows();
             }
@@ -673,6 +680,9 @@ impl KynexApp {
             control_waits: Vec::new(),
             control_wait_for: None,
             control_seen: HashMap::new(),
+            custom_themes: Vec::new(),
+            theme_errors: Vec::new(),
+            _theme_watch: theme_watch,
             tray: None,
             native_window: attention::native_handle(window),
             window_active: window.is_window_active(),

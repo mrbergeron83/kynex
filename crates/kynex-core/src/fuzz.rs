@@ -223,6 +223,11 @@ pub fn control_request(text: &str) {
     let _ = crate::control::args::parse(&words);
 }
 
+/// A theme file in the data dir's `themes/`.
+pub fn theme_file(text: &str) {
+    let _ = crate::themes::parse("x", text);
+}
+
 pub fn user_commands(text: &str) {
     let mut all = crate::user_commands::parse(text).unwrap_or_default();
     let own = all.clone();

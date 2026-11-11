@@ -65,7 +65,7 @@ fn main() {
                 win_shell::stamp_shortcuts(&win_shell::shortcut_folders(), &exe, kynex_core::attention::APP_ID)
             });
         }
-        theme::set(saved.theme, cx);
+        theme::set_saved(saved.theme, saved.custom_theme.as_deref(), cx);
         theme::init_fonts(cx);
         theme::set_fonts(&saved.ui_font, &saved.code_font);
         ui::motion::apply(saved.motion, cx);

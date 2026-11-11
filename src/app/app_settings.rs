@@ -181,6 +181,7 @@ impl KynexApp {
 
     pub(super) fn set_theme(&mut self, th: Theme, cx: &mut Context<Self>) {
         self.saved.theme = th;
+        self.saved.custom_theme = None;
         self.save();
         theme::set(th, cx);
         cx.refresh_windows();
@@ -495,13 +496,36 @@ impl KynexApp {
     }
 
     fn render_appearance(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
-        let themes =
-            div().flex().flex_col().gap_1().child(heading("Theme", "Colours for the whole window.", t)).children(
-                THEMES.iter().enumerate().map(|(n, (th, name))| {
-                    let th = *th;
-                    choice(("app-theme", n), self.saved.theme == th, name.to_string(), t)
-                        .on_click(cx.listener(move |this, _, _, cx| this.set_theme(th, cx)))
-                }),
+        let themes = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(heading(
+                "Theme",
+                "Colours for the whole window. Your own themes are JSON files in the themes folder; a change to one shows at once.",
+                t,
+            ))
+            .children(THEMES.iter().enumerate().map(|(n, (th, name))| {
+                let th = *th;
+                choice(("app-theme", n), self.saved.custom_theme.is_none() && self.saved.theme == th, name.to_string(), t)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_theme(th, cx)))
+            }))
+            .children(self.custom_themes.iter().enumerate().map(|(n, c)| {
+                let id = c.id.clone();
+                choice(("app-custom-theme", n), self.saved.custom_theme.as_deref() == Some(&c.id), c.name.clone(), t)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_custom_theme(id.clone(), cx)))
+            }))
+            .children(
+                self.theme_errors
+                    .iter()
+                    .map(|e| div().px_2().text_xs().text_color(t.error).child(format!("Theme not used: {e}"))),
+            )
+            .child(
+                outline_button("app-themes-folder", "Open themes folder", cx).on_click(cx.listener(|this, _, _, _| {
+                    let dir = kynex_core::themes::dir();
+                    let _ = std::fs::create_dir_all(&dir);
+                    this.open_in(Opener::Explorer, &dir)
+                })),
             );
 
         let font_row = |role: FontRole, label: &'static str, current: String, cx: &mut Context<Self>| {

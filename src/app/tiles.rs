@@ -426,7 +426,7 @@ impl KynexApp {
                 (id, label)
             })
             .collect();
-        let focus_colour = self.active_colour(&t).unwrap_or(t.border_focused);
+        let focus_colour = t.tile_border.active.or_else(|| self.active_colour(&t)).unwrap_or(t.border_focused);
         let area = self.tile_area.clone();
         let probe = canvas(
             move |bounds, window, _| {
@@ -474,7 +474,7 @@ impl KynexApp {
                 };
                 let width = if focused { fw } else { bw };
                 let surface = bordered(div().size_full().overflow_hidden().bg(t.editor), width)
-                    .border_color(if focused { focus_colour } else { t.border })
+                    .border_color(if focused { focus_colour } else { t.tile_border.inactive.unwrap_or(t.border) })
                     .rounded(px(radius))
                     .child(body);
                 let tile = Rect::new(r.x + half, r.y + half, (r.w - style.gap).max(0.0), (r.h - style.gap).max(0.0));
