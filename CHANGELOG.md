@@ -9,6 +9,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - The terminal is a pane: it splits, moves between tabs and zooms like a session, and two can sit side by side.
   Ctrl+` shows one below the workspace, focuses it, or hides it; an open dock comes back as a pane where it was.
+- A pane's header dragged onto a pane tab moves the pane there (onto + it gets a tab of its own), splitting that tab's
+  focused pane along its longer side; the palette has Move pane to tab too. A terminal's menu offers one in another
+  workspace, since terminals and sessions stay with their folder.
 - Custom commands: list programs in `commands.json` (in Kynex's data folder, or a project's settings folder) with a
   name, an argv, where they show (a popup that closes when the program exits, a pane, or in the background) and an
   optional key, e.g. one key for lazygit. They run in the selected workspace's folder with `KYNEX_WORKSPACE_DIR`,

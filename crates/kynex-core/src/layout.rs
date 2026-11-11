@@ -725,9 +725,16 @@ impl Layout {
             return false;
         }
         let target = self.tabs[tab].focus();
+        // Along the focused pane's longer side (in units of a pane's least size), else the other.
+        let r = self.tabs[tab].rects(bounds).pane(target).unwrap_or(bounds);
+        let first = if r.w / MIN_W >= r.h / MIN_H { Axis::Row } else { Axis::Column };
+        let second = if first == Axis::Row { Axis::Column } else { Axis::Row };
         let mut trial = self.tabs[tab].clone();
-        if !trial.split(target, Axis::Row, pane, bounds) {
-            return false;
+        if !trial.split(target, first, pane, bounds) {
+            trial = self.tabs[tab].clone();
+            if !trial.split(target, second, pane, bounds) {
+                return false;
+            }
         }
         self.tabs[tab] = trial;
         let last = self.tabs[from].panes().len() == 1;
@@ -1086,13 +1093,25 @@ mod tests {
     }
 
     #[test]
-    fn a_pane_without_room_stays_put() {
+    fn a_moved_pane_splits_the_focused_pane_along_its_longer_side() {
         let narrow = Rect::new(0.0, 0.0, MIN_W * 2.0 + DIVIDER, 900.0);
         let mut l = Layout::new("a", 1);
         l.split(1, Axis::Row, 2, narrow);
         l.new_tab("b", 3);
+        assert!(l.move_to_tab(3, 0, narrow), "no room beside 2, so under it");
+        let r = l.tabs()[0].rects(narrow);
+        let (two, three) = (r.pane(2).unwrap(), r.pane(3).unwrap());
+        assert!(three.y > two.y && close(three.x, two.x));
+    }
+
+    #[test]
+    fn a_pane_without_room_stays_put() {
+        let tiny = Rect::new(0.0, 0.0, MIN_W * 2.0 + DIVIDER, MIN_H);
+        let mut l = Layout::new("a", 1);
+        l.split(1, Axis::Row, 2, tiny);
+        l.new_tab("b", 3);
         l.select(0);
-        assert!(!l.move_to_tab(3, 0, narrow));
+        assert!(!l.move_to_tab(3, 0, tiny));
         assert_eq!(l.tabs().len(), 2);
     }
 

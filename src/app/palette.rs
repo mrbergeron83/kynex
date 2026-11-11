@@ -119,6 +119,9 @@ pub(super) enum Cmd {
     Focus(Direction),
     Swap(Direction),
     ZoomPane,
+    /// Move the focused pane to tab `n` of its workspace.
+    MovePaneToTab(usize),
+    MovePaneToNewTab,
     ResizePanes,
     RenamePaneTab,
     PickWorkspace,
@@ -406,6 +409,32 @@ impl KynexApp {
                 state: None,
             });
         }
+        // The focused pane to another tab of its workspace.
+        if let Some((_, ws, _)) = self.tiling_scope()
+            && let Some(t) = self.tiles.get(&ws)
+        {
+            let tabs = t.tabs();
+            let alone =
+                t.focus().and_then(|f| t.layout().tab_of(f)).is_none_or(|i| t.layout().tabs()[i].panes().len() < 2);
+            let mut moves = Vec::new();
+            if !alone {
+                moves.push((Cmd::MovePaneToNewTab, "Move pane to a new tab".to_string()));
+            }
+            for (i, tab) in tabs.iter().enumerate().filter(|(_, tab)| !tab.active) {
+                moves.push((Cmd::MovePaneToTab(i), format!("Move pane to tab {}", tab.name)));
+            }
+            for (cmd, title) in moves {
+                rows.push(Row { target: Target::Command(cmd), detail: "".into(), hint: "".into() });
+                entries.push(Entry {
+                    kind: Kind::Action,
+                    title,
+                    keywords: "pane move tab".into(),
+                    when: None,
+                    section: None,
+                    state: None,
+                });
+            }
+        }
         for c in &self.user_commands {
             rows.push(Row {
                 target: Target::UserCommand(c.name.clone()),
@@ -518,6 +547,15 @@ impl KynexApp {
     }
 
     fn run_palette_command(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
+        // The pane to move is the one focused now, before the message box takes the keys.
+        if let Cmd::MovePaneToTab(_) | Cmd::MovePaneToNewTab = cmd {
+            let focus = self.tiling_scope().and_then(|(_, ws, _)| self.tiles.get(&ws)?.focus());
+            if let Some(pane) = focus {
+                let tab = if let Cmd::MovePaneToTab(i) = cmd { Some(i) } else { None };
+                self.move_pane(pane, tab, window, cx);
+            }
+            return self.focus_input(window, cx);
+        }
         // Keys that only work in the message box (Ctrl+R, Ctrl+S…) find it focused.
         self.focus_input(window, cx);
         if let Some(action) = cmd.action() {

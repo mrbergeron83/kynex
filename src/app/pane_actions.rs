@@ -12,6 +12,7 @@ use kynex_core::toasts::Toast;
 
 use super::KynexApp;
 use super::menus::Menu;
+use super::pane_tabs::DraggedPane;
 use super::session_groups::DraggedSession;
 use crate::theme::{mono, theme};
 use crate::ui::{Icon, Lamp, Tooltip, divider, icon_button, lamp, menu_item, px};
@@ -135,10 +136,17 @@ impl KynexApp {
         cx.notify();
     }
 
-    fn move_pane(&mut self, pane: PaneId, tab: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+    /// Moves `pane` to tab `tab` of its workspace, or to a new tab of its own with `None`.
+    pub(super) fn move_pane(&mut self, pane: PaneId, tab: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, ws, _)) = self.tiling_scope() else { return };
         let bounds = self.tile_bounds();
         let Some(t) = self.tiles.get_mut(&ws) else { return };
+        // Where it is already (its own tab, or alone in it for a new one): nothing to do.
+        let from = t.layout().tab_of(pane);
+        let alone = from.is_some_and(|f| t.layout().tabs()[f].panes().len() < 2);
+        if from.is_none() || tab == from || tab.is_none() && alone {
+            return;
+        }
         let moved = match tab {
             Some(tab) => t.move_to_tab(pane, tab, bounds),
             None => t.move_to_new_tab(pane),
@@ -196,8 +204,13 @@ impl KynexApp {
             );
         }
         let header = self.render_session_header_with(key, lead, tail, cx)?;
+        let label = self.session_title(key).unwrap_or_else(|| "Pane".to_string());
+        let drag = DraggedPane { pane, label: label.into() };
         Some(
             div()
+                .id(("pane-header", n))
+                // Dragged onto a pane tab, the pane moves there.
+                .when(tiled, |d| d.on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone())))
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
@@ -309,6 +322,23 @@ impl KynexApp {
                 Box::new(move |this, window, cx| this.move_pane(pane, Some(i), window, cx)),
             ));
         }
+        // A terminal belongs to its folder: other workspaces get one of their own instead.
+        if terminal {
+            let command = t.command_of(pane).map(str::to_string);
+            for (i, (path, label)) in self.other_workspaces(&ws, cx).into_iter().enumerate() {
+                let what = match &command {
+                    Some(name) => format!("Run {name} in {label}"),
+                    None => format!("Open a terminal in {label}"),
+                };
+                let command = command.clone();
+                items.push(Self::menu_action(
+                    200 + i,
+                    what,
+                    cx,
+                    Box::new(move |this, window, cx| this.terminal_in(&path, command.clone(), window, cx)),
+                ));
+            }
+        }
         if closable {
             items.push(div().my_1().child(divider(cx)).into_any_element());
             items.push(Self::menu_action(
@@ -319,6 +349,35 @@ impl KynexApp {
             ));
         }
         items
+    }
+
+    /// The project's workspaces other than `ws`: (folder, label).
+    fn other_workspaces(&mut self, ws: &std::path::Path, cx: &mut Context<Self>) -> Vec<(std::path::PathBuf, String)> {
+        let Some((project, _, _)) = self.tiling_scope() else { return Vec::new() };
+        self.workspaces_of(&project, cx)
+            .into_iter()
+            .map(|(w, _)| (w.path, w.label))
+            .filter(|(p, _)| !kynex_core::workspace::same_folder(p, ws))
+            .collect()
+    }
+
+    /// Switches to workspace `path` and opens a terminal there, or runs custom command
+    /// `command` there.
+    fn terminal_in(
+        &mut self,
+        path: &std::path::Path,
+        command: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_workspace(path, cx);
+        self.sync_tiles(window, cx);
+        match command {
+            Some(name) => self.run_user_command(name, window, cx),
+            None => {
+                self.show_terminal(window, cx);
+            }
+        }
     }
 
     /// A pane tab's right-click menu.

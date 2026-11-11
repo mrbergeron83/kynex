@@ -113,7 +113,11 @@ impl KynexApp {
     }
 
     /// A terminal pane below everything in the tab on screen, focused, with a shell running.
-    fn show_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<TerminalPanel>> {
+    pub(super) fn show_terminal(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<TerminalPanel>> {
         let (_, ws, _) = self.tiling_scope()?;
         let id = self.next_pane;
         let ratio = self.terminal_ratio(window);
