@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use crate::ui::px;
-use gpui::{Anchor, ClickEvent, Context, PathPromptOptions, Window, div, prelude::*};
+use gpui::{Anchor, ClickEvent, Context, Entity, PathPromptOptions, Window, div, prelude::*};
 use kynex_core::awake::KeepAwake;
 use kynex_core::browser::{self, Browser, Pick};
 use kynex_core::cli;
@@ -26,6 +26,7 @@ use super::KynexApp;
 use super::menus::{FontRole, Menu};
 use super::settings::{heading, radio, settings_modal, settings_nav};
 use crate::theme::{self, Palette, THEMES, Theme, mono, theme};
+use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::{Icon, Tooltip, icon, outline_button};
 
 #[derive(Clone)]
@@ -39,6 +40,8 @@ pub struct AppSettingsView {
     /// when the modal opens, not every frame.
     browsers: Vec<Browser>,
     npx: bool,
+    /// The search box over Keyboard's shortcuts.
+    shortcuts_filter: Entity<TextInput>,
 }
 
 /// Found off the UI thread when the modal opens, so no frame searches PATH.
@@ -67,7 +70,15 @@ impl KynexApp {
         let agents = self.new_agents_view(cx);
         let browsers = Browser::ALL.into_iter().filter(|b| b.installed()).collect();
         let npx = kynex_core::mcp_config::npx_found();
-        self.app_settings = Some(AppSettingsView { section: 0, cli: None, providers, agents, browsers, npx });
+        let shortcuts_filter = cx.new(|cx| TextInput::new(cx).placeholder("Search shortcuts"));
+        cx.subscribe(&shortcuts_filter, |_, _, ev, cx| {
+            if let InputEvent::Changed = ev {
+                cx.notify();
+            }
+        })
+        .detach();
+        self.app_settings =
+            Some(AppSettingsView { section: 0, cli: None, providers, agents, browsers, npx, shortcuts_filter });
         // Storage is measured again each time Settings opens; the last stays up meanwhile.
         if let Some(s) = &mut self.storage {
             s.stale = true;
@@ -683,6 +694,31 @@ impl KynexApp {
 
     fn render_keyboard(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
         let path = data_dir().join("keymap.json");
+        let filter = self.app_settings.as_ref().map(|s| s.shortcuts_filter.clone());
+        let query = filter.as_ref().map(|f| f.read(cx).text().to_string()).unwrap_or_default();
+        let rows: Vec<_> = super::keys::in_effect()
+            .iter()
+            .filter(|(name, keys)| kynex_core::shortcuts::matches(name, &display_keys(keys), &query))
+            .map(|(name, keys)| {
+                let shown = display_keys(keys);
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .px_2()
+                    .py_1()
+                    .child(div().text_sm().child(kynex_core::shortcuts::label(name)))
+                    .child(
+                        div()
+                            .font_family(mono())
+                            .text_xs()
+                            .text_color(if shown.is_empty() { t.text_muted } else { t.text })
+                            .child(if shown.is_empty() { "unbound".to_string() } else { shown }),
+                    )
+            })
+            .collect();
+        let empty = rows.is_empty();
         div()
             .flex()
             .flex_col()
@@ -705,7 +741,16 @@ impl KynexApp {
                         this.open_in(Opener::Explorer, &data_dir())
                     }))),
             )
+            .children(filter.map(|f| {
+                div().px_2().py_1().rounded_md().border_1().border_color(t.border).text_sm().child(f)
+            }))
+            .child(div().flex().flex_col().children(rows))
+            .when(empty, |d| d.child(div().px_2().text_sm().text_color(t.text_muted).child("No shortcut matches.")))
     }
+}
+
+fn display_keys(keys: &str) -> String {
+    kynex_core::shortcuts::display(keys, cfg!(target_os = "macos"))
 }
 
 /// A radio row: a label with a dot when it's the current choice.
