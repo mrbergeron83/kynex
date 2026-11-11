@@ -87,6 +87,20 @@ doc = false
 bench = false
 
 [[bin]]
+name = "control_request"
+path = "fuzz_targets/control_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "theme_file"
+path = "fuzz_targets/theme_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "user_commands"
 path = "fuzz_targets/user_commands.rs"
 test = false

@@ -80,6 +80,25 @@ start Kynex from a terminal. Archives are also on the
 attestation (`gh attestation verify <archive> --repo mrbergeron83/kynex`). Builds are not
 code-signed yet.
 
+### Scripting a running Kynex
+
+`knx` also talks to the Kynex that is running, over a local socket in the data folder (a named
+pipe on Windows, a Unix socket elsewhere) that only you can reach. Each command prints one JSON
+line; errors go to stderr with exit code 1.
+
+```sh
+knx <folder>                                  # open a folder in the running Kynex (or start on it)
+knx project list | create <folder> | open <folder> | remove <folder>   # projects (tabs)
+knx workspace list | open <folder> | create <branch> | remove <folder> [--force]   # the shown project's checkouts
+knx pane list | split [row|column] | focus <id> | close [id]           # panes of the shown workspace
+knx session list | prompt <id> <message…> [--wait] | read <id> | wait <id>
+knx events                                    # a line per finished turn or session that needs you
+```
+
+A prompt sent this way is a normal message: it runs under the session's permission mode, and
+permission prompts are still answered in Kynex (`--wait` then returns with `"state":"waiting"`).
+The line protocol (`{"cmd": "session_list"}` …) is described in `crates/kynex-core/src/control/protocol.rs`.
+
 ## User guide
 
 ### First start

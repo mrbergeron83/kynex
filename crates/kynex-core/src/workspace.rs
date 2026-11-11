@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::git::{self, Worktree};
 use crate::paths::data_dir;
 use crate::project::{self, normalize};
+use crate::snapshots::History;
 use crate::tiling::SavedLayout;
 
 /// One checkout of a project.
@@ -164,6 +165,15 @@ pub struct Workspaces {
     /// that can't be read is skipped, so one bad layout doesn't cost the rest of the file.
     #[serde(deserialize_with = "lenient_layouts")]
     pub layouts: BTreeMap<String, SavedLayout>,
+    /// Each workspace's older layouts, keyed like `layouts` (see `snapshots`).
+    #[serde(deserialize_with = "lenient_history")]
+    pub history: BTreeMap<String, History>,
+}
+
+/// The `history` map, less the entries that don't parse.
+fn lenient_history<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeMap<String, History>, D::Error> {
+    let raw: BTreeMap<String, serde_json::Value> = BTreeMap::deserialize(d)?;
+    Ok(raw.into_iter().filter_map(|(k, v)| Some((k, serde_json::from_value::<History>(v).ok()?))).collect())
 }
 
 /// The `layouts` map, less the entries that don't parse or don't hold together.
@@ -305,12 +315,18 @@ impl Workspaces {
         }
     }
 
+    /// The workspace's layout history, started if it has none.
+    pub fn history(&mut self, path: &Path) -> &mut History {
+        self.history.entry(normalize(path)).or_default()
+    }
+
     /// Drops everything saved about the workspace at `path`, once it was removed on
     /// purpose. (Not done on its own when a worktree isn't listed: a failed `git`
     /// call must not cost the sessions.)
     pub fn forget(&mut self, path: &Path) {
         self.sessions.remove(&normalize(path));
         self.layouts.remove(&normalize(path));
+        self.history.remove(&normalize(path));
         self.order.retain(|p| normalize(p) != normalize(path));
         self.folders.retain(|p| normalize(p) != normalize(path));
         if self.selected.as_deref().is_some_and(|s| normalize(s) == normalize(path)) {
@@ -551,7 +567,7 @@ mod tests {
     fn saved_two_panes() -> SavedLayout {
         let mut layout = crate::layout::Layout::new("1", 1);
         layout.split(1, crate::layout::Axis::Row, 2, crate::layout::Rect::new(0.0, 0.0, 2000.0, 1000.0));
-        SavedLayout { layout, sessions: BTreeMap::from([(1, "a".to_string())]), tools: None }
+        SavedLayout { layout, sessions: BTreeMap::from([(1, "a".to_string())]), tools: None, seeded: false }
     }
 
     #[test]

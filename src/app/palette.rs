@@ -21,6 +21,7 @@ use kynex_core::paths::project_name;
 use kynex_core::session::{self, SessionInfo};
 
 use super::KynexApp;
+use super::app_settings::{APPEARANCE_SECTION, KEYBOARD_SECTION, STORAGE_SECTION};
 use super::goto::Which;
 use super::keys;
 use super::palette_filters::filter_chips;
@@ -136,6 +137,12 @@ pub(super) enum Cmd {
     NewWorkspace,
     CloseWorkspace,
     PickProject,
+    SessionsPane,
+    WorkspacesPane,
+    UndoLayout,
+    RedoLayout,
+    ReopenPane,
+    LayoutSnapshots,
     NextNeedsYou,
     ToggleSessions,
     ToggleTerminal,
@@ -192,8 +199,12 @@ impl Cmd {
             Cmd::NewWorkspace => Box::new(keys::NewWorkspace),
             Cmd::CloseWorkspace => Box::new(keys::CloseWorkspace),
             Cmd::PickProject => Box::new(keys::PickProject),
+            Cmd::UndoLayout => Box::new(keys::UndoLayout),
+            Cmd::RedoLayout => Box::new(keys::RedoLayout),
+            Cmd::ReopenPane => Box::new(keys::ReopenPane),
+            Cmd::LayoutSnapshots => Box::new(keys::LayoutSnapshots),
             Cmd::NextNeedsYou => Box::new(keys::NextNeedsYou),
-            Cmd::Settings(2) => Box::new(keys::KeyboardSettings),
+            Cmd::Settings(KEYBOARD_SECTION) => Box::new(keys::KeyboardSettings),
             Cmd::ToggleSessions => Box::new(keys::ToggleSessions),
             Cmd::ToggleTerminal => Box::new(keys::ToggleTerminal),
             Cmd::ToggleTimeline => Box::new(keys::ToggleTimeline),
@@ -248,6 +259,12 @@ fn commands() -> Vec<(Cmd, String, &'static str)> {
         (Cmd::NewWorkspace, "New workspace", "worktree checkout branch add"),
         (Cmd::CloseWorkspace, "Close workspace", "remove worktree checkout delete"),
         (Cmd::PickProject, "Go to project…", "tab switch open folder"),
+        (Cmd::SessionsPane, "Sessions pane", "list history groups archive open beside"),
+        (Cmd::WorkspacesPane, "Workspaces pane", "worktree checkout folders open beside"),
+        (Cmd::UndoLayout, "Undo layout change", "panes split close arrangement back"),
+        (Cmd::RedoLayout, "Redo layout change", "panes split close arrangement forward"),
+        (Cmd::ReopenPane, "Reopen closed pane", "undo close restore"),
+        (Cmd::LayoutSnapshots, "Restore an older layout…", "snapshots history panes yesterday"),
         (Cmd::NextNeedsYou, "Next session that needs you", "attention waiting blocked permission question"),
         (Cmd::ToggleSessions, "Toggle sessions panel", "sidebar list"),
         (Cmd::ToggleTerminal, "Toggle terminal", "shell panel console"),
@@ -264,9 +281,9 @@ fn commands() -> Vec<(Cmd, String, &'static str)> {
         (Cmd::ZoomOut, "Zoom out", "smaller scale"),
         (Cmd::ZoomReset, "Reset zoom", "100% scale"),
         (Cmd::Settings(0), "Settings", "preferences general cli shell"),
-        (Cmd::Settings(1), "Settings: Appearance", "theme font motion toasts footer"),
-        (Cmd::Settings(2), "Settings: Keyboard", "shortcuts keymap bindings"),
-        (Cmd::Settings(3), "Settings: Storage", "disk space size clean delete old sessions"),
+        (Cmd::Settings(APPEARANCE_SECTION), "Settings: Appearance", "theme font motion toasts footer"),
+        (Cmd::Settings(KEYBOARD_SECTION), "Settings: Keyboard", "shortcuts keymap bindings"),
+        (Cmd::Settings(STORAGE_SECTION), "Settings: Storage", "disk space size clean delete old sessions"),
         (Cmd::ProjectSettings, "Project settings", "rules permissions effort model directories"),
         (Cmd::Extensions, "Extensions", "mcp servers plugins"),
         (Cmd::SessionScratch, "Files of this session", "scratch scratchpad edited images screenshots output explorer"),
@@ -542,6 +559,16 @@ impl KynexApp {
         }
         match cmd {
             Cmd::PrevPane => self.step_pane(-1, window, cx),
+            Cmd::SessionsPane | Cmd::WorkspacesPane => {
+                let target = self.tiling_scope().and_then(|(_, ws, _)| self.tiles.get(&ws)?.session_focus());
+                if let Some(target) = target {
+                    if cmd == Cmd::SessionsPane {
+                        self.show_sessions_pane(target, window, cx);
+                    } else {
+                        self.show_workspaces_pane(target, window, cx);
+                    }
+                }
+            }
             Cmd::Compact => self.compact(self.focused_key(), cx),
             Cmd::Settings(section) => {
                 self.app_settings = None;

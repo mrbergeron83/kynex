@@ -235,22 +235,22 @@ fn set_level(level: Level, cx: &mut App) {
 /// global so [`looping`] needs no context, like gpui's own animations.
 static LOOP_FPS: AtomicU32 = AtomicU32::new(0);
 
-/// Whether the window is in front; looping animations crawl when it isn't.
-static ACTIVE: AtomicBool = AtomicBool::new(true);
-
-/// Frames a second a looping animation gets while the window is in the background.
+/// Whether the window is in front. Looping animations in a background window
+/// tick at [`BACKGROUND_FPS`]: nobody is watching them.
+static WINDOW_ACTIVE: AtomicBool = AtomicBool::new(true);
 const BACKGROUND_FPS: f32 = 1.;
 
-/// Tells [`looping`] if the window is in front (call on activation changes).
-pub fn set_active(active: bool) {
-    ACTIVE.store(active, Ordering::Relaxed);
+/// Called when the window gains or loses focus; the caller redraws, so the
+/// animations pick up their new rate.
+pub fn set_window_active(active: bool) {
+    WINDOW_ACTIVE.store(active, Ordering::Relaxed);
 }
 
 /// A repeating animation for things that run as long as Claude works
 /// (spinners, pulses): every frame, or capped by "Animations: reduced".
 pub fn looping(duration: Duration) -> Animation {
     let animation = Animation::new(duration).repeat();
-    if !ACTIVE.load(Ordering::Relaxed) {
+    if !WINDOW_ACTIVE.load(Ordering::Relaxed) {
         return animation.with_max_fps(BACKGROUND_FPS);
     }
     match LOOP_FPS.load(Ordering::Relaxed) {

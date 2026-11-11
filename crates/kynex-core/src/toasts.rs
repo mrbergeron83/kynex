@@ -179,12 +179,6 @@ impl Toasts {
         self.list.is_empty()
     }
 
-    /// A toast is on its way out: only then does the clock need to be smooth.
-    /// Otherwise time only decides when one starts to close, so a slow tick does.
-    pub fn closing(&self) -> bool {
-        self.list.iter().any(|t| t.leaving.is_some())
-    }
-
     /// Time going by: `dt` since the last tick. Toasts age only while not
     /// `paused` (the pointer is on them, or the window isn't in front); closing
     /// ones play out their `exit` regardless. True if anything changed.
@@ -212,6 +206,12 @@ impl Toasts {
             self.expanded = false;
         }
         changed || self.list.len() != before
+    }
+
+    /// Whether time changes anything: a toast closing, or one that expires
+    /// and isn't `paused`. False means ticking can slow down.
+    pub fn aging(&self, paused: bool) -> bool {
+        self.list.iter().any(|t| t.leaving.is_some() || (!paused && t.lifetime.is_some()))
     }
 
     /// Closes one: you clicked its ×, or its button.
@@ -347,16 +347,6 @@ mod tests {
     }
 
     const EXIT: Duration = Duration::from_millis(150);
-
-    #[test]
-    fn closing_only_once_a_toast_starts_to_leave() {
-        let mut toasts = Toasts::default();
-        toasts.push(Toast::info("hi"));
-        toasts.push(Toast::error("stays"));
-        assert!(!toasts.closing());
-        toasts.tick(Duration::from_secs(6), false, EXIT);
-        assert!(toasts.closing());
-    }
 
     #[test]
     fn a_progress_toast_stays_until_its_outcome_takes_its_place() {

@@ -66,7 +66,7 @@ if [ "$(uname -s)" = Darwin ]; then
 EOF
     # Ad-hoc sign the bundle so macOS accepts it as a whole, not just the binary.
     codesign --force --sign - "$app" >/dev/null 2>&1 || true
-    printf '#!/bin/sh\nexec open -a "%s" --args "$@"\n' "$app" >"$tmp/knx"
+    printf '#!/bin/sh\ncase "$1" in project|workspace|pane|session|events) exec "%s/Contents/MacOS/kynex" "$@" ;; esac\nif [ -d "$1" ]; then nohup "%s/Contents/MacOS/kynex" "$@" >/dev/null 2>&1 & exit 0; fi\nexec open -a "%s" --args "$@"\n' "$app" "$app" "$app" >"$tmp/knx"
     where="$app"
 else
     dir="${KYNEX_INSTALL_DIR:-$HOME/.local/share/kynex}"
@@ -90,7 +90,7 @@ Terminal=false
 Categories=Development;
 EOF
     command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$apps" >/dev/null 2>&1 || true
-    printf '#!/bin/sh\nnohup "%s" "$@" >/dev/null 2>&1 &\n' "$dir/kynex" >"$tmp/knx"
+    printf '#!/bin/sh\ncase "$1" in project|workspace|pane|session|events) exec "%s" "$@" ;; esac\nnohup "%s" "$@" >/dev/null 2>&1 &\n' "$dir/kynex" "$dir/kynex" >"$tmp/knx"
     where="$dir"
 fi
 

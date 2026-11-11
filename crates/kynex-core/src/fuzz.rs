@@ -216,6 +216,18 @@ pub fn agent_rule(text: &str) {
 }
 
 /// A `commands.json` (the user's or a project's custom commands).
+/// What a client of the control socket sends, and what `knx` is given.
+pub fn control_request(text: &str) {
+    let _ = crate::control::protocol::parse_request(text);
+    let words: Vec<String> = text.split_whitespace().map(String::from).collect();
+    let _ = crate::control::args::parse(&words);
+}
+
+/// A theme file in the data dir's `themes/`.
+pub fn theme_file(text: &str) {
+    let _ = crate::themes::parse("x", text);
+}
+
 pub fn user_commands(text: &str) {
     let mut all = crate::user_commands::parse(text).unwrap_or_default();
     let own = all.clone();

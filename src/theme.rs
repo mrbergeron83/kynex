@@ -72,6 +72,15 @@ pub struct Palette {
     pub syntax: Syntax,
     /// How the pane tiles look until Appearance says otherwise.
     pub tile: TileStyle,
+    /// Border colours a theme file gave the tiles; `None` follows `border_focused` / `border`.
+    pub tile_border: TileBorders,
+}
+
+/// The colours of the focused tile's border and the others', when a theme sets them.
+#[derive(Clone, Copy, Default)]
+pub struct TileBorders {
+    pub active: Option<Hsla>,
+    pub inactive: Option<Hsla>,
 }
 
 /// Code colours: low chroma, so code doesn't out-shout the prose.
@@ -120,6 +129,7 @@ impl Theme {
                 border_variant: c(0x282624),
                 border_focused: c(0x77becf),
                 tile: TileStyle::default(),
+                tile_border: TileBorders::default(),
                 text: c(0xe5e2df),
                 text_muted: c(0xa7a4a0),
                 text_placeholder: c(0x777471),
@@ -156,6 +166,7 @@ impl Theme {
                 border_variant: c(0xe2dfdc),
                 border_focused: c(0x07657d),
                 tile: TileStyle::default(),
+                tile_border: TileBorders::default(),
                 text: c(0x292622),
                 text_muted: c(0x5d5a56),
                 text_placeholder: c(0x888682),
@@ -192,6 +203,7 @@ impl Theme {
                 border_variant: c(0x363c46),
                 border_focused: c(0x47679e),
                 tile: TileStyle::default(),
+                tile_border: TileBorders::default(),
                 text: c(0xdce0e5),
                 text_muted: c(0xa9afbc),
                 text_placeholder: c(0x878a98),
@@ -227,6 +239,7 @@ impl Theme {
                 border_variant: c(0x26263a),
                 border_focused: c(0x89b4fa),
                 tile: TileStyle { gap: 10.0, border: 2.0, radius: 10.0 },
+                tile_border: TileBorders::default(),
                 text: c(0xcdd6f4),
                 text_muted: c(0xa6adc8),
                 text_placeholder: c(0x6c7086),
@@ -264,6 +277,7 @@ impl Theme {
                 border_variant: c(0x2b2b2b),
                 border_focused: c(0x0078d4),
                 tile: TileStyle::default(),
+                tile_border: TileBorders::default(),
                 text: c(0xcccccc),
                 text_muted: c(0x9d9d9d),
                 text_placeholder: c(0x6e7681),
@@ -384,6 +398,76 @@ pub fn mix(base: Hsla, over: Hsla, amount: f32) -> Hsla {
     gpui::Rgba { r: lerp(a.r, b.r), g: lerp(a.g, b.g), b: lerp(a.b, b.b), a: 1. }.into()
 }
 
+impl Theme {
+    /// The built-in theme a theme file names as its `base` (`kynex_core::themes::BASES`).
+    fn from_base(name: &str) -> Theme {
+        match name {
+            "kynex_light" => Theme::KynexLight,
+            "one_dark" => Theme::OneDark,
+            "catppuccin_mocha" => Theme::Hyprland,
+            "vscode_dark" => Theme::VsCode,
+            _ => Theme::KynexDark,
+        }
+    }
+}
+
+impl Palette {
+    /// The palette field a theme file's colour name stands for.
+    fn colour_mut(&mut self, key: &str) -> Option<&mut Hsla> {
+        Some(match key {
+            "title_bar" => &mut self.title_bar,
+            "panel" => &mut self.panel,
+            "editor" => &mut self.editor,
+            "elevated" => &mut self.elevated,
+            "border" => &mut self.border,
+            "border_variant" => &mut self.border_variant,
+            "border_focused" => &mut self.border_focused,
+            "text" => &mut self.text,
+            "text_muted" => &mut self.text_muted,
+            "text_placeholder" => &mut self.text_placeholder,
+            "accent" => &mut self.accent,
+            "on_accent" => &mut self.on_accent,
+            "hover" => &mut self.hover,
+            "active" => &mut self.active,
+            "element" => &mut self.element,
+            "selection" => &mut self.selection,
+            "text_selection" => &mut self.text_selection,
+            "success" => &mut self.success,
+            "warning" => &mut self.warning,
+            "error" => &mut self.error,
+            "info" => &mut self.info,
+            "diff_add" => &mut self.diff_add,
+            "diff_del" => &mut self.diff_del,
+            "keyword" => &mut self.syntax.keyword,
+            "string" => &mut self.syntax.string,
+            "type" => &mut self.syntax.r#type,
+            "number" => &mut self.syntax.number,
+            "comment" => &mut self.syntax.comment,
+            "function" => &mut self.syntax.function,
+            "punctuation" => &mut self.syntax.punctuation,
+            _ => return None,
+        })
+    }
+
+    /// This palette with what a theme file sets laid over it.
+    fn customised(mut self, custom: &kynex_core::themes::Custom) -> Palette {
+        let hsla = |c: kynex_core::themes::Colour| ca(c.rgb, c.alpha);
+        for (key, colour) in custom.colours.iter().chain(&custom.syntax) {
+            if let Some(slot) = self.colour_mut(key) {
+                *slot = hsla(*colour);
+            }
+        }
+        let t = &custom.tile;
+        self.tile = TileStyle {
+            gap: t.gap.unwrap_or(self.tile.gap),
+            border: t.border.unwrap_or(self.tile.border),
+            radius: t.radius.unwrap_or(self.tile.radius),
+        };
+        self.tile_border = TileBorders { active: t.active.map(hsla), inactive: t.inactive.map(hsla) };
+        self
+    }
+}
+
 pub struct ActiveTheme(pub Palette);
 
 impl Global for ActiveTheme {}
@@ -392,6 +476,23 @@ impl Global for ActiveTheme {}
 pub fn set(theme: Theme, cx: &mut App) {
     let theme = theme.resolve(cx.window_appearance());
     cx.set_global(ActiveTheme(theme.palette()));
+}
+
+/// Draws with a theme from a file: its base theme, with its colours and tile look over it.
+pub fn set_custom(custom: &kynex_core::themes::Custom, cx: &mut App) {
+    let base = Theme::from_base(&custom.base).palette();
+    cx.set_global(ActiveTheme(base.customised(custom)));
+}
+
+/// At start: the theme file `custom` names if it reads, else the built-in `theme`.
+pub fn set_saved(theme: Theme, custom: Option<&str>, cx: &mut App) {
+    let found = custom.and_then(|id| {
+        kynex_core::themes::load_all(&kynex_core::themes::dir()).themes.into_iter().find(|t| t.id == id)
+    });
+    match found {
+        Some(c) => set_custom(&c, cx),
+        None => set(theme, cx),
+    }
 }
 
 pub fn theme(cx: &App) -> &Palette {
@@ -494,5 +595,34 @@ pub fn init_fonts(cx: &App) {
     let installed = cx.text_system().all_font_names();
     if let Some(f) = ["Hubot Sans Expanded", "Hubot Sans"].into_iter().find(|f| installed.iter().any(|n| n == f)) {
         let _ = LABEL.set(f.into());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_colour_a_theme_file_may_set_is_a_palette_field() {
+        let mut p = Theme::KynexDark.palette();
+        for key in kynex_core::themes::PALETTE_KEYS.iter().chain(&kynex_core::themes::SYNTAX_KEYS) {
+            assert!(p.colour_mut(key).is_some(), "{key}");
+        }
+        assert!(p.colour_mut("nope").is_none());
+    }
+
+    #[test]
+    fn every_base_names_a_theme_and_a_file_overrides_it() {
+        for base in kynex_core::themes::BASES {
+            let text = format!(
+                r##"{{"base":"{base}","colours":{{"panel":"#102030"}},"tile":{{"gap":3,"active":"#ff0000"}}}}"##
+            );
+            let custom = kynex_core::themes::parse("t", &text).unwrap();
+            let p = Theme::from_base(base).palette().customised(&custom);
+            assert_eq!(p.panel, c(0x102030));
+            assert_eq!(p.tile.gap, 3.0);
+            assert!(p.tile_border.active.is_some() && p.tile_border.inactive.is_none());
+        }
+        assert!(Theme::from_base("kynex_light").palette().is_light());
     }
 }

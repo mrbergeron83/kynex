@@ -123,7 +123,9 @@ impl KynexApp {
         let Some((_, ws, _)) = self.tiling_scope() else { return };
         match self.tiles.get(&ws).and_then(|t| t.content(id)) {
             Some(Content::Terminal) => return self.hide_terminal(id, window, cx),
-            Some(Content::Git | Content::Timeline) => return self.close_tool_pane(id, window, cx),
+            Some(Content::Git | Content::Timeline | Content::Sessions | Content::Workspaces) => {
+                return self.close_tool_pane(id, window, cx);
+            }
             _ => {}
         }
         let Some(Content::Session(key)) = self.tiles.get_mut(&ws).and_then(|t| t.close_pane(id)) else { return };
@@ -302,6 +304,18 @@ impl KynexApp {
                 "Timeline beside".into(),
                 cx,
                 Box::new(move |this, window, cx| this.show_timeline_pane(pane, window, cx)),
+            ));
+            items.push(Self::menu_action(
+                7,
+                "Sessions beside".into(),
+                cx,
+                Box::new(move |this, window, cx| this.show_sessions_pane(pane, window, cx)),
+            ));
+            items.push(Self::menu_action(
+                8,
+                "Workspaces beside".into(),
+                cx,
+                Box::new(move |this, window, cx| this.show_workspaces_pane(pane, window, cx)),
             ));
             let agents: Vec<(String, String)> =
                 self.agent_rules.iter().map(|r| (r.id.clone(), r.name.clone())).collect();

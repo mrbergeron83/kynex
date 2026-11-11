@@ -302,7 +302,13 @@ pub struct Session {
     pub busy: bool,
     /// A turn ended and the user hasn't looked at it yet; the UI clears it.
     pub finished: bool,
+    /// What the session has cost: [`Self::carried_cost`] plus this process's own counter.
     pub total_cost: f64,
+    /// Cost of the processes before the current one. A resumed or restarted
+    /// `claude` starts its `total_cost_usd` over from 0, so the legs add up.
+    carried_cost: f64,
+    /// The current process's `total_cost_usd`, as of its last result.
+    run_cost: f64,
     /// Tokens and cost of every turn this session object has seen, subagents included.
     pub spent: crate::spent::Spent,
     pub context: ContextUse,
@@ -503,6 +509,8 @@ impl Session {
             busy: false,
             finished: false,
             total_cost: 0.0,
+            carried_cost: 0.0,
+            run_cost: 0.0,
             spent: Default::default(),
             context: ContextUse::default(),
             mode,
@@ -800,6 +808,7 @@ impl Session {
         self.launched = None;
         self.spawned = Some(Instant::now());
         self.runs += 1;
+        self.carried_cost += std::mem::take(&mut self.run_cost);
         self.ready = false;
         self.talked = false;
         if grok {
@@ -1576,7 +1585,8 @@ impl Session {
                     .and_then(|m| m.values().filter_map(|u| u["contextWindow"].as_u64()).max());
                 self.context.window = known_window(&self.reply_model).or(biggest).or(self.context.window);
                 let cost = v["total_cost_usd"].as_f64().unwrap_or(0.0);
-                self.total_cost = cost.max(self.total_cost);
+                self.run_cost = cost.max(self.run_cost);
+                self.total_cost = self.carried_cost + self.run_cost;
                 self.spent.add_turn(&v);
                 self.settle_thoughts();
                 let (tools, files) = self.turn_recap();
@@ -2265,6 +2275,18 @@ mod tests {
         let Some(Item::Result { tools, files, .. }) = s.items.last() else { panic!("no result") };
         assert_eq!(*tools, 4);
         assert_eq!(files, &["C:/x/a.rs", "/y/b.md"]);
+    }
+
+    #[test]
+    fn cost_of_a_restarted_process_adds_to_the_earlier_one() {
+        let mut s = Session::new(Kind::Code, std::env::temp_dir());
+        s.handle(json!({ "type": "result", "total_cost_usd": 0.5 }));
+        s.handle(json!({ "type": "result", "total_cost_usd": 0.75 }));
+        assert!((s.total_cost - 0.75).abs() < 1e-9);
+        // A new process: its counter starts again at 0.
+        s.carried_cost += std::mem::take(&mut s.run_cost);
+        s.handle(json!({ "type": "result", "total_cost_usd": 0.25 }));
+        assert!((s.total_cost - 1.0).abs() < 1e-9);
     }
 
     #[test]
