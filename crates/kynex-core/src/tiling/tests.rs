@@ -467,3 +467,15 @@ fn a_drop_near_an_edge_is_for_that_side() {
     assert_eq!(drop_side(r, 300.0, 150.0), None, "the middle is the pane itself");
     assert_eq!(drop_side(Rect::new(0.0, 0.0, 0.0, 0.0), 1.0, 1.0), None);
 }
+
+#[test]
+fn a_narrow_window_is_too_thin_for_a_split_but_not_for_one_pane() {
+    let mut two = Tiling::new(1, 10);
+    assert!(two.split(Axis::Row, 2, 20, BIG));
+    let narrow = Rect::new(0.0, 0.0, 500.0, 800.0);
+    assert!(two.too_narrow(narrow, 360.0));
+    assert!(!two.too_narrow(BIG, 360.0), "wide enough: the split stays");
+    assert!(!Tiling::new(1, 10).too_narrow(narrow, 360.0), "one pane is never too thin");
+    two.toggle_zoom();
+    assert!(!two.too_narrow(narrow, 360.0), "a zoomed pane already fills the tab");
+}

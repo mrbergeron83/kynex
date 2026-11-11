@@ -14,7 +14,7 @@ use kynex_core::layout::{Axis, DIVIDER, Divider, PaneId, Rect};
 use kynex_core::live::Key;
 use kynex_core::session::Session;
 use kynex_core::tile_style::TileStyle;
-use kynex_core::tiling::Tiling;
+use kynex_core::tiling::{Content, Tiling};
 
 use super::KynexApp;
 use super::session_groups::DraggedSession;
@@ -22,7 +22,13 @@ use super::state::{Active, View};
 use crate::pane::SessionPane;
 use crate::theme::theme;
 use crate::ui::input::{InputEvent, TextInput};
+use crate::ui::motion;
 use crate::ui::px;
+
+/// Panes under this wide aren't usable: the tab shows one at a time instead.
+const MIN_PANE_W: f32 = 360.0;
+/// The strip that switches between the panes then.
+const STRIP_H: f32 = 28.0;
 
 /// Room for a split when the area hasn't been measured yet.
 const UNMEASURED: Rect = Rect { x: 0.0, y: 0.0, w: 4000.0, h: 4000.0 };
@@ -388,13 +394,38 @@ impl KynexApp {
         let style = self.tile_style(cx);
         let bounds = self.core_bounds(style.gap);
         let tiling = self.tiled()?;
-        let rects = tiling.rects(bounds);
+        let mut rects = tiling.rects(bounds);
+        // Too narrow for the split: the focused pane alone, under a strip of them all.
+        let narrow = tiling.too_narrow(bounds, MIN_PANE_W);
+        let strip: Vec<(PaneId, Option<Key>, kynex_core::tiling::Content)> = if narrow {
+            rects.panes.iter().filter_map(|(id, _)| Some((*id, tiling.key_of(*id), tiling.content(*id)?))).collect()
+        } else {
+            Vec::new()
+        };
+        if narrow && let Some(only) = tiling.focus().or_else(|| rects.panes.first().map(|(id, _)| *id)) {
+            let r = Rect::new(bounds.x, bounds.y + STRIP_H, bounds.w, (bounds.h - STRIP_H).max(0.0));
+            rects.panes = vec![(only, r)];
+            rects.dividers.clear();
+        }
         let measured = self.tile_area.get().is_some();
         let panes: Vec<(PaneId, Option<Key>, Rect)> =
             rects.panes.iter().map(|(id, r)| (*id, tiling.key_of(*id), *r)).collect();
         let focus = tiling.focus();
         // Zoom and close only mean something with other panes about.
         let several = tiling.visible_panes().len() > 1 || tiling.zoomed().is_some();
+        let strip: Vec<(PaneId, String)> = strip
+            .into_iter()
+            .map(|(id, key, content)| {
+                let label = match (key.and_then(|k| self.session_title(k)), content) {
+                    (Some(title), _) => title,
+                    (None, Content::Session(_)) => "Session".to_string(),
+                    (None, Content::Terminal) => "Terminal".to_string(),
+                    (None, Content::Git) => "Git".to_string(),
+                    (None, Content::Timeline) => "Timeline".to_string(),
+                };
+                (id, label)
+            })
+            .collect();
         let focus_colour = self.active_colour(&t).unwrap_or(t.border_focused);
         let area = self.tile_area.clone();
         let probe = canvas(
@@ -447,26 +478,32 @@ impl KynexApp {
                     .rounded(px(radius))
                     .child(body);
                 let tile = Rect::new(r.x + half, r.y + half, (r.w - style.gap).max(0.0), (r.h - style.gap).max(0.0));
-                children.push(
-                    div()
-                        .absolute()
-                        .left(px(r.x + half))
-                        .top(px(r.y + half))
-                        .w(px((r.w - style.gap).max(0.0)))
-                        .h(px((r.h - style.gap).max(0.0)))
-                        .when(!focused && fw > bw, |d| d.p_px())
-                        // The click that focuses a pane comes before what it lands on.
-                        .capture_any_mouse_down(cx.listener(move |this, _, window, cx| {
-                            this.focus_pane(id, window, cx);
-                        }))
-                        // A session row let go here: on an edge it splits, in the middle it opens.
-                        .drag_over::<DraggedSession>(|style, _, _, _| style.opacity(0.7))
-                        .on_drop(cx.listener(move |this, d: &DraggedSession, window, cx| {
-                            this.drop_session_on_pane(d, id, Some(tile), window, cx)
-                        }))
-                        .child(surface)
-                        .into_any_element(),
-                );
+                let tile_el = div()
+                    .absolute()
+                    .left(px(r.x + half))
+                    .top(px(r.y + half))
+                    .w(px((r.w - style.gap).max(0.0)))
+                    .h(px((r.h - style.gap).max(0.0)))
+                    .when(!focused && fw > bw, |d| d.p_px())
+                    // The click that focuses a pane comes before what it lands on.
+                    .capture_any_mouse_down(cx.listener(move |this, _, window, cx| {
+                        this.focus_pane(id, window, cx);
+                    }))
+                    // A session row let go here: on an edge it splits, in the middle it opens.
+                    .drag_over::<DraggedSession>(|style, _, _, _| style.opacity(0.7))
+                    .on_drop(cx.listener(move |this, d: &DraggedSession, window, cx| {
+                        this.drop_session_on_pane(d, id, Some(tile), window, cx)
+                    }))
+                    .child(surface);
+                children.push(if narrow {
+                    // A pane change fades in, as everything else does (and not at all with reduced motion).
+                    motion::fade_in(("narrow-pane", id as usize), tile_el, motion::QUICK).into_any_element()
+                } else {
+                    tile_el.into_any_element()
+                });
+            }
+            if narrow {
+                children.push(self.render_narrow_strip(&strip, focus, cx));
             }
             if flush {
                 for d in &rects.dividers {
@@ -533,6 +570,53 @@ impl KynexApp {
                 .children(children)
                 .into_any_element(),
         )
+    }
+}
+
+impl KynexApp {
+    /// The row of every pane's name when the window is too narrow to show them side by side:
+    /// the focused one is marked, a click shows another.
+    fn render_narrow_strip(
+        &self,
+        panes: &[(PaneId, String)],
+        focus: Option<PaneId>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = theme(cx).clone();
+        let tabs = panes.iter().map(|(id, label)| {
+            let id = *id;
+            let on = Some(id) == focus;
+            div()
+                .id(("narrow-tab", id as usize))
+                .flex_1()
+                .min_w_0()
+                .px_2()
+                .h_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .truncate()
+                .text_xs()
+                .cursor_pointer()
+                .border_b_2()
+                .border_color(if on { t.border_focused } else { gpui::transparent_black() })
+                .text_color(if on { t.text } else { t.text_muted })
+                .hover(|s| s.bg(t.hover))
+                .on_click(cx.listener(move |this, _, window, cx| this.focus_pane(id, window, cx)))
+                .child(label.clone())
+        });
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w_full()
+            .h(px(STRIP_H))
+            .flex()
+            .bg(t.panel)
+            .border_b_1()
+            .border_color(t.border)
+            .children(tabs)
+            .into_any_element()
     }
 }
 

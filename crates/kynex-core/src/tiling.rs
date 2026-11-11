@@ -532,6 +532,17 @@ impl Tiling {
         self.layout.tab().and_then(|t| t.zoomed())
     }
 
+    /// Whether some pane of the active tab would be under `min_w` wide in `bounds`: the
+    /// window is too narrow for the split, and the app shows one pane at a time until it
+    /// grows. Never with a single pane, or while one is zoomed.
+    pub fn too_narrow(&self, bounds: Rect, min_w: f32) -> bool {
+        if self.zoomed().is_some() {
+            return false;
+        }
+        let rects = self.rects(bounds);
+        rects.panes.len() > 1 && rects.panes.iter().any(|(_, r)| r.w < min_w)
+    }
+
     /// Zooms the focused pane to fill its tab, or puts the others back.
     pub fn toggle_zoom(&mut self) {
         if let Some(t) = self.layout.tab_mut() {
