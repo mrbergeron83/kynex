@@ -1,7 +1,8 @@
 //! `knx` subcommands as a [`Request`]:
 //!
 //! ```text
-//! knx context list | create <folder> | open <folder> | remove <folder>
+//! knx project list | create <folder> | open <folder> | remove <folder>
+//! knx workspace list | open <folder> | create <branch> | remove <folder> [--force]
 //! knx pane list | split [row|column] | focus <id> | close [id]
 //! knx session list | prompt <id> <text…> [--wait] | read <id> | wait <id>
 //! knx events
@@ -12,7 +13,7 @@ use std::path::Path;
 use super::Request;
 
 /// The first words that make a command line a subcommand, not a folder to open.
-const GROUPS: [&str; 4] = ["context", "pane", "session", "events"];
+const GROUPS: [&str; 5] = ["project", "workspace", "pane", "session", "events"];
 
 /// Whether `args` (without the program name) is a control subcommand.
 pub fn is_command(args: &[String]) -> bool {
@@ -24,10 +25,15 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     match words.as_slice() {
         ["events"] => Ok(Request::Events),
-        ["context", "list"] => Ok(Request::ContextList),
-        ["context", "create", p] => Ok(Request::ContextCreate { path: absolute(p) }),
-        ["context", "open", p] => Ok(Request::ContextOpen { path: absolute(p) }),
-        ["context", "remove", p] => Ok(Request::ContextRemove { path: absolute(p) }),
+        ["project", "list"] => Ok(Request::ProjectList),
+        ["project", "create", p] => Ok(Request::ProjectCreate { path: absolute(p) }),
+        ["project", "open", p] => Ok(Request::ProjectOpen { path: absolute(p) }),
+        ["project", "remove", p] => Ok(Request::ProjectRemove { path: absolute(p) }),
+        ["workspace", "list"] => Ok(Request::WorkspaceList),
+        ["workspace", "open", p] => Ok(Request::WorkspaceOpen { path: absolute(p) }),
+        ["workspace", "create", branch] => Ok(Request::WorkspaceCreate { branch: branch.to_string() }),
+        ["workspace", "remove", p] => Ok(Request::WorkspaceRemove { path: absolute(p), force: false }),
+        ["workspace", "remove", p, "--force"] => Ok(Request::WorkspaceRemove { path: absolute(p), force: true }),
         ["pane", "list"] => Ok(Request::PaneList),
         ["pane", "split"] => Ok(Request::PaneSplit { axis: None }),
         ["pane", "split", a @ ("row" | "column")] => Ok(Request::PaneSplit { axis: Some(a.to_string()) }),
@@ -58,7 +64,8 @@ fn absolute(p: &str) -> String {
 }
 
 pub const USAGE: &str = "usage:
-  knx context list | create <folder> | open <folder> | remove <folder>
+  knx project list | create <folder> | open <folder> | remove <folder>
+  knx workspace list | open <folder> | create <branch> | remove <folder> [--force]
   knx pane list | split [row|column] | focus <id> | close [id]
   knx session list | prompt <id> <message…> [--wait] | read <id> | wait <id>
   knx events";
@@ -75,6 +82,7 @@ mod tests {
     fn subcommands_are_told_from_folders() {
         assert!(is_command(&words("session list")));
         assert!(is_command(&words("events")));
+        assert!(is_command(&words("workspace list")));
         assert!(!is_command(&words("C:/work/app")));
         assert!(!is_command(&[]));
     }
@@ -84,6 +92,15 @@ mod tests {
         assert_eq!(parse(&words("pane list")), Ok(Request::PaneList));
         assert_eq!(parse(&words("pane split column")), Ok(Request::PaneSplit { axis: Some("column".into()) }));
         assert_eq!(parse(&words("pane focus 4")), Ok(Request::PaneFocus { pane: 4 }));
+        assert_eq!(
+            parse(&words("workspace create fix/login")),
+            Ok(Request::WorkspaceCreate { branch: "fix/login".into() })
+        );
+        assert!(matches!(
+            parse(&words("workspace remove sub --force")),
+            Ok(Request::WorkspaceRemove { force: true, .. })
+        ));
+        assert!(matches!(parse(&words("workspace remove sub")), Ok(Request::WorkspaceRemove { force: false, .. })));
         assert_eq!(
             parse(&words("session prompt 2 fix the build --wait")),
             Ok(Request::SessionPrompt { session: 2, text: "fix the build".into(), wait: true })
@@ -100,7 +117,7 @@ mod tests {
 
     #[test]
     fn folders_are_made_absolute() {
-        let Ok(Request::ContextOpen { path }) = parse(&words("context open sub")) else { panic!() };
+        let Ok(Request::ProjectOpen { path }) = parse(&words("project open sub")) else { panic!() };
         assert!(Path::new(&path).is_absolute());
     }
 }

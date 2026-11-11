@@ -115,7 +115,7 @@ pub fn attach_console() {
 
 /// Asks the running app, if there is one, to open `folder` as a project. Whether one did.
 pub fn open_folder(folder: &str) -> bool {
-    let request = Request::ContextOpen { path: folder.to_string() };
+    let request = Request::ProjectOpen { path: folder.to_string() };
     let mut answered_ok = false;
     let sent = call(&request, |line| {
         answered_ok = serde_json::from_str::<serde_json::Value>(line).is_ok_and(|v| v["ok"] == true);

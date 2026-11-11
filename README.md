@@ -88,7 +88,8 @@ line; errors go to stderr with exit code 1.
 
 ```sh
 knx <folder>                                  # open a folder in the running Kynex (or start on it)
-knx context list | create <folder> | open <folder> | remove <folder>   # projects (tabs)
+knx project list | create <folder> | open <folder> | remove <folder>   # projects (tabs)
+knx workspace list | open <folder> | create <branch> | remove <folder> [--force]   # the shown project's checkouts
 knx pane list | split [row|column] | focus <id> | close [id]           # panes of the shown workspace
 knx session list | prompt <id> <message…> [--wait] | read <id> | wait <id>
 knx events                                    # a line per finished turn or session that needs you
