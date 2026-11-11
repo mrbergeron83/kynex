@@ -23,6 +23,13 @@ impl KynexApp {
         cx.spawn(async move |this, cx| {
             let mut sampler = Sampler::default();
             loop {
+                // Nobody sees it with the footer hidden or the window in the background.
+                let wanted = this.read_with(cx, |this, _| this.saved.footer && this.window_active);
+                let Ok(wanted) = wanted else { break };
+                if !wanted {
+                    cx.background_executor().timer(SAMPLE_EVERY).await;
+                    continue;
+                }
                 let (back, usage) = cx
                     .background_executor()
                     .spawn(async move {

@@ -12,7 +12,7 @@
 //! closes, the view draws it once more per frame with how far it has gone,
 //! and [`inert`] keeps that leftover from taking clicks meant for what's under it.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use gpui::{
@@ -235,10 +235,24 @@ fn set_level(level: Level, cx: &mut App) {
 /// global so [`looping`] needs no context, like gpui's own animations.
 static LOOP_FPS: AtomicU32 = AtomicU32::new(0);
 
+/// Whether the window is in front. Looping animations in a background window
+/// tick at [`BACKGROUND_FPS`]: nobody is watching them.
+static WINDOW_ACTIVE: AtomicBool = AtomicBool::new(true);
+const BACKGROUND_FPS: f32 = 1.;
+
+/// Called when the window gains or loses focus; the caller redraws, so the
+/// animations pick up their new rate.
+pub fn set_window_active(active: bool) {
+    WINDOW_ACTIVE.store(active, Ordering::Relaxed);
+}
+
 /// A repeating animation for things that run as long as Claude works
 /// (spinners, pulses): every frame, or capped by "Animations: reduced".
 pub fn looping(duration: Duration) -> Animation {
     let animation = Animation::new(duration).repeat();
+    if !WINDOW_ACTIVE.load(Ordering::Relaxed) {
+        return animation.with_max_fps(BACKGROUND_FPS);
+    }
     match LOOP_FPS.load(Ordering::Relaxed) {
         0 => animation,
         bits => animation.with_max_fps(f32::from_bits(bits)),

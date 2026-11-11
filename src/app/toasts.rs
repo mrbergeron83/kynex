@@ -19,6 +19,8 @@ use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, spinner};
 
 /// How often the stack's time moves: smooth enough for a toast fading out.
 const TICK: Duration = Duration::from_millis(16);
+/// While nothing in the stack is aging (paused, or only toasts that never expire).
+const IDLE_TICK: Duration = Duration::from_millis(250);
 
 impl KynexApp {
     /// Puts a toast up (or merges it into a like one).
@@ -41,7 +43,9 @@ impl KynexApp {
         cx.spawn(async move |this, cx| {
             let mut last = Instant::now();
             loop {
-                cx.background_executor().timer(TICK).await;
+                let busy = this.read_with(cx, |this, _| this.toasts.aging(this.toasts_paused));
+                let wait = if matches!(busy, Ok(false)) { IDLE_TICK } else { TICK };
+                cx.background_executor().timer(wait).await;
                 let now = Instant::now();
                 let dt = now - last;
                 last = now;

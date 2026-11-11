@@ -10,7 +10,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::tiling::SavedLayout;
+use crate::layout::{Axis, PaneId, Rect};
+use crate::tiling::{SavedLayout, Tool};
 
 /// Layouts kept of each kind.
 pub const KEEP: usize = 48;
@@ -20,6 +21,14 @@ pub const EVERY: u64 = 15 * 60;
 const CLOSED: usize = 10;
 /// Changes this close together (seconds) count as one undo step, unless a pane closed.
 const COALESCE: u64 = 3;
+
+/// A pane that was closed: what it held, to put a pane like it back.
+#[derive(Clone, Debug, PartialEq)]
+struct Closed {
+    /// The session's id, if it had said anything.
+    session: Option<String>,
+    tool: Option<Tool>,
+}
 
 /// A layout and when it was current (seconds since the Unix epoch).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -37,9 +46,9 @@ pub struct History {
     undo: Vec<Snapshot>,
     #[serde(skip)]
     redo: Vec<Snapshot>,
-    /// The layout from just before each pane was closed, newest last.
+    /// Each pane that was closed, newest last.
     #[serde(skip)]
-    closed: Vec<Snapshot>,
+    closed: Vec<Closed>,
     #[serde(skip)]
     current: Option<Snapshot>,
     /// A layout was handed out to be applied: the next one recorded is that, not a change.
@@ -87,7 +96,15 @@ impl History {
                     && !self.undo.is_empty()
                     && !std::mem::take(&mut self.after_apply);
                 if closing {
-                    push(&mut self.closed, cur.clone(), CLOSED);
+                    let now_there = layout.layout.panes();
+                    for pane in cur.layout.layout.panes().into_iter().filter(|p| !now_there.contains(p)) {
+                        let tool = cur.layout.tools.as_ref().and_then(|t| t.get(&pane)).cloned();
+                        let session = cur.layout.sessions.get(&pane).cloned();
+                        self.closed.push(Closed { session, tool });
+                        if self.closed.len() > CLOSED {
+                            self.closed.remove(0);
+                        }
+                    }
                 }
                 if !quick {
                     push(&mut self.undo, cur, KEEP);
@@ -142,11 +159,31 @@ impl History {
         self.apply(forward)
     }
 
-    /// The layout from just before the pane closed last, to apply (a change like any other:
-    /// it can be undone).
+    /// The current layout with the pane closed last put back beside the focused one, to apply
+    /// (a change like any other: it can be undone). Every other pane stays as it is now.
     pub fn reopen_closed(&mut self) -> Option<SavedLayout> {
-        let before = self.closed.pop()?;
-        self.change_to(before)
+        let cur = self.current.clone()?;
+        let mut layout = cur.layout;
+        // A session that is open in a pane again (reopened from the list) isn't brought back twice.
+        let closed = loop {
+            let c = self.closed.pop()?;
+            if !c.session.as_ref().is_some_and(|id| layout.sessions.values().any(|v| v == id)) {
+                break c;
+            }
+        };
+        let id: PaneId = layout.layout.panes().into_iter().max().map_or(1, |m| m + 1);
+        let bounds = Rect::new(0.0, 0.0, 100_000.0, 100_000.0);
+        let target = layout.layout.focus()?;
+        if !layout.layout.split(target, Axis::Row, id, bounds) {
+            return None;
+        }
+        if let Some(session) = closed.session {
+            layout.sessions.insert(id, session);
+        }
+        if let Some(tool) = closed.tool {
+            layout.tools.get_or_insert_with(Default::default).insert(id, tool);
+        }
+        self.change_to(Snapshot { at: cur.at, layout })
     }
 
     /// The older layouts to pick from, newest first, less those that arrange the panes as
@@ -293,10 +330,31 @@ mod tests {
         h.record(0, &two());
         h.record(100, &one("a"));
         assert!(h.can_reopen());
-        assert_eq!(h.reopen_closed(), Some(two()));
-        h.record(101, &two());
+        let back = h.reopen_closed().expect("a pane to reopen");
+        assert_eq!(back.layout.panes().len(), 2);
+        assert_eq!(back.sessions.get(&1).map(String::as_str), Some("a"));
+        assert_eq!(back.sessions.get(&2).map(String::as_str), Some("b"));
+        h.record(101, &back);
         assert!(!h.can_reopen());
         assert_eq!(h.undo(), Some(one("a")));
+    }
+
+    #[test]
+    fn reopening_keeps_what_changed_after_the_close() {
+        let mut h = History::default();
+        h.record(0, &two());
+        let mut after = one("a");
+        h.record(100, &after);
+        // Later changes: another pane, and the first one's session changed.
+        after.layout.split(1, Axis::Column, 3, Rect::new(0.0, 0.0, 2000.0, 2000.0));
+        after.sessions.insert(1, "a2".to_string());
+        after.sessions.insert(3, "c".to_string());
+        h.record(200, &after);
+        let back = h.reopen_closed().expect("a pane to reopen");
+        assert_eq!(back.layout.panes().len(), 3);
+        assert_eq!(back.sessions.get(&1).map(String::as_str), Some("a2"));
+        assert_eq!(back.sessions.get(&3).map(String::as_str), Some("c"));
+        assert!(back.sessions.values().any(|v| v == "b"), "the closed pane's session is back");
     }
 
     #[test]

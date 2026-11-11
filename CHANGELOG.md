@@ -9,8 +9,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - The sessions list and the workspaces can be panes: "Sessions beside" and "Workspaces beside" on a pane's right-click menu, or the command palette. The sidebar shows whatever isn't a pane in the tab, and steps aside when both are.
 - Your own themes: JSON files in the themes folder of the data dir set the palette, syntax colours and the pane tile look (gap, border, corner radius, active and inactive border colours) over a built-in theme. They show in Settings → Appearance, change live when the file does, and a file that doesn't read is reported and left out.
+- Less idle CPU: spinners slow down while Kynex is in the background, the CPU and memory readout is only sampled when the footer is shown and the window is in front, toasts that aren't ageing wake up less, and the session header no longer scans tool history every frame in a project without linked worktrees.
 - A control socket and `knx` subcommands for scripts: `knx project | workspace | pane | session | events …` talk to the running Kynex (open a project, make a workspace, split panes, send a prompt and wait for the turn to end), and `knx <folder>` opens the folder in the running Kynex instead of starting a second one. See the README.
-- Layout history: Ctrl+B U / Shift+U undo and redo a change to the panes, Ctrl+B Shift+R reopens the pane closed last, and Ctrl+B S lists older layouts (one kept every 15 minutes, 48 of them, so yesterday's is still there after a restart) to bring back. The palette has them too.
+- Layout history: Ctrl+B U / Shift+U undo and redo a change to the panes, Ctrl+B Shift+R reopens the pane closed last beside the focused one (changes made since stay), and Ctrl+B S lists older layouts (one kept every 15 minutes, 48 of them, so yesterday's is still there after a restart) to bring back. The palette has them too.
 - When the window is too narrow for the panes of a tab, one shows at a time with a strip to switch between them; the split returns when the window grows.
 - Settings → Keyboard lists every shortcut with the keys it has now (your `keymap.json` included), with a search box. Its key (Ctrl+B ?) and the palette's Appearance, Keyboard and Storage entries opened the wrong Settings section; they open the right one now.
 - The terminal is a pane: it splits, moves between tabs and zooms like a session, and two can sit side by side.
@@ -97,6 +98,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - KNX Ops (the chief of staff) is gone; run several sessions with workspaces, tabs and panes
   instead. A state saved on its tab opens on your first project. Leftover `<repo>-chief-worker`
   worktrees and `chief-worker` branches can be removed by hand.
+
+### Fixed
+
+- The session cost adds up across a restarted `claude` process (a mode change, a rewind) instead of keeping only the larger leg.
 
 ## [0.0.26] - 2026-11-09
 
