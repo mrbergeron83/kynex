@@ -3,6 +3,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use interprocess::local_socket::{GenericFilePath, Stream, ToFsName, prelude::*};
 
@@ -36,26 +37,72 @@ pub fn call(request: &Request, on_line: impl FnMut(&str)) -> Result<(), String> 
     call_in(&crate::paths::data_dir(), request, on_line)
 }
 
+/// How long the first answer to `request` may take before the app counts as stuck: a few
+/// seconds for most, longer for git, none for what waits on a turn or listens.
+fn patience(request: &Request) -> Option<Duration> {
+    match request {
+        Request::Events | Request::SessionWait { .. } | Request::SessionPrompt { wait: true, .. } => None,
+        Request::WorkspaceCreate { .. } | Request::WorkspaceRemove { .. } => Some(Duration::from_secs(300)),
+        _ => Some(Duration::from_secs(15)),
+    }
+}
+
 /// [`call`] to the app whose data dir is `dir`.
-pub fn call_in(dir: &Path, request: &Request, mut on_line: impl FnMut(&str)) -> Result<(), String> {
+pub fn call_in(dir: &Path, request: &Request, on_line: impl FnMut(&str)) -> Result<(), String> {
+    call_within(dir, request, patience(request), on_line)
+}
+
+/// [`call_in`] giving up on the first answer after `first` (never, for `None`): a Kynex whose
+/// window is stuck still accepts the connection but doesn't answer.
+pub fn call_within(
+    dir: &Path,
+    request: &Request,
+    first: Option<Duration>,
+    mut on_line: impl FnMut(&str),
+) -> Result<(), String> {
     let stream = open(dir)?;
     let mut send = &stream;
     writeln!(send, "{}", request_line(1, request)).map_err(|e| e.to_string())?;
     send.flush().map_err(|e| e.to_string())?;
-    let mut reader = BufReader::new(&stream);
-    let mut line = String::new();
+    // Read on a thread of its own, so the wait for a line can end. It stops with the process.
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::Builder::new()
+        .name("control-client".into())
+        .spawn(move || {
+            let mut reader = BufReader::new(&stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => {
+                        if tx.send(line.trim_end().to_string()).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
     let mut got = false;
     loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {
+        let next = match (got, first) {
+            (false, Some(wait)) => rx.recv_timeout(wait).map_err(|e| match e {
+                std::sync::mpsc::RecvTimeoutError::Timeout => Some(()),
+                std::sync::mpsc::RecvTimeoutError::Disconnected => None,
+            }),
+            _ => rx.recv().map_err(|_| None),
+        };
+        match next {
+            Ok(line) => {
                 got = true;
-                on_line(line.trim_end());
+                on_line(&line);
                 if *request != Request::Events {
                     break;
                 }
             }
+            Err(Some(())) => return Err("Kynex didn't answer (its window may be stuck)".into()),
+            Err(None) => break,
         }
     }
     if got { Ok(()) } else { Err("Kynex closed the connection without answering".into()) }

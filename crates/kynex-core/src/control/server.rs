@@ -111,19 +111,40 @@ fn address(dir: &Path) -> String {
     }
 }
 
-/// One line, at most [`MAX_LINE`] bytes. `None` when the client left, sent something that
-/// isn't text, or went on too long.
-fn read_line(reader: &mut impl BufRead) -> Option<String> {
+/// What a read from a client found.
+#[derive(Debug, PartialEq)]
+enum Line {
+    /// One line, at most [`MAX_LINE`] bytes.
+    Text(String),
+    /// The client left, or sent something that isn't text.
+    Gone,
+    /// It went on for more than [`MAX_LINE`] bytes without ending.
+    TooLong,
+}
+
+fn read_line(reader: &mut impl BufRead) -> Line {
     let mut line = String::new();
-    let n = reader.by_ref().take(MAX_LINE as u64 + 1).read_line(&mut line).ok()?;
-    (n > 0 && line.len() <= MAX_LINE).then_some(line)
+    match reader.by_ref().take(MAX_LINE as u64 + 1).read_line(&mut line) {
+        Ok(0) | Err(_) => Line::Gone,
+        Ok(_) if line.len() > MAX_LINE => Line::TooLong,
+        Ok(_) => Line::Text(line),
+    }
 }
 
 fn serve(stream: Stream, calls: Calls, subscribers: Subscribers, wake: Arc<dyn Fn() + Send + Sync>) {
     let mut send = &stream;
     let mut reader = BufReader::new(&stream);
     let mut write = move |line: &str| writeln!(send, "{line}").and_then(|()| send.flush()).is_ok();
-    while let Some(line) = read_line(&mut reader) {
+    loop {
+        let line = match read_line(&mut reader) {
+            Line::Text(line) => line,
+            Line::Gone => return,
+            Line::TooLong => {
+                let e = format!("a request can't be longer than {} KiB", MAX_LINE / 1024);
+                write(&answer(&None, Err(e)));
+                return;
+            }
+        };
         if line.trim().is_empty() {
             continue;
         }
@@ -201,6 +222,19 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
         });
+        // A line that never ends gets an answer saying so.
+        let mut long = Vec::new();
+        let huge = format!("{}\n", "a".repeat(MAX_LINE + 5));
+        let mut raw = interprocess::local_socket::Stream::connect(
+            PathBuf::from(std::fs::read_to_string(dir.join("control.addr")).unwrap())
+                .to_fs_name::<GenericFilePath>()
+                .unwrap(),
+        )
+        .unwrap();
+        let _ = raw.write_all(huge.as_bytes());
+        let _ = BufReader::new(&raw).read_line(&mut String::new()).map(|_| long.push(1));
+        assert_eq!(long.len(), 1, "the client was answered");
+
         let mut lines = Vec::new();
         super::super::client::call_in(&dir, &Request::PaneList, |l| lines.push(l.to_string())).unwrap();
         let v: Value = serde_json::from_str(&lines[0]).unwrap();
@@ -223,25 +257,44 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// An app that takes the connection but never answers: the client gives up.
+    #[test]
+    fn a_client_gives_up_on_a_stuck_app() {
+        let dir = std::env::temp_dir().join(format!("kynex-control-stuck-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _server = Server::start_in(&dir, Arc::new(|| {})).unwrap();
+        let started = std::time::Instant::now();
+        let e = super::super::client::call_within(
+            &dir,
+            &Request::PaneList,
+            Some(std::time::Duration::from_millis(200)),
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(e.contains("didn't answer"), "{e}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_line_is_read_up_to_its_end() {
         let mut r = Cursor::new(b"{\"cmd\":\"events\"}\nnext\n".to_vec());
-        assert_eq!(read_line(&mut r).as_deref(), Some("{\"cmd\":\"events\"}\n"));
-        assert_eq!(read_line(&mut r).as_deref(), Some("next\n"));
-        assert_eq!(read_line(&mut r), None);
+        assert_eq!(read_line(&mut r), Line::Text("{\"cmd\":\"events\"}\n".into()));
+        assert_eq!(read_line(&mut r), Line::Text("next\n".into()));
+        assert_eq!(read_line(&mut r), Line::Gone);
     }
 
     #[test]
     fn a_line_that_goes_on_too_long_ends_the_connection() {
         let mut r = Cursor::new(vec![b'a'; MAX_LINE + 10]);
-        assert_eq!(read_line(&mut r), None);
+        assert_eq!(read_line(&mut r), Line::TooLong);
         let mut ok = Cursor::new([vec![b'a'; MAX_LINE - 1], b"\n".to_vec()].concat());
-        assert!(read_line(&mut ok).is_some());
+        assert!(matches!(read_line(&mut ok), Line::Text(_)));
     }
 
     #[test]
     fn text_that_isnt_utf8_ends_it_too() {
         let mut r = Cursor::new(vec![0xff, 0xfe, b'\n']);
-        assert_eq!(read_line(&mut r), None);
+        assert_eq!(read_line(&mut r), Line::Gone);
     }
 }
