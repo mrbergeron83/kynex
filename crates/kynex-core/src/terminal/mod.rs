@@ -26,7 +26,7 @@ use alacritty_terminal::term::Config;
 use alacritty_terminal::tty;
 
 pub use keys::{Key, key_bytes, paste_bytes};
-pub use shell::{ShellKind, ShellSpec, elevated, resolve as resolve_shell};
+pub use shell::{ShellKind, ShellSpec, elevated, resolve as resolve_shell, which};
 pub use snapshot::{Cursor, CursorStyle, Palette, Rgb, Row, Run, Snapshot};
 
 use crate::session::Wake;
@@ -130,6 +130,7 @@ impl Terminal {
             ("COLORTERM".to_string(), "truecolor".to_string()),
             ("TERM_PROGRAM".to_string(), "kynex".to_string()),
         ]);
+        env.extend(shell.env.iter().cloned());
         let options = tty::Options {
             shell: Some(tty::Shell::new(shell.program.to_string_lossy().into_owned(), shell.args.clone())),
             working_directory: Some(cwd.to_path_buf()),

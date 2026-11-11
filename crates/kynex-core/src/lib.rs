@@ -79,6 +79,7 @@ pub mod tray;
 pub mod trust;
 pub mod update;
 pub mod usage;
+pub mod user_commands;
 pub mod watch;
 pub mod why;
 #[cfg(windows)]

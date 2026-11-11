@@ -80,6 +80,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "user_commands"
+path = "fuzz_targets/user_commands.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "versions"
 path = "fuzz_targets/versions.rs"
 test = false

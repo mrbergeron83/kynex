@@ -95,6 +95,11 @@ pub struct FocusPane(pub Direction);
 #[action(namespace = kynex, no_json)]
 pub struct SwapPane(pub Direction);
 
+/// Run the custom command of this name (`kynex_core::user_commands`).
+#[derive(Clone, PartialEq, Debug, gpui::Action)]
+#[action(namespace = kynex, no_json)]
+pub struct RunCommand(pub String);
+
 /// Show pane tab `n` (counting from 1).
 #[derive(Clone, PartialEq, Debug, gpui::Action)]
 #[action(namespace = kynex, no_json)]

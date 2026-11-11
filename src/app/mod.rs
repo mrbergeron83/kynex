@@ -24,6 +24,7 @@
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `terminal_panes.rs` | terminal panes: Ctrl+`, run buttons, hide and show   |
 //! | `tool_panes.rs`     | the Git view and the timeline as panes               |
+//! | `custom_commands.rs`| custom commands: keys, popup, pane, background       |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
 //! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
@@ -87,6 +88,7 @@ mod appearance;
 mod attention;
 mod background;
 mod composer;
+mod custom_commands;
 mod delegate_view;
 mod drafts;
 mod extensions;
@@ -165,6 +167,7 @@ use kynex_core::paths::chat_dir;
 use kynex_core::project::ClaudeSettings;
 use kynex_core::session::{self, Kind, Session};
 
+pub use custom_commands::bind_command_keys;
 use drafts::Draft;
 pub use keys::{SHELL_KEYS, SendPrefix, ToggleTerminal, bind_keys, prefix_key};
 use menus::OpenMenu;
@@ -210,6 +213,12 @@ pub struct KynexApp {
     terminals: Vec<(PathBuf, Entity<TerminalPanel>)>,
     /// The panel in each terminal pane, of every workspace.
     term_panes: HashMap<kynex_core::layout::PaneId, Entity<TerminalPanel>>,
+    /// Command panes from last time whose program is being looked up, so it starts once.
+    command_starting: HashSet<kynex_core::layout::PaneId>,
+    /// The custom commands of the project in front, for the palette.
+    user_commands: Vec<kynex_core::user_commands::UserCommand>,
+    /// A custom command's program over the window, until it exits.
+    command_popup: Option<Entity<crate::terminal::TerminalView>>,
     threads: HashMap<Key, Thread>,
     /// Each session's timeline turns, walked again only where items changed.
     timelines: HashMap<Key, kynex_core::timeline::Turns>,
@@ -524,6 +533,9 @@ impl KynexApp {
             workspace_ui: Default::default(),
             terminals: Vec::new(),
             term_panes: HashMap::new(),
+            command_starting: HashSet::new(),
+            user_commands: Vec::new(),
+            command_popup: None,
             appearances: HashMap::new(),
             claude_settings: HashMap::new(),
             threads: HashMap::new(),

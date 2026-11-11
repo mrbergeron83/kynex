@@ -95,6 +95,7 @@ A cargo workspace with two crates:
   - `rewind.rs` — going back to an earlier message: the log's current branch, the points with
     their file checkpoints, restoring files (`--rewind-files`); the session resumes with
     `--resume-session-at`
+  - `user_commands.rs` — custom commands (`commands.json`, user and per project): argv, placement, key, env
   - `groups.rs` — session groups and the archive in the sessions panel (`sessions.json` per project)
   - `grok/` — the Grok provider: `grok agent stdio` over ACP (`acp.rs` maps it to and from
     stream-json, so sessions draw it like `claude`), usage and models (`usage.rs`), Grok's own

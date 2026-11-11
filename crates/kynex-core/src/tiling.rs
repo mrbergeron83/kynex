@@ -16,10 +16,13 @@ use serde::{Deserialize, Serialize};
 use crate::layout::{Axis, Direction, Layout, PaneId, Rect, Rects};
 use crate::live::Key;
 
-/// What a terminal pane is, beyond being one (room for what later kinds of terminal
-/// pane need to bring back).
+/// What a terminal pane is, beyond being one.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct TermPane {}
+pub struct TermPane {
+    /// The custom command it runs ([`crate::user_commands`]), by name; `None` for a shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+}
 
 /// What a pane holds besides a session, as saved.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -215,9 +218,18 @@ impl Tiling {
         self.panes_of(Content::Terminal)
     }
 
-    /// The terminal panes of the active tab, in reading order.
+    /// The shell panes of the active tab (not a custom command's), in reading order.
     pub fn tab_terminals(&self) -> Vec<PaneId> {
-        self.tab_panes_of(Content::Terminal)
+        let shell = |p: &PaneId| matches!(self.tools.get(p), Some(Tool::Terminal(t)) if t.command.is_none());
+        self.tab_panes_of(Content::Terminal).into_iter().filter(shell).collect()
+    }
+
+    /// The custom command terminal pane `pane` runs, if it runs one.
+    pub fn command_of(&self, pane: PaneId) -> Option<&str> {
+        match self.tools.get(&pane) {
+            Some(Tool::Terminal(t)) => t.command.as_deref(),
+            _ => None,
+        }
     }
 
     /// Every pane in sight, sessions and tools, in reading order.

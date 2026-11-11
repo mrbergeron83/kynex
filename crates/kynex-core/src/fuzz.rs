@@ -206,6 +206,13 @@ pub fn openrouter(text: &str) {
     }
 }
 
+/// A `commands.json` (the user's or a project's custom commands).
+pub fn user_commands(text: &str) {
+    let mut all = crate::user_commands::parse(text).unwrap_or_default();
+    let own = all.clone();
+    crate::user_commands::merge(&mut all, own);
+}
+
 pub fn versions(bytes: &[u8]) {
     let text = String::from_utf8_lossy(bytes);
     let _ = cli::last_line(bytes);

@@ -62,6 +62,7 @@ fn main() {
         prompt::bind_keys(cx);
         terminal::bind_keys(cx);
         app::bind_keys(cx);
+        app::bind_command_keys(&saved.projects.iter().map(|p| p.path.clone()).collect::<Vec<_>>(), cx);
 
         let bounds = match saved.window {
             Some(w) if w.width >= 640. && w.height >= 400. => {

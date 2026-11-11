@@ -93,6 +93,8 @@ pub(super) enum Target {
         path: PathBuf,
     },
     Command(Cmd),
+    /// A custom command, by name.
+    UserCommand(String),
 }
 
 /// What an action in the palette does.
@@ -284,6 +286,7 @@ impl KynexApp {
             return cx.notify();
         }
         self.menu = None;
+        self.refresh_user_commands(cx);
         let input = cx.new(|cx| TextInput::new(cx).placeholder("Go to a session, project or action…"));
         input.read(cx).focus_handle(cx).focus(window, cx);
         let view = PaletteView {
@@ -403,10 +406,32 @@ impl KynexApp {
                 state: None,
             });
         }
+        for c in &self.user_commands {
+            rows.push(Row {
+                target: Target::UserCommand(c.name.clone()),
+                detail: c.argv.join(" ").into(),
+                hint: c.key.clone().unwrap_or_default().into(),
+            });
+            entries.push(Entry {
+                kind: Kind::Action,
+                title: format!("Run {}", c.name),
+                keywords: format!("custom command {}", c.argv.join(" ")),
+                when: None,
+                section: None,
+                state: None,
+            });
+        }
         let view = self.palette.as_mut().unwrap();
         view.rows = Rc::new(rows);
         view.palette = Rc::new(Palette::new(entries));
         view.stale = true;
+    }
+
+    /// Lists every entry again if the palette is open: the custom commands came in.
+    pub(super) fn rebuild_palette_if_open(&mut self, cx: &Context<Self>) {
+        if self.palette.is_some() {
+            self.rebuild_palette(cx);
+        }
     }
 
     /// The results for what's typed, matched once per change.
@@ -480,6 +505,7 @@ impl KynexApp {
                 self.select(tab, window, cx);
                 self.focus_input(window, cx);
             }
+            Target::UserCommand(name) => self.run_user_command(name, window, cx),
             Target::Command(cmd) => {
                 let title = view.palette.entries[m.index].title.clone();
                 self.palette_recent.retain(|r| *r != title);

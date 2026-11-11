@@ -156,13 +156,18 @@ impl TerminalView {
     }
 
     /// The tab's name: which shell it is.
-    pub fn label(&self) -> &'static str {
-        self.shell.kind.label()
+    pub fn label(&self) -> gpui::SharedString {
+        self.shell.title.clone().map_or_else(|| self.shell.kind.label().into(), Into::into)
     }
 
     /// What the shell calls its window (often the folder or running program).
     pub fn title(&self) -> Option<String> {
         self.terminal.as_ref().and_then(Terminal::title).map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+    }
+
+    /// Why it couldn't start, if it couldn't.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
     }
 
     pub fn exited(&self) -> bool {

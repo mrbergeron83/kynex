@@ -151,7 +151,9 @@ impl KynexApp {
         let scratch = self.draw_leaving(|s| &mut s.scratch, |e| &mut e.scratch, window, cx, Self::render_scratch_modal);
         let viewer =
             self.draw_leaving(|s| &mut s.viewer, |e| &mut e.viewer, window, cx, |s, l, _, _| s.render_image_viewer(l));
+        let popup = self.render_command_popup(cx);
         root.children(toasts)
+            .children(popup)
             .children(git_modal)
             .children(scratch)
             .children(settings)
@@ -225,6 +227,7 @@ impl KynexApp {
             .on_action(cx.listener(Self::edit_in_editor_action))
             .on_action(cx.listener(Self::rewind_action))
             .on_action(cx.listener(Self::toggle_timeline))
+            .on_action(cx.listener(Self::run_command_action))
             .on_action(cx.listener(Self::prev_turn))
             .on_action(cx.listener(Self::next_turn))
             .on_action(cx.listener(|this, _: &keys::PageUp, _, cx| this.scroll_keys(Scroll::Page(-1.), cx)))

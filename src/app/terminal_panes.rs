@@ -33,6 +33,14 @@ impl KynexApp {
         if let Some(p) = self.term_panes.get(&pane) {
             return p.clone();
         }
+        // A command's pane runs its own program, never the folder's hidden shells.
+        let command =
+            self.tiling_scope().and_then(|(_, ws, _)| self.tiles.get(&ws)?.command_of(pane).map(str::to_string));
+        if command.is_some() {
+            let panel = Self::new_term_panel(cwd, window, cx);
+            self.term_panes.insert(pane, panel.clone());
+            return panel;
+        }
         let hidden = self.terminals.iter().rposition(|(k, _)| same_folder(k, cwd));
         let panel = match hidden.map(|i| self.terminals.remove(i).1) {
             Some(p) => p,
@@ -43,7 +51,7 @@ impl KynexApp {
     }
 
     /// A panel with no shells yet in `cwd`. Closing its last shell hides its pane.
-    fn new_term_panel(cwd: &Path, window: &mut Window, cx: &mut Context<Self>) -> Entity<TerminalPanel> {
+    pub(super) fn new_term_panel(cwd: &Path, window: &mut Window, cx: &mut Context<Self>) -> Entity<TerminalPanel> {
         let panel = cx.new(|cx| TerminalPanel::new(cwd.to_path_buf(), cx));
         cx.subscribe_in(&panel, window, |this, panel, ev: &PanelEvent, window, cx| match ev {
             PanelEvent::Hide => {
@@ -89,7 +97,9 @@ impl KynexApp {
         let Some((_, ws, _)) = self.tiling_scope() else { return };
         let Some(t) = self.tiles.get(&ws) else { return };
         let focus = t.focus();
-        match (focus.filter(|f| t.is_terminal(*f)), t.tab_terminals().first().copied()) {
+        // A custom command's pane isn't the terminal Ctrl+` means.
+        let shell = focus.filter(|f| t.is_terminal(*f) && t.command_of(*f).is_none());
+        match (shell, t.tab_terminals().first().copied()) {
             (Some(f), _) => self.hide_terminal(f, window, cx),
             (None, Some(p)) => {
                 self.focus_pane(p, window, cx);
@@ -216,7 +226,10 @@ impl KynexApp {
         let (_, ws, _) = self.tiling_scope()?;
         let panel = self.term_panel(pane, &ws, window, cx);
         if panel.read(cx).is_empty() {
-            panel.update(cx, |p, cx| p.ensure_open(window, cx));
+            match self.tiles.get(&ws).and_then(|t| t.command_of(pane)).map(str::to_string) {
+                Some(name) => self.restart_command_pane(pane, name, window, cx),
+                None => panel.update(cx, |p, cx| p.ensure_open(window, cx)),
+            }
         }
         Some(gpui::div().size_full().child(panel).into_any_element())
     }
@@ -244,7 +257,8 @@ impl KynexApp {
 
     /// Keeps `panel`, whose pane closed, for folder `cwd`'s next terminal if it has shells.
     fn keep_hidden(&mut self, cwd: std::path::PathBuf, panel: Entity<TerminalPanel>, cx: &Context<Self>) {
-        if !panel.read(cx).is_empty() {
+        // A command's program ends with its pane.
+        if !panel.read(cx).is_empty() && !panel.read(cx).is_command() {
             self.terminals.push((cwd, panel));
         }
     }
@@ -253,6 +267,7 @@ impl KynexApp {
     /// Ctrl+` leaves them, while their workspace is still around; else they end.
     pub(super) fn drop_gone_terminals(&mut self, cx: &Context<Self>) {
         let live: Vec<PaneId> = self.tiles.values().flat_map(|t| t.terminals()).collect();
+        self.command_starting.retain(|id| live.contains(id));
         let gone: Vec<PaneId> = self.term_panes.keys().copied().filter(|id| !live.contains(id)).collect();
         for id in gone {
             let Some(panel) = self.term_panes.remove(&id) else { continue };
