@@ -11,7 +11,11 @@ use kynex_core::tiling::{Content, Tool};
 use kynex_core::toasts::Toast;
 
 use super::KynexApp;
+use super::sessions_panel::Parts;
 use super::timeline::WIDTH;
+
+/// How wide the sessions column is made, in pixels, as far as the window allows.
+const SIDE_WIDTH: f32 = 280.0;
 
 impl KynexApp {
     /// Tool pane `pane`'s body.
@@ -37,7 +41,103 @@ impl KynexApp {
                 let key = t.session_focus().and_then(|p| t.key_of(p))?;
                 self.render_timeline(key, true, cx)
             }
+            Content::Sessions => {
+                Some(self.render_sessions_pane(pane, Parts { workspaces: false, sessions: true }, window, cx))
+            }
+            Content::Workspaces => {
+                Some(self.render_sessions_pane(pane, Parts { workspaces: true, sessions: false }, window, cx))
+            }
             Content::Session(_) => None,
+        }
+    }
+
+    /// The sessions list or the workspaces, in a pane: the sidebar's own views, one of them each.
+    fn render_sessions_pane(
+        &mut self,
+        pane: PaneId,
+        parts: Parts,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = crate::theme::theme(cx).clone();
+        div()
+            .size_full()
+            .bg(t.panel)
+            .child(self.render_sessions_panel(window, cx, parts, Some(pane)))
+            .into_any_element()
+    }
+
+    /// The sessions list on the right of pane `target`. The sidebar leaves out what a pane shows.
+    pub(super) fn show_sessions_pane(&mut self, target: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_tool(target, Tool::Sessions, 0.7, window, cx);
+    }
+
+    /// The workspaces on the right of pane `target`.
+    pub(super) fn show_workspaces_pane(&mut self, target: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_tool(target, Tool::Workspaces, 0.7, window, cx);
+    }
+
+    /// The share of the width the sessions column gets: about [`SIDE_WIDTH`] pixels.
+    pub(super) fn side_share(&self, cx: &Context<Self>) -> f32 {
+        if self.tile_area.get().is_none() {
+            return 0.2;
+        }
+        (SIDE_WIDTH / self.layout_bounds(cx).w).clamp(0.12, 0.4)
+    }
+
+    /// Every tab of the workspace `cwd` gets its Sessions and Workspaces panes, once: what the
+    /// sidebar was. A tab where they were closed stays without.
+    pub(super) fn seed_side_panes(&mut self, cwd: &Path, cx: &mut Context<Self>) {
+        if self.tiles.get(cwd).is_none_or(|t| t.seeded()) {
+            return;
+        }
+        let (ratio, bounds) = (self.side_share(cx), self.layout_bounds(cx));
+        let mut next = self.next_pane;
+        if let Some(t) = self.tiles.get_mut(cwd) {
+            t.seed_side_panes(
+                || {
+                    next += 1;
+                    next - 1
+                },
+                ratio,
+                bounds,
+            );
+        }
+        self.next_pane = next;
+    }
+
+    /// Ctrl+B b and the toolbar's button: the tab's Sessions and Workspaces panes away, or back.
+    /// False outside a project's panes (chat and the Git view have the sidebar).
+    pub(super) fn toggle_side_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some((_, cwd, _)) = self.tiling_scope() else { return false };
+        let (ratio, bounds) = (self.side_share(cx), self.layout_bounds(cx));
+        let mut next = self.next_pane;
+        let Some(t) = self.tiles.get_mut(&cwd) else { return false };
+        if t.has_side_panes() {
+            t.remove_side_panes();
+        } else {
+            t.add_side_panes(
+                || {
+                    next += 1;
+                    next - 1
+                },
+                ratio,
+                bounds,
+            );
+        }
+        self.next_pane = next;
+        self.show_focused_pane(window, cx);
+        self.focus_input(window, cx);
+        cx.notify();
+        true
+    }
+
+    /// Whether the sessions list and workspaces are out of sight: the tab has none of them as
+    /// panes (a project's panes), or the sidebar is folded (everywhere else).
+    pub(super) fn sessions_hidden(&self) -> bool {
+        match self.tiling_scope().and_then(|(_, ws, _)| self.tiles.get(&ws)) {
+            Some(t) => !t.has_side_panes(),
+            None => self.saved.sessions_collapsed,
         }
     }
 
@@ -121,7 +221,10 @@ impl KynexApp {
     pub(super) fn close_tool_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, ws, _)) = self.tiling_scope() else { return };
         let Some(t) = self.tiles.get_mut(&ws) else { return };
-        if !matches!(t.close_pane(pane), Some(Content::Git | Content::Timeline)) {
+        if !matches!(
+            t.close_pane(pane),
+            Some(Content::Git | Content::Timeline | Content::Sessions | Content::Workspaces)
+        ) {
             return;
         }
         self.show_focused_pane(window, cx);

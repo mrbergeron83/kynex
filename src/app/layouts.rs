@@ -64,8 +64,18 @@ impl KynexApp {
             layouts.push((project, cwd.clone(), worth.then_some(saved)));
         }
         let mut changed: Vec<PathBuf> = Vec::new();
+        let now = super::layout_history::now_secs();
         for (project, cwd, saved) in layouts {
-            if self.saved_workspaces(&project).set_layout(&cwd, saved) && !changed.contains(&project) {
+            let ws = self.saved_workspaces(&project);
+            // The history sees every layout; its timed snapshots are saved with the workspace.
+            let kept = match &saved {
+                Some(l) => ws.history(&cwd).record(now, l),
+                None => {
+                    ws.history(&cwd).pause();
+                    false
+                }
+            };
+            if (ws.set_layout(&cwd, saved) || kept) && !changed.contains(&project) {
                 changed.push(project);
             }
         }

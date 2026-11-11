@@ -66,6 +66,8 @@ pub struct Saved {
     pub active: Active,
     pub chat_session_id: Option<String>,
     pub theme: Theme,
+    /// The theme file (its name without `.json`, in the data dir's `themes/`) in use instead of `theme`.
+    pub custom_theme: Option<String>,
     /// Interface and code font families; empty means the built-in ones.
     pub ui_font: String,
     pub code_font: String,
@@ -150,6 +152,7 @@ impl Default for Saved {
             active: Active::Chat,
             chat_session_id: None,
             theme: Theme::default(),
+            custom_theme: None,
             ui_font: String::new(),
             code_font: String::new(),
             motion: Motion::System,

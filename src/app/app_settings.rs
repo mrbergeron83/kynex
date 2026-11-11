@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use crate::ui::px;
-use gpui::{Anchor, ClickEvent, Context, PathPromptOptions, Window, div, prelude::*};
+use gpui::{Anchor, ClickEvent, Context, Entity, PathPromptOptions, Window, div, prelude::*};
 use kynex_core::awake::KeepAwake;
 use kynex_core::browser::{self, Browser, Pick};
 use kynex_core::cli;
@@ -26,6 +26,7 @@ use super::KynexApp;
 use super::menus::{FontRole, Menu};
 use super::settings::{heading, radio, settings_modal, settings_nav};
 use crate::theme::{self, Palette, THEMES, Theme, mono, theme};
+use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::{Icon, Tooltip, icon, outline_button};
 
 #[derive(Clone)]
@@ -39,6 +40,8 @@ pub struct AppSettingsView {
     /// when the modal opens, not every frame.
     browsers: Vec<Browser>,
     npx: bool,
+    /// The search box over Keyboard's shortcuts.
+    shortcuts_filter: Entity<TextInput>,
 }
 
 /// Found off the UI thread when the modal opens, so no frame searches PATH.
@@ -51,9 +54,11 @@ struct CliInfo {
 }
 
 const SECTIONS: [&str; 6] = ["General", "Providers", "Agents", "Appearance", "Keyboard", "Storage"];
-/// Where Providers, Agents and Storage are in [`SECTIONS`], for opening Settings on them.
+/// Where Providers, Agents, Appearance, Keyboard and Storage are in [`SECTIONS`], for opening Settings on them.
 pub(super) const PROVIDERS_SECTION: usize = 1;
 pub(super) const AGENTS_SECTION: usize = 2;
+pub(super) const APPEARANCE_SECTION: usize = 3;
+pub(super) const KEYBOARD_SECTION: usize = 4;
 pub(super) const STORAGE_SECTION: usize = 5;
 
 impl KynexApp {
@@ -67,7 +72,15 @@ impl KynexApp {
         let agents = self.new_agents_view(cx);
         let browsers = Browser::ALL.into_iter().filter(|b| b.installed()).collect();
         let npx = kynex_core::mcp_config::npx_found();
-        self.app_settings = Some(AppSettingsView { section: 0, cli: None, providers, agents, browsers, npx });
+        let shortcuts_filter = cx.new(|cx| TextInput::new(cx).placeholder("Search shortcuts"));
+        cx.subscribe(&shortcuts_filter, |_, _, ev, cx| {
+            if let InputEvent::Changed = ev {
+                cx.notify();
+            }
+        })
+        .detach();
+        self.app_settings =
+            Some(AppSettingsView { section: 0, cli: None, providers, agents, browsers, npx, shortcuts_filter });
         // Storage is measured again each time Settings opens; the last stays up meanwhile.
         if let Some(s) = &mut self.storage {
             s.stale = true;
@@ -168,6 +181,7 @@ impl KynexApp {
 
     pub(super) fn set_theme(&mut self, th: Theme, cx: &mut Context<Self>) {
         self.saved.theme = th;
+        self.saved.custom_theme = None;
         self.save();
         theme::set(th, cx);
         cx.refresh_windows();
@@ -482,13 +496,36 @@ impl KynexApp {
     }
 
     fn render_appearance(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
-        let themes =
-            div().flex().flex_col().gap_1().child(heading("Theme", "Colours for the whole window.", t)).children(
-                THEMES.iter().enumerate().map(|(n, (th, name))| {
-                    let th = *th;
-                    choice(("app-theme", n), self.saved.theme == th, name.to_string(), t)
-                        .on_click(cx.listener(move |this, _, _, cx| this.set_theme(th, cx)))
-                }),
+        let themes = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(heading(
+                "Theme",
+                "Colours for the whole window. Your own themes are JSON files in the themes folder; a change to one shows at once.",
+                t,
+            ))
+            .children(THEMES.iter().enumerate().map(|(n, (th, name))| {
+                let th = *th;
+                choice(("app-theme", n), self.saved.custom_theme.is_none() && self.saved.theme == th, name.to_string(), t)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_theme(th, cx)))
+            }))
+            .children(self.custom_themes.iter().enumerate().map(|(n, c)| {
+                let id = c.id.clone();
+                choice(("app-custom-theme", n), self.saved.custom_theme.as_deref() == Some(&c.id), c.name.clone(), t)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_custom_theme(id.clone(), cx)))
+            }))
+            .children(
+                self.theme_errors
+                    .iter()
+                    .map(|e| div().px_2().text_xs().text_color(t.error).child(format!("Theme not used: {e}"))),
+            )
+            .child(
+                outline_button("app-themes-folder", "Open themes folder", cx).on_click(cx.listener(|this, _, _, _| {
+                    let dir = kynex_core::themes::dir();
+                    let _ = std::fs::create_dir_all(&dir);
+                    this.open_in(Opener::Explorer, &dir)
+                })),
             );
 
         let font_row = |role: FontRole, label: &'static str, current: String, cx: &mut Context<Self>| {
@@ -683,6 +720,31 @@ impl KynexApp {
 
     fn render_keyboard(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
         let path = data_dir().join("keymap.json");
+        let filter = self.app_settings.as_ref().map(|s| s.shortcuts_filter.clone());
+        let query = filter.as_ref().map(|f| f.read(cx).text().to_string()).unwrap_or_default();
+        let rows: Vec<_> = super::keys::in_effect()
+            .iter()
+            .filter(|(name, keys)| kynex_core::shortcuts::matches(name, &display_keys(keys), &query))
+            .map(|(name, keys)| {
+                let shown = display_keys(keys);
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .px_2()
+                    .py_1()
+                    .child(div().text_sm().child(kynex_core::shortcuts::label(name)))
+                    .child(
+                        div()
+                            .font_family(mono())
+                            .text_xs()
+                            .text_color(if shown.is_empty() { t.text_muted } else { t.text })
+                            .child(if shown.is_empty() { "unbound".to_string() } else { shown }),
+                    )
+            })
+            .collect();
+        let empty = rows.is_empty();
         div()
             .flex()
             .flex_col()
@@ -705,7 +767,16 @@ impl KynexApp {
                         this.open_in(Opener::Explorer, &data_dir())
                     }))),
             )
+            .children(filter.map(|f| {
+                div().px_2().py_1().rounded_md().border_1().border_color(t.border).text_sm().child(f)
+            }))
+            .child(div().flex().flex_col().children(rows))
+            .when(empty, |d| d.child(div().px_2().text_sm().text_color(t.text_muted).child("No shortcut matches.")))
     }
+}
+
+fn display_keys(keys: &str) -> String {
+    kynex_core::shortcuts::display(keys, cfg!(target_os = "macos"))
 }
 
 /// A radio row: a label with a dot when it's the current choice.

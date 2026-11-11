@@ -48,6 +48,10 @@ pub enum Tool {
     Git,
     /// The timeline of the session pane focused last.
     Timeline,
+    /// The sessions list: open and past sessions, groups, the archive.
+    Sessions,
+    /// The project's workspaces, each with the sessions open in it.
+    Workspaces,
 }
 
 impl Tool {
@@ -56,6 +60,8 @@ impl Tool {
             Self::Terminal(_) => Content::Terminal,
             Self::Git => Content::Git,
             Self::Timeline => Content::Timeline,
+            Self::Sessions => Content::Sessions,
+            Self::Workspaces => Content::Workspaces,
         }
     }
 }
@@ -67,7 +73,16 @@ pub enum Content {
     Terminal,
     Git,
     Timeline,
+    Sessions,
+    Workspaces,
 }
+
+/// Panes of the sessions list and the workspaces count as too narrow under this, not the width
+/// of a conversation.
+pub const SIDE_MIN_W: f32 = 180.0;
+
+/// The share of the left column's height the Workspaces pane gets, above the Sessions pane.
+const WORKSPACES_SHARE: f32 = 0.35;
 
 /// Where a terminal goes when it's shown and the tab has none: below everything.
 pub const TERMINAL_RATIO: f32 = 0.7;
@@ -94,6 +109,10 @@ pub struct SavedLayout {
     /// panes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<BTreeMap<PaneId, Tool>>,
+    /// The sessions list and the workspaces were put in its tabs (see
+    /// [`Tiling::seed_side_panes`]); not again once they were closed.
+    #[serde(default)]
+    pub seeded: bool,
 }
 
 impl SavedLayout {
@@ -111,6 +130,8 @@ pub struct Tiling {
     last_session: Option<PaneId>,
     /// The session the window talked to at the last [`Self::reconcile`].
     shown: Option<Key>,
+    /// The tabs got their Sessions and Workspaces panes (once; closing them is the user's say).
+    seeded: bool,
 }
 
 impl Tiling {
@@ -119,7 +140,7 @@ impl Tiling {
     pub fn save(&self, id_of: impl Fn(Key) -> Option<String>) -> SavedLayout {
         let sessions = self.layout.panes().into_iter().filter_map(|p| Some((p, id_of(self.key_of(p)?)?))).collect();
         let tools = self.tools.iter().map(|(p, t)| (*p, t.clone())).collect();
-        SavedLayout { layout: self.layout.clone(), sessions, tools: Some(tools) }
+        SavedLayout { layout: self.layout.clone(), sessions, tools: Some(tools), seeded: self.seeded }
     }
 
     /// Brings a saved layout back. Its panes get fresh ids from `*next_pane` up (advancing
@@ -188,7 +209,14 @@ impl Tiling {
                 keys.insert(k, key);
             }
         }
-        (!layout.is_empty()).then_some(Self { layout, keys, tools, last_session: None, shown: None })
+        (!layout.is_empty()).then_some(Self {
+            layout,
+            keys,
+            tools,
+            last_session: None,
+            shown: None,
+            seeded: saved.seeded,
+        })
     }
 
     /// One tab with one pane `pane`, showing session `key`.
@@ -198,6 +226,7 @@ impl Tiling {
             keys: HashMap::from([(pane, key)]),
             tools: HashMap::new(),
             last_session: Some(pane),
+            seeded: false,
             shown: None,
         }
     }
@@ -530,6 +559,76 @@ impl Tiling {
     /// The pane filling the active tab, if one is zoomed.
     pub fn zoomed(&self) -> Option<PaneId> {
         self.layout.tab().and_then(|t| t.zoomed())
+    }
+
+    /// Whether some pane of the active tab would be under `min_w` wide in `bounds` (the sessions
+    /// list and the workspaces, under [`SIDE_MIN_W`]): the window is too narrow for the split,
+    /// and the app shows one pane at a time until it grows. Never with a single pane, or while
+    /// one is zoomed.
+    pub fn too_narrow(&self, bounds: Rect, min_w: f32) -> bool {
+        if self.zoomed().is_some() {
+            return false;
+        }
+        let rects = self.rects(bounds);
+        rects.panes.len() > 1
+            && rects.panes.iter().any(|(p, r)| r.w < if self.is_side(*p) { SIDE_MIN_W.min(min_w) } else { min_w })
+    }
+
+    /// Whether `pane` holds the sessions list or the workspaces.
+    pub fn is_side(&self, pane: PaneId) -> bool {
+        matches!(self.content(pane), Some(Content::Sessions | Content::Workspaces))
+    }
+
+    /// Whether the active tab has the sessions list or the workspaces as a pane.
+    pub fn has_side_panes(&self) -> bool {
+        self.layout.tab().is_some_and(|t| t.panes().into_iter().any(|p| self.is_side(p)))
+    }
+
+    /// Whether the tabs got their side panes already.
+    pub fn seeded(&self) -> bool {
+        self.seeded
+    }
+
+    /// Puts the Sessions pane on the left of the active tab, `ratio` of its width, with the
+    /// Workspaces above it (`ids` gives the two new pane ids). Does nothing if the tab has a
+    /// side pane, or there is no room.
+    pub fn add_side_panes(&mut self, mut ids: impl FnMut() -> PaneId, ratio: f32, bounds: Rect) -> bool {
+        if self.has_side_panes() {
+            return false;
+        }
+        let Some(target) = self.session_focus().or_else(|| self.layout.tab().and_then(|t| t.panes().first().copied()))
+        else {
+            return false;
+        };
+        let sessions = ids();
+        if !self.split_tool(target, Direction::Left, sessions, Tool::Sessions, ratio, bounds) {
+            return false;
+        }
+        let workspaces = ids();
+        // Best effort: without room for the second, the first stays alone.
+        self.split_tool(sessions, Direction::Up, workspaces, Tool::Workspaces, WORKSPACES_SHARE, bounds);
+        // The focus goes back to the session.
+        self.focus_pane(target);
+        true
+    }
+
+    /// Every tab gets its Sessions and Workspaces panes, once (what the sidebar used to be).
+    /// The active tab stays active.
+    pub fn seed_side_panes(&mut self, mut ids: impl FnMut() -> PaneId, ratio: f32, bounds: Rect) {
+        let active = self.layout.active();
+        for i in 0..self.layout.tabs().len() {
+            self.layout.select(i);
+            self.add_side_panes(&mut ids, ratio, bounds);
+        }
+        self.layout.select(active);
+        self.seeded = true;
+    }
+
+    /// Takes the active tab's Sessions and Workspaces panes away. Returns how many went.
+    pub fn remove_side_panes(&mut self) -> usize {
+        let side: Vec<PaneId> =
+            self.layout.tab().map(|t| t.panes().into_iter().filter(|p| self.is_side(*p)).collect()).unwrap_or_default();
+        side.into_iter().filter(|p| self.close_pane(*p).is_some()).count()
     }
 
     /// Zooms the focused pane to fill its tab, or puts the others back.

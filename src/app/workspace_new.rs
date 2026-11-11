@@ -185,14 +185,20 @@ impl KynexApp {
             why.push("a session still working".to_string());
         }
         if why.is_empty() {
-            return self.confirm_remove_workspace(path, false, cx);
+            return self.confirm_remove_workspace(path, false, None, cx);
         }
         self.workspace_ui = WorkspaceUi { removing: Some(Removal { path, label, why }), ..WorkspaceUi::default() };
         cx.notify();
     }
 
     /// Closes the workspace's sessions, then `git worktree remove`; the branch stays.
-    fn confirm_remove_workspace(&mut self, path: PathBuf, force: bool, cx: &mut Context<Self>) {
+    pub(super) fn confirm_remove_workspace(
+        &mut self,
+        path: PathBuf,
+        force: bool,
+        done: Option<std::sync::mpsc::Sender<Result<serde_json::Value, String>>>,
+        cx: &mut Context<Self>,
+    ) {
         self.workspace_ui = WorkspaceUi::default();
         let Some(project) = self.workspace_project() else { return };
         // Sessions there go first: a process in the folder keeps Windows from removing it.
@@ -226,6 +232,9 @@ impl KynexApp {
         if self.saved_workspaces(&project).is_folder(&path) {
             self.saved_workspaces(&project).remove_folder(&path);
             self.save_workspaces(&project, cx);
+            if let Some(done) = done {
+                let _ = done.send(Ok(serde_json::json!({ "removed": path })));
+            }
             return cx.notify();
         }
         let root = project.clone();
@@ -238,8 +247,14 @@ impl KynexApp {
                         this.drop_tiles_of(&path);
                         this.workspaces.entry(project.clone()).or_default().forget(&path);
                         this.save_workspaces(&project, cx);
+                        if let Some(done) = &done {
+                            let _ = done.send(Ok(serde_json::json!({ "removed": path })));
+                        }
                     }
                     Err(e) => {
+                        if let Some(done) = &done {
+                            let _ = done.send(Err(e.clone()));
+                        }
                         this.toast(Toast::error(e));
                     }
                 }
@@ -357,11 +372,9 @@ impl KynexApp {
                         div()
                             .flex()
                             .gap_1()
-                            .child(primary_button("remove-workspace-yes", "Remove anyway", cx).on_click(
-                                cx.listener(move |this, _, _, cx| {
-                                    this.confirm_remove_workspace(path.clone(), true, cx)
-                                }),
-                            ))
+                            .child(primary_button("remove-workspace-yes", "Remove anyway", cx).on_click(cx.listener(
+                                move |this, _, _, cx| this.confirm_remove_workspace(path.clone(), true, None, cx),
+                            )))
                             .child(outline_button("remove-workspace-no", "Keep", cx).on_click(cx.listener(
                                 |this, _, _, cx| {
                                     this.cancel_new_workspace();
