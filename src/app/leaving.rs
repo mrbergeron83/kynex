@@ -30,7 +30,6 @@ pub(super) struct Exits {
     pub scratch: Leaving<ScratchModal>,
     pub viewer: Leaving<Entity<ImageViewer>>,
     pub sessions: Leaving<()>,
-    pub terminal: Leaving<()>,
     /// The slash-command list and its selection.
     pub slash: Leaving<(Rc<Vec<Completion>>, usize)>,
 }
@@ -48,7 +47,6 @@ impl Default for Exits {
             scratch: Leaving::new(QUICK),
             viewer: Leaving::new(QUICK),
             sessions: Leaving::new(NORMAL),
-            terminal: Leaving::new(NORMAL),
             slash: Leaving::new(QUICK),
         }
     }

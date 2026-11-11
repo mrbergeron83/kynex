@@ -45,7 +45,7 @@ impl KynexApp {
             .into_any_element()
     }
 
-    /// The conversation: header, transcript, composer, timeline and terminal.
+    /// The conversation: header, transcript, composer and timeline, or the workspace's panes.
     pub(super) fn render_code_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let key = self.focused_key();
@@ -81,8 +81,7 @@ impl KynexApp {
                     .child(self.render_toolbar(cx))
                     .children(pane_tabs)
                     .children(header)
-                    .child(body)
-                    .children(self.render_terminal_dock(window, cx)),
+                    .child(body),
             )
             .into_any_element()
     }
@@ -184,21 +183,6 @@ impl KynexApp {
                     MouseButton::Left,
                     cx.listener(|this, _, _, cx| {
                         this.tile_drag = None;
-                        cx.notify();
-                    }),
-                )
-        })
-        .when(self.resizing_terminal, |d| {
-            d.cursor_row_resize()
-                .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
-                    this.drag_terminal_edge(f32::from(ev.position.y), window);
-                    cx.notify();
-                }))
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.resizing_terminal = false;
-                        this.save();
                         cx.notify();
                     }),
                 )

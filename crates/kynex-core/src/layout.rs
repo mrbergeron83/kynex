@@ -334,6 +334,25 @@ impl Tab {
         true
     }
 
+    /// Splits the whole tab in two, `new` after everything there (right for `Row`, below for
+    /// `Column`) with `ratio` of the room before it, and focuses it. Refused like [`Self::split`].
+    pub fn split_root(&mut self, axis: Axis, new: PaneId, ratio: f32, bounds: Rect) -> bool {
+        if self.contains(new) || !ratio.is_finite() {
+            return false;
+        }
+        let old = std::mem::replace(&mut self.root, Node::Pane(new));
+        let root = Node::Split { axis, ratio: ratio.clamp(0.0, 1.0), a: Box::new(old), b: Box::new(Node::Pane(new)) };
+        if root.min_extent(Axis::Row) > bounds.w + EPS || root.min_extent(Axis::Column) > bounds.h + EPS {
+            let Node::Split { a, .. } = root else { unreachable!() };
+            self.root = *a;
+            return false;
+        }
+        self.root = root;
+        self.focus = new;
+        self.zoomed = None;
+        true
+    }
+
     /// Closes `pane`: its sibling takes the space. False if it isn't here or is the only
     /// pane (close the tab instead).
     pub fn close(&mut self, pane: PaneId) -> bool {
@@ -648,6 +667,11 @@ impl Layout {
         done
     }
 
+    /// Splits the whole active tab (see [`Tab::split_root`]).
+    pub fn split_root(&mut self, axis: Axis, new: PaneId, ratio: f32, bounds: Rect) -> bool {
+        self.tab_of(new).is_none() && self.tab_mut().is_some_and(|t| t.split_root(axis, new, ratio, bounds))
+    }
+
     /// Closes a pane; the tab goes with it if it was the last one. False if it isn't here.
     pub fn close_pane(&mut self, pane: PaneId) -> bool {
         let Some(i) = self.tab_of(pane) else { return false };
@@ -763,6 +787,20 @@ mod tests {
         assert!(t.split(1, Axis::Row, 2, B));
         assert!(t.split(2, Axis::Column, 3, B));
         t
+    }
+
+    #[test]
+    fn a_root_split_runs_along_the_whole_tab() {
+        let mut t = three();
+        assert!(t.split_root(Axis::Column, 4, 0.75, B));
+        assert_eq!((t.panes(), t.focus()), (vec![1, 2, 3, 4], 4));
+        let r = t.rects(B);
+        let bottom = r.pane(4).unwrap();
+        assert!(close(bottom.w, B.w) && close(bottom.y, (B.h - DIVIDER) * 0.75 + DIVIDER));
+        assert!(!t.split_root(Axis::Column, 4, 0.5, B), "4 is here already");
+        let tiny = Rect::new(0.0, 0.0, 1600.0, 250.0);
+        assert!(!t.split_root(Axis::Column, 5, 0.5, tiny));
+        assert_eq!(t.panes(), vec![1, 2, 3, 4], "a refused split changes nothing");
     }
 
     #[test]

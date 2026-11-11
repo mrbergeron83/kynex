@@ -130,7 +130,7 @@ A cargo workspace with two crates:
   - `git/` — the Git view (`GitView` entity): top bar with branch picker and fetch / pull / push,
     Changes tab (commit box, staged / unstaged files), History tab, diff viewer; the table at the
     top of `git/mod.rs` lists the files
-  - `terminal/` — the terminal panel under the conversation (`TerminalPanel`, tabs of
+  - `terminal/` — the terminal panel a terminal pane shows (`TerminalPanel`, tabs of
     `TerminalView`s drawn by a custom GPU element); play buttons on the ```bash / ```powershell commands Claude suggests
     run their command there; Ctrl+` toggles it
   - `ui/` — our small component kit, Zed `ui`-crate style: buttons, tooltips, menus, icons

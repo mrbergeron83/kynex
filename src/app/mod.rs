@@ -22,7 +22,7 @@
 //! | `session_select.rs` | picking sessions to archive or delete together       |
 //! | `session_tidy.rs`   | many sessions at once: menu, tidying, list keys      |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
-//! | `terminal_dock.rs`  | the project's terminal panel under the conversation  |
+//! | `terminal_panes.rs` | terminal panes: Ctrl+`, run buttons, hide and show   |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
 //! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
@@ -135,7 +135,7 @@ mod status;
 mod storage;
 mod storage_list;
 mod tasks;
-mod terminal_dock;
+mod terminal_panes;
 mod tiles;
 pub(crate) mod timeline;
 mod title_bar;
@@ -203,8 +203,11 @@ pub struct KynexApp {
     /// Each open project's Claude settings (mode, effort, folders), read once and
     /// kept in step with every save, so no render reads the file.
     claude_settings: HashMap<PathBuf, kynex_core::project::ClaudeSettings>,
-    /// Each project's terminal panel, created the first time it's opened.
-    terminals: HashMap<PathBuf, Entity<TerminalPanel>>,
+    /// Hidden terminals with shells running, by folder, newest last: shown again before
+    /// a new one starts.
+    terminals: Vec<(PathBuf, Entity<TerminalPanel>)>,
+    /// The panel in each terminal pane, of every workspace.
+    term_panes: HashMap<kynex_core::layout::PaneId, Entity<TerminalPanel>>,
     threads: HashMap<Key, Thread>,
     /// Each session's timeline turns, walked again only where items changed.
     timelines: HashMap<Key, kynex_core::timeline::Turns>,
@@ -296,7 +299,6 @@ pub struct KynexApp {
     /// What's animating out after it closed: menus, modals, panels.
     exits: leaving::Exits,
     resizing_sessions: bool,
-    resizing_terminal: bool,
     /// Whether a newer Claude Code is out, or being installed.
     cli_update: UpdateState,
     /// Folders the CLI would ignore settings in until trusted; see `trust.rs`.
@@ -518,7 +520,8 @@ impl KynexApp {
             worktrees: HashMap::new(),
             workspaces: HashMap::new(),
             workspace_ui: Default::default(),
-            terminals: HashMap::new(),
+            terminals: Vec::new(),
+            term_panes: HashMap::new(),
             appearances: HashMap::new(),
             claude_settings: HashMap::new(),
             threads: HashMap::new(),
@@ -571,7 +574,6 @@ impl KynexApp {
             menu: None,
             exits: Default::default(),
             resizing_sessions: false,
-            resizing_terminal: false,
             cli_update: UpdateState::Idle,
             trust: Default::default(),
             app_update: UpdateState::Idle,

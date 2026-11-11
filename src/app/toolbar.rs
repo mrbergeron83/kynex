@@ -125,8 +125,8 @@ impl KynexApp {
             .child(open("open-files", Icon::Folder, "Open in file manager", Opener::Explorer, here.clone(), cx))
             .child(
                 icon_button("open-term", Icon::Terminal, cx)
-                    .when(self.saved.terminal_open && view == View::Code, |b| b.bg(t.active))
-                    .tooltip(Tooltip::for_action("Terminal", ToggleTerminal, "in Kynex, under the conversation"))
+                    .when(view == View::Code && self.has_terminal(), |b| b.bg(t.active))
+                    .tooltip(Tooltip::for_action("Terminal", ToggleTerminal, "a pane in Kynex, under the conversation"))
                     .on_click(cx.listener(|this, _, window, cx| this.terminal_button(window, cx))),
             )
     }

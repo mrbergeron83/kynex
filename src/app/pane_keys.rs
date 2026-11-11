@@ -81,7 +81,7 @@ impl KynexApp {
     fn close_pane_or_tab(&mut self, _: &keys::ClosePaneOrTab, window: &mut Window, cx: &mut Context<Self>) {
         let several = self
             .tiling_scope()
-            .and_then(|(_, cwd, _)| self.tiles.get(&cwd).map(|t| t.visible().len() > 1))
+            .and_then(|(_, cwd, _)| self.tiles.get(&cwd).map(|t| t.visible_panes().len() > 1))
             .unwrap_or(false);
         if several {
             self.close_pane(window, cx);
@@ -111,7 +111,9 @@ impl KynexApp {
 
     /// Whether the tab that's showing has several panes on screen.
     fn has_several_panes(&self) -> bool {
-        self.tiling_scope().and_then(|(_, cwd, _)| self.tiles.get(&cwd).map(|t| t.visible().len() > 1)).unwrap_or(false)
+        self.tiling_scope()
+            .and_then(|(_, cwd, _)| self.tiles.get(&cwd).map(|t| t.visible_panes().len() > 1))
+            .unwrap_or(false)
     }
 
     /// Where the focus is now, as far as resize mode cares.

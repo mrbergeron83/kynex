@@ -217,7 +217,7 @@ impl KynexApp {
             self.forget(&closed);
         }
         // Its shells and Git view too: a shell standing in the folder blocks removing it.
-        self.terminals.retain(|f, _| !workspace::same_folder(f, &path));
+        self.terminals.retain(|(f, _)| !workspace::same_folder(f, &path));
         self.git.retain(|f, _| !workspace::same_folder(f, &path));
         if shown_there {
             self.select_workspace(&project, cx);

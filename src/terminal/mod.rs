@@ -80,6 +80,11 @@ impl TerminalPanel {
         }
     }
 
+    /// The folder its shells start in.
+    pub fn cwd(&self) -> &std::path::Path {
+        &self.cwd
+    }
+
     pub fn is_empty(&self) -> bool {
         self.tabs.is_empty()
     }

@@ -7,6 +7,7 @@ use gpui::{Anchor, AnyElement, Context, MouseButton, MouseDownEvent, Window, can
 use kynex_core::layout::{Axis, Direction, PaneId, Rect};
 use kynex_core::live::Key;
 use kynex_core::session::Session;
+use kynex_core::tiling::Content;
 use kynex_core::toasts::Toast;
 
 use super::KynexApp;
@@ -107,10 +108,15 @@ impl KynexApp {
         self.open_beside(id, Some(pane), kynex_core::tiling::drop_side(rect, x, y), window, cx);
     }
 
-    /// Closes pane `id` (the last one stays). A session that never got a message goes with it.
+    /// Closes pane `id` (the last session pane stays). A session that never got a message
+    /// goes with it; a terminal is hidden.
     pub(super) fn close_pane_id(&mut self, id: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, ws, _)) = self.tiling_scope() else { return };
-        let Some(key) = self.tiles.get_mut(&ws).and_then(|t| t.close_pane(id)) else { return };
+        if self.tiles.get(&ws).is_some_and(|t| t.is_terminal(id)) {
+            self.hide_terminal(id, window, cx);
+            return;
+        }
+        let Some(Content::Session(key)) = self.tiles.get_mut(&ws).and_then(|t| t.close_pane(id)) else { return };
         self.show_focused_pane(window, cx);
         if self.session_by_key(key).is_some_and(Session::is_new) {
             self.close_open(key);
@@ -240,28 +246,25 @@ impl KynexApp {
         let Some(t) = self.tiles.get(&ws) else { return Vec::new() };
         let tabs = t.tabs();
         let zoomed = t.zoomed().is_some();
-        let several = t.visible().len() > 1 || zoomed;
+        let several = t.visible_panes().len() > 1 || zoomed;
         let here = tabs.iter().position(|t| t.active).unwrap_or(0);
-        let closable = t.panes().len() > 1;
+        let terminal = t.is_terminal(pane);
+        let closable = terminal || t.panes().len() > 1 && t.sessions().len() > 1;
+        // A terminal splits into another terminal; a session into a new session.
+        let split = move |axis: Axis| -> Action {
+            Box::new(move |this: &mut KynexApp, window: &mut Window, cx: &mut Context<KynexApp>| {
+                if terminal {
+                    let side = if axis == Axis::Row { Direction::Right } else { Direction::Down };
+                    this.split_terminal(pane, side, window, cx);
+                } else {
+                    this.focus_pane(pane, window, cx);
+                    this.split_pane(axis, window, cx);
+                }
+            })
+        };
         let mut items = vec![
-            Self::menu_action(
-                0,
-                "Split right".into(),
-                cx,
-                Box::new(move |this, window, cx| {
-                    this.focus_pane(pane, window, cx);
-                    this.split_pane(Axis::Row, window, cx);
-                }),
-            ),
-            Self::menu_action(
-                1,
-                "Split down".into(),
-                cx,
-                Box::new(move |this, window, cx| {
-                    this.focus_pane(pane, window, cx);
-                    this.split_pane(Axis::Column, window, cx);
-                }),
-            ),
+            Self::menu_action(0, "Split right".into(), cx, split(Axis::Row)),
+            Self::menu_action(1, "Split down".into(), cx, split(Axis::Column)),
         ];
         if several {
             items.push(Self::menu_action(
@@ -293,7 +296,7 @@ impl KynexApp {
             items.push(div().my_1().child(divider(cx)).into_any_element());
             items.push(Self::menu_action(
                 4,
-                "Close pane".into(),
+                if terminal { "Hide terminal".into() } else { "Close pane".into() },
                 cx,
                 Box::new(move |this, window, cx| this.close_pane_id(pane, window, cx)),
             ));

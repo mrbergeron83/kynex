@@ -114,7 +114,7 @@ impl KynexApp {
         };
         self.git.retain(|f, _| !ours(f));
         // Dropping a panel ends its shells.
-        self.terminals.retain(|f, _| !ours(f));
+        self.terminals.retain(|(f, _)| !ours(f));
     }
 
     /// Shows a workspace: its open session, else the one it last had, else a new one.

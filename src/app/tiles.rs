@@ -72,7 +72,7 @@ impl KynexApp {
     /// The workspace's tiling when it has several panes on screen.
     fn tiled(&self) -> Option<&Tiling> {
         let (_, cwd, _) = self.tiling_scope()?;
-        self.tiles.get(&cwd).filter(|t| t.visible().len() > 1 || t.zoomed().is_some())
+        self.tiles.get(&cwd).filter(|t| t.visible_panes().len() > 1 || t.zoomed().is_some())
     }
 
     /// Runs `f` with pane `id`'s state as `self.pane`.
@@ -117,6 +117,14 @@ impl KynexApp {
         if !t.focus_pane(id) {
             return;
         }
+        // A terminal takes the keys; the session state up stays the last session pane's.
+        if t.is_terminal(id) {
+            if let Some(p) = t.session_focus() {
+                self.swap_to(p, window, cx);
+            }
+            cx.notify();
+            return;
+        }
         if let Some(key) = t.key_of(id)
             && let Some(live) = self.code.get_mut(&project)
         {
@@ -130,7 +138,7 @@ impl KynexApp {
     pub(super) fn show_focused_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((project, cwd, _)) = self.tiling_scope() else { return };
         let Some(t) = self.tiles.get(&cwd) else { return };
-        let Some(focus) = t.focus() else { return };
+        let Some(focus) = t.session_focus() else { return };
         if let Some(key) = t.key_of(focus)
             && let Some(live) = self.code.get_mut(&project)
         {
@@ -198,6 +206,11 @@ impl KynexApp {
     /// Closes the focused pane; its session stays open until it's idle and not recent.
     pub(super) fn close_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, cwd, key)) = self.tiling_scope() else { return };
+        if let Some(focus) = self.tiles.get(&cwd).and_then(Tiling::focus).filter(|_| self.focused_terminal().is_some())
+        {
+            self.hide_terminal(focus, window, cx);
+            return;
+        }
         if self.tiles.get_mut(&cwd).and_then(Tiling::close_focused).is_none() {
             return;
         }
@@ -212,7 +225,7 @@ impl KynexApp {
     /// Focuses the next (`1`) or previous (`-1`) pane of the tab.
     pub(super) fn step_pane(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(t) = self.tiled() else { return };
-        let panes: Vec<PaneId> = t.visible().iter().map(|(p, _)| *p).collect();
+        let panes = t.visible_panes();
         let at = t.focus().and_then(|f| panes.iter().position(|p| *p == f)).unwrap_or(0) as isize;
         let next = panes[(at + by).rem_euclid(panes.len() as isize) as usize];
         self.focus_pane(next, window, cx);
@@ -241,6 +254,7 @@ impl KynexApp {
             };
             self.tiles.insert(cwd.clone(), tiling);
             self.tile_projects.insert(cwd.clone(), project.clone());
+            self.migrate_terminal_dock(&cwd, window, cx);
             self.keep_restored_focus(&project, &cwd, current);
         }
         // Restoring may have changed which session the window talks to.
@@ -250,7 +264,7 @@ impl KynexApp {
         let Some(t) = self.tiles.get_mut(&cwd) else { return };
         t.reconcile(&open, current);
         let visible = t.visible();
-        let focus = t.focus();
+        let focus = t.session_focus();
         // Every pane's session stays open: those of the other tabs and workspaces too, which
         // come back as they were.
         let held: Vec<Key> = self.tiles.values().flat_map(Tiling::sessions).collect();
@@ -272,6 +286,7 @@ impl KynexApp {
         let live: Vec<PaneId> = self.tiles.values().flat_map(|t| t.panes()).collect();
         let me = self.pane_id;
         self.parked.retain(|id, _| *id != me && live.contains(id));
+        self.drop_gone_terminals(cx);
     }
 
     /// Every pane's half-written message, put aside (for quitting).
@@ -392,14 +407,29 @@ impl KynexApp {
         if measured {
             for (id, key, r) in panes {
                 let focused = Some(id) == focus;
-                let body = self.with_pane(id, |this| {
-                    div()
-                        .size_full()
-                        .flex()
-                        .flex_col()
-                        .children(this.render_tile_header(id, key, true, cx))
-                        .child(this.render_pane_body(key, focused, window, cx))
-                });
+                let body = match key {
+                    None => {
+                        // A terminal: its panel's tab strip is its header; right-click for the menu.
+                        let panel = self.render_terminal_pane(id, window, cx);
+                        div()
+                            .size_full()
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
+                                    this.open_menu(super::menus::Menu::Pane(id), ev.position, gpui::Anchor::TopLeft, cx)
+                                }),
+                            )
+                            .children(panel)
+                    }
+                    Some(_) => self.with_pane(id, |this| {
+                        div()
+                            .size_full()
+                            .flex()
+                            .flex_col()
+                            .children(this.render_tile_header(id, key, true, cx))
+                            .child(this.render_pane_body(key, focused, window, cx))
+                    }),
+                };
                 let width = if focused { fw } else { bw };
                 let surface = bordered(div().size_full().overflow_hidden().bg(t.editor), width)
                     .border_color(if focused { focus_colour } else { t.border })
