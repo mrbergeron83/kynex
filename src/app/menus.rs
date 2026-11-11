@@ -40,6 +40,8 @@ pub enum Menu {
     PaneTab(usize),
     /// The workspace picker (`prefix w`): this project's workspaces.
     Workspaces,
+    /// The older layouts of this workspace (`prefix s`), to bring one back.
+    Layouts,
     /// The project picker (`prefix shift-p`): the open projects, and Open project….
     Projects,
 }
@@ -107,7 +109,10 @@ impl KynexApp {
 
     /// Which picker (workspaces, projects) is open, for its keys.
     pub(super) fn open_picker_menu(&self) -> Option<Menu> {
-        self.menu.as_ref().map(|m| m.which.clone()).filter(|m| matches!(m, Menu::Workspaces | Menu::Projects))
+        self.menu
+            .as_ref()
+            .map(|m| m.which.clone())
+            .filter(|m| matches!(m, Menu::Workspaces | Menu::Projects | Menu::Layouts))
     }
 
     /// The open menu; `leaving` while it plays out after closing.
@@ -426,6 +431,23 @@ impl KynexApp {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.menu = None;
                                 this.select_workspace(&path, cx);
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
+            Menu::Layouts => {
+                let entries = self.layout_entries();
+                if entries.is_empty() {
+                    items.push(menu_item("layout-none", "No older layouts yet", false, cx).into_any_element());
+                }
+                for (n, s) in entries.into_iter().enumerate() {
+                    let label = format!("{} · {}", kynex_core::fmt::ago_unix(s.at as i64), s.summary());
+                    items.push(
+                        menu_item(("layout-pick", n), label, n == self.menu_pick, cx)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.menu = None;
+                                this.restore_layout(&s, window, cx);
                             }))
                             .into_any_element(),
                     );

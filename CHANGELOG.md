@@ -7,6 +7,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Layout history: Ctrl+B U / Shift+U undo and redo a change to the panes, Ctrl+B Shift+R reopens the pane closed last, and Ctrl+B S lists older layouts (one kept every 15 minutes, 48 of them, so yesterday's is still there after a restart) to bring back. The palette has them too.
 - When the window is too narrow for the panes of a tab, one shows at a time with a strip to switch between them; the split returns when the window grows.
 - Settings → Keyboard lists every shortcut with the keys it has now (your `keymap.json` included), with a search box. Its key (Ctrl+B ?) and the palette's Appearance, Keyboard and Storage entries opened the wrong Settings section; they open the right one now.
 - The terminal is a pane: it splits, moves between tabs and zooms like a session, and two can sit side by side.

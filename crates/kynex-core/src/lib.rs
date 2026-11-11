@@ -63,6 +63,7 @@ pub mod session;
 pub mod session_files;
 pub mod session_log;
 pub mod shortcuts;
+pub mod snapshots;
 pub mod sound;
 pub mod spent;
 pub mod starters;

@@ -81,7 +81,11 @@ actions!(
         KeyboardSettings,
         PickProject,
         NextNeedsYou,
-        ClosePaneOrTab
+        ClosePaneOrTab,
+        UndoLayout,
+        RedoLayout,
+        ReopenPane,
+        LayoutSnapshots
     ]
 );
 
@@ -226,6 +230,11 @@ const PREFIXED: &[(&str, &str)] = &[
     ("next_project", "prefix ]"),
     ("prev_project", "prefix ["),
     ("pick_project", "prefix shift-p"),
+    // Layout history: undo / redo a change to the panes, bring back a closed one, older layouts.
+    ("undo_layout", "prefix u"),
+    ("redo_layout", "prefix shift-u"),
+    ("reopen_pane", "prefix shift-r"),
+    ("layout_snapshots", "prefix s"),
 ];
 
 /// Keys that scroll the transcript when nothing focused (the message box, a
@@ -296,6 +305,10 @@ fn prefixed_binding(name: &str, keys: &'static str) -> Option<KeyBinding> {
         "next_project" => KeyBinding::new(keys, NextTab, c),
         "prev_project" => KeyBinding::new(keys, PrevTab, c),
         "pick_project" => KeyBinding::new(keys, PickProject, c),
+        "undo_layout" => KeyBinding::new(keys, UndoLayout, c),
+        "redo_layout" => KeyBinding::new(keys, RedoLayout, c),
+        "reopen_pane" => KeyBinding::new(keys, ReopenPane, c),
+        "layout_snapshots" => KeyBinding::new(keys, LayoutSnapshots, c),
         _ => {
             let (what, rest) = name.split_once('_')?;
             let rest = rest.strip_suffix("_arrow").unwrap_or(rest);

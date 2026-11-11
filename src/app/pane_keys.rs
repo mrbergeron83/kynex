@@ -48,11 +48,15 @@ impl KynexApp {
                 this.open_settings_on(super::app_settings::KEYBOARD_SECTION, cx)
             }))
             .on_action(cx.listener(Self::next_needs_you))
+            .on_action(cx.listener(|this, _: &keys::UndoLayout, w, cx| this.undo_layout(w, cx)))
+            .on_action(cx.listener(|this, _: &keys::RedoLayout, w, cx| this.redo_layout(w, cx)))
+            .on_action(cx.listener(|this, _: &keys::ReopenPane, w, cx| this.reopen_pane(w, cx)))
+            .on_action(cx.listener(|this, _: &keys::LayoutSnapshots, w, cx| this.open_picker(Menu::Layouts, w, cx)))
             .on_action(cx.listener(|this, _: &keys::PickProject, w, cx| this.open_picker(Menu::Projects, w, cx)))
     }
 
     /// A picker menu, at the top middle of the window.
-    fn open_picker(&mut self, which: Menu, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_picker(&mut self, which: Menu, window: &mut Window, cx: &mut Context<Self>) {
         let at = point(window.viewport_size().width / 2.0, gpui::px(96.));
         self.menu = None;
         self.menu_pick = 0;
@@ -214,13 +218,23 @@ impl KynexApp {
         } else {
             Vec::new()
         };
-        let rows = if which == Menu::Workspaces { workspaces.len() } else { self.saved.projects.len() + 1 };
+        let snapshots = if which == Menu::Layouts { self.layout_entries() } else { Vec::new() };
+        let rows = match which {
+            Menu::Workspaces => workspaces.len(),
+            Menu::Layouts => snapshots.len(),
+            _ => self.saved.projects.len() + 1,
+        };
         match k.key.as_str() {
             "up" | "k" => self.menu_pick = self.menu_pick.saturating_sub(1),
             "down" | "j" => self.menu_pick = (self.menu_pick + 1).min(rows.saturating_sub(1)),
             "enter" => {
                 let at = self.menu_pick;
-                if which == Menu::Workspaces {
+                if which == Menu::Layouts {
+                    if let Some(s) = snapshots.get(at) {
+                        self.menu = None;
+                        self.restore_layout(s, window, cx);
+                    }
+                } else if which == Menu::Workspaces {
                     if let Some((c, _)) = workspaces.get(at) {
                         self.menu = None;
                         self.select_workspace(&c.path, cx);

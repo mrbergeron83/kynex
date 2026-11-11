@@ -16,6 +16,7 @@
 //! | `pane_tabs.rs`     | the selected workspace's tab bar: new, close, rename, reorder |
 //! | `tiles.rs`          | the split panes of a workspace: layouts, focus, drawing |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
+//! | `layout_history.rs` | undo / redo of pane changes, reopening a pane, older layouts |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_groups.rs` | session groups and the archive, their menus          |
@@ -108,6 +109,7 @@ mod handoff;
 pub(crate) mod history;
 mod keys;
 mod layout;
+mod layout_history;
 mod layouts;
 mod leaving;
 pub(crate) mod mentions;
