@@ -51,14 +51,13 @@ pub fn play(sound: Sound) {
                     .stderr(std::process::Stdio::null());
                 crate::process::detach(cmd)
             };
-            let mut canberra = std::process::Command::new("canberra-gtk-play");
-            let started = quiet(canberra.args(["-i", id]));
-            let child = started.or_else(|_| {
+            let played = |cmd: &mut std::process::Command| {
+                quiet(cmd).and_then(|mut child| child.wait()).is_ok_and(|status| status.success())
+            };
+            // canberra may be missing, or there but without a sound theme: then paplay.
+            if !played(std::process::Command::new("canberra-gtk-play").args(["-i", id])) {
                 let path = format!("/usr/share/sounds/freedesktop/stereo/{file}");
-                quiet(std::process::Command::new("paplay").arg(path))
-            });
-            if let Ok(mut child) = child {
-                let _ = child.wait();
+                played(std::process::Command::new("paplay").arg(path));
             }
         });
     }

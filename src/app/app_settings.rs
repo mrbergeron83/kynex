@@ -360,15 +360,22 @@ impl KynexApp {
                     ))
                 },
             ))
-            .child(div().pt_1().text_xs().text_color(t.text_muted).child("Sound"))
+            .child(div().pt_1().text_xs().text_color(t.text_muted).child(if notify {
+                "Sound"
+            } else {
+                "Sound (with notifications on)"
+            }))
             .children([(false, "Off"), (true, "Play a sound")].into_iter().map(|(on, label)| {
-                choice(("sounds", usize::from(on)), sounds == on, label.into(), t).on_click(cx.listener(
-                    move |this, _, _, cx| {
-                        this.saved.sounds = on;
-                        this.save();
-                        cx.notify();
-                    },
-                ))
+                let row = choice(("sounds", usize::from(on)), sounds == on, label.into(), t);
+                // Sounds only come with notifications, so the choice waits for them.
+                if !notify {
+                    return row.opacity(0.5).cursor_default().hover(|s| s);
+                }
+                row.on_click(cx.listener(move |this, _, _, cx| {
+                    this.saved.sounds = on;
+                    this.save();
+                    cx.notify();
+                }))
             }));
 
         let keep = self.saved.keep_awake;
