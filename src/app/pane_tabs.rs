@@ -76,6 +76,20 @@ impl KynexApp {
             live.focus(key);
         }
         self.swap_to(id, window, cx);
+        // A new tab starts as the others do, with the sessions list and the workspaces.
+        let (ratio, bounds) = (self.side_share(cx), self.layout_bounds(cx));
+        let mut next = self.next_pane;
+        if let Some(t) = self.tiles.get_mut(&cwd) {
+            t.add_side_panes(
+                || {
+                    next += 1;
+                    next - 1
+                },
+                ratio,
+                bounds,
+            );
+        }
+        self.next_pane = next;
         self.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
         cx.notify();
     }

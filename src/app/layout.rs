@@ -70,7 +70,8 @@ impl KynexApp {
             .flex()
             .flex_1()
             .min_h_0()
-            .children(self.render_sessions_column(window, cx))
+            // A project's panes have the sessions and workspaces as panes of their own.
+            .children(if self.tiling_scope().is_none() { self.render_sessions_column(window, cx) } else { None })
             .child(
                 div()
                     .flex()

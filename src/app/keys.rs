@@ -81,7 +81,11 @@ actions!(
         KeyboardSettings,
         PickProject,
         NextNeedsYou,
-        ClosePaneOrTab
+        ClosePaneOrTab,
+        UndoLayout,
+        RedoLayout,
+        ReopenPane,
+        LayoutSnapshots
     ]
 );
 
@@ -226,6 +230,11 @@ const PREFIXED: &[(&str, &str)] = &[
     ("next_project", "prefix ]"),
     ("prev_project", "prefix ["),
     ("pick_project", "prefix shift-p"),
+    // Layout history: undo / redo a change to the panes, bring back a closed one, older layouts.
+    ("undo_layout", "prefix u"),
+    ("redo_layout", "prefix shift-u"),
+    ("reopen_pane", "prefix shift-r"),
+    ("layout_snapshots", "prefix s"),
 ];
 
 /// Keys that scroll the transcript when nothing focused (the message box, a
@@ -238,6 +247,15 @@ const ESC_ESC: &str = "escape escape";
 pub(super) const PROJECTS_AT: usize = 1;
 
 static PREFIX: OnceLock<&'static str> = OnceLock::new();
+
+/// Every rebindable shortcut and the keys it ended up with (empty: unbound), in
+/// the order of the tables above; set once by [`bind_keys`].
+static IN_EFFECT: OnceLock<Vec<(&'static str, String)>> = OnceLock::new();
+
+/// The shortcuts in effect, by `keymap.json` name, for Settings → Keyboard.
+pub fn in_effect() -> &'static [(&'static str, String)] {
+    IN_EFFECT.get().map_or(&[], Vec::as_slice)
+}
 
 /// The prefix key, as a keystroke `Keystroke::parse` takes (`ctrl-b` by default).
 pub fn prefix_key() -> &'static str {
@@ -287,6 +305,10 @@ fn prefixed_binding(name: &str, keys: &'static str) -> Option<KeyBinding> {
         "next_project" => KeyBinding::new(keys, NextTab, c),
         "prev_project" => KeyBinding::new(keys, PrevTab, c),
         "pick_project" => KeyBinding::new(keys, PickProject, c),
+        "undo_layout" => KeyBinding::new(keys, UndoLayout, c),
+        "redo_layout" => KeyBinding::new(keys, RedoLayout, c),
+        "reopen_pane" => KeyBinding::new(keys, ReopenPane, c),
+        "layout_snapshots" => KeyBinding::new(keys, LayoutSnapshots, c),
         _ => {
             let (what, rest) = name.split_once('_')?;
             let rest = rest.strip_suffix("_arrow").unwrap_or(rest);
@@ -372,6 +394,7 @@ pub fn bind_keys(cx: &mut App) {
     let mut bindings = Vec::new();
     // Ctrl+W in a pane closes the pane while the tab has several: on whatever keys `close_tab` has.
     let mut close_keys = None;
+    let mut in_effect = Vec::new();
     for &(name, default) in SHORTCUTS.iter().chain(PREFIXED) {
         let default = resolve(default, prefix);
         // The old default for the sessions column (written out on first run) would make
@@ -391,16 +414,19 @@ pub fn bind_keys(cx: &mut App) {
             let esc_esc = keys.split_whitespace().collect::<Vec<_>>().join(" ") == ESC_ESC;
             ESC_ESC_REWINDS.store(esc_esc, Ordering::Relaxed);
             if esc_esc {
+                in_effect.push((name, keys.to_string()));
                 continue;
             }
         }
         if keys.trim().is_empty() {
+            in_effect.push((name, String::new()));
             continue;
         }
         if let Some(bad) = keys.split_whitespace().find(|k| gpui::Keystroke::parse(k).is_err()) {
             eprintln!("kynex: keymap.json: `{bad}` isn't a key for {name}; using {default}");
         }
         let keys = if keys.split_whitespace().all(|k| gpui::Keystroke::parse(k).is_ok()) { keys } else { default };
+        in_effect.push((name, keys.to_string()));
         if name == "close_tab" {
             close_keys = Some(keys);
         }
@@ -472,6 +498,7 @@ pub fn bind_keys(cx: &mut App) {
             _ => KeyBinding::new(key, ListDelete, list),
         });
     }
+    let _ = IN_EFFECT.set(in_effect);
     cx.bind_keys(bindings);
 }
 
@@ -608,7 +635,11 @@ impl KynexApp {
         self.step_workspace(-1, cx);
     }
 
-    pub(super) fn toggle_sessions(&mut self, _: &ToggleSessions, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn toggle_sessions(&mut self, _: &ToggleSessions, window: &mut Window, cx: &mut Context<Self>) {
+        // A project's panes: its Sessions and Workspaces panes. Elsewhere, the sidebar.
+        if self.toggle_side_panes(window, cx) {
+            return;
+        }
         self.saved.sessions_collapsed = !self.saved.sessions_collapsed;
         self.save();
         cx.notify();

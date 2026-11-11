@@ -20,7 +20,7 @@ impl KynexApp {
     pub(super) fn render_toolbar(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         let project = self.active_project().map(|p| (p.path.clone(), p.view));
-        let collapsed = self.saved.sessions_collapsed;
+        let collapsed = self.sessions_hidden();
         let bar = div()
             .flex()
             .flex_none()

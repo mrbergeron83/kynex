@@ -40,6 +40,8 @@ pub enum Menu {
     PaneTab(usize),
     /// The workspace picker (`prefix w`): this project's workspaces.
     Workspaces,
+    /// The older layouts of this workspace (`prefix s`), to bring one back.
+    Layouts,
     /// The project picker (`prefix shift-p`): the open projects, and Open project….
     Projects,
 }
@@ -107,7 +109,10 @@ impl KynexApp {
 
     /// Which picker (workspaces, projects) is open, for its keys.
     pub(super) fn open_picker_menu(&self) -> Option<Menu> {
-        self.menu.as_ref().map(|m| m.which.clone()).filter(|m| matches!(m, Menu::Workspaces | Menu::Projects))
+        self.menu
+            .as_ref()
+            .map(|m| m.which.clone())
+            .filter(|m| matches!(m, Menu::Workspaces | Menu::Projects | Menu::Layouts))
     }
 
     /// The open menu; `leaving` while it plays out after closing.
@@ -154,7 +159,12 @@ impl KynexApp {
                         .into_any_element(),
                 );
                 // Theme, fonts and motion, a step away without a picker in the bar.
-                let current = THEMES.iter().find(|x| x.0 == self.saved.theme).map_or("", |x| x.1);
+                let custom =
+                    self.saved.custom_theme.as_ref().and_then(|id| self.custom_themes.iter().find(|c| &c.id == id));
+                let current: String = match custom {
+                    Some(c) => c.name.clone(),
+                    None => THEMES.iter().find(|x| x.0 == self.saved.theme).map_or("", |x| x.1).to_string(),
+                };
                 items.push(
                     menu_item("kynex-appearance", "Appearance", false, cx)
                         .child(div().flex_none().text_color(t.text_placeholder).child(current))
@@ -272,12 +282,28 @@ impl KynexApp {
                 for (n, (th, name)) in THEMES.iter().enumerate() {
                     let th = *th;
                     items.push(
-                        menu_item(("theme", n), *name, self.saved.theme == th, cx)
+                        menu_item(("theme", n), *name, self.saved.custom_theme.is_none() && self.saved.theme == th, cx)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.menu = None;
                                 this.set_theme(th, cx);
                             }))
                             .into_any_element(),
+                    );
+                }
+                for (n, c) in self.custom_themes.iter().enumerate() {
+                    let id = c.id.clone();
+                    items.push(
+                        menu_item(
+                            ("custom-theme", n),
+                            c.name.clone(),
+                            self.saved.custom_theme.as_deref() == Some(&c.id),
+                            cx,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.menu = None;
+                            this.set_custom_theme(id.clone(), cx);
+                        }))
+                        .into_any_element(),
                     );
                 }
                 items.push(div().my_1().child(divider(cx)).into_any_element());
@@ -426,6 +452,23 @@ impl KynexApp {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.menu = None;
                                 this.select_workspace(&path, cx);
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
+            Menu::Layouts => {
+                let entries = self.layout_entries();
+                if entries.is_empty() {
+                    items.push(menu_item("layout-none", "No older layouts yet", false, cx).into_any_element());
+                }
+                for (n, s) in entries.into_iter().enumerate() {
+                    let label = format!("{} · {}", kynex_core::fmt::ago_unix(s.at as i64), s.summary());
+                    items.push(
+                        menu_item(("layout-pick", n), label, n == self.menu_pick, cx)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.menu = None;
+                                this.restore_layout(&s, window, cx);
                             }))
                             .into_any_element(),
                     );

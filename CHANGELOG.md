@@ -7,6 +7,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The sessions list and the workspaces can be panes: "Sessions beside" and "Workspaces beside" on a pane's right-click menu, or the command palette. The sidebar shows whatever isn't a pane in the tab, and steps aside when both are.
+- Your own themes: JSON files in the themes folder of the data dir set the palette, syntax colours and the pane tile look (gap, border, corner radius, active and inactive border colours) over a built-in theme. They show in Settings → Appearance, change live when the file does, and a file that doesn't read is reported and left out.
+- A control socket and `knx` subcommands for scripts: `knx project | workspace | pane | session | events …` talk to the running Kynex (open a project, make a workspace, split panes, send a prompt and wait for the turn to end), and `knx <folder>` opens the folder in the running Kynex instead of starting a second one. See the README.
+- Layout history: Ctrl+B U / Shift+U undo and redo a change to the panes, Ctrl+B Shift+R reopens the pane closed last, and Ctrl+B S lists older layouts (one kept every 15 minutes, 48 of them, so yesterday's is still there after a restart) to bring back. The palette has them too.
+- When the window is too narrow for the panes of a tab, one shows at a time with a strip to switch between them; the split returns when the window grows.
+- Settings → Keyboard lists every shortcut with the keys it has now (your `keymap.json` included), with a search box. Its key (Ctrl+B ?) and the palette's Appearance, Keyboard and Storage entries opened the wrong Settings section; they open the right one now.
 - The terminal is a pane: it splits, moves between tabs and zooms like a session, and two can sit side by side.
   Ctrl+` shows one below the workspace, focuses it, or hides it; an open dock comes back as a pane where it was.
 - A terminal pane shows what was on it before a restart, above a fresh shell (Settings → Terminal scrollback turns it

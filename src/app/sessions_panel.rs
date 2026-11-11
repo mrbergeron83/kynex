@@ -11,6 +11,7 @@ use gpui::{
 };
 use kynex_core::dates::{self, Bucket};
 use kynex_core::fmt::ago;
+use kynex_core::layout::PaneId;
 use kynex_core::live::Key;
 use kynex_core::session::{self, Item, Kind, SessionInfo};
 
@@ -124,8 +125,10 @@ impl KynexApp {
         }
     }
 
-    /// The panel with its drag-to-resize right edge, or nothing while collapsed.
+    /// The panel with its drag-to-resize right edge, or nothing while collapsed. Only where
+    /// there are no panes to hold the sessions and workspaces: chat and a project's Git view.
     pub(super) fn render_sessions_column(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let parts = Parts { workspaces: true, sessions: true };
         let open = !self.saved.sessions_collapsed;
         let leaving = self.exits.sessions.track_flag(open, window, cx);
         if !open && leaving.is_none() {
@@ -142,7 +145,7 @@ impl KynexApp {
                 .bg(t.panel)
                 .border_r_1()
                 .border_color(t.border)
-                .child(self.render_sessions_panel(window, cx))
+                .child(self.render_sessions_panel(window, cx, parts, None))
                 .child(
                     div()
                         .id("sessions-resize")
@@ -167,11 +170,26 @@ impl KynexApp {
         ))
     }
 
-    fn render_sessions_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The sidebar's contents (`pane` is `None`), or a pane's: the sessions list, the workspaces,
+    /// or both, per `parts`.
+    pub(super) fn render_sessions_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        parts: Parts,
+        pane: Option<PaneId>,
+    ) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         let Some(live) = self.live_mut() else { return div() };
         let Some(s) = live.current() else { return div() };
         let (kind, cwd, current, current_uid) = (s.kind, s.cwd.clone(), s.session_id.clone(), s.uid);
+        // Only the workspaces: their own scrolling block.
+        if !parts.sessions {
+            let workspaces = if kind == Kind::Code { self.render_workspaces(cx) } else { None };
+            return div().size_full().child(
+                div().id("workspaces-pane").flex().flex_col().size_full().overflow_y_scroll().children(workspaces),
+            );
+        }
         let open: Vec<OpenSession> = live
             .sessions
             .iter()
@@ -226,7 +244,7 @@ impl KynexApp {
                 .map_or((false, false, false), |o| (o.busy, o.waiting, o.finished))
         };
 
-        let workspaces = if kind == Kind::Code { self.render_workspaces(cx) } else { None };
+        let workspaces = if kind == Kind::Code && parts.workspaces { self.render_workspaces(cx) } else { None };
         let header = div()
             .flex()
             .flex_none()
@@ -273,11 +291,15 @@ impl KynexApp {
                         this.open_menu(Menu::SessionsPanel, ev.position(), Anchor::TopLeft, cx)
                     })),
             )
-            .child(
-                icon_button("hide-sessions", Icon::PanelLeft, cx)
+            .child(match pane {
+                // In a pane, the panel's own button closes the pane.
+                Some(id) => icon_button("close-sessions-pane", Icon::Close, cx)
+                    .tooltip(Tooltip::text("Close pane"))
+                    .on_click(cx.listener(move |this, _, window, cx| this.close_pane_id(id, window, cx))),
+                None => icon_button("hide-sessions", Icon::PanelLeft, cx)
                     .tooltip(Tooltip::for_action("Hide sessions", ToggleSessions, ""))
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_sessions(&ToggleSessions, window, cx))),
-            );
+            });
 
         let mut rows: Vec<AnyElement> = Vec::new();
         // Open sessions with no transcript listed yet: new ones, before or just
@@ -689,6 +711,13 @@ impl KynexApp {
         }
         cx.notify();
     }
+}
+
+/// Which parts of the sessions panel are drawn: the workspaces, the sessions list, or both.
+#[derive(Clone, Copy)]
+pub(super) struct Parts {
+    pub workspaces: bool,
+    pub sessions: bool,
 }
 
 fn session_row(
