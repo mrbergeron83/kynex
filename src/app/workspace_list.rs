@@ -113,7 +113,13 @@ impl KynexApp {
                 let live = self.code.get(&project);
                 let sessions: Vec<&Session> =
                     open.iter().filter_map(|k| live.and_then(|l| l.sessions.iter().find(|s| s.uid == *k))).collect();
-                let lamp_state = Lamp::most_urgent(sessions.iter().map(|s| Lamp::of(s.busy, s.waiting(), s.finished)));
+                let agents = self.agents_in(&c.path);
+                let lamp_state = Lamp::most_urgent(
+                    sessions
+                        .iter()
+                        .map(|s| Lamp::of(s.busy, s.waiting(), s.finished))
+                        .chain(agents.iter().map(|(_, _, l)| *l)),
+                );
                 let is_selected = n == selected;
                 let path = c.path.clone();
                 let menu_path = c.path.clone();
@@ -159,6 +165,31 @@ impl KynexApp {
                             .on_click(cx.listener(move |this, _, window, cx| this.focus_open_session(key, window, cx)))
                             .into_any_element()
                     })
+                    // Agent panes, after the sessions: their lamps read off their screens.
+                    .chain(agents.iter().enumerate().map(|(i, (pane, name, state))| {
+                        let (pane, ws) = (*pane, c.path.clone());
+                        div()
+                            .id(("workspace-agent", n * 1000 + i))
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .h(px(24.))
+                            .pl_5()
+                            .pr_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .text_sm()
+                            .hover(|s| s.bg(t.hover))
+                            .child(lamp(("workspace-agent-lamp", n * 1000 + i), *state, cx))
+                            .child(div().flex_1().min_w_0().truncate().text_color(t.text_muted).child(name.clone()))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.select_workspace(&ws, cx);
+                                this.sync_tiles(window, cx);
+                                this.focus_pane(pane, window, cx);
+                                this.focus_input(window, cx);
+                            }))
+                            .into_any_element()
+                    }))
                     .collect();
                 div()
                     .flex()

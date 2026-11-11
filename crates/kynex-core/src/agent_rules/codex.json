@@ -1,0 +1,9 @@
+{
+  "id": "codex",
+  "name": "Codex",
+  "argv": ["codex"],
+  "working": ["esc to interrupt"],
+  "blocked": ["Allow command?", "Would you like to run", "Would you like to make", "Approve this"],
+  "resume_after": "codex resume ",
+  "resume_argv": ["codex", "resume", "{id}"]
+}

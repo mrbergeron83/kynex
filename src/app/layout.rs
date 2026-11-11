@@ -45,7 +45,7 @@ impl KynexApp {
             .into_any_element()
     }
 
-    /// The conversation: header, transcript, composer, timeline and terminal.
+    /// The conversation: header, transcript, composer and timeline, or the workspace's panes.
     pub(super) fn render_code_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let key = self.focused_key();
@@ -81,14 +81,13 @@ impl KynexApp {
                     .child(self.render_toolbar(cx))
                     .children(pane_tabs)
                     .children(header)
-                    .child(body)
-                    .children(self.render_terminal_dock(window, cx)),
+                    .child(body),
             )
             .into_any_element()
     }
 
-    /// One pane's conversation: transcript and composer, the timeline running the full
-    /// height beside them. `focused` panes also draw the find bar.
+    /// One pane's conversation: transcript and composer, and in chat the timeline running
+    /// the full height beside them. `focused` panes also draw the find bar.
     pub(super) fn render_pane_body(
         &mut self,
         key: Option<Key>,
@@ -123,7 +122,11 @@ impl KynexApp {
                     )
                     .child(self.render_composer(key, window, cx)),
             )
-            .children(key.and_then(|key| self.render_timeline(key, cx)))
+            // A project's timeline is a pane of its own.
+            .children(
+                key.filter(|_| self.saved.timeline_open && self.tiling_scope().is_none())
+                    .and_then(|key| self.render_timeline(key, false, cx)),
+            )
             .into_any_element()
     }
 
@@ -148,7 +151,9 @@ impl KynexApp {
         let scratch = self.draw_leaving(|s| &mut s.scratch, |e| &mut e.scratch, window, cx, Self::render_scratch_modal);
         let viewer =
             self.draw_leaving(|s| &mut s.viewer, |e| &mut e.viewer, window, cx, |s, l, _, _| s.render_image_viewer(l));
+        let popup = self.render_command_popup(cx);
         root.children(toasts)
+            .children(popup)
             .children(git_modal)
             .children(scratch)
             .children(settings)
@@ -188,21 +193,6 @@ impl KynexApp {
                     }),
                 )
         })
-        .when(self.resizing_terminal, |d| {
-            d.cursor_row_resize()
-                .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, cx| {
-                    this.drag_terminal_edge(f32::from(ev.position.y), window);
-                    cx.notify();
-                }))
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.resizing_terminal = false;
-                        this.save();
-                        cx.notify();
-                    }),
-                )
-        })
     }
 
     /// `root` with the window's shortcuts: each action to the method that runs it.
@@ -237,6 +227,7 @@ impl KynexApp {
             .on_action(cx.listener(Self::edit_in_editor_action))
             .on_action(cx.listener(Self::rewind_action))
             .on_action(cx.listener(Self::toggle_timeline))
+            .on_action(cx.listener(Self::run_command_action))
             .on_action(cx.listener(Self::prev_turn))
             .on_action(cx.listener(Self::next_turn))
             .on_action(cx.listener(|this, _: &keys::PageUp, _, cx| this.scroll_keys(Scroll::Page(-1.), cx)))

@@ -1,0 +1,9 @@
+{
+  "id": "copilot",
+  "name": "Copilot",
+  "argv": ["copilot"],
+  "working": ["Esc to cancel", "esc to interrupt"],
+  "blocked": ["Do you want to", "Allow this", "Yes, and approve"],
+  "resume_after": "copilot --resume ",
+  "resume_argv": ["copilot", "--resume", "{id}"]
+}

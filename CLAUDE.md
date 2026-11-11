@@ -95,6 +95,10 @@ A cargo workspace with two crates:
   - `rewind.rs` — going back to an earlier message: the log's current branch, the points with
     their file checkpoints, restoring files (`--rewind-files`); the session resumes with
     `--resume-session-at`
+  - `agent_panes.rs` — other agent CLIs in terminal panes: rules (`agent_rules/*.json`, user overrides in
+    `<data dir>/agents/`) read their state and resume id off the screen
+  - `scrollback.rs` — terminal panes' scrollback kept across a restart (bounded, one file per pane)
+  - `user_commands.rs` — custom commands (`commands.json`, user and per project): argv, placement, key, env
   - `groups.rs` — session groups and the archive in the sessions panel (`sessions.json` per project)
   - `grok/` — the Grok provider: `grok agent stdio` over ACP (`acp.rs` maps it to and from
     stream-json, so sessions draw it like `claude`), usage and models (`usage.rs`), Grok's own
@@ -130,7 +134,7 @@ A cargo workspace with two crates:
   - `git/` — the Git view (`GitView` entity): top bar with branch picker and fetch / pull / push,
     Changes tab (commit box, staged / unstaged files), History tab, diff viewer; the table at the
     top of `git/mod.rs` lists the files
-  - `terminal/` — the terminal panel under the conversation (`TerminalPanel`, tabs of
+  - `terminal/` — the terminal panel a terminal pane shows (`TerminalPanel`, tabs of
     `TerminalView`s drawn by a custom GPU element); play buttons on the ```bash / ```powershell commands Claude suggests
     run their command there; Ctrl+` toggles it
   - `ui/` — our small component kit, Zed `ui`-crate style: buttons, tooltips, menus, icons

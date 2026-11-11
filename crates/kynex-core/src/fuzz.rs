@@ -206,6 +206,22 @@ pub fn openrouter(text: &str) {
     }
 }
 
+/// An agent rule file (`agent_panes`), and its patterns run over the same text as a screen.
+pub fn agent_rule(text: &str) {
+    if let Ok(rule) = crate::agent_panes::parse(text) {
+        let _ = crate::agent_panes::detect(&rule, text);
+        let id = crate::agent_panes::resume_id(&rule, text);
+        let _ = crate::agent_panes::resume_argv(&rule, id.as_deref());
+    }
+}
+
+/// A `commands.json` (the user's or a project's custom commands).
+pub fn user_commands(text: &str) {
+    let mut all = crate::user_commands::parse(text).unwrap_or_default();
+    let own = all.clone();
+    crate::user_commands::merge(&mut all, own);
+}
+
 pub fn versions(bytes: &[u8]) {
     let text = String::from_utf8_lossy(bytes);
     let _ = cli::last_line(bytes);

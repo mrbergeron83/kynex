@@ -19,7 +19,8 @@ use crate::theme::{Palette, theme};
 use crate::ui::ease_height::ease_height;
 use crate::ui::{Icon, Tooltip, icon, icon_button, scrollbar, section_label};
 
-const WIDTH: f32 = 260.;
+/// The timeline's width beside a chat, and the width its pane opens at.
+pub(super) const WIDTH: f32 = 260.;
 
 /// A transcript row lit up after a jump, until its flash fades.
 pub(crate) struct Flash {
@@ -30,7 +31,11 @@ pub(crate) struct Flash {
 }
 
 impl KynexApp {
-    pub(super) fn toggle_timeline(&mut self, _: &ToggleTimeline, _: &mut Window, cx: &mut Context<Self>) {
+    /// In a project, shows or closes the tab's timeline pane; in chat, the panel beside it.
+    pub(super) fn toggle_timeline(&mut self, _: &ToggleTimeline, window: &mut Window, cx: &mut Context<Self>) {
+        if self.toggle_timeline_pane(window, cx) {
+            return;
+        }
         self.saved.timeline_open = !self.saved.timeline_open;
         self.save();
         cx.notify();
@@ -143,11 +148,8 @@ impl KynexApp {
         }
     }
 
-    /// The panel, when it's open and there's a conversation to outline.
-    pub(super) fn render_timeline(&mut self, key: Key, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.saved.timeline_open {
-            return None;
-        }
+    /// Session `key`'s timeline: beside a chat, or filling a pane (`fill`).
+    pub(super) fn render_timeline(&mut self, key: Key, fill: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
         if !self.update_turns(key) {
             return None;
@@ -220,12 +222,9 @@ impl KynexApp {
             div()
                 .flex()
                 .flex_col()
-                .flex_none()
-                .w(px(WIDTH))
-                .h_full()
+                .when(fill, |d| d.size_full())
+                .when(!fill, |d| d.flex_none().w(px(WIDTH)).h_full().border_l_1().border_color(t.border))
                 .bg(t.panel)
-                .border_l_1()
-                .border_color(t.border)
                 .child(header)
                 .child({
                     let scroll = scrollbar::handle("timeline-scroll");

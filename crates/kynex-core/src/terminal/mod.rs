@@ -26,7 +26,7 @@ use alacritty_terminal::term::Config;
 use alacritty_terminal::tty;
 
 pub use keys::{Key, key_bytes, paste_bytes};
-pub use shell::{ShellKind, ShellSpec, elevated, resolve as resolve_shell};
+pub use shell::{ShellKind, ShellSpec, elevated, resolve as resolve_shell, which};
 pub use snapshot::{Cursor, CursorStyle, Palette, Rgb, Row, Run, Snapshot};
 
 use crate::session::Wake;
@@ -130,6 +130,7 @@ impl Terminal {
             ("COLORTERM".to_string(), "truecolor".to_string()),
             ("TERM_PROGRAM".to_string(), "kynex".to_string()),
         ]);
+        env.extend(shell.env.iter().cloned());
         let options = tty::Options {
             shell: Some(tty::Shell::new(shell.program.to_string_lossy().into_owned(), shell.args.clone())),
             working_directory: Some(cwd.to_path_buf()),
@@ -138,6 +139,17 @@ impl Terminal {
             #[cfg(windows)]
             escape_args: true,
         };
+        // Last time's scrollback first: the shell's screen clears it up into the history.
+        if let Some(text) = shell.history.as_deref() {
+            let mut parser: alacritty_terminal::vte::ansi::Processor = Default::default();
+            let mut bytes = crate::scrollback::replay(text);
+            // ConPTY paints its own (empty) screen as it starts, over whatever is on ours: the
+            // text goes up into the scrollback first, where it stays.
+            if cfg!(windows) {
+                bytes.extend(std::iter::repeat_n(b'\n', size.lines));
+            }
+            parser.advance(&mut *term.lock(), &bytes);
+        }
         let pty = tty::new(&options, window_size(size), 0)
             .map_err(|e| format!("Couldn't start {}: {e}", shell.program.display()))?;
         let event_loop = EventLoop::new(term.clone(), listener, pty, true, false)
@@ -200,6 +212,17 @@ impl Terminal {
         if term.grid().display_offset() != 0 {
             term.scroll_display(Scroll::Bottom);
         }
+    }
+
+    /// Everything it holds as text, scrollback and screen, for keeping across a restart;
+    /// `None` while a full-screen program is up.
+    pub fn history_text(&self) -> Option<String> {
+        snapshot::history_text(&self.term.lock())
+    }
+
+    /// The screen's text, as the program last drew it.
+    pub fn screen_text(&self) -> String {
+        snapshot::screen_text(&self.term.lock())
     }
 
     pub fn snapshot(&self, palette: &Palette) -> Snapshot {

@@ -7,6 +7,23 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The terminal is a pane: it splits, moves between tabs and zooms like a session, and two can sit side by side.
+  Ctrl+` shows one below the workspace, focuses it, or hides it; an open dock comes back as a pane where it was.
+- A terminal pane shows what was on it before a restart, above a fresh shell (Settings → Terminal scrollback turns it
+  off). What's kept goes when the pane, or its workspace or project, closes.
+- Agent panes: Codex, Copilot, Cursor or opencode in a pane next to Claude (a pane's menu or the palette). Kynex reads
+  what each is doing off its screen, so its lamp, the tab's and the workspace's, Go To's filters, toasts and sounds
+  work as for a session, and one that printed how to resume is resumed after a restart. The rules are JSON files;
+  add or change an agent in Kynex's `agents` folder.
+- A pane's header dragged onto a pane tab moves the pane there (onto + it gets a tab of its own), splitting that tab's
+  focused pane along its longer side; the palette has Move pane to tab too. A terminal's menu offers one in another
+  workspace, since terminals and sessions stay with their folder.
+- Custom commands: list programs in `commands.json` (in Kynex's data folder, or a project's settings folder) with a
+  name, an argv, where they show (a popup that closes when the program exits, a pane, or in the background) and an
+  optional key, e.g. one key for lazygit. They run in the selected workspace's folder with `KYNEX_WORKSPACE_DIR`,
+  `KYNEX_BRANCH` and `KYNEX_SESSION_ID` set, and are in the palette.
+- The Git view and the timeline are panes too: "Changes beside" and "Timeline beside" on a pane's menu put a
+  workspace's changes or a session's timeline next to it, and the timeline can be resized. Ctrl+Shift+T toggles it.
 - With notifications on, a session you aren't looking at that finishes or needs you shows a toast that takes you
   there, and an optional sound (Settings → Notifications) plays.
 - The palette (Ctrl+K) groups sessions by project and workspace, with Needs you / Working / Idle / Done

@@ -59,8 +59,9 @@ impl KynexApp {
                 .filter_map(|s| Some((s.uid, s.session_id.clone()?)))
                 .collect();
             let saved = tiling.save(|key| ids.get(&key).cloned());
-            // Panes of sessions nobody has talked to say nothing worth bringing back.
-            layouts.push((project, cwd.clone(), (!saved.sessions.is_empty()).then_some(saved)));
+            // Panes of sessions nobody has talked to say nothing worth bringing back; terminals do.
+            let worth = !saved.sessions.is_empty() || saved.tools.as_ref().is_some_and(|t| !t.is_empty());
+            layouts.push((project, cwd.clone(), worth.then_some(saved)));
         }
         let mut changed: Vec<PathBuf> = Vec::new();
         for (project, cwd, saved) in layouts {

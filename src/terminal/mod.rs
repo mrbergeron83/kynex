@@ -23,7 +23,7 @@ use gpui::{
 use kynex_core::terminal::{self as core, ShellKind};
 
 pub use self::view::bind_keys;
-use self::view::{TerminalEvent, TerminalView};
+pub use self::view::{TerminalEvent, TerminalView};
 use crate::theme::{mono, theme};
 use crate::ui::{Icon, Tooltip, icon, icon_button, menu_item, popover};
 
@@ -55,6 +55,8 @@ pub struct TerminalPanel {
     focus: FocusHandle,
     /// Last said through `PanelEvent::Collapsed`.
     was_collapsed: bool,
+    /// It was opened for a custom command, not as a shell.
+    command: bool,
 }
 
 impl TerminalPanel {
@@ -77,7 +79,13 @@ impl TerminalPanel {
             error: None,
             focus: cx.focus_handle(),
             was_collapsed: false,
+            command: false,
         }
+    }
+
+    /// The folder its shells start in.
+    pub fn cwd(&self) -> &std::path::Path {
+        &self.cwd
     }
 
     pub fn is_empty(&self) -> bool {
@@ -124,6 +132,41 @@ impl TerminalPanel {
                 return None;
             }
         };
+        Some(self.open_spec(shell, window, cx))
+    }
+
+    /// The shown tab's scrollback and screen as text, once its shell runs.
+    pub fn history_text(&self, cx: &App) -> Option<String> {
+        self.tabs.get(self.active)?.view.read(cx).history_text()
+    }
+
+    /// The shown tab's screen text, once its program runs.
+    pub fn screen_text(&self, cx: &App) -> Option<String> {
+        self.tabs.get(self.active)?.view.read(cx).screen_text()
+    }
+
+    /// Whether it was opened for a custom command rather than as a shell.
+    pub fn is_command(&self) -> bool {
+        self.command
+    }
+
+    /// Shows `e` where a shell would be.
+    pub fn show_error(&mut self, e: String, cx: &mut Context<Self>) {
+        self.error = Some(e);
+        cx.notify();
+    }
+
+    /// Opens a new tab running `shell` (a shell, or a custom command's program) and shows it.
+    pub fn open_spec(
+        &mut self,
+        shell: core::ShellSpec,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<TerminalView> {
+        self.new_menu = false;
+        if self.tabs.is_empty() && shell.title.is_some() {
+            self.command = true;
+        }
         self.error = None;
         let cwd = self.cwd.clone();
         let view = cx.new(|cx| TerminalView::new(shell, cwd, cx));
@@ -138,7 +181,7 @@ impl TerminalPanel {
         view.read(cx).focus_handle(cx).focus(window, cx);
         self.check_collapsed(cx);
         cx.notify();
-        Some(view)
+        view
     }
 
     /// Makes sure there's a shell to look at.

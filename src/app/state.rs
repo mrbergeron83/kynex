@@ -82,11 +82,16 @@ pub struct Saved {
     pub browser: kynex_core::browser::Pick,
     /// A Claude Code release the user chose to skip; newer ones are offered again.
     pub skipped_cli_version: Option<String>,
-    /// The terminal panel under the conversation is showing.
+    /// The old terminal dock was showing: the first workspace shown gets a terminal pane.
     pub terminal_open: bool,
+    /// The old dock's height, which a terminal pane shown with Ctrl+` takes.
     pub terminal_height: f32,
-    /// The session timeline is showing beside the transcript.
+    /// The session timeline is showing beside the transcript in chat (a project's is a pane).
     pub timeline_open: bool,
+    /// Whether `timeline_open` from before the timeline was a pane has been turned into one.
+    pub timeline_migrated: bool,
+    /// Terminal panes show their scrollback from last time when they reopen.
+    pub terminal_history: bool,
     /// Unsent messages, by Claude Code session id.
     pub drafts: HashMap<String, String>,
     /// Claude names the most recent unnamed sessions too, not only the one
@@ -158,6 +163,8 @@ impl Default for Saved {
             terminal_open: false,
             terminal_height: 280.,
             timeline_open: false,
+            timeline_migrated: false,
+            terminal_history: true,
             drafts: HashMap::new(),
             name_past_sessions: false,
             delegate: true,

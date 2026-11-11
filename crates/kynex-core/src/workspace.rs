@@ -551,7 +551,7 @@ mod tests {
     fn saved_two_panes() -> SavedLayout {
         let mut layout = crate::layout::Layout::new("1", 1);
         layout.split(1, crate::layout::Axis::Row, 2, crate::layout::Rect::new(0.0, 0.0, 2000.0, 1000.0));
-        SavedLayout { layout, sessions: BTreeMap::from([(1, "a".to_string())]) }
+        SavedLayout { layout, sessions: BTreeMap::from([(1, "a".to_string())]), tools: None }
     }
 
     #[test]

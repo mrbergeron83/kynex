@@ -57,6 +57,13 @@ pub struct ShellSpec {
     pub kind: ShellKind,
     pub program: PathBuf,
     pub args: Vec<String>,
+    /// Variables it gets besides the terminal's own.
+    pub env: Vec<(String, String)>,
+    /// What its tab is called instead of the shell's name (a custom command's).
+    pub title: Option<String>,
+    /// Text shown above it as it starts: the pane's scrollback from last time
+    /// ([`crate::scrollback`]).
+    pub history: Option<String>,
 }
 
 /// Finds the program for `kind`.
@@ -77,7 +84,7 @@ pub fn resolve(kind: ShellKind) -> Result<ShellSpec, String> {
             (shell.unwrap_or_else(|| PathBuf::from("/bin/bash")), vec!["-l".into()])
         }
     };
-    Ok(ShellSpec { kind, program, args })
+    Ok(ShellSpec { kind, program, args, env: Vec::new(), title: None, history: None })
 }
 
 /// Git for Windows' bash, the one Claude Code itself uses: `CLAUDE_CODE_GIT_BASH_PATH`,
@@ -106,7 +113,7 @@ fn git_bash() -> Option<PathBuf> {
 
 /// A program on PATH as it is now (`.exe` added on Windows), so a shell
 /// installed since Kynex started is found.
-fn which(name: &str) -> Option<PathBuf> {
+pub fn which(name: &str) -> Option<PathBuf> {
     let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
     let fresh = crate::fresh_env::vars().into_iter().find(|(n, _)| n.eq_ignore_ascii_case("PATH")).map(|(_, v)| v);
     let path = fresh.or_else(|| std::env::var_os("PATH"))?;

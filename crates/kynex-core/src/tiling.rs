@@ -3,6 +3,11 @@
 //! window talks to ([`Live::current`](crate::live::Live::current)): picking a session
 //! somewhere else (the sessions panel, a workspace) shows it in the focused pane, or
 //! focuses the pane that already holds it.
+//!
+//! A pane holds a session or a tool: a terminal, the workspace's Git view, or the timeline
+//! of the session pane focused last. Tool panes split, move and zoom like the others, but
+//! sessions never land in them: picking a session while a tool has the focus shows it in
+//! the session pane focused last. There is always a session pane.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -11,12 +16,70 @@ use serde::{Deserialize, Serialize};
 use crate::layout::{Axis, Direction, Layout, PaneId, Rect, Rects};
 use crate::live::Key;
 
+/// What a terminal pane is, beyond being one.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TermPane {
+    /// The custom command it runs ([`crate::user_commands`]), by name; `None` for a shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// The agent CLI it runs ([`crate::agent_panes`]), by rule id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// The id the agent printed to be resumed with, for after a restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<String>,
+    /// Where its scrollback was kept at the last quit ([`crate::scrollback`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<String>,
+}
+
+impl TermPane {
+    /// A plain shell, which Ctrl+` and the run buttons use.
+    pub fn is_shell(&self) -> bool {
+        self.command.is_none() && self.agent.is_none()
+    }
+}
+
+/// What a pane holds besides a session, as saved.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Tool {
+    Terminal(TermPane),
+    /// The workspace's changes: its Git view.
+    Git,
+    /// The timeline of the session pane focused last.
+    Timeline,
+}
+
+impl Tool {
+    pub fn content(&self) -> Content {
+        match self {
+            Self::Terminal(_) => Content::Terminal,
+            Self::Git => Content::Git,
+            Self::Timeline => Content::Timeline,
+        }
+    }
+}
+
+/// What a pane holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Content {
+    Session(Key),
+    Terminal,
+    Git,
+    Timeline,
+}
+
+/// Where a terminal goes when it's shown and the tab has none: below everything.
+pub const TERMINAL_RATIO: f32 = 0.7;
+
 /// One tab of a workspace, for the tab bar.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabInfo {
     pub name: String,
     /// The sessions in its panes, in reading order.
     pub sessions: Vec<Key>,
+    /// Every pane in it, in reading order.
+    pub panes: Vec<PaneId>,
     pub active: bool,
 }
 
@@ -27,6 +90,10 @@ pub struct TabInfo {
 pub struct SavedLayout {
     pub layout: Layout,
     pub sessions: BTreeMap<PaneId, String>,
+    /// The tool panes (terminals, Git, timeline). `None` in a layout saved before they were
+    /// panes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<BTreeMap<PaneId, Tool>>,
 }
 
 impl SavedLayout {
@@ -39,14 +106,20 @@ impl SavedLayout {
 pub struct Tiling {
     layout: Layout,
     keys: HashMap<PaneId, Key>,
+    tools: HashMap<PaneId, Tool>,
+    /// The session pane that had the focus last, where a session goes while a tool has it.
+    last_session: Option<PaneId>,
+    /// The session the window talked to at the last [`Self::reconcile`].
+    shown: Option<Key>,
 }
 
 impl Tiling {
-    /// What to save: the layout and, from `id_of`, each pane's session id (`None` for a
-    /// session that has none to resume).
+    /// What to save: the layout, from `id_of` each pane's session id (`None` for a session
+    /// that has none to resume), and the tool panes.
     pub fn save(&self, id_of: impl Fn(Key) -> Option<String>) -> SavedLayout {
         let sessions = self.layout.panes().into_iter().filter_map(|p| Some((p, id_of(self.key_of(p)?)?))).collect();
-        SavedLayout { layout: self.layout.clone(), sessions }
+        let tools = self.tools.iter().map(|(p, t)| (*p, t.clone())).collect();
+        SavedLayout { layout: self.layout.clone(), sessions, tools: Some(tools) }
     }
 
     /// Brings a saved layout back. Its panes get fresh ids from `*next_pane` up (advancing
@@ -71,8 +144,13 @@ impl Tiling {
         let mut layout = saved.layout.clone();
         layout.renumber(|p| renamed[&p]);
         let mut keys: HashMap<PaneId, Key> = HashMap::new();
+        let mut tools: HashMap<PaneId, Tool> = HashMap::new();
         let mut seen: Vec<&str> = Vec::new();
         for p in old {
+            if let Some(tool) = saved.tools.as_ref().and_then(|t| t.get(&p)) {
+                tools.insert(renamed[&p], tool.clone());
+                continue;
+            }
             let id = saved.sessions.get(&p).map(String::as_str);
             let repeat = id.is_some_and(|id| seen.contains(&id));
             seen.extend(id);
@@ -87,9 +165,22 @@ impl Tiling {
                 }
             }
         }
-        // Whichever pane is focused once the missing ones are gone takes `keep`.
+        // Tools alone aren't a workspace: there has to be a session.
+        if keys.is_empty() {
+            return None;
+        }
+        // A tool can't keep the focus: the session state up belongs to a session pane.
+        if let Some(focus) = layout.focus()
+            && tools.contains_key(&focus)
+            && let Some(p) = layout.tab().and_then(|t| t.panes().into_iter().find(|p| keys.contains_key(p)))
+            && let Some(t) = layout.tab_mut()
+        {
+            t.set_focus(p);
+        }
+        // The focused session pane takes `keep`.
+        let focus = layout.focus().filter(|f| keys.contains_key(f)).or_else(|| keys.keys().min().copied());
         if let Some(k) = keep
-            && let Some(focus) = layout.focus()
+            && let Some(focus) = focus
             && !layout.panes().contains(&k)
         {
             layout.renumber(|p| if p == focus { k } else { p });
@@ -97,12 +188,145 @@ impl Tiling {
                 keys.insert(k, key);
             }
         }
-        (!layout.is_empty()).then_some(Self { layout, keys })
+        (!layout.is_empty()).then_some(Self { layout, keys, tools, last_session: None, shown: None })
     }
 
     /// One tab with one pane `pane`, showing session `key`.
     pub fn new(pane: PaneId, key: Key) -> Self {
-        Self { layout: Layout::new("1", pane), keys: HashMap::from([(pane, key)]) }
+        Self {
+            layout: Layout::new("1", pane),
+            keys: HashMap::from([(pane, key)]),
+            tools: HashMap::new(),
+            last_session: Some(pane),
+            shown: None,
+        }
+    }
+
+    /// What pane `pane` holds.
+    pub fn content(&self, pane: PaneId) -> Option<Content> {
+        match self.keys.get(&pane) {
+            Some(k) => Some(Content::Session(*k)),
+            None => self.tools.get(&pane).map(Tool::content),
+        }
+    }
+
+    pub fn is_terminal(&self, pane: PaneId) -> bool {
+        self.content(pane) == Some(Content::Terminal)
+    }
+
+    /// Whether pane `pane` holds a tool rather than a session.
+    pub fn is_tool(&self, pane: PaneId) -> bool {
+        self.tools.contains_key(&pane)
+    }
+
+    /// The panes holding `kind` in every tab, in reading order.
+    pub fn panes_of(&self, kind: Content) -> Vec<PaneId> {
+        self.layout.panes().into_iter().filter(|p| self.content(*p) == Some(kind)).collect()
+    }
+
+    /// The panes holding `kind` in the active tab, in reading order (a zoomed tab's other
+    /// panes included).
+    pub fn tab_panes_of(&self, kind: Content) -> Vec<PaneId> {
+        let panes = self.layout.tab().map(|t| t.panes()).unwrap_or_default();
+        panes.into_iter().filter(|p| self.content(*p) == Some(kind)).collect()
+    }
+
+    /// The terminal panes of every tab, in reading order.
+    pub fn terminals(&self) -> Vec<PaneId> {
+        self.panes_of(Content::Terminal)
+    }
+
+    /// The shell panes of the active tab (not a custom command's), in reading order.
+    pub fn tab_terminals(&self) -> Vec<PaneId> {
+        let shell = |p: &PaneId| matches!(self.tools.get(p), Some(Tool::Terminal(t)) if t.is_shell());
+        self.tab_panes_of(Content::Terminal).into_iter().filter(shell).collect()
+    }
+
+    /// What terminal pane `pane` is beyond being one.
+    pub fn term_pane(&self, pane: PaneId) -> Option<&TermPane> {
+        match self.tools.get(&pane) {
+            Some(Tool::Terminal(t)) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// The agent panes of every tab, with their agents' ids.
+    pub fn agents(&self) -> Vec<(PaneId, String)> {
+        let of = |p: PaneId| Some((p, self.term_pane(p)?.agent.clone()?));
+        self.layout.panes().into_iter().filter_map(of).collect()
+    }
+
+    /// Notes the id agent pane `pane` can be resumed with. True if it changed.
+    pub fn set_resume(&mut self, pane: PaneId, id: String) -> bool {
+        match self.tools.get_mut(&pane) {
+            Some(Tool::Terminal(t)) if t.agent.is_some() && t.resume.as_deref() != Some(id.as_str()) => {
+                t.resume = Some(id);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Notes where terminal pane `pane`'s scrollback is kept.
+    pub fn set_history(&mut self, pane: PaneId, id: String) {
+        if let Some(Tool::Terminal(t)) = self.tools.get_mut(&pane) {
+            t.history = Some(id);
+        }
+    }
+
+    /// The custom command terminal pane `pane` runs, if it runs one.
+    pub fn command_of(&self, pane: PaneId) -> Option<&str> {
+        match self.tools.get(&pane) {
+            Some(Tool::Terminal(t)) => t.command.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Every pane in sight, sessions and tools, in reading order.
+    pub fn visible_panes(&self) -> Vec<PaneId> {
+        self.layout.visible()
+    }
+
+    /// The pane the window's session state belongs to: the focused one if it holds a
+    /// session, else the session pane focused last, else the first.
+    pub fn session_focus(&self) -> Option<PaneId> {
+        let focus = self.focus().filter(|f| self.keys.contains_key(f));
+        let last = self.last_session.filter(|p| self.keys.contains_key(p));
+        focus.or(last).or_else(|| self.layout.panes().into_iter().find(|p| self.keys.contains_key(p)))
+    }
+
+    /// A terminal pane `pane` below everything in the active tab, `ratio` of the height
+    /// above it, and focused. False if there's no room.
+    pub fn add_terminal(&mut self, pane: PaneId, ratio: f32, bounds: Rect) -> bool {
+        if !self.layout.split_root(Axis::Column, pane, ratio, bounds) {
+            return false;
+        }
+        self.tools.insert(pane, Tool::Terminal(TermPane::default()));
+        true
+    }
+
+    /// A terminal pane `pane` at `side` of pane `target` (a terminal beside a terminal, or
+    /// one beside a session), and focused. False if there's no room.
+    pub fn split_terminal(&mut self, target: PaneId, side: Direction, pane: PaneId, bounds: Rect) -> bool {
+        self.split_tool(target, side, pane, Tool::Terminal(TermPane::default()), 0.5, bounds)
+    }
+
+    /// A pane `pane` holding `tool` at `side` of pane `target`, focused. `ratio` of the room
+    /// goes to the first of the two (left or top). False if there's no room.
+    pub fn split_tool(
+        &mut self,
+        target: PaneId,
+        side: Direction,
+        pane: PaneId,
+        tool: Tool,
+        ratio: f32,
+        bounds: Rect,
+    ) -> bool {
+        if !self.place_with(target, side, pane, ratio, bounds) {
+            return false;
+        }
+        self.tools.insert(pane, tool);
+        true
     }
 
     pub fn layout(&self) -> &Layout {
@@ -147,6 +371,7 @@ impl Tiling {
             .map(|(i, t)| TabInfo {
                 name: t.name.clone(),
                 sessions: t.panes().into_iter().filter_map(|p| self.key_of(p)).collect(),
+                panes: t.panes(),
                 active: i == active,
             })
             .collect()
@@ -171,13 +396,19 @@ impl Tiling {
         self.layout.select(i)
     }
 
-    /// Closes tab `i` unless it is the only one. Returns the panes it held with their
-    /// sessions (which stay open, off screen).
+    /// Closes tab `i` unless it is the only one, or the only one with sessions. Returns the
+    /// panes it held with their sessions (which stay open, off screen); its tools go.
     pub fn close_tab(&mut self, i: usize) -> Vec<(PaneId, Key)> {
-        if self.layout.tabs().len() < 2 {
+        let Some(tab) = self.layout.tabs().get(i) else { return Vec::new() };
+        let mine = tab.panes();
+        let others_have_sessions = self.keys.keys().any(|p| !mine.contains(p));
+        if self.layout.tabs().len() < 2 || !others_have_sessions {
             return Vec::new();
         }
         let panes = self.layout.close_tab(i);
+        for p in &panes {
+            self.tools.remove(p);
+        }
         panes.into_iter().filter_map(|p| Some((p, self.keys.remove(&p)?))).collect()
     }
 
@@ -198,6 +429,9 @@ impl Tiling {
     pub fn focus_pane(&mut self, pane: PaneId) -> bool {
         let Some(i) = self.layout.tab_of(pane) else { return false };
         self.layout.select(i);
+        if self.keys.contains_key(&pane) {
+            self.last_session = Some(pane);
+        }
         self.layout.tab_mut().is_some_and(|t| t.set_focus(pane))
     }
 
@@ -253,14 +487,25 @@ impl Tiling {
     /// Puts a new pane (showing `key`) at `side` of pane `target`, and focuses it. False if
     /// it would leave a pane too small for `bounds`, `target` isn't here or `key` is on show.
     pub fn split_at(&mut self, target: PaneId, side: Direction, pane: PaneId, key: Key, bounds: Rect) -> bool {
-        if self.keys.values().any(|k| *k == key) {
+        if self.keys.values().any(|k| *k == key) || !self.place(target, side, pane, bounds) {
             return false;
         }
+        self.keys.insert(pane, key);
+        true
+    }
+
+    /// Splits `target` with `pane` at its `side`.
+    fn place(&mut self, target: PaneId, side: Direction, pane: PaneId, bounds: Rect) -> bool {
+        self.place_with(target, side, pane, 0.5, bounds)
+    }
+
+    /// [`Self::place`], `ratio` of the room going to the first of the two.
+    fn place_with(&mut self, target: PaneId, side: Direction, pane: PaneId, ratio: f32, bounds: Rect) -> bool {
         let axis = match side {
             Direction::Left | Direction::Right => Axis::Row,
             Direction::Up | Direction::Down => Axis::Column,
         };
-        if !self.layout.split(target, axis, pane, bounds) {
+        if !self.layout.split_with(target, axis, pane, ratio, bounds) {
             return false;
         }
         // A split puts the new pane after its target; before it is the two swapped.
@@ -269,14 +514,13 @@ impl Tiling {
         {
             t.swap(target, pane);
         }
-        self.keys.insert(pane, key);
         true
     }
 
     /// Shows session `key` in pane `pane` in place of what it had. False if the pane isn't
-    /// here or the session is in another pane.
+    /// here, is a tool, or the session is in another pane.
     pub fn show_in(&mut self, pane: PaneId, key: Key) -> bool {
-        if !self.has(pane) || self.pane_of(key).is_some_and(|p| p != pane) {
+        if !self.has(pane) || self.is_tool(pane) || self.pane_of(key).is_some_and(|p| p != pane) {
             return false;
         }
         self.keys.insert(pane, key);
@@ -295,13 +539,17 @@ impl Tiling {
         }
     }
 
-    /// Closes `pane` when the window has others to keep (its session stays open, off
-    /// screen). Returns the session it showed.
-    pub fn close_pane(&mut self, pane: PaneId) -> Option<Key> {
-        if self.layout.panes().len() < 2 || !self.layout.close_pane(pane) {
+    /// Closes `pane` when the window has others to keep (a session stays open, off screen),
+    /// though never the last session pane. Returns what it held.
+    pub fn close_pane(&mut self, pane: PaneId) -> Option<Content> {
+        let content = self.content(pane)?;
+        let last_session = matches!(content, Content::Session(_)) && self.keys.len() < 2;
+        if last_session || self.layout.panes().len() < 2 || !self.layout.close_pane(pane) {
             return None;
         }
-        self.keys.remove(&pane)
+        self.keys.remove(&pane);
+        self.tools.remove(&pane);
+        Some(content)
     }
 
     /// Moves `pane` to tab `tab`, beside that tab's focused pane. False if it is there
@@ -336,24 +584,37 @@ impl Tiling {
     /// last one stays), and `current`, the session the window talks to, ends up in the
     /// focused pane: focusing the pane already showing it, else taking the focused pane's
     /// place. Returns the panes that went.
+    ///
+    /// Tool panes stay. While one has the focus and `current` is the session it was last
+    /// time, the focus stays on it; a session not on show goes into [`Self::session_focus`].
     pub fn reconcile(&mut self, open: &[Key], current: Key) -> Vec<PaneId> {
         let mut gone = Vec::new();
         for pane in self.layout.panes() {
-            let alive = self.key_of(pane).is_some_and(|k| open.contains(&k));
-            if !alive && self.layout.panes().len() > 1 && self.layout.close_pane(pane) {
+            let Some(key) = self.key_of(pane) else { continue };
+            if !open.contains(&key) && self.keys.len() > 1 && self.layout.close_pane(pane) {
                 self.keys.remove(&pane);
                 gone.push(pane);
             }
         }
+        let on_tool = self.focus().is_some_and(|f| self.is_tool(f));
+        let unchanged = self.shown == Some(current);
+        self.shown = Some(current);
         match self.keys.iter().find(|(_, k)| **k == current).map(|(p, _)| *p) {
+            Some(_) if on_tool && unchanged => {}
             Some(pane) => {
                 self.focus_pane(pane);
             }
             None => {
-                if let Some(focus) = self.focus() {
-                    self.keys.insert(focus, current);
+                if let Some(pane) = self.session_focus() {
+                    self.keys.insert(pane, current);
+                    if !on_tool || !unchanged {
+                        self.focus_pane(pane);
+                    }
                 }
             }
+        }
+        if let Some(f) = self.focus().filter(|f| self.keys.contains_key(f)) {
+            self.last_session = Some(f);
         }
         gone
     }
@@ -372,335 +633,4 @@ pub fn drop_side(r: Rect, x: f32, y: f32) -> Option<Direction> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const BIG: Rect = Rect { x: 0.0, y: 0.0, w: 2000.0, h: 1000.0 };
-
-    fn three() -> Tiling {
-        let mut t = Tiling::new(1, 10);
-        assert!(t.split(Axis::Row, 2, 20, BIG));
-        assert!(t.split(Axis::Column, 3, 30, BIG));
-        t
-    }
-
-    #[test]
-    fn the_sessions_are_those_of_every_pane() {
-        assert_eq!(three().sessions(), [10, 20, 30]);
-    }
-
-    #[test]
-    fn a_split_shows_a_new_session_in_the_new_focused_pane() {
-        let t = three();
-        assert_eq!(t.focus(), Some(3));
-        assert_eq!(t.visible(), [(1, 10), (2, 20), (3, 30)]);
-    }
-
-    #[test]
-    fn a_session_already_on_show_cannot_be_split_in_again() {
-        let mut t = Tiling::new(1, 10);
-        assert!(!t.split(Axis::Row, 2, 10, BIG));
-        assert_eq!(t.panes(), [1]);
-    }
-
-    #[test]
-    fn picking_a_session_that_is_on_show_focuses_its_pane() {
-        let mut t = three();
-        assert!(t.reconcile(&[10, 20, 30], 10).is_empty());
-        assert_eq!(t.focus(), Some(1));
-        assert_eq!(t.visible().len(), 3, "nothing was replaced");
-    }
-
-    #[test]
-    fn picking_a_session_that_is_not_on_show_replaces_the_focused_pane() {
-        let mut t = three();
-        t.focus_pane(2);
-        assert!(t.reconcile(&[10, 20, 30, 40], 40).is_empty());
-        assert_eq!(t.visible(), [(1, 10), (2, 40), (3, 30)]);
-        assert_eq!(t.focus(), Some(2));
-    }
-
-    #[test]
-    fn a_pane_whose_session_closed_goes() {
-        let mut t = three();
-        // 30 closed; 20 is where the window is.
-        assert_eq!(t.reconcile(&[10, 20], 20), [3]);
-        assert_eq!(t.visible(), [(1, 10), (2, 20)]);
-        assert_eq!(t.focus(), Some(2));
-    }
-
-    #[test]
-    fn the_last_pane_stays_and_takes_the_current_session() {
-        let mut t = Tiling::new(1, 10);
-        assert!(t.reconcile(&[11], 11).is_empty());
-        assert_eq!(t.visible(), [(1, 11)]);
-    }
-
-    #[test]
-    fn closing_the_focused_pane_keeps_the_last_one() {
-        let mut t = three();
-        assert_eq!(t.close_focused(), Some(3));
-        assert_eq!(t.close_focused(), Some(2));
-        assert_eq!(t.close_focused(), None);
-        assert_eq!(t.visible(), [(1, 10)]);
-    }
-
-    #[test]
-    fn a_new_tab_is_numbered_and_active() {
-        let mut t = three();
-        assert!(t.new_tab(4, 40));
-        let tabs = t.tabs();
-        assert_eq!(tabs.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["1", "2"]);
-        assert_eq!(tabs[0].sessions, [10, 20, 30]);
-        assert_eq!((tabs[1].sessions.clone(), tabs[1].active), (vec![40], true));
-        assert_eq!(t.visible(), [(4, 40)]);
-        // A session that is on show somewhere can't open a second time.
-        assert!(!t.new_tab(5, 10));
-        // Numbers aren't reused while a higher one is around.
-        t.rename_tab(1, "review");
-        assert!(t.new_tab(5, 50));
-        assert_eq!(t.tabs().iter().map(|t| t.name.clone()).collect::<Vec<_>>(), ["1", "review", "3"]);
-    }
-
-    #[test]
-    fn selecting_a_tab_shows_its_panes_and_picking_a_session_brings_its_tab_up() {
-        let mut t = three();
-        t.new_tab(4, 40);
-        assert!(t.select_tab(0));
-        assert_eq!(t.visible().len(), 3);
-        assert!(!t.select_tab(7));
-        // 40 becomes the session the window talks to: its tab comes up.
-        t.reconcile(&[10, 20, 30, 40], 40);
-        assert_eq!(t.visible(), [(4, 40)]);
-    }
-
-    #[test]
-    fn closing_a_tab_gives_back_its_panes_and_keeps_the_last_tab() {
-        let mut t = three();
-        t.new_tab(4, 40);
-        assert_eq!(t.close_tab(0), [(1, 10), (2, 20), (3, 30)]);
-        assert_eq!(t.tabs().len(), 1);
-        assert_eq!(t.visible(), [(4, 40)]);
-        assert!(t.close_tab(0).is_empty(), "the only tab stays");
-    }
-
-    #[test]
-    fn tabs_are_renamed_and_moved() {
-        let mut t = three();
-        t.new_tab(4, 40);
-        t.rename_tab(0, "  agents ");
-        t.rename_tab(1, "   ");
-        assert_eq!(t.tabs().iter().map(|t| t.name.clone()).collect::<Vec<_>>(), ["agents", "2"]);
-        t.move_tab(1, 0);
-        let tabs = t.tabs();
-        assert_eq!(tabs.iter().map(|t| t.name.clone()).collect::<Vec<_>>(), ["2", "agents"]);
-        assert!(tabs[0].active, "the active tab is still the same tab");
-    }
-
-    #[test]
-    fn a_pane_goes_at_any_side_of_another() {
-        let mut t = Tiling::new(1, 10);
-        assert!(t.split_at(1, Direction::Left, 2, 20, BIG));
-        assert_eq!(t.visible(), [(2, 20), (1, 10)], "left of it comes first");
-        assert_eq!(t.focus(), Some(2));
-        assert!(t.split_at(1, Direction::Down, 3, 30, BIG));
-        assert_eq!(t.visible(), [(2, 20), (1, 10), (3, 30)]);
-        assert!(t.split_at(1, Direction::Up, 4, 40, BIG));
-        assert_eq!(t.visible(), [(2, 20), (4, 40), (1, 10), (3, 30)]);
-        // Not a session that's on show, nor beside a pane that isn't there.
-        assert!(!t.split_at(1, Direction::Right, 5, 20, BIG));
-        assert!(!t.split_at(9, Direction::Right, 5, 50, BIG));
-        assert_eq!(t.pane_of(40), Some(4));
-    }
-
-    #[test]
-    fn a_session_takes_a_panes_place() {
-        let mut t = three();
-        assert!(t.show_in(2, 40));
-        assert_eq!(t.visible(), [(1, 10), (2, 40), (3, 30)]);
-        assert!(!t.show_in(2, 10), "10 is in another pane");
-        assert!(t.show_in(2, 40), "showing what it shows is fine");
-        assert!(!t.show_in(9, 50));
-    }
-
-    #[test]
-    fn focus_and_swap_go_by_direction() {
-        let mut t = three();
-        assert_eq!(t.focus(), Some(3));
-        assert!(t.focus_dir(Direction::Up, BIG));
-        assert_eq!(t.focus(), Some(2));
-        assert!(!t.focus_dir(Direction::Up, BIG));
-        assert!(t.focus_dir(Direction::Left, BIG));
-        assert_eq!(t.focus(), Some(1));
-        let before = t.rects(BIG).pane(1).unwrap();
-        assert!(t.swap_dir(Direction::Right, BIG));
-        assert_eq!(t.focus(), Some(1));
-        assert_ne!(t.rects(BIG).pane(1).unwrap(), before);
-        assert!(!t.swap_dir(Direction::Up, BIG), "pane 1 is on the top edge now");
-    }
-
-    #[test]
-    fn the_focused_pane_grows_towards_a_direction() {
-        let mut t = three();
-        assert!(t.focus_pane(1));
-        let w = t.rects(BIG).pane(1).unwrap().w;
-        assert!(t.resize_focused(Direction::Right, 40.0, BIG));
-        assert!((t.rects(BIG).pane(1).unwrap().w - w - 40.0).abs() < 0.5);
-        assert!(!t.resize_focused(Direction::Left, 40.0, BIG));
-    }
-
-    #[test]
-    fn zoom_shows_one_pane_and_back() {
-        let mut t = three();
-        t.toggle_zoom();
-        assert_eq!(t.zoomed(), Some(3));
-        assert_eq!(t.visible(), [(3, 30)]);
-        t.toggle_zoom();
-        assert_eq!((t.zoomed(), t.visible().len()), (None, 3));
-    }
-
-    #[test]
-    fn any_pane_closes_but_the_last() {
-        let mut t = three();
-        assert_eq!(t.close_pane(1), Some(10));
-        assert_eq!(t.close_pane(1), None);
-        assert_eq!(t.close_pane(2), Some(20));
-        assert_eq!(t.close_pane(3), None, "the last pane stays");
-    }
-
-    #[test]
-    fn panes_move_between_tabs() {
-        let mut t = three();
-        assert!(t.move_to_new_tab(3));
-        assert_eq!(t.tabs().iter().map(|t| t.sessions.clone()).collect::<Vec<_>>(), [vec![10, 20], vec![30]]);
-        assert!(!t.move_to_new_tab(3), "alone in its tab already");
-        assert!(t.move_to_tab(2, 1, BIG));
-        assert_eq!(t.tabs().iter().map(|t| t.sessions.clone()).collect::<Vec<_>>(), [vec![10], vec![30, 20]]);
-        assert!(!t.move_to_tab(2, 1, BIG));
-    }
-
-    /// Session ids as the app would know them: key 10 is "s10".
-    fn id_of(key: Key) -> Option<String> {
-        Some(format!("s{key}"))
-    }
-
-    fn key_of_id(id: Option<&str>) -> Option<Key> {
-        id.map(|i| i[1..].parse().unwrap())
-    }
-
-    #[test]
-    fn a_saved_layout_comes_back_with_new_pane_ids() {
-        let mut t = three();
-        t.new_tab(4, 40);
-        t.select_tab(0);
-        t.focus_pane(2);
-        let saved = t.save(id_of);
-        assert_eq!(saved.sessions.len(), 4);
-        let saved: SavedLayout = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
-        let mut next = 100;
-        let back = Tiling::restore(&saved, &mut next, None, key_of_id).unwrap();
-        assert_eq!(next, 104, "four panes took four ids");
-        assert_eq!(back.panes(), [100, 101, 102, 103]);
-        assert_eq!(back.sessions(), [10, 20, 30, 40]);
-        assert_eq!(back.tabs().iter().map(|t| t.sessions.clone()).collect::<Vec<_>>(), [vec![10, 20, 30], vec![40]]);
-        assert_eq!(back.focus(), Some(101), "the focus came along");
-        assert_eq!(back.key_of(back.focus().unwrap()), Some(20));
-    }
-
-    #[test]
-    fn a_pane_without_an_id_is_a_new_session() {
-        let mut t = three();
-        t.show_in(2, 99);
-        let saved = t.save(|k| (k != 99).then(|| format!("s{k}")));
-        assert_eq!(saved.sessions.len(), 2);
-        let mut next = 1;
-        let back =
-            Tiling::restore(&saved, &mut next, None, |id| Some(id.map_or(500, |i| i[1..].parse().unwrap()))).unwrap();
-        assert_eq!(back.sessions(), [10, 500, 30]);
-    }
-
-    #[test]
-    fn a_missing_session_closes_its_pane() {
-        let saved = three().save(id_of);
-        let mut next = 1;
-        let back = Tiling::restore(&saved, &mut next, None, |id| key_of_id(id).filter(|k| *k != 20)).unwrap();
-        assert_eq!(back.sessions(), [10, 30]);
-        assert_eq!(back.panes().len(), 2);
-        assert!(back.layout().is_valid());
-        assert!(back.focus().is_some());
-    }
-
-    #[test]
-    fn no_session_left_is_no_tiling() {
-        let saved = three().save(id_of);
-        assert!(Tiling::restore(&saved, &mut 1, None, |_| None).is_none());
-    }
-
-    #[test]
-    fn a_session_in_two_panes_keeps_the_first() {
-        let mut saved = three().save(id_of);
-        saved.sessions.insert(2, "s10".into());
-        let mut asked = Vec::new();
-        let back = Tiling::restore(&saved, &mut 1, None, |id| {
-            asked.push(id.map(str::to_string));
-            key_of_id(id)
-        })
-        .unwrap();
-        assert_eq!(back.sessions(), [10, 30]);
-        assert_eq!(asked.len(), 2, "the repeat wasn't asked for twice");
-    }
-
-    #[test]
-    fn a_corrupt_layout_is_not_restored() {
-        let saved = three().save(id_of);
-        let mut next = 7;
-        let json = serde_json::to_string(&saved).unwrap().replace("\"Pane\":3", "\"Pane\":1");
-        let bad: SavedLayout = serde_json::from_str(&json).unwrap();
-        assert!(Tiling::restore(&bad, &mut next, None, key_of_id).is_none());
-        assert_eq!(next, 7, "nothing was taken");
-        assert!(Tiling::restore(&SavedLayout::default(), &mut next, None, key_of_id).is_none());
-    }
-
-    #[test]
-    fn the_focused_pane_can_keep_an_id_and_reconcile_keeps_every_restored_session() {
-        let mut t = three();
-        t.focus_pane(2);
-        let saved = t.save(id_of);
-        let mut next = 50;
-        let back = Tiling::restore(&saved, &mut next, Some(7), key_of_id);
-        let mut back = back.unwrap();
-        assert_eq!(back.focus(), Some(7));
-        assert_eq!(back.key_of(7), Some(20));
-        assert_eq!(back.panes().len(), 3);
-        assert_eq!(next, 53, "every pane took a fresh id before the focused one was renamed");
-        assert!(back.panes().iter().filter(|p| **p != 7).all(|p| (50..53).contains(p)));
-        // The focused pane's session is gone: the pane that is focused after that keeps the id.
-        let gone = Tiling::restore(&saved, &mut 50, Some(7), |id| key_of_id(id).filter(|k| *k != 20)).unwrap();
-        assert_eq!(gone.panes().len(), 2);
-        assert!(gone.focus() == Some(7) && gone.key_of(7).is_some_and(|k| k != 20));
-        assert_eq!(gone.sessions().len(), 2);
-        // The window talks to the focused pane's session: nothing is replaced.
-        assert!(back.reconcile(&[10, 20, 30], 20).is_empty());
-        assert_eq!(back.sessions(), [10, 20, 30]);
-    }
-
-    #[test]
-    fn renumbered_panes_do_not_collide_with_ones_in_use() {
-        let saved = three().save(id_of);
-        let mut next = 1;
-        let a = Tiling::restore(&saved, &mut next, None, key_of_id).unwrap();
-        let b = Tiling::restore(&saved, &mut next, None, key_of_id).unwrap();
-        assert!(a.panes().iter().all(|p| !b.panes().contains(p)));
-    }
-
-    #[test]
-    fn a_drop_near_an_edge_is_for_that_side() {
-        let r = Rect::new(100.0, 50.0, 400.0, 200.0);
-        assert_eq!(drop_side(r, 120.0, 150.0), Some(Direction::Left));
-        assert_eq!(drop_side(r, 480.0, 150.0), Some(Direction::Right));
-        assert_eq!(drop_side(r, 300.0, 60.0), Some(Direction::Up));
-        assert_eq!(drop_side(r, 300.0, 240.0), Some(Direction::Down));
-        assert_eq!(drop_side(r, 300.0, 150.0), None, "the middle is the pane itself");
-        assert_eq!(drop_side(Rect::new(0.0, 0.0, 0.0, 0.0), 1.0, 1.0), None);
-    }
-}
+mod tests;

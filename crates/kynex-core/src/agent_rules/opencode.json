@@ -1,0 +1,7 @@
+{
+  "id": "opencode",
+  "name": "opencode",
+  "argv": ["opencode"],
+  "working": ["esc interrupt", "esc to interrupt"],
+  "blocked": ["Permission required", "Allow once", "allow always"]
+}

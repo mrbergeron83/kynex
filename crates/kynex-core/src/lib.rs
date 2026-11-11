@@ -2,6 +2,7 @@
 //! `cargo test -p kynex-core`. Blocking calls (processes, git, the network) are
 //! marked as such; the app runs them off the UI thread.
 
+pub mod agent_panes;
 pub mod attach;
 pub mod attention;
 pub mod awake;
@@ -56,6 +57,7 @@ pub mod resources;
 pub mod rewind;
 pub mod rules;
 pub mod scale;
+pub mod scrollback;
 pub mod secrets;
 pub mod session;
 pub mod session_files;
@@ -79,6 +81,7 @@ pub mod tray;
 pub mod trust;
 pub mod update;
 pub mod usage;
+pub mod user_commands;
 pub mod watch;
 pub mod why;
 #[cfg(windows)]

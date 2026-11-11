@@ -149,6 +149,16 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// Turning it off forgets what was kept.
+    fn set_terminal_history(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.saved.terminal_history = on;
+        self.save();
+        if !on {
+            cx.background_spawn(async { kynex_core::scrollback::clear_all() }).detach();
+        }
+        cx.notify();
+    }
+
     fn set_shell(&mut self, shell: Option<ShellKind>, cx: &mut Context<Self>) {
         ShellKind::set_default(shell);
         self.saved.shell = shell;
@@ -291,6 +301,23 @@ impl KynexApp {
                 choice(("shell", n), current == kind, label, t)
                     .on_click(cx.listener(move |this, _, _, cx| this.set_shell(kind, cx)))
             }));
+
+        let keep = self.saved.terminal_history;
+        let history = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(heading(
+                "Terminal scrollback",
+                "Whether a terminal pane shows what was on it before Kynex last quit, above a fresh shell.",
+                t,
+            ))
+            .children([(true, "Bring it back"), (false, "Start empty")].into_iter().enumerate().map(
+                |(n, (on, label))| {
+                    choice(("terminal-history", n), keep == on, label.to_string(), t)
+                        .on_click(cx.listener(move |this, _, _, cx| this.set_terminal_history(on, cx)))
+                },
+            ));
 
         let picked = self.saved.browser;
         let installed = view.map(|v| v.browsers.clone()).unwrap_or_default();
@@ -437,6 +464,7 @@ impl KynexApp {
             .gap_6()
             .child(cli)
             .child(shell)
+            .child(history)
             .child(browser)
             .child(naming)
             .child(notifications)

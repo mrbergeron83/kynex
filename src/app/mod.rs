@@ -22,7 +22,10 @@
 //! | `session_select.rs` | picking sessions to archive or delete together       |
 //! | `session_tidy.rs`   | many sessions at once: menu, tidying, list keys      |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
-//! | `terminal_dock.rs`  | the project's terminal panel under the conversation  |
+//! | `terminal_panes.rs` | terminal panes: Ctrl+`, run buttons, hide and show   |
+//! | `tool_panes.rs`     | the Git view and the timeline as panes               |
+//! | `custom_commands.rs`| custom commands: keys, popup, pane, background       |
+//! | `agent_panes.rs`    | other agent CLIs in panes, their state off the screen |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
 //! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
@@ -52,6 +55,7 @@
 //! | `menus.rs`          | popup menus                                          |
 //! | `palette.rs`        | the command palette (Ctrl+K)                         |
 //! | `palette_filters.rs`| its state filters (All, Needs you, Working, Idle, Done) |
+//! | `palette_more.rs`   | its rows for pane moves, agent panes, custom commands |
 //! | `palette_sessions.rs`| its session rows: per workspace, and open ones not listed yet |
 //! | `goto.rs`           | revealing a session in its project, workspace and pane; next that needs you |
 //! | `leaving.rs`        | menus, modals and panels animating out as they close |
@@ -79,6 +83,7 @@
 //! | `viewer.rs`         | images opened over the window, thumbnails            |
 
 mod about;
+mod agent_panes;
 mod agents_settings;
 mod app_settings;
 mod app_update;
@@ -86,6 +91,7 @@ mod appearance;
 mod attention;
 mod background;
 mod composer;
+mod custom_commands;
 mod delegate_view;
 mod drafts;
 mod extensions;
@@ -109,6 +115,7 @@ mod menus;
 mod models;
 mod palette;
 mod palette_filters;
+mod palette_more;
 mod palette_sessions;
 mod pane_actions;
 mod pane_keys;
@@ -135,12 +142,13 @@ mod status;
 mod storage;
 mod storage_list;
 mod tasks;
-mod terminal_dock;
+mod terminal_panes;
 mod tiles;
 pub(crate) mod timeline;
 mod title_bar;
 mod titles;
 mod toasts;
+mod tool_panes;
 mod tool_rows;
 mod toolbar;
 mod transcript;
@@ -163,6 +171,7 @@ use kynex_core::paths::chat_dir;
 use kynex_core::project::ClaudeSettings;
 use kynex_core::session::{self, Kind, Session};
 
+pub use custom_commands::bind_command_keys;
 use drafts::Draft;
 pub use keys::{SHELL_KEYS, SendPrefix, ToggleTerminal, bind_keys, prefix_key};
 use menus::OpenMenu;
@@ -203,8 +212,28 @@ pub struct KynexApp {
     /// Each open project's Claude settings (mode, effort, folders), read once and
     /// kept in step with every save, so no render reads the file.
     claude_settings: HashMap<PathBuf, kynex_core::project::ClaudeSettings>,
-    /// Each project's terminal panel, created the first time it's opened.
-    terminals: HashMap<PathBuf, Entity<TerminalPanel>>,
+    /// Hidden terminals with shells running, by folder, newest last: shown again before
+    /// a new one starts.
+    terminals: Vec<(PathBuf, Entity<TerminalPanel>)>,
+    /// The panel in each terminal pane, of every workspace.
+    term_panes: HashMap<kynex_core::layout::PaneId, Entity<TerminalPanel>>,
+    /// Command panes from last time whose program is being looked up, so it starts once.
+    command_starting: HashSet<kynex_core::layout::PaneId>,
+    /// The custom commands of the project in front, for the palette.
+    user_commands: Vec<kynex_core::user_commands::UserCommand>,
+    /// Where each terminal pane's scrollback from last time is kept, to forget it with the pane.
+    /// (workspace, id) by pane.
+    term_histories: HashMap<kynex_core::layout::PaneId, (PathBuf, String)>,
+    /// The agent CLIs agent panes can run, built-in and the user's.
+    agent_rules: Vec<kynex_core::agent_panes::AgentRule>,
+    /// What each agent pane's screen last said.
+    agent_trackers: HashMap<kynex_core::layout::PaneId, kynex_core::agent_panes::Tracker>,
+    /// Agent screens are being read every so often.
+    agent_watch: bool,
+    /// The agent rules were asked for.
+    agent_rules_asked: bool,
+    /// A custom command's program over the window, until it exits.
+    command_popup: Option<Entity<crate::terminal::TerminalView>>,
     threads: HashMap<Key, Thread>,
     /// Each session's timeline turns, walked again only where items changed.
     timelines: HashMap<Key, kynex_core::timeline::Turns>,
@@ -296,7 +325,6 @@ pub struct KynexApp {
     /// What's animating out after it closed: menus, modals, panels.
     exits: leaving::Exits,
     resizing_sessions: bool,
-    resizing_terminal: bool,
     /// Whether a newer Claude Code is out, or being installed.
     cli_update: UpdateState,
     /// Folders the CLI would ignore settings in until trusted; see `trust.rs`.
@@ -489,6 +517,7 @@ impl KynexApp {
         .detach();
         cx.on_app_quit(|this, cx| {
             this.stash_all_drafts(cx);
+            this.save_scrollback(cx);
             this.save_layouts_now();
             this.save();
             async {}
@@ -518,7 +547,16 @@ impl KynexApp {
             worktrees: HashMap::new(),
             workspaces: HashMap::new(),
             workspace_ui: Default::default(),
-            terminals: HashMap::new(),
+            terminals: Vec::new(),
+            term_panes: HashMap::new(),
+            command_starting: HashSet::new(),
+            user_commands: Vec::new(),
+            command_popup: None,
+            agent_rules: Vec::new(),
+            term_histories: HashMap::new(),
+            agent_trackers: HashMap::new(),
+            agent_watch: false,
+            agent_rules_asked: false,
             appearances: HashMap::new(),
             claude_settings: HashMap::new(),
             threads: HashMap::new(),
@@ -571,7 +609,6 @@ impl KynexApp {
             menu: None,
             exits: Default::default(),
             resizing_sessions: false,
-            resizing_terminal: false,
             cli_update: UpdateState::Idle,
             trust: Default::default(),
             app_update: UpdateState::Idle,

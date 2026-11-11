@@ -86,6 +86,30 @@ impl KynexApp {
                 });
             }
         }
+        // Agent panes, with their state read off their screens, so Go To's filters find them.
+        for f in folders.iter() {
+            for (pane, name, lamp) in self.agents_in(&f.path) {
+                let state = match lamp {
+                    Lamp::Idle => State::Idle,
+                    Lamp::Working => State::Working,
+                    Lamp::NeedsYou => State::NeedsYou,
+                    Lamp::Done => State::Done,
+                };
+                rows.push(Row {
+                    target: Target::AgentPane { project: f.project.clone(), workspace: f.path.clone(), pane },
+                    detail: "agent pane".into(),
+                    hint: state.word().into(),
+                });
+                entries.push(Entry {
+                    kind: Kind::Session,
+                    title: name,
+                    keywords: format!("agent {}", f.project_name),
+                    when: Some(std::time::SystemTime::now()),
+                    section: Some(f.section.clone()),
+                    state: Some(state),
+                });
+            }
+        }
         (rows, entries)
     }
 }

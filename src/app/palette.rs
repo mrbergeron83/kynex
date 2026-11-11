@@ -93,6 +93,16 @@ pub(super) enum Target {
         path: PathBuf,
     },
     Command(Cmd),
+    /// A custom command, by name.
+    UserCommand(String),
+    /// A new agent pane running the agent with this rule id.
+    Agent(String),
+    /// An agent pane that's open.
+    AgentPane {
+        project: PathBuf,
+        workspace: PathBuf,
+        pane: kynex_core::layout::PaneId,
+    },
 }
 
 /// What an action in the palette does.
@@ -117,6 +127,9 @@ pub(super) enum Cmd {
     Focus(Direction),
     Swap(Direction),
     ZoomPane,
+    /// Move the focused pane to tab `n` of its workspace.
+    MovePaneToTab(usize),
+    MovePaneToNewTab,
     ResizePanes,
     RenamePaneTab,
     PickWorkspace,
@@ -284,6 +297,8 @@ impl KynexApp {
             return cx.notify();
         }
         self.menu = None;
+        self.refresh_user_commands(cx);
+        self.refresh_agent_rules(cx);
         let input = cx.new(|cx| TextInput::new(cx).placeholder("Go to a session, project or action…"));
         input.read(cx).focus_handle(cx).focus(window, cx);
         let view = PaletteView {
@@ -403,10 +418,18 @@ impl KynexApp {
                 state: None,
             });
         }
+        self.palette_more_rows(&mut rows, &mut entries);
         let view = self.palette.as_mut().unwrap();
         view.rows = Rc::new(rows);
         view.palette = Rc::new(Palette::new(entries));
         view.stale = true;
+    }
+
+    /// Lists every entry again if the palette is open: the custom commands came in.
+    pub(super) fn rebuild_palette_if_open(&mut self, cx: &Context<Self>) {
+        if self.palette.is_some() {
+            self.rebuild_palette(cx);
+        }
     }
 
     /// The results for what's typed, matched once per change.
@@ -480,6 +503,17 @@ impl KynexApp {
                 self.select(tab, window, cx);
                 self.focus_input(window, cx);
             }
+            Target::UserCommand(name) => self.run_user_command(name, window, cx),
+            Target::Agent(id) => self.open_agent_pane(id, None, window, cx),
+            Target::AgentPane { project, workspace, pane } => {
+                if let Some(i) = self.saved.projects.iter().position(|p| p.path == project) {
+                    self.select(Active::Project(i), window, cx);
+                    self.select_workspace(&workspace, cx);
+                    self.sync_tiles(window, cx);
+                    self.focus_pane(pane, window, cx);
+                }
+                self.focus_input(window, cx);
+            }
             Target::Command(cmd) => {
                 let title = view.palette.entries[m.index].title.clone();
                 self.palette_recent.retain(|r| *r != title);
@@ -492,6 +526,15 @@ impl KynexApp {
     }
 
     fn run_palette_command(&mut self, cmd: Cmd, window: &mut Window, cx: &mut Context<Self>) {
+        // The pane to move is the one focused now, before the message box takes the keys.
+        if let Cmd::MovePaneToTab(_) | Cmd::MovePaneToNewTab = cmd {
+            let focus = self.tiling_scope().and_then(|(_, ws, _)| self.tiles.get(&ws)?.focus());
+            if let Some(pane) = focus {
+                let tab = if let Cmd::MovePaneToTab(i) = cmd { Some(i) } else { None };
+                self.move_pane(pane, tab, window, cx);
+            }
+            return self.focus_input(window, cx);
+        }
         // Keys that only work in the message box (Ctrl+R, Ctrl+S…) find it focused.
         self.focus_input(window, cx);
         if let Some(action) = cmd.action() {

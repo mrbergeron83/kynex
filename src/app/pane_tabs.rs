@@ -2,6 +2,7 @@
 //! with a state lamp rolled up from its sessions. Click shows a tab, double-click renames
 //! it, the × or a middle-click closes it, dragging reorders, and + opens a new one with a
 //! new session. With one tab the row is hidden (New pane tab in the palette makes a second).
+//! A pane's header dropped on a tab moves the pane there; dropped on + it gets a tab of its own.
 
 use gpui::{AnyElement, ClickEvent, Context, Focusable, MouseButton, SharedString, Window, div, prelude::*};
 use kynex_core::live::Key;
@@ -24,6 +25,28 @@ impl Render for DraggedPaneTab {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
         // Drawn outside the window's root, so it doesn't inherit the font.
+        popover(cx)
+            .font_family(ui_font())
+            .flex_row()
+            .items_center()
+            .h(px(26.))
+            .px_2p5()
+            .text_sm()
+            .text_color(t.text)
+            .child(self.label.clone())
+    }
+}
+
+/// What follows the pointer while a pane is dragged by its header, to another tab.
+#[derive(Clone)]
+pub(super) struct DraggedPane {
+    pub pane: kynex_core::layout::PaneId,
+    pub label: SharedString,
+}
+
+impl Render for DraggedPane {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = theme(cx);
         popover(cx)
             .font_family(ui_font())
             .flex_row()
@@ -167,75 +190,87 @@ impl KynexApp {
                     .map(|s| Lamp::of(s.busy, s.waiting(), s.finished)),
             )
         };
-        let states: Vec<Lamp> = tabs.iter().map(|tab| state_of(&tab.sessions)).collect();
-        let renaming = self.pane_tab_rename.clone();
-        let row: Vec<AnyElement> = tabs
+        // Agent panes roll up with the sessions.
+        let states: Vec<Lamp> = tabs
             .iter()
-            .enumerate()
-            .map(|(n, tab)| {
-                let name = tab.name.clone();
-                let field = renaming.as_ref().filter(|(i, _)| *i == n).map(|(_, input)| input.clone());
-                let drag = DraggedPaneTab { from: n, label: name.clone().into() };
-                let rename_name = name.clone();
-                div()
-                    .id(("pane-tab", n))
-                    .group("pane-tab")
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap_1p5()
-                    .h(px(28.))
-                    .pl_2p5()
-                    .pr_1()
-                    .cursor_pointer()
-                    .text_sm()
-                    .relative()
-                    .child(row_wash(tab.active, t.hover, t.selection))
-                    .when(tab.active, |d| {
-                        d.child(div().absolute().left_2().right_2().bottom_0().h(px(2.)).rounded_full().bg(colour))
-                    })
-                    .child(lamp(("pane-tab-lamp", n), states[n], cx))
-                    .child(match field {
-                        Some(input) => div().w(px(120.)).child(input).into_any_element(),
-                        None => div()
-                            .max_w(px(180.))
-                            .truncate()
-                            .text_color(if tab.active { t.text } else { t.text_muted })
-                            .child(name)
-                            .into_any_element(),
-                    })
-                    .child(
-                        icon_button(("pane-tab-close", n), Icon::Close, cx)
-                            .tooltip(Tooltip::text("Close tab"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.close_pane_tab(n, window, cx);
-                            })),
-                    )
-                    .tooltip(Tooltip::text("Double-click to rename · drag to reorder · middle-click to close"))
-                    .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
-                        if ev.click_count() == 2 {
-                            this.start_tab_rename(n, rename_name.clone(), window, cx);
-                        } else if this.pane_tab_rename.is_none() {
-                            this.select_pane_tab(n, window, cx);
-                        }
-                    }))
-                    .on_mouse_down(
-                        MouseButton::Middle,
-                        cx.listener(move |this, _, window, cx| this.close_pane_tab(n, window, cx)),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
-                            this.open_menu(super::menus::Menu::PaneTab(n), ev.position, gpui::Anchor::TopLeft, cx)
-                        }),
-                    )
-                    .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
-                    .drag_over::<DraggedPaneTab>(move |style, _, _, _| style.bg(t.hover))
-                    .on_drop(cx.listener(move |this, d: &DraggedPaneTab, _, cx| this.move_pane_tab(d.from, n, cx)))
-                    .into_any_element()
+            .map(|tab| {
+                Lamp::most_urgent(
+                    [state_of(&tab.sessions)].into_iter().chain(tab.panes.iter().map(|p| self.agent_lamp(*p))),
+                )
             })
             .collect();
+        let renaming = self.pane_tab_rename.clone();
+        let row: Vec<AnyElement> =
+            tabs.iter()
+                .enumerate()
+                .map(|(n, tab)| {
+                    let name = tab.name.clone();
+                    let field = renaming.as_ref().filter(|(i, _)| *i == n).map(|(_, input)| input.clone());
+                    let drag = DraggedPaneTab { from: n, label: name.clone().into() };
+                    let rename_name = name.clone();
+                    div()
+                        .id(("pane-tab", n))
+                        .group("pane-tab")
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap_1p5()
+                        .h(px(28.))
+                        .pl_2p5()
+                        .pr_1()
+                        .cursor_pointer()
+                        .text_sm()
+                        .relative()
+                        .child(row_wash(tab.active, t.hover, t.selection))
+                        .when(tab.active, |d| {
+                            d.child(div().absolute().left_2().right_2().bottom_0().h(px(2.)).rounded_full().bg(colour))
+                        })
+                        .child(lamp(("pane-tab-lamp", n), states[n], cx))
+                        .child(match field {
+                            Some(input) => div().w(px(120.)).child(input).into_any_element(),
+                            None => div()
+                                .max_w(px(180.))
+                                .truncate()
+                                .text_color(if tab.active { t.text } else { t.text_muted })
+                                .child(name)
+                                .into_any_element(),
+                        })
+                        .child(
+                            icon_button(("pane-tab-close", n), Icon::Close, cx)
+                                .tooltip(Tooltip::text("Close tab"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    cx.stop_propagation();
+                                    this.close_pane_tab(n, window, cx);
+                                })),
+                        )
+                        .tooltip(Tooltip::text("Double-click to rename · drag to reorder · middle-click to close"))
+                        .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
+                            if ev.click_count() == 2 {
+                                this.start_tab_rename(n, rename_name.clone(), window, cx);
+                            } else if this.pane_tab_rename.is_none() {
+                                this.select_pane_tab(n, window, cx);
+                            }
+                        }))
+                        .on_mouse_down(
+                            MouseButton::Middle,
+                            cx.listener(move |this, _, window, cx| this.close_pane_tab(n, window, cx)),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
+                                this.open_menu(super::menus::Menu::PaneTab(n), ev.position, gpui::Anchor::TopLeft, cx)
+                            }),
+                        )
+                        .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
+                        .drag_over::<DraggedPaneTab>(move |style, _, _, _| style.bg(t.hover))
+                        .on_drop(cx.listener(move |this, d: &DraggedPaneTab, _, cx| this.move_pane_tab(d.from, n, cx)))
+                        .drag_over::<DraggedPane>(move |style, _, _, _| style.bg(t.hover))
+                        .on_drop(cx.listener(move |this, d: &DraggedPane, window, cx| {
+                            this.move_pane(d.pane, Some(n), window, cx)
+                        }))
+                        .into_any_element()
+                })
+                .collect();
         Some(
             div()
                 .flex()
@@ -245,11 +280,19 @@ impl KynexApp {
                 .border_color(t.border_variant)
                 .child(div().id("pane-tabs").flex().min_w_0().overflow_x_scroll().children(row))
                 .child(
-                    div().flex_none().px_1().child(
-                        icon_button("new-pane-tab", Icon::Plus, cx)
-                            .tooltip(Tooltip::text("New tab: another layout of panes in this workspace"))
-                            .on_click(cx.listener(|this, _, window, cx| this.new_pane_tab(window, cx))),
-                    ),
+                    div()
+                        .flex_none()
+                        .px_1()
+                        .rounded(px(4.))
+                        .drag_over::<DraggedPane>(move |style, _, _, _| style.bg(t.hover))
+                        .on_drop(
+                            cx.listener(|this, d: &DraggedPane, window, cx| this.move_pane(d.pane, None, window, cx)),
+                        )
+                        .child(
+                            icon_button("new-pane-tab", Icon::Plus, cx)
+                                .tooltip(Tooltip::text("New tab: another layout of panes in this workspace"))
+                                .on_click(cx.listener(|this, _, window, cx| this.new_pane_tab(window, cx))),
+                        ),
                 )
                 .into_any_element(),
         )

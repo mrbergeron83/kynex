@@ -69,10 +69,11 @@ impl KynexApp {
         Some((p.path.clone(), s.cwd.clone(), s.uid))
     }
 
-    /// The workspace's tiling when it has several panes on screen.
+    /// The workspace's tiling: a project's Code view always draws its panes as tiles, one
+    /// pane included.
     fn tiled(&self) -> Option<&Tiling> {
         let (_, cwd, _) = self.tiling_scope()?;
-        self.tiles.get(&cwd).filter(|t| t.visible().len() > 1 || t.zoomed().is_some())
+        self.tiles.get(&cwd)
     }
 
     /// Runs `f` with pane `id`'s state as `self.pane`.
@@ -117,6 +118,14 @@ impl KynexApp {
         if !t.focus_pane(id) {
             return;
         }
+        // A tool takes the keys; the session state up stays the last session pane's.
+        if t.is_tool(id) {
+            if let Some(p) = t.session_focus() {
+                self.swap_to(p, window, cx);
+            }
+            cx.notify();
+            return;
+        }
         if let Some(key) = t.key_of(id)
             && let Some(live) = self.code.get_mut(&project)
         {
@@ -130,7 +139,7 @@ impl KynexApp {
     pub(super) fn show_focused_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((project, cwd, _)) = self.tiling_scope() else { return };
         let Some(t) = self.tiles.get(&cwd) else { return };
-        let Some(focus) = t.focus() else { return };
+        let Some(focus) = t.session_focus() else { return };
         if let Some(key) = t.key_of(focus)
             && let Some(live) = self.code.get_mut(&project)
         {
@@ -198,6 +207,11 @@ impl KynexApp {
     /// Closes the focused pane; its session stays open until it's idle and not recent.
     pub(super) fn close_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, cwd, key)) = self.tiling_scope() else { return };
+        // A tool pane closes as its own menu would close it.
+        if let Some(focus) = self.tiles.get(&cwd).and_then(Tiling::focus).filter(|f| self.tiles[&cwd].is_tool(*f)) {
+            self.close_pane_id(focus, window, cx);
+            return;
+        }
         if self.tiles.get_mut(&cwd).and_then(Tiling::close_focused).is_none() {
             return;
         }
@@ -212,7 +226,7 @@ impl KynexApp {
     /// Focuses the next (`1`) or previous (`-1`) pane of the tab.
     pub(super) fn step_pane(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(t) = self.tiled() else { return };
-        let panes: Vec<PaneId> = t.visible().iter().map(|(p, _)| *p).collect();
+        let panes = t.visible_panes();
         let at = t.focus().and_then(|f| panes.iter().position(|p| *p == f)).unwrap_or(0) as isize;
         let next = panes[(at + by).rem_euclid(panes.len() as isize) as usize];
         self.focus_pane(next, window, cx);
@@ -223,6 +237,11 @@ impl KynexApp {
     /// the sessions on screen are kept open, prompts and drafts are kept for every pane.
     pub(super) fn sync_tiles(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((project, cwd, current)) = self.tiling_scope() else { return };
+        if !self.agent_rules_asked {
+            self.agent_rules_asked = true;
+            self.refresh_agent_rules(cx);
+            self.prune_scrollback(cx);
+        }
         if !self.tiles.contains_key(&cwd) {
             // Once per run: the panes it had last time, else one pane.
             // The first pane of a workspace takes the state that's up, if no workspace has it.
@@ -241,6 +260,9 @@ impl KynexApp {
             };
             self.tiles.insert(cwd.clone(), tiling);
             self.tile_projects.insert(cwd.clone(), project.clone());
+            self.note_histories(&cwd);
+            self.migrate_terminal_dock(&cwd, window, cx);
+            self.migrate_timeline(&cwd, cx);
             self.keep_restored_focus(&project, &cwd, current);
         }
         // Restoring may have changed which session the window talks to.
@@ -250,7 +272,7 @@ impl KynexApp {
         let Some(t) = self.tiles.get_mut(&cwd) else { return };
         t.reconcile(&open, current);
         let visible = t.visible();
-        let focus = t.focus();
+        let focus = t.session_focus();
         // Every pane's session stays open: those of the other tabs and workspaces too, which
         // come back as they were.
         let held: Vec<Key> = self.tiles.values().flat_map(Tiling::sessions).collect();
@@ -272,6 +294,7 @@ impl KynexApp {
         let live: Vec<PaneId> = self.tiles.values().flat_map(|t| t.panes()).collect();
         let me = self.pane_id;
         self.parked.retain(|id, _| *id != me && live.contains(id));
+        self.drop_gone_terminals(cx);
     }
 
     /// Every pane's half-written message, put aside (for quitting).
@@ -355,11 +378,11 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// The panes of the workspace, when it has several on screen: each a session view in a
-    /// tile (a rounded, bordered surface with a gap round it; the focused tile's border is
-    /// in the project's colour and a pixel thicker), with a handle on every divider to drag.
-    /// With no gap the panes are flush, split by 1px dividers. `None` for one pane, which
-    /// `render_code_main` draws as it always has.
+    /// The panes of a project's workspace, one or several: each in a tile (a rounded,
+    /// bordered surface with a gap round it; the focused tile's border is in the project's
+    /// colour and a pixel thicker), with a handle on every divider to drag. With no gap the
+    /// panes are flush, split by 1px dividers. `None` outside a project's Code view (chat),
+    /// which `render_code_main` draws as one plain pane.
     pub(super) fn render_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();
         let style = self.tile_style(cx);
@@ -370,6 +393,8 @@ impl KynexApp {
         let panes: Vec<(PaneId, Option<Key>, Rect)> =
             rects.panes.iter().map(|(id, r)| (*id, tiling.key_of(*id), *r)).collect();
         let focus = tiling.focus();
+        // Zoom and close only mean something with other panes about.
+        let several = tiling.visible_panes().len() > 1 || tiling.zoomed().is_some();
         let focus_colour = self.active_colour(&t).unwrap_or(t.border_focused);
         let area = self.tile_area.clone();
         let probe = canvas(
@@ -392,14 +417,30 @@ impl KynexApp {
         if measured {
             for (id, key, r) in panes {
                 let focused = Some(id) == focus;
-                let body = self.with_pane(id, |this| {
-                    div()
-                        .size_full()
-                        .flex()
-                        .flex_col()
-                        .children(this.render_tile_header(id, key, true, cx))
-                        .child(this.render_pane_body(key, focused, window, cx))
-                });
+                let body = match key {
+                    None => {
+                        // A tool: it draws its own header (a terminal's tab strip, the Git
+                        // view's bar, the timeline's title); right-click for the menu.
+                        let panel = self.render_tool_pane(id, window, cx);
+                        div()
+                            .size_full()
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
+                                    this.open_menu(super::menus::Menu::Pane(id), ev.position, gpui::Anchor::TopLeft, cx)
+                                }),
+                            )
+                            .children(panel)
+                    }
+                    Some(_) => self.with_pane(id, |this| {
+                        div()
+                            .size_full()
+                            .flex()
+                            .flex_col()
+                            .children(this.render_tile_header(id, key, several, cx))
+                            .child(this.render_pane_body(key, focused, window, cx))
+                    }),
+                };
                 let width = if focused { fw } else { bw };
                 let surface = bordered(div().size_full().overflow_hidden().bg(t.editor), width)
                     .border_color(if focused { focus_colour } else { t.border })

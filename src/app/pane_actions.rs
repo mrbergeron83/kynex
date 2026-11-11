@@ -7,15 +7,25 @@ use gpui::{Anchor, AnyElement, Context, MouseButton, MouseDownEvent, Window, can
 use kynex_core::layout::{Axis, Direction, PaneId, Rect};
 use kynex_core::live::Key;
 use kynex_core::session::Session;
+use kynex_core::tiling::Content;
 use kynex_core::toasts::Toast;
 
 use super::KynexApp;
 use super::menus::Menu;
+use super::pane_tabs::DraggedPane;
 use super::session_groups::DraggedSession;
 use crate::theme::{mono, theme};
 use crate::ui::{Icon, Lamp, Tooltip, divider, icon_button, lamp, menu_item, px};
 
 type Action = Box<dyn Fn(&mut KynexApp, &mut Window, &mut Context<KynexApp>)>;
+
+/// What a terminal pane runs, to open the same in another workspace.
+#[derive(Clone)]
+enum There {
+    Shell,
+    Command(String),
+    Agent(String),
+}
 
 impl KynexApp {
     /// Shows the past session `id` of the workspace you're in at `side` of pane `target`
@@ -107,10 +117,16 @@ impl KynexApp {
         self.open_beside(id, Some(pane), kynex_core::tiling::drop_side(rect, x, y), window, cx);
     }
 
-    /// Closes pane `id` (the last one stays). A session that never got a message goes with it.
+    /// Closes pane `id` (the last session pane stays). A session that never got a message
+    /// goes with it; a terminal is hidden.
     pub(super) fn close_pane_id(&mut self, id: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, ws, _)) = self.tiling_scope() else { return };
-        let Some(key) = self.tiles.get_mut(&ws).and_then(|t| t.close_pane(id)) else { return };
+        match self.tiles.get(&ws).and_then(|t| t.content(id)) {
+            Some(Content::Terminal) => return self.hide_terminal(id, window, cx),
+            Some(Content::Git | Content::Timeline) => return self.close_tool_pane(id, window, cx),
+            _ => {}
+        }
+        let Some(Content::Session(key)) = self.tiles.get_mut(&ws).and_then(|t| t.close_pane(id)) else { return };
         self.show_focused_pane(window, cx);
         if self.session_by_key(key).is_some_and(Session::is_new) {
             self.close_open(key);
@@ -128,10 +144,17 @@ impl KynexApp {
         cx.notify();
     }
 
-    fn move_pane(&mut self, pane: PaneId, tab: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+    /// Moves `pane` to tab `tab` of its workspace, or to a new tab of its own with `None`.
+    pub(super) fn move_pane(&mut self, pane: PaneId, tab: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, ws, _)) = self.tiling_scope() else { return };
         let bounds = self.tile_bounds();
         let Some(t) = self.tiles.get_mut(&ws) else { return };
+        // Where it is already (its own tab, or alone in it for a new one): nothing to do.
+        let from = t.layout().tab_of(pane);
+        let alone = from.is_some_and(|f| t.layout().tabs()[f].panes().len() < 2);
+        if from.is_none() || tab == from || tab.is_none() && alone {
+            return;
+        }
         let moved = match tab {
             Some(tab) => t.move_to_tab(pane, tab, bounds),
             None => t.move_to_new_tab(pane),
@@ -189,8 +212,13 @@ impl KynexApp {
             );
         }
         let header = self.render_session_header_with(key, lead, tail, cx)?;
+        let label = self.session_title(key).unwrap_or_else(|| "Pane".to_string());
+        let drag = DraggedPane { pane, label: label.into() };
         Some(
             div()
+                .id(("pane-header", n))
+                // Dragged onto a pane tab, the pane moves there.
+                .when(tiled, |d| d.on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone())))
                 .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
@@ -240,29 +268,52 @@ impl KynexApp {
         let Some(t) = self.tiles.get(&ws) else { return Vec::new() };
         let tabs = t.tabs();
         let zoomed = t.zoomed().is_some();
-        let several = t.visible().len() > 1 || zoomed;
+        let several = t.visible_panes().len() > 1 || zoomed;
         let here = tabs.iter().position(|t| t.active).unwrap_or(0);
-        let closable = t.panes().len() > 1;
-        let mut items = vec![
-            Self::menu_action(
-                0,
-                "Split right".into(),
-                cx,
-                Box::new(move |this, window, cx| {
+        let terminal = t.is_terminal(pane);
+        let tool = t.is_tool(pane);
+        let closable = tool || t.panes().len() > 1 && t.sessions().len() > 1;
+        // A terminal splits into another terminal; a session into a new session.
+        let split = move |axis: Axis| -> Action {
+            Box::new(move |this: &mut KynexApp, window: &mut Window, cx: &mut Context<KynexApp>| {
+                if terminal {
+                    let side = if axis == Axis::Row { Direction::Right } else { Direction::Down };
+                    this.split_terminal(pane, side, window, cx);
+                } else {
                     this.focus_pane(pane, window, cx);
-                    this.split_pane(Axis::Row, window, cx);
-                }),
-            ),
-            Self::menu_action(
-                1,
-                "Split down".into(),
+                    this.split_pane(axis, window, cx);
+                }
+            })
+        };
+        let mut items = Vec::new();
+        if terminal || !tool {
+            items.push(Self::menu_action(0, "Split right".into(), cx, split(Axis::Row)));
+            items.push(Self::menu_action(1, "Split down".into(), cx, split(Axis::Column)));
+        }
+        if !tool {
+            items.push(Self::menu_action(
+                5,
+                "Changes beside".into(),
                 cx,
-                Box::new(move |this, window, cx| {
-                    this.focus_pane(pane, window, cx);
-                    this.split_pane(Axis::Column, window, cx);
-                }),
-            ),
-        ];
+                Box::new(move |this, window, cx| this.show_git_pane(pane, window, cx)),
+            ));
+            items.push(Self::menu_action(
+                6,
+                "Timeline beside".into(),
+                cx,
+                Box::new(move |this, window, cx| this.show_timeline_pane(pane, window, cx)),
+            ));
+            let agents: Vec<(String, String)> =
+                self.agent_rules.iter().map(|r| (r.id.clone(), r.name.clone())).collect();
+            for (i, (id, name)) in agents.into_iter().enumerate() {
+                items.push(Self::menu_action(
+                    300 + i,
+                    format!("{name} beside"),
+                    cx,
+                    Box::new(move |this, window, cx| this.open_agent_pane(id.clone(), Some(pane), window, cx)),
+                ));
+            }
+        }
         if several {
             items.push(Self::menu_action(
                 2,
@@ -289,16 +340,63 @@ impl KynexApp {
                 Box::new(move |this, window, cx| this.move_pane(pane, Some(i), window, cx)),
             ));
         }
+        // A terminal belongs to its folder: other workspaces get one of their own instead.
+        if terminal {
+            let tp = t.term_pane(pane).cloned().unwrap_or_default();
+            let command = match (tp.command, tp.agent) {
+                (Some(name), _) => There::Command(name),
+                (None, Some(id)) => There::Agent(id),
+                (None, None) => There::Shell,
+            };
+            for (i, (path, label)) in self.other_workspaces(&ws, cx).into_iter().enumerate() {
+                let what = match &command {
+                    There::Command(name) => format!("Run {name} in {label}"),
+                    There::Agent(id) => format!("Open {} in {label}", self.agent_name(id)),
+                    There::Shell => format!("Open a terminal in {label}"),
+                };
+                let command = command.clone();
+                items.push(Self::menu_action(
+                    200 + i,
+                    what,
+                    cx,
+                    Box::new(move |this, window, cx| this.terminal_in(&path, command.clone(), window, cx)),
+                ));
+            }
+        }
         if closable {
             items.push(div().my_1().child(divider(cx)).into_any_element());
             items.push(Self::menu_action(
                 4,
-                "Close pane".into(),
+                if terminal { "Hide terminal".into() } else { "Close pane".into() },
                 cx,
                 Box::new(move |this, window, cx| this.close_pane_id(pane, window, cx)),
             ));
         }
         items
+    }
+
+    /// The project's workspaces other than `ws`: (folder, label).
+    fn other_workspaces(&mut self, ws: &std::path::Path, cx: &mut Context<Self>) -> Vec<(std::path::PathBuf, String)> {
+        let Some((project, _, _)) = self.tiling_scope() else { return Vec::new() };
+        self.workspaces_of(&project, cx)
+            .into_iter()
+            .map(|(w, _)| (w.path, w.label))
+            .filter(|(p, _)| !kynex_core::workspace::same_folder(p, ws))
+            .collect()
+    }
+
+    /// Switches to workspace `path` and opens there what a terminal pane had: a shell, a
+    /// custom command or an agent.
+    fn terminal_in(&mut self, path: &std::path::Path, what: There, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_workspace(path, cx);
+        self.sync_tiles(window, cx);
+        match what {
+            There::Command(name) => self.run_user_command(name, window, cx),
+            There::Agent(id) => self.open_agent_pane(id, None, window, cx),
+            There::Shell => {
+                self.show_terminal(window, cx);
+            }
+        }
     }
 
     /// A pane tab's right-click menu.

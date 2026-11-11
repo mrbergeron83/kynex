@@ -119,6 +119,8 @@ impl TerminalView {
                 this.starting = false;
                 match result {
                     Ok(t) => {
+                        // Last time's text is shown once, not on every restart.
+                        this.shell.history = None;
                         for command in this.pending.drain(..) {
                             t.run(&command);
                         }
@@ -156,13 +158,28 @@ impl TerminalView {
     }
 
     /// The tab's name: which shell it is.
-    pub fn label(&self) -> &'static str {
-        self.shell.kind.label()
+    pub fn label(&self) -> gpui::SharedString {
+        self.shell.title.clone().map_or_else(|| self.shell.kind.label().into(), Into::into)
     }
 
     /// What the shell calls its window (often the folder or running program).
     pub fn title(&self) -> Option<String> {
         self.terminal.as_ref().and_then(Terminal::title).map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+    }
+
+    /// All its text, scrollback and screen, once it's running.
+    pub fn history_text(&self) -> Option<String> {
+        self.terminal.as_ref().and_then(Terminal::history_text)
+    }
+
+    /// The screen's text as the program last drew it, once it's running.
+    pub fn screen_text(&self) -> Option<String> {
+        self.terminal.as_ref().map(Terminal::screen_text)
+    }
+
+    /// Why it couldn't start, if it couldn't.
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
     }
 
     pub fn exited(&self) -> bool {
