@@ -9,6 +9,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - The terminal is a pane: it splits, moves between tabs and zooms like a session, and two can sit side by side.
   Ctrl+` shows one below the workspace, focuses it, or hides it; an open dock comes back as a pane where it was.
+- The Git view and the timeline are panes too: "Changes beside" and "Timeline beside" on a pane's menu put a
+  workspace's changes or a session's timeline next to it, and the timeline can be resized. Ctrl+Shift+T toggles it.
 - With notifications on, a session you aren't looking at that finishes or needs you shows a toast that takes you
   there, and an optional sound (Settings → Notifications) plays.
 - The palette (Ctrl+K) groups sessions by project and workspace, with Needs you / Working / Idle / Done

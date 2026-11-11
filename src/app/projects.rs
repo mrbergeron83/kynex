@@ -254,7 +254,7 @@ impl KynexApp {
     /// has one up, else the composer. A session just switched to has no prompt
     /// view yet; the one made for it on the next frame takes focus itself.
     pub(super) fn focus_input(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.focus_terminal_input(window, cx) {
+        if self.focus_tool_input(window, cx) {
             return;
         }
         match &self.pane.prompt {

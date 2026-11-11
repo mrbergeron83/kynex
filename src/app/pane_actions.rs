@@ -112,9 +112,10 @@ impl KynexApp {
     /// goes with it; a terminal is hidden.
     pub(super) fn close_pane_id(&mut self, id: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, ws, _)) = self.tiling_scope() else { return };
-        if self.tiles.get(&ws).is_some_and(|t| t.is_terminal(id)) {
-            self.hide_terminal(id, window, cx);
-            return;
+        match self.tiles.get(&ws).and_then(|t| t.content(id)) {
+            Some(Content::Terminal) => return self.hide_terminal(id, window, cx),
+            Some(Content::Git | Content::Timeline) => return self.close_tool_pane(id, window, cx),
+            _ => {}
         }
         let Some(Content::Session(key)) = self.tiles.get_mut(&ws).and_then(|t| t.close_pane(id)) else { return };
         self.show_focused_pane(window, cx);
@@ -249,7 +250,8 @@ impl KynexApp {
         let several = t.visible_panes().len() > 1 || zoomed;
         let here = tabs.iter().position(|t| t.active).unwrap_or(0);
         let terminal = t.is_terminal(pane);
-        let closable = terminal || t.panes().len() > 1 && t.sessions().len() > 1;
+        let tool = t.is_tool(pane);
+        let closable = tool || t.panes().len() > 1 && t.sessions().len() > 1;
         // A terminal splits into another terminal; a session into a new session.
         let split = move |axis: Axis| -> Action {
             Box::new(move |this: &mut KynexApp, window: &mut Window, cx: &mut Context<KynexApp>| {
@@ -262,10 +264,25 @@ impl KynexApp {
                 }
             })
         };
-        let mut items = vec![
-            Self::menu_action(0, "Split right".into(), cx, split(Axis::Row)),
-            Self::menu_action(1, "Split down".into(), cx, split(Axis::Column)),
-        ];
+        let mut items = Vec::new();
+        if terminal || !tool {
+            items.push(Self::menu_action(0, "Split right".into(), cx, split(Axis::Row)));
+            items.push(Self::menu_action(1, "Split down".into(), cx, split(Axis::Column)));
+        }
+        if !tool {
+            items.push(Self::menu_action(
+                5,
+                "Changes beside".into(),
+                cx,
+                Box::new(move |this, window, cx| this.show_git_pane(pane, window, cx)),
+            ));
+            items.push(Self::menu_action(
+                6,
+                "Timeline beside".into(),
+                cx,
+                Box::new(move |this, window, cx| this.show_timeline_pane(pane, window, cx)),
+            ));
+        }
         if several {
             items.push(Self::menu_action(
                 2,

@@ -145,14 +145,16 @@ impl Node {
         }
     }
 
-    fn split_leaf(&mut self, target: PaneId, axis: Axis, new: PaneId) -> bool {
+    fn split_leaf(&mut self, target: PaneId, axis: Axis, new: PaneId, ratio: f32) -> bool {
         match self {
             Self::Pane(id) if *id == target => {
-                *self = Self::Split { axis, ratio: 0.5, a: Box::new(Self::Pane(target)), b: Box::new(Self::Pane(new)) };
+                *self = Self::Split { axis, ratio, a: Box::new(Self::Pane(target)), b: Box::new(Self::Pane(new)) };
                 true
             }
             Self::Pane(_) => false,
-            Self::Split { a, b, .. } => a.split_leaf(target, axis, new) || b.split_leaf(target, axis, new),
+            Self::Split { a, b, .. } => {
+                a.split_leaf(target, axis, new, ratio) || b.split_leaf(target, axis, new, ratio)
+            }
         }
     }
 
@@ -318,11 +320,16 @@ impl Tab {
     /// focuses it. Refused (false) when `target` isn't here or the result wouldn't leave
     /// every pane its minimum size inside `bounds`.
     pub fn split(&mut self, target: PaneId, axis: Axis, new: PaneId, bounds: Rect) -> bool {
-        if self.contains(new) {
+        self.split_with(target, axis, new, 0.5, bounds)
+    }
+
+    /// [`Self::split`] with `ratio` of the room going to `target` rather than half.
+    pub fn split_with(&mut self, target: PaneId, axis: Axis, new: PaneId, ratio: f32, bounds: Rect) -> bool {
+        if self.contains(new) || !ratio.is_finite() {
             return false;
         }
         let mut root = self.root.clone();
-        if !root.split_leaf(target, axis, new) {
+        if !root.split_leaf(target, axis, new, ratio.clamp(0.0, 1.0)) {
             return false;
         }
         if root.min_extent(Axis::Row) > bounds.w + EPS || root.min_extent(Axis::Column) > bounds.h + EPS {
@@ -656,11 +663,16 @@ impl Layout {
 
     /// Splits `target` in its tab (see [`Tab::split`]) and makes that tab active.
     pub fn split(&mut self, target: PaneId, axis: Axis, new: PaneId, bounds: Rect) -> bool {
+        self.split_with(target, axis, new, 0.5, bounds)
+    }
+
+    /// [`Self::split`] with `ratio` of the room going to `target` (see [`Tab::split_with`]).
+    pub fn split_with(&mut self, target: PaneId, axis: Axis, new: PaneId, ratio: f32, bounds: Rect) -> bool {
         if self.tab_of(new).is_some() {
             return false;
         }
         let Some(i) = self.tab_of(target) else { return false };
-        let done = self.tabs[i].split(target, axis, new, bounds);
+        let done = self.tabs[i].split_with(target, axis, new, ratio, bounds);
         if done {
             self.active = i;
         }

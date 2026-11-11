@@ -117,8 +117,8 @@ impl KynexApp {
         if !t.focus_pane(id) {
             return;
         }
-        // A terminal takes the keys; the session state up stays the last session pane's.
-        if t.is_terminal(id) {
+        // A tool takes the keys; the session state up stays the last session pane's.
+        if t.is_tool(id) {
             if let Some(p) = t.session_focus() {
                 self.swap_to(p, window, cx);
             }
@@ -206,9 +206,9 @@ impl KynexApp {
     /// Closes the focused pane; its session stays open until it's idle and not recent.
     pub(super) fn close_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, cwd, key)) = self.tiling_scope() else { return };
-        if let Some(focus) = self.tiles.get(&cwd).and_then(Tiling::focus).filter(|_| self.focused_terminal().is_some())
-        {
-            self.hide_terminal(focus, window, cx);
+        // A tool pane closes as its own menu would close it.
+        if let Some(focus) = self.tiles.get(&cwd).and_then(Tiling::focus).filter(|f| self.tiles[&cwd].is_tool(*f)) {
+            self.close_pane_id(focus, window, cx);
             return;
         }
         if self.tiles.get_mut(&cwd).and_then(Tiling::close_focused).is_none() {
@@ -255,6 +255,7 @@ impl KynexApp {
             self.tiles.insert(cwd.clone(), tiling);
             self.tile_projects.insert(cwd.clone(), project.clone());
             self.migrate_terminal_dock(&cwd, window, cx);
+            self.migrate_timeline(&cwd, cx);
             self.keep_restored_focus(&project, &cwd, current);
         }
         // Restoring may have changed which session the window talks to.
@@ -409,8 +410,9 @@ impl KynexApp {
                 let focused = Some(id) == focus;
                 let body = match key {
                     None => {
-                        // A terminal: its panel's tab strip is its header; right-click for the menu.
-                        let panel = self.render_terminal_pane(id, window, cx);
+                        // A tool: it draws its own header (a terminal's tab strip, the Git
+                        // view's bar, the timeline's title); right-click for the menu.
+                        let panel = self.render_tool_pane(id, window, cx);
                         div()
                             .size_full()
                             .on_mouse_down(

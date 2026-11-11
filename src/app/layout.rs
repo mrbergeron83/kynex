@@ -86,8 +86,8 @@ impl KynexApp {
             .into_any_element()
     }
 
-    /// One pane's conversation: transcript and composer, the timeline running the full
-    /// height beside them. `focused` panes also draw the find bar.
+    /// One pane's conversation: transcript and composer, and in chat the timeline running
+    /// the full height beside them. `focused` panes also draw the find bar.
     pub(super) fn render_pane_body(
         &mut self,
         key: Option<Key>,
@@ -122,7 +122,11 @@ impl KynexApp {
                     )
                     .child(self.render_composer(key, window, cx)),
             )
-            .children(key.and_then(|key| self.render_timeline(key, cx)))
+            // A project's timeline is a pane of its own.
+            .children(
+                key.filter(|_| self.saved.timeline_open && self.tiling_scope().is_none())
+                    .and_then(|key| self.render_timeline(key, false, cx)),
+            )
             .into_any_element()
     }
 

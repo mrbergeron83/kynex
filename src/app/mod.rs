@@ -23,6 +23,7 @@
 //! | `session_tidy.rs`   | many sessions at once: menu, tidying, list keys      |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `terminal_panes.rs` | terminal panes: Ctrl+`, run buttons, hide and show   |
+//! | `tool_panes.rs`     | the Git view and the timeline as panes               |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
 //! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
@@ -141,6 +142,7 @@ pub(crate) mod timeline;
 mod title_bar;
 mod titles;
 mod toasts;
+mod tool_panes;
 mod tool_rows;
 mod toolbar;
 mod transcript;

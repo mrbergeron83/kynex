@@ -376,7 +376,7 @@ fn terminals_are_saved_and_come_back() {
     let mut t = with_terminals();
     t.focus_pane(1);
     let saved = t.save(id_of);
-    assert_eq!(saved.terminals.as_ref().map(|t| t.len()), Some(2));
+    assert_eq!(saved.tools.as_ref().map(|t| t.len()), Some(2));
     let saved: SavedLayout = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
     let back = Tiling::restore(&saved, &mut 100, None, key_of_id).unwrap();
     assert_eq!(back.terminals(), [101, 102]);
@@ -401,9 +401,9 @@ fn terminals_without_a_session_are_not_restored() {
 #[test]
 fn a_layout_from_before_terminal_panes_reads_as_having_none_said() {
     let json = serde_json::to_string(&three().save(id_of)).unwrap();
-    let old = json.replace(",\"terminals\":{}", "");
+    let old = json.replace(",\"tools\":{}", "");
     let saved: SavedLayout = serde_json::from_str(&old).unwrap();
-    assert_eq!(saved.terminals, None);
+    assert_eq!(saved.tools, None);
     assert_eq!(Tiling::restore(&saved, &mut 1, None, key_of_id).unwrap().sessions(), [10, 20, 30]);
 }
 
@@ -416,6 +416,29 @@ fn a_tab_holding_the_only_sessions_does_not_close() {
     assert!(t.close_tab(1).is_empty(), "a terminal has no session to give back");
     assert_eq!(t.tabs().len(), 1);
     assert!(t.terminals().is_empty());
+}
+
+#[test]
+fn git_and_the_timeline_sit_beside_a_session_and_come_back() {
+    let mut t = Tiling::new(1, 10);
+    t.reconcile(&[10], 10);
+    assert!(t.split_tool(1, Direction::Right, 2, Tool::Timeline, 0.8, BIG));
+    assert!(t.split_tool(1, Direction::Down, 3, Tool::Git, 0.5, BIG));
+    assert_eq!((t.content(2), t.content(3)), (Some(Content::Timeline), Some(Content::Git)));
+    assert_eq!(t.tab_panes_of(Content::Git), [3]);
+    let r = t.rects(BIG);
+    assert!(r.pane(2).unwrap().w < 0.25 * BIG.w, "the timeline got the narrow side");
+    // A session doesn't land in them, and the focus stays on one while nothing changes.
+    t.reconcile(&[10], 10);
+    assert_eq!(t.focus(), Some(3));
+    assert!(!t.show_in(2, 40));
+    t.reconcile(&[10, 40], 40);
+    assert_eq!(t.visible(), [(1, 40)]);
+    let saved = t.save(id_of);
+    let back = Tiling::restore(&saved, &mut 10, None, key_of_id).unwrap();
+    assert_eq!(back.panes_of(Content::Timeline).len(), 1);
+    assert_eq!(back.panes_of(Content::Git).len(), 1);
+    assert_eq!(back.sessions(), [40]);
 }
 
 #[test]

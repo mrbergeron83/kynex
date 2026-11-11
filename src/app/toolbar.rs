@@ -38,7 +38,7 @@ impl KynexApp {
                 )
             });
         let timeline = icon_button("toggle-timeline", Icon::Timeline, cx)
-            .when(self.saved.timeline_open, |b| b.bg(t.active))
+            .when(self.timeline_shown(), |b| b.bg(t.active))
             .tooltip(Tooltip::for_action("Timeline", ToggleTimeline, "jump to any message or step"))
             .on_click(cx.listener(|this, _, window, cx| this.toggle_timeline(&ToggleTimeline, window, cx)));
         let tab = |id: &'static str, label: &'static str, which: Icon, selected: bool| {

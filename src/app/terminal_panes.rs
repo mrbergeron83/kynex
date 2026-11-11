@@ -263,9 +263,21 @@ impl KynexApp {
         }
     }
 
-    /// Focuses the focused terminal's shell, if a terminal has the focus. False otherwise.
-    pub(super) fn focus_terminal_input(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(panel) = self.focused_terminal() else { return false };
+    /// Where the keys go when a tool pane has the focus: a terminal's shell; the Git view
+    /// and the timeline keep what they have, short of the message box. False when a session
+    /// pane has the focus.
+    pub(super) fn focus_tool_input(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some((_, ws, _)) = self.tiling_scope() else { return false };
+        let Some(t) = self.tiles.get(&ws) else { return false };
+        if !t.focus().is_some_and(|f| t.is_tool(f)) {
+            return false;
+        }
+        let Some(panel) = self.focused_terminal() else {
+            if self.pane.composer.read(cx).is_focused(window) {
+                self.focus.focus(window, cx);
+            }
+            return true;
+        };
         let handle = panel.read(cx).focus_handle(cx);
         let focused = handle.contains_focused(window, cx);
         if !focused {
