@@ -555,8 +555,10 @@ impl KynexApp {
             }
         })
         .detach();
+        crate::ui::motion::set_window_active(window.is_window_active());
         cx.observe_window_activation(window, |this, window, cx| {
             this.window_active = window.is_window_active();
+            crate::ui::motion::set_window_active(this.window_active);
             if window.is_window_active() {
                 let folders: Vec<PathBuf> = this.worktrees.keys().cloned().collect();
                 this.refresh_worktrees(&folders, cx);

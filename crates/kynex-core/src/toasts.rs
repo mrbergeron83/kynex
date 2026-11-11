@@ -208,6 +208,12 @@ impl Toasts {
         changed || self.list.len() != before
     }
 
+    /// Whether time changes anything: a toast closing, or one that expires
+    /// and isn't `paused`. False means ticking can slow down.
+    pub fn aging(&self, paused: bool) -> bool {
+        self.list.iter().any(|t| t.leaving.is_some() || (!paused && t.lifetime.is_some()))
+    }
+
     /// Closes one: you clicked its ×, or its button.
     pub fn dismiss(&mut self, id: u64) {
         if let Some(t) = self.list.iter_mut().find(|t| t.id == id && t.leaving.is_none()) {
