@@ -274,6 +274,8 @@ impl KynexApp {
                     Some(Content::Terminal) => ("terminal", None),
                     Some(Content::Git) => ("git", None),
                     Some(Content::Timeline) => ("timeline", None),
+                    Some(Content::Sessions) => ("sessions", None),
+                    Some(Content::Workspaces) => ("workspaces", None),
                     None => ("unknown", None),
                 };
                 json!({ "pane": p, "kind": kind, "session": session, "focused": Some(p) == focus })

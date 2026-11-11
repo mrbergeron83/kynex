@@ -270,6 +270,7 @@ impl KynexApp {
             };
             self.tiles.insert(cwd.clone(), tiling);
             self.tile_projects.insert(cwd.clone(), project.clone());
+            self.seed_side_panes(&cwd, cx);
             self.note_histories(&cwd);
             self.migrate_terminal_dock(&cwd, window, cx);
             self.migrate_timeline(&cwd, cx);
@@ -426,6 +427,8 @@ impl KynexApp {
                     (None, Content::Terminal) => "Terminal".to_string(),
                     (None, Content::Git) => "Git".to_string(),
                     (None, Content::Timeline) => "Timeline".to_string(),
+                    (None, Content::Sessions) => "Sessions".to_string(),
+                    (None, Content::Workspaces) => "Workspaces".to_string(),
                 };
                 (id, label)
             })

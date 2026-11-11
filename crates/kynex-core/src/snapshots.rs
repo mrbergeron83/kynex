@@ -198,13 +198,23 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn one(session: &str) -> SavedLayout {
-        SavedLayout { layout: Layout::new("1", 1), sessions: BTreeMap::from([(1, session.to_string())]), tools: None }
+        SavedLayout {
+            layout: Layout::new("1", 1),
+            sessions: BTreeMap::from([(1, session.to_string())]),
+            tools: None,
+            seeded: false,
+        }
     }
 
     fn two() -> SavedLayout {
         let mut layout = Layout::new("1", 1);
         layout.split(1, Axis::Row, 2, Rect::new(0.0, 0.0, 2000.0, 1000.0));
-        SavedLayout { layout, sessions: BTreeMap::from([(1, "a".to_string()), (2, "b".to_string())]), tools: None }
+        SavedLayout {
+            layout,
+            sessions: BTreeMap::from([(1, "a".to_string()), (2, "b".to_string())]),
+            tools: None,
+            seeded: false,
+        }
     }
 
     #[test]

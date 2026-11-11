@@ -137,6 +137,8 @@ pub(super) enum Cmd {
     NewWorkspace,
     CloseWorkspace,
     PickProject,
+    SessionsPane,
+    WorkspacesPane,
     UndoLayout,
     RedoLayout,
     ReopenPane,
@@ -257,6 +259,8 @@ fn commands() -> Vec<(Cmd, String, &'static str)> {
         (Cmd::NewWorkspace, "New workspace", "worktree checkout branch add"),
         (Cmd::CloseWorkspace, "Close workspace", "remove worktree checkout delete"),
         (Cmd::PickProject, "Go to project…", "tab switch open folder"),
+        (Cmd::SessionsPane, "Sessions pane", "list history groups archive open beside"),
+        (Cmd::WorkspacesPane, "Workspaces pane", "worktree checkout folders open beside"),
         (Cmd::UndoLayout, "Undo layout change", "panes split close arrangement back"),
         (Cmd::RedoLayout, "Redo layout change", "panes split close arrangement forward"),
         (Cmd::ReopenPane, "Reopen closed pane", "undo close restore"),
@@ -555,6 +559,16 @@ impl KynexApp {
         }
         match cmd {
             Cmd::PrevPane => self.step_pane(-1, window, cx),
+            Cmd::SessionsPane | Cmd::WorkspacesPane => {
+                let target = self.tiling_scope().and_then(|(_, ws, _)| self.tiles.get(&ws)?.session_focus());
+                if let Some(target) = target {
+                    if cmd == Cmd::SessionsPane {
+                        self.show_sessions_pane(target, window, cx);
+                    } else {
+                        self.show_workspaces_pane(target, window, cx);
+                    }
+                }
+            }
             Cmd::Compact => self.compact(self.focused_key(), cx),
             Cmd::Settings(section) => {
                 self.app_settings = None;

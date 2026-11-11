@@ -635,7 +635,11 @@ impl KynexApp {
         self.step_workspace(-1, cx);
     }
 
-    pub(super) fn toggle_sessions(&mut self, _: &ToggleSessions, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn toggle_sessions(&mut self, _: &ToggleSessions, window: &mut Window, cx: &mut Context<Self>) {
+        // A project's panes: its Sessions and Workspaces panes. Elsewhere, the sidebar.
+        if self.toggle_side_panes(window, cx) {
+            return;
+        }
         self.saved.sessions_collapsed = !self.saved.sessions_collapsed;
         self.save();
         cx.notify();
