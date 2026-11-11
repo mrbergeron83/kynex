@@ -116,7 +116,11 @@ impl KynexApp {
 
     /// Focuses pane `id` of the workspace you're in, and the session in it.
     pub(super) fn focus_pane(&mut self, id: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        if id == self.pane_id {
+        // The pane whose state is up may not be the focused one: a tool (a terminal) took the
+        // focus and left the session state where it was, so clicking that session pane still counts.
+        let focused =
+            self.tiling_scope().and_then(|(_, cwd, _)| self.tiles.get(&cwd)).is_some_and(|t| t.focus() == Some(id));
+        if id == self.pane_id && focused {
             return;
         }
         let Some((project, cwd, _)) = self.tiling_scope() else { return };
