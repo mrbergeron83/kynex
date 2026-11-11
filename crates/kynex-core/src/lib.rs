@@ -12,6 +12,7 @@ pub mod chat_api;
 pub mod cli;
 pub mod column;
 pub mod commands;
+pub mod control;
 pub mod dates;
 pub mod delegate;
 pub mod edit_lines;

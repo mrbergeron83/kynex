@@ -96,8 +96,17 @@ namespace KynexInstall {
         try { [KynexInstall.Shortcut]::SetAppId($path, 'Kynex.Kynex') } catch { Write-Warning "Couldn't set Kynex's app ID on ${path}: $_" }
     }
 
-    # `knx` from any terminal: a shim that starts Kynex without holding the console.
-    Set-Content (Join-Path $dir 'knx.cmd') "@start `"`" `"%~dp0kynex.exe`" %*" -Encoding Ascii
+    # `knx` from any terminal: a shim that starts Kynex without holding the console. The control
+    # subcommands (`knx session list` …) run in the terminal instead, to print there.
+    $shim = @(
+        '@echo off',
+        'for %%c in (context pane session events) do if /i "%~1"=="%%c" goto run',
+        'start "" "%~dp0kynex.exe" %*',
+        'exit /b',
+        ':run',
+        '"%~dp0kynex.exe" %*'
+    )
+    Set-Content (Join-Path $dir 'knx.cmd') $shim -Encoding Ascii
     # Edit the raw registry value so %VARS% in the user PATH stay unexpanded.
     $envKey = (Get-Item 'HKCU:\').OpenSubKey('Environment', $true)
     try {

@@ -25,6 +25,21 @@ fn main() {
     if let Some(code) = kynex_core::chat_api::main_if_asked() {
         std::process::exit(code);
     }
+    // `knx context | pane | session | events …`: ask the running app and print what it says.
+    // `knx <folder>`: the running app opens it; with none, this one starts on it.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if kynex_core::control::args::is_command(&args) {
+        kynex_core::control::client::attach_console();
+        std::process::exit(kynex_core::control::client::run(&args));
+    }
+    if let Some(folder) = args.first().filter(|a| std::path::Path::new(a).is_dir())
+        && let Ok(folder) = std::path::absolute(folder)
+    {
+        if kynex_core::control::client::open_folder(&folder.to_string_lossy()) {
+            return;
+        }
+        let _ = app::OPEN_AT_START.set(folder);
+    }
     // Started from Finder or the Dock, macOS gives no shell PATH: find `claude` and friends anyway.
     // SAFETY: first thing in main, before any other thread starts.
     unsafe { kynex_core::env_path::fix() };

@@ -15,6 +15,7 @@
 //! | `pane_keys.rs`     | the prefix keys (Ctrl+B …): panes, pane tabs, workspaces, projects, resize mode |
 //! | `pane_tabs.rs`     | the selected workspace's tab bar: new, close, rename, reorder |
 //! | `tiles.rs`          | the split panes of a workspace: layouts, focus, drawing |
+//! | `control.rs`        | the control socket: `knx context / pane / session / events` |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
 //! | `layout_history.rs` | undo / redo of pane changes, reopening a pane, older layouts |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
@@ -92,6 +93,7 @@ mod appearance;
 mod attention;
 mod background;
 mod composer;
+mod control;
 mod custom_commands;
 mod delegate_view;
 mod drafts;
@@ -173,6 +175,7 @@ use kynex_core::paths::chat_dir;
 use kynex_core::project::ClaudeSettings;
 use kynex_core::session::{self, Kind, Session};
 
+pub use control::OPEN_AT_START;
 pub use custom_commands::bind_command_keys;
 use drafts::Draft;
 pub use keys::{SHELL_KEYS, SendPrefix, ToggleTerminal, bind_keys, prefix_key};
@@ -361,6 +364,13 @@ pub struct KynexApp {
     /// Idle sleep held off while sessions work (Keep awake), and whether taking it failed.
     awake: Option<kynex_core::awake::Awake>,
     awake_failed: bool,
+    /// The control socket, if this is the Kynex serving it (`control.rs`).
+    control: Option<kynex_core::control::server::Server>,
+    /// Clients waiting for a session's turn to end, and the one being set up.
+    control_waits: Vec<control::Wait>,
+    control_wait_for: Option<control::Wait>,
+    /// What each session was doing at the last look, for the event listeners.
+    control_seen: control::Seen,
     /// The notification-area icon, while closing the window hides Kynex there (Windows).
     tray: Option<kynex_core::tray::Tray>,
     /// The window's native handle, for the taskbar dot.
@@ -410,6 +420,35 @@ impl KynexApp {
             }
         })
         .detach();
+        // The control socket: requests ring this, and a task answers them with the window at hand.
+        let (control_tx, control_rx) = async_channel::bounded::<()>(1);
+        let control = match kynex_core::control::server::Server::start(Arc::new(move || {
+            let _ = control_tx.try_send(());
+        })) {
+            Ok(server) => Some(server),
+            Err(e) => {
+                eprintln!("kynex: no control socket: {e}");
+                None
+            }
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            while control_rx.recv().await.is_ok() {
+                if this.update_in(cx, |this, window, cx| this.serve_control(window, cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+        if let Some(folder) = OPEN_AT_START.get() {
+            let folder = folder.to_string_lossy().into_owned();
+            cx.spawn_in(window, async move |this, cx| {
+                this.update_in(cx, |this, window, cx| {
+                    let _ = this.open_context(&folder, window, cx);
+                })
+                .ok();
+            })
+            .detach();
+        }
         Self::watch_cli_updates(cx);
         Self::watch_app_updates(cx);
         Self::watch_usage(cx);
@@ -630,6 +669,10 @@ impl KynexApp {
             badged: false,
             awake: None,
             awake_failed: false,
+            control,
+            control_waits: Vec::new(),
+            control_wait_for: None,
+            control_seen: HashMap::new(),
             tray: None,
             native_window: attention::native_handle(window),
             window_active: window.is_window_active(),
@@ -758,6 +801,8 @@ impl KynexApp {
         self.restart_idle();
         self.sync_session_ids();
         self.save_layouts(cx);
+        self.finish_control_waits(cx);
+        self.control_events();
         self.sync_attention(cx);
         self.sync_awake();
         cx.notify();
