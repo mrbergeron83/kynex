@@ -12,6 +12,7 @@
 //! | `footer.rs`         | status footer: Kynex's CPU / memory, meters, update  |
 //! | `status.rs`         | the footer's usage-limits meter and update pill      |
 //! | `pane_actions.rs`  | a pane's header buttons and menus, opening a session beside one |
+//! | `pane_keys.rs`     | the prefix keys (Ctrl+B …): panes, pane tabs, workspaces, projects, resize mode |
 //! | `pane_tabs.rs`     | the selected workspace's tab bar: new, close, rename, reorder |
 //! | `tiles.rs`          | the split panes of a workspace: layouts, focus, drawing |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
@@ -50,6 +51,9 @@
 //! | `prompts.rs`        | permission / plan / question prompts                 |
 //! | `menus.rs`          | popup menus                                          |
 //! | `palette.rs`        | the command palette (Ctrl+K)                         |
+//! | `palette_filters.rs`| its state filters (All, Needs you, Working, Idle, Done) |
+//! | `palette_sessions.rs`| its session rows: per workspace, and open ones not listed yet |
+//! | `goto.rs`           | revealing a session in its project, workspace and pane; next that needs you |
 //! | `leaving.rs`        | menus, modals and panels animating out as they close |
 //! | `settings.rs`       | the project's Claude settings modal                  |
 //! | `project_setup.rs`  | its "Setup": trust, mode, ask rules, starter rules   |
@@ -92,6 +96,7 @@ mod extensions_servers;
 pub(crate) mod find;
 mod footer;
 mod git_modal;
+mod goto;
 mod grok_setup;
 mod handoff;
 pub(crate) mod history;
@@ -103,7 +108,10 @@ pub(crate) mod mentions;
 mod menus;
 mod models;
 mod palette;
+mod palette_filters;
+mod palette_sessions;
 mod pane_actions;
+mod pane_keys;
 mod pane_tabs;
 mod project_setup;
 mod projects;
@@ -156,7 +164,7 @@ use kynex_core::project::ClaudeSettings;
 use kynex_core::session::{self, Kind, Session};
 
 use drafts::Draft;
-pub use keys::{SHELL_KEYS, ToggleTerminal, bind_keys};
+pub use keys::{SHELL_KEYS, SendPrefix, ToggleTerminal, bind_keys, prefix_key};
 use menus::OpenMenu;
 use palette::PaletteView;
 use scratch_modal::ScratchModal;
@@ -233,6 +241,12 @@ pub struct KynexApp {
     tile_projects: HashMap<PathBuf, PathBuf>,
     /// The pane tab being renamed, and the field its name is typed in.
     pane_tab_rename: Option<(usize, Entity<TextInput>)>,
+    /// Resize mode (`prefix r`): h / j / k / l and the arrows grow the focused pane.
+    resize_mode: Option<pane_keys::ResizePlace>,
+    /// The row picked with the keys in the workspace / project picker menus.
+    menu_pick: usize,
+    /// The key just handled by resize mode, so the views under it don't take it too.
+    resize_swallow: bool,
     /// Dividers held by the pointer, while the panes are being resized.
     tile_drag: Option<Vec<tiles::Resizing>>,
     /// Where the panes are drawn, as last laid out.
@@ -481,6 +495,7 @@ impl KynexApp {
         })
         .detach();
 
+        Self::watch_resize_keys(cx);
         composer.read(cx).focus_handle(cx).focus(window, cx);
         if let Some(found) = saved.newer_than_us {
             let msg = format!(
@@ -525,6 +540,9 @@ impl KynexApp {
             tiles: HashMap::new(),
             tile_projects: HashMap::new(),
             pane_tab_rename: None,
+            resize_mode: None,
+            menu_pick: 0,
+            resize_swallow: false,
             tile_drag: None,
             tile_area: Default::default(),
             palette: None,
@@ -758,6 +776,7 @@ impl Render for KynexApp {
             .font_family(ui_font())
             .text_color(t.text)
             .text_sm()
+            .capture_key_down(cx.listener(Self::swallow_resize_key))
             .on_key_down(cx.listener(Self::key_down))
             .on_drop(cx.listener(Self::on_drop))
             // A dragged project tab follows the pointer anywhere in the window,

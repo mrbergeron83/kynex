@@ -339,13 +339,14 @@ impl KynexApp {
             ));
 
         let notify = self.saved.notify;
+        let sounds = self.saved.sounds;
         let notifications = div()
             .flex()
             .flex_col()
             .gap_1()
             .child(heading(
                 "Notifications",
-                "While Kynex is in the background. Its icon shows a dot whenever a session needs you.",
+                "A note when a session you aren't looking at finishes or needs you: from the OS while Kynex is in the background, a toast while it's in front. Its icon shows a dot whenever a session needs you.",
                 t,
             ))
             .children([(false, "Off"), (true, "Notify when a session finishes or needs you")].into_iter().map(
@@ -358,7 +359,24 @@ impl KynexApp {
                         },
                     ))
                 },
-            ));
+            ))
+            .child(div().pt_1().text_xs().text_color(t.text_muted).child(if notify {
+                "Sound"
+            } else {
+                "Sound (with notifications on)"
+            }))
+            .children([(false, "Off"), (true, "Play a sound")].into_iter().map(|(on, label)| {
+                let row = choice(("sounds", usize::from(on)), sounds == on, label.into(), t);
+                // Sounds only come with notifications, so the choice waits for them.
+                if !notify {
+                    return row.opacity(0.5).cursor_default().hover(|s| s);
+                }
+                row.on_click(cx.listener(move |this, _, _, cx| {
+                    this.saved.sounds = on;
+                    this.save();
+                    cx.notify();
+                }))
+            }));
 
         let keep = self.saved.keep_awake;
         let awake = div()
@@ -643,7 +661,7 @@ impl KynexApp {
             .gap_2()
             .child(heading(
                 "Shortcuts",
-                "Rebind Kynex's shortcuts in keymap.json by name, e.g. { \"interrupt\": \"ctrl-c\" }; an empty string unbinds one. Changes apply from the next start.",
+                "Rebind Kynex's shortcuts in keymap.json by name, e.g. { \"interrupt\": \"ctrl-c\" }; an empty string unbinds one. Shortcuts that start with `prefix` (Ctrl+B, then a key) follow the \"prefix\" entry, e.g. { \"prefix\": \"ctrl-a\" }. Changes apply from the next start.",
                 t,
             ))
             .child(div().font_family(mono()).text_sm().text_color(t.text_muted).child(path.display().to_string()))

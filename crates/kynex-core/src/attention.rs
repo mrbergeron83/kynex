@@ -4,6 +4,17 @@
 //! on Windows, a Dock badge on macOS. Linux has no common badge; nothing there.
 
 use crate::session::Session;
+use crate::sound::Sound;
+
+/// Of sessions in a stable order, each with whether it wants you: the first one after
+/// `current` that does, wrapping round and never `current` itself. With no `current` in the
+/// list, the first that does.
+pub fn next_waiting<T: PartialEq + Copy>(order: &[(T, bool)], current: Option<T>) -> Option<T> {
+    let at = current.and_then(|c| order.iter().position(|(k, _)| *k == c));
+    let n = order.len();
+    let start = at.map_or(0, |a| a + 1);
+    (0..n).map(|i| &order[(start + i) % n]).find(|(k, waiting)| *waiting && Some(*k) != current).map(|(k, _)| *k)
+}
 
 /// Why a session wants you.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +55,26 @@ impl Why {
 /// Back to nothing, or the same reason as before, says nothing.
 pub fn news(was: Option<Why>, now: Option<Why>) -> Option<Why> {
     now.filter(|n| was != Some(*n))
+}
+
+impl Why {
+    /// The sound that goes with it.
+    pub fn sound(self) -> Sound {
+        match self {
+            Self::Finished => Sound::Done,
+            Self::Answer | Self::Browser => Sound::NeedsYou,
+        }
+    }
+}
+
+/// Whether session `key` is in sight: the focused one, or in a visible pane.
+pub fn on_screen<T: PartialEq + Copy>(key: T, focused: Option<T>, visible: &[T]) -> bool {
+    focused == Some(key) || visible.contains(&key)
+}
+
+/// The sound for a batch of news: "needs you" wins over "done".
+pub fn loudest(whys: impl IntoIterator<Item = Why>) -> Option<Sound> {
+    whys.into_iter().map(Why::sound).max()
 }
 
 /// The process-wide app identity: the Windows AppUserModelID, which the OS
@@ -103,6 +134,18 @@ mod tests {
     }
 
     #[test]
+    fn needs_you_outranks_done_and_focus_is_on_screen() {
+        use Why::*;
+        assert_eq!(loudest([Finished, Browser, Finished]), Some(Sound::NeedsYou));
+        assert_eq!(loudest([Finished]), Some(Sound::Done));
+        assert_eq!(loudest([]), None);
+        assert!(on_screen(1, Some(1), &[]));
+        assert!(on_screen(2, Some(1), &[1, 2]));
+        assert!(!on_screen(3, Some(1), &[1, 2]));
+        assert!(!on_screen(3, None, &[]));
+    }
+
+    #[test]
     fn only_a_new_reason_is_news() {
         use Why::*;
         assert_eq!(news(None, Some(Finished)), Some(Finished));
@@ -110,5 +153,17 @@ mod tests {
         assert_eq!(news(Some(Finished), Some(Answer)), Some(Answer));
         assert_eq!(news(Some(Answer), None), None);
         assert_eq!(Answer.body(), "Needs your answer");
+    }
+
+    #[test]
+    fn next_waiting_wraps_and_skips_current() {
+        let order = [(1, false), (2, true), (3, false), (4, true)];
+        assert_eq!(next_waiting(&order, Some(2)), Some(4));
+        assert_eq!(next_waiting(&order, Some(4)), Some(2));
+        assert_eq!(next_waiting(&order, Some(1)), Some(2));
+        assert_eq!(next_waiting(&order, None), Some(2));
+        assert_eq!(next_waiting(&order, Some(9)), Some(2));
+        assert_eq!(next_waiting(&[(1, true)], Some(1)), None);
+        assert_eq!(next_waiting::<u8>(&[], None), None);
     }
 }

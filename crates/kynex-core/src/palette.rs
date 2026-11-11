@@ -16,6 +16,103 @@ pub enum Kind {
     Action,
 }
 
+/// What an open session is doing, for the palette's filters (mirrors the app's lamp).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    Idle,
+    Working,
+    NeedsYou,
+    Done,
+}
+
+impl State {
+    /// The word shown beside a session in that state.
+    pub fn word(self) -> &'static str {
+        match self {
+            State::Idle => "idle",
+            State::Working => "working",
+            State::NeedsYou => "needs you",
+            State::Done => "done",
+        }
+    }
+}
+
+/// Which sessions the palette lists. A past session that isn't open has no state, so only
+/// `All` shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Filter {
+    #[default]
+    All,
+    NeedsYou,
+    Working,
+    Idle,
+    Done,
+}
+
+impl Filter {
+    pub const ALL: [Filter; 5] = [Filter::All, Filter::NeedsYou, Filter::Working, Filter::Idle, Filter::Done];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Filter::All => "All",
+            Filter::NeedsYou => "Needs you",
+            Filter::Working => "Working",
+            Filter::Idle => "Idle",
+            Filter::Done => "Done",
+        }
+    }
+
+    /// Whether a session in `state` passes.
+    pub fn matches(self, state: Option<State>) -> bool {
+        matches!(
+            (self, state),
+            (Filter::All, _)
+                | (Filter::NeedsYou, Some(State::NeedsYou))
+                | (Filter::Working, Some(State::Working))
+                | (Filter::Idle, Some(State::Idle))
+                | (Filter::Done, Some(State::Done))
+        )
+    }
+
+    /// The next (`1`) or previous (`-1`) filter, wrapping round.
+    pub fn step(self, by: isize) -> Filter {
+        let at = Self::ALL.iter().position(|f| *f == self).unwrap_or(0) as isize;
+        Self::ALL[(at + by).rem_euclid(Self::ALL.len() as isize) as usize]
+    }
+}
+
+/// Where a session sits in the list: its project's and workspace's places, and the header.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Section {
+    /// The project's place among the open ones.
+    pub project: usize,
+    /// The workspace's place in its project: the main tree first, then by label.
+    pub workspace: usize,
+    /// The header: see [`section_label`].
+    pub label: String,
+}
+
+/// A section's header: `project › workspace`, or just the project when it has one workspace.
+pub fn section_label(project: &str, workspace: &str, workspaces: usize) -> String {
+    if workspaces < 2 { project.to_string() } else { format!("{project} › {workspace}") }
+}
+
+/// The workspaces' places, main tree first then by label: `places[i]` is where
+/// `(main, label)` pair `i` goes.
+pub fn workspace_places(workspaces: &[(bool, &str)]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..workspaces.len()).collect();
+    order.sort_by(|&a, &b| {
+        let (ma, la) = workspaces[a];
+        let (mb, lb) = workspaces[b];
+        mb.cmp(&ma).then_with(|| la.to_lowercase().cmp(&lb.to_lowercase()))
+    });
+    let mut places = vec![0; workspaces.len()];
+    for (place, i) in order.into_iter().enumerate() {
+        places[i] = place;
+    }
+    places
+}
+
 /// One thing the palette can list.
 #[derive(Clone, Debug)]
 pub struct Entry {
@@ -28,6 +125,10 @@ pub struct Entry {
     pub keywords: String,
     /// When a session was last active, to put newer ones first.
     pub when: Option<SystemTime>,
+    /// A session's project and workspace.
+    pub section: Option<Section>,
+    /// An open session's state.
+    pub state: Option<State>,
 }
 
 /// One result: an index into the entries, and the byte offsets in its title of
@@ -60,14 +161,37 @@ impl Palette {
     /// only in the keywords; ties go to the newer session, then to the order
     /// the entries came in.
     pub fn matching(&self, query: &str, recent: &[&str], limit: usize) -> Vec<Match> {
+        self.matching_in(query, recent, limit, Filter::All)
+    }
+
+    /// How many sessions each of [`Filter::ALL`] lets through.
+    pub fn counts(&self) -> [usize; 5] {
+        let mut out = [0; 5];
+        for e in self.entries.iter().filter(|e| e.kind == Kind::Session) {
+            for (n, f) in out.iter_mut().zip(Filter::ALL) {
+                *n += usize::from(f.matches(e.state));
+            }
+        }
+        out
+    }
+
+    /// [`Self::matching`] under a filter: with one other than `All`, only the sessions
+    /// in that state, all of them when nothing is typed.
+    pub fn matching_in(&self, query: &str, recent: &[&str], limit: usize, filter: Filter) -> Vec<Match> {
         let q = fuzzy::lower(query.trim());
         let tidy = |text: &str| fuzzy::find_words(text, &q);
-        let mut found: Vec<(i64, usize, Vec<usize>)> = if q.is_empty() {
+        let keep = |i: usize| {
+            filter == Filter::All || (self.entries[i].kind == Kind::Session && filter.matches(self.entries[i].state))
+        };
+        let mut found: Vec<(i64, usize, Vec<usize>)> = if q.is_empty() && filter != Filter::All {
+            (0..self.entries.len()).filter(|&i| keep(i)).map(|i| (10_000, i, Vec::new())).collect()
+        } else if q.is_empty() {
             self.empty(recent)
         } else {
             self.lower
                 .iter()
                 .enumerate()
+                .filter(|(i, _)| keep(*i))
                 .filter_map(|(i, (title, keywords))| {
                     if let Some(p) = tidy(title) {
                         // A short title the query covers more of reads as the closer match.
@@ -86,6 +210,24 @@ impl Palette {
         let when = |i: usize| self.entries[i].when;
         found.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| when(b.1).cmp(&when(a.1))).then_with(|| a.1.cmp(&b.1)));
         found.into_iter().take(limit).map(|(_, index, positions)| Match { index, positions }).collect()
+    }
+
+    /// `found` grouped by kind, the kind with the best match first; sessions go by project,
+    /// then workspace, and the ranking holds within each group.
+    pub fn grouped(&self, mut found: Vec<Match>) -> Vec<Match> {
+        let mut kinds: Vec<Kind> = Vec::new();
+        for m in &found {
+            let k = self.entries[m.index].kind;
+            if !kinds.contains(&k) {
+                kinds.push(k);
+            }
+        }
+        found.sort_by_key(|m| {
+            let e = &self.entries[m.index];
+            let at = e.section.as_ref().map_or((0, 0), |s| (s.project, s.workspace));
+            (kinds.iter().position(|k| *k == e.kind), at)
+        });
+        found
     }
 
     /// The order for an empty query, as scores: sessions (newest first, by the
@@ -116,7 +258,7 @@ mod tests {
 
     fn entry(kind: Kind, title: &str, keywords: &str, age: u64) -> Entry {
         let when = (kind == Kind::Session).then(|| SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000 - age));
-        Entry { kind, title: title.into(), keywords: keywords.into(), when }
+        Entry { kind, title: title.into(), keywords: keywords.into(), when, section: None, state: None }
     }
 
     fn palette() -> Palette {
@@ -179,5 +321,56 @@ mod tests {
         assert_eq!(p.entries[m.index].title, "New session");
         assert_eq!(m.positions, [0, 4]);
         assert!(p.matching("panel", &[], 1)[0].positions.is_empty());
+    }
+
+    fn session(title: &str, project: usize, workspace: usize, state: Option<State>, age: u64) -> Entry {
+        let mut e = entry(Kind::Session, title, "", age);
+        e.section = Some(Section { project, workspace, label: format!("p{project}") });
+        e.state = state;
+        e
+    }
+
+    #[test]
+    fn sessions_group_by_project_then_workspace() {
+        let p = Palette::new(vec![
+            session("a", 1, 0, None, 1),
+            session("b", 0, 1, None, 2),
+            session("c", 0, 0, None, 3),
+            entry(Kind::Action, "New session", "", 0),
+            session("d", 0, 0, None, 9),
+        ]);
+        let found = p.grouped(p.matching("", &[], 20));
+        let titles: Vec<_> = found.iter().map(|m| p.entries[m.index].title.as_str()).collect();
+        // Newest first inside a group, actions last.
+        assert_eq!(titles, ["c", "d", "b", "a", "New session"]);
+    }
+
+    #[test]
+    fn filters_pick_sessions_by_state() {
+        let p = Palette::new(vec![
+            session("one", 0, 0, Some(State::NeedsYou), 1),
+            session("two", 0, 0, Some(State::Working), 2),
+            session("three", 0, 0, None, 3),
+            entry(Kind::Action, "New session", "", 0),
+        ]);
+        assert_eq!(p.counts(), [3, 1, 1, 0, 0]);
+        let names = |f| -> Vec<_> {
+            p.matching_in("", &[], 20, f).into_iter().map(|m| p.entries[m.index].title.clone()).collect()
+        };
+        assert_eq!(names(Filter::NeedsYou), ["one"]);
+        assert_eq!(names(Filter::Working), ["two"]);
+        assert!(names(Filter::Done).is_empty());
+        assert_eq!(p.matching_in("t", &[], 20, Filter::NeedsYou).len(), 0);
+        assert_eq!(names(Filter::All).len(), 4);
+        assert!(!Filter::Idle.matches(None) && Filter::All.matches(None));
+    }
+
+    #[test]
+    fn filters_cycle_and_workspaces_sort() {
+        assert_eq!(Filter::All.step(-1), Filter::Done);
+        assert_eq!(Filter::Done.step(1), Filter::All);
+        assert_eq!(workspace_places(&[(false, "b"), (false, "A"), (true, "zz")]), [2, 1, 0]);
+        assert_eq!(section_label("kynex", "x", 1), "kynex");
+        assert_eq!(section_label("kynex", "x", 2), "kynex › x");
     }
 }

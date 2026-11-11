@@ -38,6 +38,10 @@ pub enum Menu {
     Pane(kynex_core::layout::PaneId),
     /// A pane tab's right-click menu.
     PaneTab(usize),
+    /// The workspace picker (`prefix w`): this project's workspaces.
+    Workspaces,
+    /// The project picker (`prefix shift-p`): the open projects, and Open project….
+    Projects,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -99,6 +103,11 @@ impl KynexApp {
             Some(OpenMenu { which, at, anchor })
         };
         cx.notify();
+    }
+
+    /// Which picker (workspaces, projects) is open, for its keys.
+    pub(super) fn open_picker_menu(&self) -> Option<Menu> {
+        self.menu.as_ref().map(|m| m.which.clone()).filter(|m| matches!(m, Menu::Workspaces | Menu::Projects))
     }
 
     /// The open menu; `leaving` while it plays out after closing.
@@ -404,6 +413,43 @@ impl KynexApp {
             Menu::SessionsPanel => items = self.sessions_panel_menu_items(cx),
             Menu::Pane(pane) => items = self.pane_menu_items(*pane, cx),
             Menu::PaneTab(tab) => items = self.pane_tab_menu_items(*tab, cx),
+            Menu::Workspaces => {
+                let list = match self.workspace_project() {
+                    Some(project) => self.workspaces_of(&project, cx),
+                    None => Vec::new(),
+                };
+                for (n, (c, _)) in list.into_iter().enumerate() {
+                    let on = n == self.menu_pick;
+                    let path = c.path.clone();
+                    items.push(
+                        menu_item(("workspace-pick", n), c.label.clone(), on, cx)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.menu = None;
+                                this.select_workspace(&path, cx);
+                            }))
+                            .into_any_element(),
+                    );
+                }
+            }
+            Menu::Projects => {
+                for (i, p) in self.saved.projects.iter().enumerate() {
+                    let on = i == self.menu_pick;
+                    items.push(
+                        menu_item(("project-pick", i), kynex_core::paths::project_name(&p.path), on, cx)
+                            .on_click(cx.listener(move |this, _, window, cx| this.jump_to_project(i, window, cx)))
+                            .into_any_element(),
+                    );
+                }
+                items.push(div().my_1().child(divider(cx)).into_any_element());
+                items.push(
+                    menu_item("project-open", "Open project…", self.menu_pick == self.saved.projects.len(), cx)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.menu = None;
+                            this.pick_project(cx);
+                        }))
+                        .into_any_element(),
+                );
+            }
             Menu::Workspace(path) => {
                 for (n, (label, opener)) in [
                     ("Open in VS Code", Opener::Code),

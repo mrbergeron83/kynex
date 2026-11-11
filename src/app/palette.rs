@@ -14,13 +14,16 @@ use gpui::{
     Action, AnyElement, Context, Entity, Focusable, FontWeight, HighlightStyle, MouseButton, SharedString, StyledText,
     Window, div, prelude::*,
 };
-use kynex_core::fmt::ago;
-use kynex_core::palette::{Entry, Kind, Match, Palette};
+use kynex_core::layout::Direction;
+use kynex_core::live::Key;
+use kynex_core::palette::{self, Entry, Filter, Kind, Match, Palette, Section};
 use kynex_core::paths::project_name;
 use kynex_core::session::{self, SessionInfo};
 
 use super::KynexApp;
+use super::goto::Which;
 use super::keys;
+use super::palette_filters::filter_chips;
 use super::state::Active;
 use crate::theme::{THEMES, Theme, mono, theme};
 use crate::ui::input::{self, TextInput};
@@ -40,8 +43,12 @@ pub(super) struct PaletteView {
     input: Entity<TextInput>,
     rows: Rc<Vec<Row>>,
     palette: Rc<Palette>,
-    /// Each project's past sessions, as they come in.
+    /// The folders whose sessions are listed: each project's workspaces.
+    folders: Rc<Vec<Folder>>,
+    /// Each folder's past sessions, as they come in.
     sessions: Rc<HashMap<PathBuf, Vec<SessionInfo>>>,
+    /// Which sessions are listed, by state.
+    filter: Filter,
     /// What `found` is for, and the selection in it.
     query: String,
     found: Rc<Vec<Match>>,
@@ -50,19 +57,34 @@ pub(super) struct PaletteView {
     stale: bool,
 }
 
+/// A workspace's folder, and where its sessions go in the list.
+pub(super) struct Folder {
+    pub(super) project: PathBuf,
+    pub(super) path: PathBuf,
+    pub(super) project_name: String,
+    pub(super) section: Section,
+}
+
 /// What a result is besides its title: where it goes and what's shown with it.
-struct Row {
-    target: Target,
-    detail: SharedString,
+pub(super) struct Row {
+    pub(super) target: Target,
+    pub(super) detail: SharedString,
     /// A shortcut, or a session's state ("working", "needs you").
-    hint: SharedString,
+    pub(super) hint: SharedString,
 }
 
 #[derive(Clone)]
-enum Target {
+pub(super) enum Target {
     Session {
-        path: PathBuf,
+        project: PathBuf,
+        workspace: PathBuf,
         id: String,
+    },
+    /// An open session with no transcript listed yet.
+    Open {
+        project: PathBuf,
+        workspace: PathBuf,
+        key: Key,
     },
     Tab(Active),
     /// One of a project's workspaces (checkouts).
@@ -75,7 +97,7 @@ enum Target {
 
 /// What an action in the palette does.
 #[derive(Clone, Copy, PartialEq)]
-enum Cmd {
+pub(super) enum Cmd {
     NewSession,
     OpenProject,
     CloseTab,
@@ -92,6 +114,16 @@ enum Cmd {
     PrevPaneTab,
     NextPane,
     PrevPane,
+    Focus(Direction),
+    Swap(Direction),
+    ZoomPane,
+    ResizePanes,
+    RenamePaneTab,
+    PickWorkspace,
+    NewWorkspace,
+    CloseWorkspace,
+    PickProject,
+    NextNeedsYou,
     ToggleSessions,
     ToggleTerminal,
     ToggleTimeline,
@@ -130,6 +162,25 @@ impl Cmd {
             Cmd::PrevTab => Box::new(keys::PrevTab),
             Cmd::NextWorkspace => Box::new(keys::NextWorkspace),
             Cmd::PrevWorkspace => Box::new(keys::PrevWorkspace),
+            Cmd::SplitRight => Box::new(keys::SplitRight),
+            Cmd::SplitDown => Box::new(keys::SplitDown),
+            Cmd::ClosePane => Box::new(keys::ClosePane),
+            Cmd::NewPaneTab => Box::new(keys::NewPaneTab),
+            Cmd::ClosePaneTab => Box::new(keys::ClosePaneTab),
+            Cmd::NextPaneTab => Box::new(keys::NextPaneTab),
+            Cmd::PrevPaneTab => Box::new(keys::PrevPaneTab),
+            Cmd::NextPane => Box::new(keys::NextPane),
+            Cmd::Focus(d) => Box::new(keys::FocusPane(d)),
+            Cmd::Swap(d) => Box::new(keys::SwapPane(d)),
+            Cmd::ZoomPane => Box::new(keys::ZoomPane),
+            Cmd::ResizePanes => Box::new(keys::ResizeMode),
+            Cmd::RenamePaneTab => Box::new(keys::RenamePaneTab),
+            Cmd::PickWorkspace => Box::new(keys::PickWorkspace),
+            Cmd::NewWorkspace => Box::new(keys::NewWorkspace),
+            Cmd::CloseWorkspace => Box::new(keys::CloseWorkspace),
+            Cmd::PickProject => Box::new(keys::PickProject),
+            Cmd::NextNeedsYou => Box::new(keys::NextNeedsYou),
+            Cmd::Settings(2) => Box::new(keys::KeyboardSettings),
             Cmd::ToggleSessions => Box::new(keys::ToggleSessions),
             Cmd::ToggleTerminal => Box::new(keys::ToggleTerminal),
             Cmd::ToggleTimeline => Box::new(keys::ToggleTimeline),
@@ -169,6 +220,22 @@ fn commands() -> Vec<(Cmd, String, &'static str)> {
         (Cmd::PrevPaneTab, "Previous pane tab", "layout tiles workspace"),
         (Cmd::NextPane, "Next pane", "tile focus split"),
         (Cmd::PrevPane, "Previous pane", "tile focus split"),
+        (Cmd::Focus(Direction::Left), "Focus pane to the left", "tile move split"),
+        (Cmd::Focus(Direction::Down), "Focus pane below", "tile move split"),
+        (Cmd::Focus(Direction::Up), "Focus pane above", "tile move split"),
+        (Cmd::Focus(Direction::Right), "Focus pane to the right", "tile move split"),
+        (Cmd::Swap(Direction::Left), "Swap pane with the one to the left", "tile move split"),
+        (Cmd::Swap(Direction::Down), "Swap pane with the one below", "tile move split"),
+        (Cmd::Swap(Direction::Up), "Swap pane with the one above", "tile move split"),
+        (Cmd::Swap(Direction::Right), "Swap pane with the one to the right", "tile move split"),
+        (Cmd::ZoomPane, "Zoom pane", "maximize fullscreen tile toggle"),
+        (Cmd::ResizePanes, "Resize panes", "tile grow shrink split size drag"),
+        (Cmd::RenamePaneTab, "Rename pane tab", "layout tiles workspace name"),
+        (Cmd::PickWorkspace, "Go to workspace…", "worktree checkout branch switch"),
+        (Cmd::NewWorkspace, "New workspace", "worktree checkout branch add"),
+        (Cmd::CloseWorkspace, "Close workspace", "remove worktree checkout delete"),
+        (Cmd::PickProject, "Go to project…", "tab switch open folder"),
+        (Cmd::NextNeedsYou, "Next session that needs you", "attention waiting blocked permission question"),
         (Cmd::ToggleSessions, "Toggle sessions panel", "sidebar list"),
         (Cmd::ToggleTerminal, "Toggle terminal", "shell panel console"),
         (Cmd::ToggleTimeline, "Toggle timeline", "turns steps panel"),
@@ -217,13 +284,15 @@ impl KynexApp {
             return cx.notify();
         }
         self.menu = None;
-        let input = cx.new(|cx| TextInput::new(cx).placeholder("Search sessions, projects and actions…"));
+        let input = cx.new(|cx| TextInput::new(cx).placeholder("Go to a session, project or action…"));
         input.read(cx).focus_handle(cx).focus(window, cx);
         let view = PaletteView {
             input,
             rows: Rc::default(),
             palette: Rc::default(),
+            folders: Rc::new(self.palette_folders(cx)),
             sessions: Rc::default(),
+            filter: Filter::All,
             query: String::new(),
             found: Rc::default(),
             selected: 0,
@@ -231,8 +300,9 @@ impl KynexApp {
         };
         self.palette = Some(view);
         self.rebuild_palette(cx);
-        for p in &self.saved.projects {
-            let path = p.path.clone();
+        let folders: Vec<PathBuf> =
+            self.palette.iter().flat_map(|v| v.folders.iter().map(|f| f.path.clone())).collect();
+        for path in folders {
             cx.spawn(async move |this, cx| {
                 let dir = path.clone();
                 let mut items = cx.background_spawn(async move { session::list_sessions(&dir) }).await;
@@ -254,34 +324,32 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Lists every entry again: after sessions come in.
-    fn rebuild_palette(&mut self, cx: &Context<Self>) {
-        let Some(view) = &self.palette else { return };
-        let mut rows = Vec::new();
-        let mut entries = Vec::new();
-        for p in &self.saved.projects {
-            let name = project_name(&p.path);
-            let live = self.code.get(&p.path);
-            for s in view.sessions.get(&p.path).into_iter().flatten() {
-                let open = live.and_then(|l| l.sessions.iter().find(|o| o.session_id.as_deref() == Some(&s.id)));
-                let hint = match open {
-                    Some(o) if o.wants_you() => "needs you",
-                    Some(o) if o.busy => "working",
-                    _ => "",
-                };
-                rows.push(Row {
-                    target: Target::Session { path: p.path.clone(), id: s.id.clone() },
-                    detail: format!("{name} · {}", ago(s.modified)).into(),
-                    hint: hint.into(),
-                });
-                entries.push(Entry {
-                    kind: Kind::Session,
-                    title: s.title.clone(),
-                    keywords: name.clone(),
-                    when: Some(s.modified),
+    /// Every project's workspaces' folders, in the order their sessions are listed.
+    fn palette_folders(&mut self, cx: &mut Context<Self>) -> Vec<Folder> {
+        let projects: Vec<PathBuf> = self.saved.projects.iter().map(|p| p.path.clone()).collect();
+        let mut folders = Vec::new();
+        for (at, project) in projects.into_iter().enumerate() {
+            let list = self.workspaces_of(&project, cx);
+            let places =
+                palette::workspace_places(&list.iter().map(|(c, _)| (c.main, c.label.as_str())).collect::<Vec<_>>());
+            let name = project_name(&project);
+            for ((c, _), place) in list.iter().zip(places) {
+                let label = palette::section_label(&name, &c.label, list.len());
+                folders.push(Folder {
+                    project: project.clone(),
+                    path: c.path.clone(),
+                    project_name: format!("{name} {}", c.label),
+                    section: Section { project: at, workspace: place, label },
                 });
             }
         }
+        folders
+    }
+
+    /// Lists every entry again: after sessions come in.
+    fn rebuild_palette(&mut self, cx: &Context<Self>) {
+        let Some(view) = &self.palette else { return };
+        let (mut rows, mut entries) = self.palette_session_rows(&view.folders, &view.sessions);
         // A project's other checkouts, once it has any.
         for p in &self.saved.projects {
             let Some(w) = self.worktrees.get(&p.path) else { continue };
@@ -301,6 +369,8 @@ impl KynexApp {
                     title: format!("{name}: {}", c.label),
                     keywords: format!("workspace worktree checkout {}", c.branch.unwrap_or_default()),
                     when: None,
+                    section: None,
+                    state: None,
                 });
             }
         }
@@ -312,12 +382,26 @@ impl KynexApp {
             );
         for (target, name, path) in tabs {
             rows.push(Row { target, detail: path.clone().into(), hint: "".into() });
-            entries.push(Entry { kind: Kind::Project, title: name, keywords: path, when: None });
+            entries.push(Entry {
+                kind: Kind::Project,
+                title: name,
+                keywords: path,
+                when: None,
+                section: None,
+                state: None,
+            });
         }
         for (cmd, label, words) in commands() {
             let hint = cmd.action().and_then(|a| crate::ui::shortcut(a.as_ref(), cx)).unwrap_or_default();
             rows.push(Row { target: Target::Command(cmd), detail: "".into(), hint: hint.into() });
-            entries.push(Entry { kind: Kind::Action, title: label, keywords: words.into(), when: None });
+            entries.push(Entry {
+                kind: Kind::Action,
+                title: label,
+                keywords: words.into(),
+                when: None,
+                section: None,
+                state: None,
+            });
         }
         let view = self.palette.as_mut().unwrap();
         view.rows = Rc::new(rows);
@@ -331,18 +415,9 @@ impl KynexApp {
         let query = view.input.read(cx).text().to_string();
         if view.stale || view.query != query {
             let recent: Vec<&str> = self.palette_recent.iter().map(String::as_str).collect();
-            let mut found = view.palette.matching(&query, &recent, LISTED);
-            // Grouped by kind under their labels, the group with the best match
-            // first; the ranking holds within each group.
-            let mut kinds: Vec<Kind> = Vec::new();
-            for m in &found {
-                let k = view.palette.entries[m.index].kind;
-                if !kinds.contains(&k) {
-                    kinds.push(k);
-                }
-            }
-            found.sort_by_key(|m| kinds.iter().position(|k| *k == view.palette.entries[m.index].kind));
-            view.found = Rc::new(found);
+            let found = view.palette.matching_in(&query, &recent, LISTED, view.filter);
+            // Grouped under their labels: sessions by project and workspace.
+            view.found = Rc::new(view.palette.grouped(found));
             if view.query != query {
                 view.selected = 0;
             }
@@ -351,6 +426,23 @@ impl KynexApp {
             view.selected = view.selected.min(view.found.len().saturating_sub(1));
         }
         Some(view.found.clone())
+    }
+
+    pub(super) fn palette_set_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
+        let Some(view) = &mut self.palette else { return };
+        if view.filter != filter {
+            view.filter = filter;
+            view.selected = 0;
+            view.stale = true;
+            cx.notify();
+        }
+    }
+
+    /// Tab / Shift+Tab: the next or previous filter.
+    pub(super) fn palette_step_filter(&mut self, by: isize, cx: &mut Context<Self>) {
+        if let Some(view) = &self.palette {
+            self.palette_set_filter(view.filter.step(by), cx);
+        }
     }
 
     fn palette_move(&mut self, by: isize, cx: &mut Context<Self>) {
@@ -367,13 +459,14 @@ impl KynexApp {
         let Some(m) = found.get(i) else { return };
         let target = view.rows[m.index].target.clone();
         match target {
-            Target::Session { path, id } => {
-                if let Some(i) = self.saved.projects.iter().position(|p| p.path == path) {
-                    self.select(Active::Project(i), window, cx);
-                    self.show_code_view();
-                    self.switch_session(session::Kind::Code, path, id);
-                }
-                self.focus_input(window, cx);
+            Target::Session { project, workspace, id } => {
+                self.edit_groups(&workspace, |g| {
+                    g.unarchive(&id);
+                });
+                self.reveal_session(&project, &workspace, Which::Id(&id), window, cx);
+            }
+            Target::Open { project, workspace, key } => {
+                self.reveal_session(&project, &workspace, Which::Open(key), window, cx);
             }
             Target::Workspace { project, path } => {
                 if let Some(i) = self.saved.projects.iter().position(|p| p.path == project) {
@@ -405,14 +498,6 @@ impl KynexApp {
             return window.dispatch_action(action, cx);
         }
         match cmd {
-            Cmd::SplitRight => self.split_pane(kynex_core::layout::Axis::Row, window, cx),
-            Cmd::SplitDown => self.split_pane(kynex_core::layout::Axis::Column, window, cx),
-            Cmd::ClosePane => self.close_pane(window, cx),
-            Cmd::NewPaneTab => self.new_pane_tab(window, cx),
-            Cmd::ClosePaneTab => self.close_active_pane_tab(window, cx),
-            Cmd::NextPaneTab => self.step_pane_tab(1, window, cx),
-            Cmd::PrevPaneTab => self.step_pane_tab(-1, window, cx),
-            Cmd::NextPane => self.step_pane(1, window, cx),
             Cmd::PrevPane => self.step_pane(-1, window, cx),
             Cmd::Compact => self.compact(self.focused_key(), cx),
             Cmd::Settings(section) => {
@@ -456,27 +541,31 @@ impl KynexApp {
         let view = self.palette.clone()?;
         let t = theme(cx).clone();
         let start = (view.selected + 1).saturating_sub(ROWS);
-        let mut last_kind = None;
+        let mut last = None;
         let mut rows: Vec<AnyElement> = Vec::new();
         for (i, m) in found.iter().enumerate().skip(start).take(ROWS) {
-            let kind = view.palette.entries[m.index].kind;
-            if last_kind != Some(kind) {
-                let label = match kind {
-                    Kind::Session => "Sessions",
-                    Kind::Project => "Projects",
-                    Kind::Action => "Actions",
+            let entry = &view.palette.entries[m.index];
+            let kind = entry.kind;
+            // A header per kind; sessions get one per project and workspace.
+            let place = (kind, entry.section.as_ref().map(|s| (s.project, s.workspace)));
+            if last != Some(place) {
+                let label = match (kind, &entry.section) {
+                    (_, Some(s)) => s.label.as_str(),
+                    (Kind::Session, None) => "Sessions",
+                    (Kind::Project, _) => "Projects",
+                    (Kind::Action, _) => "Actions",
                 };
-                let first = last_kind.is_none();
                 let header = section_label(label, cx).px_2().pb_1();
-                rows.push(if first { header.pt_1p5() } else { header.pt_3() }.into_any_element());
-                last_kind = Some(kind);
+                rows.push(if last.is_none() { header.pt_1p5() } else { header.pt_3() }.into_any_element());
+                last = Some(place);
             }
             rows.push(palette_row(&view, i, m, &t, cx));
         }
         let more = found.len().saturating_sub(start + ROWS);
         let empty = found.is_empty();
         // Projects whose sessions are still being listed.
-        let listing = view.sessions.len() < self.saved.projects.len();
+        let listing = view.sessions.len() < view.folders.len();
+        let chips = filter_chips(view.filter, view.palette.counts(), &t, cx);
 
         let card = div()
             .id("palette")
@@ -506,6 +595,13 @@ impl KynexApp {
                 this.take_palette(selected, window, cx);
                 cx.stop_propagation();
             }))
+            .capture_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, _, cx| {
+                let k = &ev.keystroke;
+                if k.key == "tab" && !k.modifiers.modified() {
+                    this.palette_step_filter(1, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .capture_action(cx.listener(|this, _: &keys::Interrupt, window, cx| {
                 this.palette = None;
                 this.focus_input(window, cx);
@@ -524,6 +620,7 @@ impl KynexApp {
                     .child(icon(Icon::Search, t.text_muted).flex_none())
                     .child(div().flex_1().min_w_0().child(view.input.clone())),
             )
+            .child(chips)
             .child(
                 div()
                     .flex()
@@ -606,6 +703,7 @@ fn palette_row(
     let hint_colour = match row.hint.as_ref() {
         "needs you" => t.warning,
         "working" => t.accent,
+        "done" => t.success,
         _ => t.text_placeholder,
     };
     let mono_hint = matches!(row.target, Target::Command(_));

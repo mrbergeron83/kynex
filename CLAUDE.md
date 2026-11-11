@@ -88,6 +88,7 @@ A cargo workspace with two crates:
   - `attention.rs` — why a session wants you, for OS notifications and the icon's "needs
     you" dot (Dock badge on macOS); `win_shell.rs` — the taskbar dot and app ID on Kynex's
     shortcuts (Windows)
+  - `sound.rs` — the short sounds for notes and toasts (`MessageBeep`, `NSSound`, canberra / paplay)
   - `zoom.rs` — the image viewer's fit, zoom and pan; `column.rs` — the Transcript width
     setting and the prose / tool-row widths it gives; `env_path.rs` — the login shell's PATH
     for an app started from Finder or the Dock (macOS)
