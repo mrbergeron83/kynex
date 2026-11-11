@@ -100,7 +100,7 @@ namespace KynexInstall {
     # subcommands (`knx session list` …) run in the terminal instead, to print there.
     $shim = @(
         '@echo off',
-        'for %%c in (context pane session events) do if /i "%~1"=="%%c" goto run',
+        'for %%c in (project workspace pane session events) do if /i "%~1"=="%%c" goto run',
         'start "" "%~dp0kynex.exe" %*',
         'exit /b',
         ':run',

@@ -46,7 +46,7 @@ impl KynexApp {
     pub(super) fn serve_control(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let calls = self.control.as_ref().map(|c| c.take()).unwrap_or_default();
         for Call { request, reply } in calls {
-            match self.control_request(request, window, cx) {
+            match self.control_request(request, &reply, window, cx) {
                 // The answer comes when the turn ends.
                 Err(None) => {}
                 Ok(v) => {
@@ -67,18 +67,36 @@ impl KynexApp {
     fn control_request(
         &mut self,
         request: Request,
+        reply: &Sender<Answer>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<Value, Option<String>> {
         let said = |e: &str| Some(e.to_string());
         match request {
-            Request::ContextList => Ok(self.context_list()),
-            Request::ContextCreate { path } => {
+            Request::ProjectList => Ok(self.project_list()),
+            Request::ProjectCreate { path } => {
                 std::fs::create_dir_all(&path).map_err(|e| Some(format!("can't make {path}: {e}")))?;
-                self.open_context(&path, window, cx).map_err(Some)
+                self.open_project_at(&path, window, cx).map_err(Some)
             }
-            Request::ContextOpen { path } => self.open_context(&path, window, cx).map_err(Some),
-            Request::ContextRemove { path } => {
+            Request::ProjectOpen { path } => self.open_project_at(&path, window, cx).map_err(Some),
+            Request::WorkspaceList => self.workspace_list(cx).map_err(Some),
+            Request::WorkspaceOpen { path } => {
+                let (project, target) = self.workspace_named(&path, cx).map_err(Some)?;
+                let _ = project;
+                self.select_workspace(&target, cx);
+                window.activate_window();
+                Ok(json!({ "opened": target }))
+            }
+            Request::WorkspaceCreate { branch } => {
+                self.create_workspace_for(branch, reply.clone(), cx);
+                Err(None)
+            }
+            Request::WorkspaceRemove { path, force } => {
+                let (_, target) = self.workspace_named(&path, cx).map_err(Some)?;
+                self.remove_workspace_for(target, force, reply.clone(), cx).map_err(Some)?;
+                Err(None)
+            }
+            Request::ProjectRemove { path } => {
                 let i = self.saved.projects.iter().position(|p| same_folder(&p.path, std::path::Path::new(&path)));
                 let i = i.ok_or_else(|| Some(format!("{path} isn't open")))?;
                 self.close_project(i);
@@ -204,7 +222,7 @@ impl KynexApp {
         self.control_seen = now;
     }
 
-    fn context_list(&self) -> Value {
+    fn project_list(&self) -> Value {
         let projects: Vec<Value> = self
             .saved
             .projects
@@ -218,11 +236,11 @@ impl KynexApp {
                 })
             })
             .collect();
-        json!({ "contexts": projects })
+        json!({ "projects": projects })
     }
 
     /// Opens `path` as a project, or shows it if it is open already, and brings the window up.
-    pub(super) fn open_context(
+    pub(super) fn open_project_at(
         &mut self,
         path: &str,
         window: &mut Window,

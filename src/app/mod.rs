@@ -15,7 +15,8 @@
 //! | `pane_keys.rs`     | the prefix keys (Ctrl+B …): panes, pane tabs, workspaces, projects, resize mode |
 //! | `pane_tabs.rs`     | the selected workspace's tab bar: new, close, rename, reorder |
 //! | `tiles.rs`          | the split panes of a workspace: layouts, focus, drawing |
-//! | `control.rs`        | the control socket: `knx context / pane / session / events` |
+//! | `control.rs`        | the control socket: `knx project / workspace / pane / session / events` |
+//! | `control_workspaces.rs` | its `workspace` commands: list, show, make, remove |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
 //! | `layout_history.rs` | undo / redo of pane changes, reopening a pane, older layouts |
 //! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
@@ -94,6 +95,7 @@ mod attention;
 mod background;
 mod composer;
 mod control;
+mod control_workspaces;
 mod custom_commands;
 mod delegate_view;
 mod drafts;
@@ -443,7 +445,7 @@ impl KynexApp {
             let folder = folder.to_string_lossy().into_owned();
             cx.spawn_in(window, async move |this, cx| {
                 this.update_in(cx, |this, window, cx| {
-                    let _ = this.open_context(&folder, window, cx);
+                    let _ = this.open_project_at(&folder, window, cx);
                 })
                 .ok();
             })

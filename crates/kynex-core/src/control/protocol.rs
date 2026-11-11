@@ -11,20 +11,37 @@ use serde_json::{Value, json};
 /// The longest line read, in bytes. A longer one is an error and ends the connection.
 pub const MAX_LINE: usize = 1 << 20;
 
-/// What a client can ask. "Context" is a project: a tab of the window.
+/// What a client can ask. A project is a tab of the window; its workspaces are its checkouts
+/// (worktrees and folders added by hand).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
-    ContextList,
+    ProjectList,
     /// Makes the folder if it isn't there, then opens it.
-    ContextCreate {
+    ProjectCreate {
         path: String,
     },
-    ContextOpen {
+    ProjectOpen {
         path: String,
     },
-    ContextRemove {
+    ProjectRemove {
         path: String,
+    },
+    /// The shown project's workspaces.
+    WorkspaceList,
+    /// Shows a workspace of the shown project.
+    WorkspaceOpen {
+        path: String,
+    },
+    /// Makes a workspace on `branch` (an existing branch, or a new one from the default branch).
+    WorkspaceCreate {
+        branch: String,
+    },
+    /// Removes a workspace; git refuses while it has changes, unless `force`.
+    WorkspaceRemove {
+        path: String,
+        #[serde(default)]
+        force: bool,
     },
     /// The panes of the shown workspace.
     PaneList,
@@ -140,8 +157,10 @@ mod tests {
     #[test]
     fn every_request_survives_a_round_trip() {
         let all = [
-            Request::ContextList,
-            Request::ContextOpen { path: "/a".into() },
+            Request::ProjectList,
+            Request::ProjectOpen { path: "/a".into() },
+            Request::WorkspaceCreate { branch: "x".into() },
+            Request::WorkspaceRemove { path: "/w".into(), force: true },
             Request::PaneSplit { axis: Some("row".into()) },
             Request::PaneClose { pane: None },
             Request::SessionWait { session: 2 },
