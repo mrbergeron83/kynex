@@ -293,5 +293,6 @@ fn agent_spec(rule: &AgentRule, resume: Option<&str>, ws: &Path, session: Option
         args: argv[1..].to_vec(),
         env: user_commands::env(ws, branch.as_deref(), session),
         title: Some(rule.name.clone()),
+        history: None,
     })
 }

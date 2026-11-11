@@ -28,6 +28,9 @@ pub struct TermPane {
     /// The id the agent printed to be resumed with, for after a restart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume: Option<String>,
+    /// Where its scrollback was kept at the last quit ([`crate::scrollback`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<String>,
 }
 
 impl TermPane {
@@ -261,6 +264,13 @@ impl Tiling {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Notes where terminal pane `pane`'s scrollback is kept.
+    pub fn set_history(&mut self, pane: PaneId, id: String) {
+        if let Some(Tool::Terminal(t)) = self.tools.get_mut(&pane) {
+            t.history = Some(id);
         }
     }
 

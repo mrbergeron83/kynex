@@ -135,6 +135,11 @@ impl TerminalPanel {
         Some(self.open_spec(shell, window, cx))
     }
 
+    /// The shown tab's scrollback and screen as text, once its shell runs.
+    pub fn history_text(&self, cx: &App) -> Option<String> {
+        self.tabs.get(self.active)?.view.read(cx).history_text()
+    }
+
     /// The shown tab's screen text, once its program runs.
     pub fn screen_text(&self, cx: &App) -> Option<String> {
         self.tabs.get(self.active)?.view.read(cx).screen_text()

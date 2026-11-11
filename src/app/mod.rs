@@ -221,6 +221,9 @@ pub struct KynexApp {
     command_starting: HashSet<kynex_core::layout::PaneId>,
     /// The custom commands of the project in front, for the palette.
     user_commands: Vec<kynex_core::user_commands::UserCommand>,
+    /// Where each terminal pane's scrollback from last time is kept, to forget it with the pane.
+    /// (workspace, id) by pane.
+    term_histories: HashMap<kynex_core::layout::PaneId, (PathBuf, String)>,
     /// The agent CLIs agent panes can run, built-in and the user's.
     agent_rules: Vec<kynex_core::agent_panes::AgentRule>,
     /// What each agent pane's screen last said.
@@ -514,6 +517,7 @@ impl KynexApp {
         .detach();
         cx.on_app_quit(|this, cx| {
             this.stash_all_drafts(cx);
+            this.save_scrollback(cx);
             this.save_layouts_now();
             this.save();
             async {}
@@ -549,6 +553,7 @@ impl KynexApp {
             user_commands: Vec::new(),
             command_popup: None,
             agent_rules: Vec::new(),
+            term_histories: HashMap::new(),
             agent_trackers: HashMap::new(),
             agent_watch: false,
             agent_rules_asked: false,

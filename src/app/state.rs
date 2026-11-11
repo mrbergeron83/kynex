@@ -90,6 +90,8 @@ pub struct Saved {
     pub timeline_open: bool,
     /// Whether `timeline_open` from before the timeline was a pane has been turned into one.
     pub timeline_migrated: bool,
+    /// Terminal panes show their scrollback from last time when they reopen.
+    pub terminal_history: bool,
     /// Unsent messages, by Claude Code session id.
     pub drafts: HashMap<String, String>,
     /// Claude names the most recent unnamed sessions too, not only the one
@@ -162,6 +164,7 @@ impl Default for Saved {
             terminal_height: 280.,
             timeline_open: false,
             timeline_migrated: false,
+            terminal_history: true,
             drafts: HashMap::new(),
             name_past_sessions: false,
             delegate: true,

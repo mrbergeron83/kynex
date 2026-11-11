@@ -108,6 +108,30 @@ pub(super) fn screen_text<T: EventListener>(term: &Term<T>) -> String {
     out
 }
 
+/// Everything in the terminal as text, oldest first: the scrollback, then the screen.
+/// `None` while a full-screen program (an editor, a pager) has the alternate screen up: what
+/// it shows isn't the shell's scrollback.
+pub(super) fn history_text<T: EventListener>(term: &Term<T>) -> Option<String> {
+    use alacritty_terminal::index::{Column, Line};
+    if term.mode().contains(TermMode::ALT_SCREEN) {
+        return None;
+    }
+    let grid = term.grid();
+    let top = -(grid.history_size() as i32);
+    let mut out = String::new();
+    for l in top..grid.screen_lines() as i32 {
+        let row = &grid[Line(l)];
+        let line: String = (0..grid.columns())
+            .map(|c| &row[Column(c)])
+            .filter(|cell| !cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER))
+            .map(|cell| if cell.c == '\0' { ' ' } else { cell.c })
+            .collect();
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    Some(out)
+}
+
 pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette) -> Snapshot {
     let content = term.renderable_content();
     let offset = content.display_offset as i32;

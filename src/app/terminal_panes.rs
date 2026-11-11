@@ -234,7 +234,10 @@ impl KynexApp {
             match (&tp.command, &tp.agent) {
                 (Some(name), _) => self.restart_command_pane(pane, name.clone(), window, cx),
                 (None, Some(_)) => self.restart_agent_pane(pane, window, cx),
-                (None, None) => panel.update(cx, |p, cx| p.ensure_open(window, cx)),
+                (None, None) => match tp.history.clone().filter(|_| self.saved.terminal_history) {
+                    Some(id) => self.restore_shell(pane, id, window, cx),
+                    None => panel.update(cx, |p, cx| p.ensure_open(window, cx)),
+                },
             }
         }
         let body = gpui::div().size_full().child(panel).into_any_element();
@@ -265,6 +268,91 @@ impl KynexApp {
         }
     }
 
+    /// Notes where workspace `ws`'s restored terminal panes keep their scrollback.
+    pub(super) fn note_histories(&mut self, ws: &Path) {
+        let Some(t) = self.tiles.get(ws) else { return };
+        for p in t.terminals() {
+            if let Some(id) = t.term_pane(p).and_then(|tp| tp.history.clone()) {
+                self.term_histories.insert(p, (ws.to_path_buf(), id));
+            }
+        }
+    }
+
+    /// Shell pane `pane` from last time: its scrollback (read in the background), then a
+    /// fresh shell under it.
+    fn restore_shell(&mut self, pane: PaneId, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.command_starting.insert(pane) {
+            return;
+        }
+        let task = cx.background_spawn(async move {
+            let shell = kynex_core::terminal::resolve_shell(ShellKind::default_shell());
+            shell.map(|mut s| {
+                s.history = kynex_core::scrollback::load(&id);
+                s
+            })
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let shell = task.await;
+            this.update_in(cx, |this, window, cx| {
+                this.command_starting.remove(&pane);
+                let Some(panel) = this.term_panes.get(&pane).cloned() else { return };
+                match shell {
+                    Ok(s) => {
+                        panel.update(cx, |p, cx| p.open_spec(s, window, cx));
+                    }
+                    Err(e) => panel.update(cx, |p, cx| p.show_error(e, cx)),
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Once a run, before anything is written: the kept scrollback no saved layout names any
+    /// more (a workspace or project gone, a pane whose layout wasn't saved) goes.
+    pub(super) fn prune_scrollback(&mut self, cx: &mut Context<Self>) {
+        let projects: Vec<std::path::PathBuf> = self.saved.projects.iter().map(|p| p.path.clone()).collect();
+        let mut keep: Vec<String> = self.term_histories.values().map(|(_, id)| id.clone()).collect();
+        cx.background_spawn(async move {
+            for p in projects {
+                for layout in kynex_core::workspace::Workspaces::load(&p).layouts.values() {
+                    let tools = layout.tools.iter().flat_map(|t| t.values());
+                    keep.extend(tools.filter_map(|t| match t {
+                        kynex_core::tiling::Tool::Terminal(tp) => tp.history.clone(),
+                        _ => None,
+                    }));
+                }
+            }
+            kynex_core::scrollback::prune(&keep);
+        })
+        .detach();
+    }
+
+    /// At quit: every shell pane's scrollback, kept for when it reopens (unless that's off).
+    pub(super) fn save_scrollback(&mut self, cx: &mut Context<Self>) {
+        if !self.saved.terminal_history {
+            return;
+        }
+        let mut writes: Vec<(String, String)> = Vec::new();
+        for t in self.tiles.values_mut() {
+            for p in t.terminals() {
+                let Some(tp) = t.term_pane(p).filter(|tp| tp.is_shell()) else { continue };
+                let Some(text) = self.term_panes.get(&p).and_then(|panel| panel.read(cx).history_text(cx)) else {
+                    continue;
+                };
+                let id = tp.history.clone().unwrap_or_else(kynex_core::scrollback::new_id);
+                t.set_history(p, id.clone());
+                writes.push((id, text));
+            }
+        }
+        // Quitting: written now, a failure only logged.
+        for (id, text) in writes {
+            if let Err(e) = kynex_core::scrollback::save(&id, &text) {
+                eprintln!("kynex: scrollback: {e}");
+            }
+        }
+    }
+
     /// Keeps `panel`, whose pane closed, for folder `cwd`'s next terminal if it has shells.
     fn keep_hidden(&mut self, cwd: std::path::PathBuf, panel: Entity<TerminalPanel>, cx: &Context<Self>) {
         // A command's program ends with its pane.
@@ -278,6 +366,19 @@ impl KynexApp {
     pub(super) fn drop_gone_terminals(&mut self, cx: &Context<Self>) {
         let live: Vec<PaneId> = self.tiles.values().flat_map(|t| t.terminals()).collect();
         self.command_starting.retain(|id| live.contains(id));
+        // A pane closed in a workspace that's still here takes its scrollback with it. One
+        // whose project closed keeps it in the saved layout; a startup prune catches the rest.
+        let tracked = |ws: &Path| self.tile_projects.keys().any(|f| same_folder(f, ws));
+        let gone: Vec<String> = self
+            .term_histories
+            .iter()
+            .filter(|(p, (ws, _))| !live.contains(p) && tracked(ws))
+            .map(|(_, (_, id))| id.clone())
+            .collect();
+        self.term_histories.retain(|p, _| live.contains(p));
+        if !gone.is_empty() {
+            cx.background_spawn(async move { gone.iter().for_each(|id| kynex_core::scrollback::remove(id)) }).detach();
+        }
         let gone: Vec<PaneId> = self.term_panes.keys().copied().filter(|id| !live.contains(id)).collect();
         for id in gone {
             let Some(panel) = self.term_panes.remove(&id) else { continue };

@@ -130,6 +130,7 @@ pub fn spec(c: &UserCommand, ws: &Path, env: Vec<(String, String)>) -> Result<Sh
         args: c.argv[1..].to_vec(),
         env,
         title: Some(c.name.clone()),
+        history: None,
     })
 }
 

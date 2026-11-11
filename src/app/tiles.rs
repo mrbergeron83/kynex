@@ -239,6 +239,7 @@ impl KynexApp {
         if !self.agent_rules_asked {
             self.agent_rules_asked = true;
             self.refresh_agent_rules(cx);
+            self.prune_scrollback(cx);
         }
         if !self.tiles.contains_key(&cwd) {
             // Once per run: the panes it had last time, else one pane.
@@ -258,6 +259,7 @@ impl KynexApp {
             };
             self.tiles.insert(cwd.clone(), tiling);
             self.tile_projects.insert(cwd.clone(), project.clone());
+            self.note_histories(&cwd);
             self.migrate_terminal_dock(&cwd, window, cx);
             self.migrate_timeline(&cwd, cx);
             self.keep_restored_focus(&project, &cwd, current);

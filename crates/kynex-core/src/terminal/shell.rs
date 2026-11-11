@@ -61,6 +61,9 @@ pub struct ShellSpec {
     pub env: Vec<(String, String)>,
     /// What its tab is called instead of the shell's name (a custom command's).
     pub title: Option<String>,
+    /// Text shown above it as it starts: the pane's scrollback from last time
+    /// ([`crate::scrollback`]).
+    pub history: Option<String>,
 }
 
 /// Finds the program for `kind`.
@@ -81,7 +84,7 @@ pub fn resolve(kind: ShellKind) -> Result<ShellSpec, String> {
             (shell.unwrap_or_else(|| PathBuf::from("/bin/bash")), vec!["-l".into()])
         }
     };
-    Ok(ShellSpec { kind, program, args, env: Vec::new(), title: None })
+    Ok(ShellSpec { kind, program, args, env: Vec::new(), title: None, history: None })
 }
 
 /// Git for Windows' bash, the one Claude Code itself uses: `CLAUDE_CODE_GIT_BASH_PATH`,

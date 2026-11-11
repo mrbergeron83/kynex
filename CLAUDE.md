@@ -97,6 +97,7 @@ A cargo workspace with two crates:
     `--resume-session-at`
   - `agent_panes.rs` — other agent CLIs in terminal panes: rules (`agent_rules/*.json`, user overrides in
     `<data dir>/agents/`) read their state and resume id off the screen
+  - `scrollback.rs` — terminal panes' scrollback kept across a restart (bounded, one file per pane)
   - `user_commands.rs` — custom commands (`commands.json`, user and per project): argv, placement, key, env
   - `groups.rs` — session groups and the archive in the sessions panel (`sessions.json` per project)
   - `grok/` — the Grok provider: `grok agent stdio` over ACP (`acp.rs` maps it to and from
