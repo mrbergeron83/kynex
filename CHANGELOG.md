@@ -99,6 +99,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
   instead. A state saved on its tab opens on your first project. Leftover `<repo>-chief-worker`
   worktrees and `chief-worker` branches can be removed by hand.
 
+### Fixed
+
+- The session cost adds up across a restarted `claude` process (a mode change, a rewind) instead of keeping only the larger leg.
+
 ## [0.0.26] - 2026-11-09
 
 ### Added
