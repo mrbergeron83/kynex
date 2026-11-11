@@ -1,0 +1,9 @@
+{
+  "id": "cursor",
+  "name": "Cursor",
+  "argv": ["cursor-agent"],
+  "working": ["ctrl+c to stop", "Generating"],
+  "blocked": ["Run this command?", "Waiting for approval", "(y) (enter)"],
+  "resume_after": "cursor-agent --resume=",
+  "resume_argv": ["cursor-agent", "--resume={id}"]
+}

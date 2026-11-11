@@ -9,6 +9,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - The terminal is a pane: it splits, moves between tabs and zooms like a session, and two can sit side by side.
   Ctrl+` shows one below the workspace, focuses it, or hides it; an open dock comes back as a pane where it was.
+- Agent panes: Codex, Copilot, Cursor or opencode in a pane next to Claude (a pane's menu or the palette). Kynex reads
+  what each is doing off its screen, so its lamp, the tab's and the workspace's, Go To's filters, toasts and sounds
+  work as for a session, and one that printed how to resume is resumed after a restart. The rules are JSON files;
+  add or change an agent in Kynex's `agents` folder.
 - A pane's header dragged onto a pane tab moves the pane there (onto + it gets a tab of its own), splitting that tab's
   focused pane along its longer side; the palette has Move pane to tab too. A terminal's menu offers one in another
   workspace, since terminals and sessions stay with their folder.

@@ -19,6 +19,14 @@ use crate::ui::{Icon, Lamp, Tooltip, divider, icon_button, lamp, menu_item, px};
 
 type Action = Box<dyn Fn(&mut KynexApp, &mut Window, &mut Context<KynexApp>)>;
 
+/// What a terminal pane runs, to open the same in another workspace.
+#[derive(Clone)]
+enum There {
+    Shell,
+    Command(String),
+    Agent(String),
+}
+
 impl KynexApp {
     /// Shows the past session `id` of the workspace you're in at `side` of pane `target`
     /// (the focused one if `None`), or in that pane's place with no side. One that is on
@@ -295,6 +303,16 @@ impl KynexApp {
                 cx,
                 Box::new(move |this, window, cx| this.show_timeline_pane(pane, window, cx)),
             ));
+            let agents: Vec<(String, String)> =
+                self.agent_rules.iter().map(|r| (r.id.clone(), r.name.clone())).collect();
+            for (i, (id, name)) in agents.into_iter().enumerate() {
+                items.push(Self::menu_action(
+                    300 + i,
+                    format!("{name} beside"),
+                    cx,
+                    Box::new(move |this, window, cx| this.open_agent_pane(id.clone(), Some(pane), window, cx)),
+                ));
+            }
         }
         if several {
             items.push(Self::menu_action(
@@ -324,11 +342,17 @@ impl KynexApp {
         }
         // A terminal belongs to its folder: other workspaces get one of their own instead.
         if terminal {
-            let command = t.command_of(pane).map(str::to_string);
+            let tp = t.term_pane(pane).cloned().unwrap_or_default();
+            let command = match (tp.command, tp.agent) {
+                (Some(name), _) => There::Command(name),
+                (None, Some(id)) => There::Agent(id),
+                (None, None) => There::Shell,
+            };
             for (i, (path, label)) in self.other_workspaces(&ws, cx).into_iter().enumerate() {
                 let what = match &command {
-                    Some(name) => format!("Run {name} in {label}"),
-                    None => format!("Open a terminal in {label}"),
+                    There::Command(name) => format!("Run {name} in {label}"),
+                    There::Agent(id) => format!("Open {} in {label}", self.agent_name(id)),
+                    There::Shell => format!("Open a terminal in {label}"),
                 };
                 let command = command.clone();
                 items.push(Self::menu_action(
@@ -361,20 +385,15 @@ impl KynexApp {
             .collect()
     }
 
-    /// Switches to workspace `path` and opens a terminal there, or runs custom command
-    /// `command` there.
-    fn terminal_in(
-        &mut self,
-        path: &std::path::Path,
-        command: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// Switches to workspace `path` and opens there what a terminal pane had: a shell, a
+    /// custom command or an agent.
+    fn terminal_in(&mut self, path: &std::path::Path, what: There, window: &mut Window, cx: &mut Context<Self>) {
         self.select_workspace(path, cx);
         self.sync_tiles(window, cx);
-        match command {
-            Some(name) => self.run_user_command(name, window, cx),
-            None => {
+        match what {
+            There::Command(name) => self.run_user_command(name, window, cx),
+            There::Agent(id) => self.open_agent_pane(id, None, window, cx),
+            There::Shell => {
                 self.show_terminal(window, cx);
             }
         }

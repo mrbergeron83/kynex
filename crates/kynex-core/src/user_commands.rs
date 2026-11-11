@@ -138,6 +138,11 @@ pub fn spec(c: &UserCommand, ws: &Path, env: Vec<(String, String)>) -> Result<Sh
 /// name. Blocks on PATH.
 pub fn program(c: &UserCommand, ws: &Path) -> Result<PathBuf, String> {
     let first = c.argv.first().map(|p| p.trim()).filter(|p| !p.is_empty()).ok_or("The command has no program.")?;
+    find_program(first, ws)
+}
+
+/// Program `first` on disk, as [`program`] finds a command's. Blocks on PATH.
+pub fn find_program(first: &str, ws: &Path) -> Result<PathBuf, String> {
     let path = Path::new(first);
     if path.is_absolute() {
         return Ok(path.to_path_buf());

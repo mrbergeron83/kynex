@@ -236,6 +236,10 @@ impl KynexApp {
     /// the sessions on screen are kept open, prompts and drafts are kept for every pane.
     pub(super) fn sync_tiles(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((project, cwd, current)) = self.tiling_scope() else { return };
+        if !self.agent_rules_asked {
+            self.agent_rules_asked = true;
+            self.refresh_agent_rules(cx);
+        }
         if !self.tiles.contains_key(&cwd) {
             // Once per run: the panes it had last time, else one pane.
             // The first pane of a workspace takes the state that's up, if no workspace has it.

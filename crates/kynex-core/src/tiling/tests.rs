@@ -442,6 +442,22 @@ fn git_and_the_timeline_sit_beside_a_session_and_come_back() {
 }
 
 #[test]
+fn an_agent_pane_is_no_shell_and_keeps_its_resume_id() {
+    let mut t = Tiling::new(1, 10);
+    t.reconcile(&[10], 10);
+    let agent = TermPane { agent: Some("codex".into()), ..TermPane::default() };
+    assert!(t.split_tool(1, Direction::Right, 2, Tool::Terminal(agent), 0.5, BIG));
+    assert!(t.tab_terminals().is_empty(), "Ctrl+` doesn't mean the agent");
+    assert_eq!(t.agents(), [(2, "codex".to_string())]);
+    assert!(t.set_resume(2, "abc".into()));
+    assert!(!t.set_resume(2, "abc".into()), "no change");
+    assert!(!t.set_resume(1, "abc".into()), "a session has none");
+    let back = Tiling::restore(&t.save(id_of), &mut 5, None, key_of_id).unwrap();
+    let p = back.agents()[0].0;
+    assert_eq!(back.term_pane(p).and_then(|t| t.resume.clone()).as_deref(), Some("abc"));
+}
+
+#[test]
 fn a_drop_near_an_edge_is_for_that_side() {
     let r = Rect::new(100.0, 50.0, 400.0, 200.0);
     assert_eq!(drop_side(r, 120.0, 150.0), Some(Direction::Left));

@@ -25,6 +25,7 @@
 //! | `terminal_panes.rs` | terminal panes: Ctrl+`, run buttons, hide and show   |
 //! | `tool_panes.rs`     | the Git view and the timeline as panes               |
 //! | `custom_commands.rs`| custom commands: keys, popup, pane, background       |
+//! | `agent_panes.rs`    | other agent CLIs in panes, their state off the screen |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
 //! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
@@ -54,6 +55,7 @@
 //! | `menus.rs`          | popup menus                                          |
 //! | `palette.rs`        | the command palette (Ctrl+K)                         |
 //! | `palette_filters.rs`| its state filters (All, Needs you, Working, Idle, Done) |
+//! | `palette_more.rs`   | its rows for pane moves, agent panes, custom commands |
 //! | `palette_sessions.rs`| its session rows: per workspace, and open ones not listed yet |
 //! | `goto.rs`           | revealing a session in its project, workspace and pane; next that needs you |
 //! | `leaving.rs`        | menus, modals and panels animating out as they close |
@@ -81,6 +83,7 @@
 //! | `viewer.rs`         | images opened over the window, thumbnails            |
 
 mod about;
+mod agent_panes;
 mod agents_settings;
 mod app_settings;
 mod app_update;
@@ -112,6 +115,7 @@ mod menus;
 mod models;
 mod palette;
 mod palette_filters;
+mod palette_more;
 mod palette_sessions;
 mod pane_actions;
 mod pane_keys;
@@ -217,6 +221,14 @@ pub struct KynexApp {
     command_starting: HashSet<kynex_core::layout::PaneId>,
     /// The custom commands of the project in front, for the palette.
     user_commands: Vec<kynex_core::user_commands::UserCommand>,
+    /// The agent CLIs agent panes can run, built-in and the user's.
+    agent_rules: Vec<kynex_core::agent_panes::AgentRule>,
+    /// What each agent pane's screen last said.
+    agent_trackers: HashMap<kynex_core::layout::PaneId, kynex_core::agent_panes::Tracker>,
+    /// Agent screens are being read every so often.
+    agent_watch: bool,
+    /// The agent rules were asked for.
+    agent_rules_asked: bool,
     /// A custom command's program over the window, until it exits.
     command_popup: Option<Entity<crate::terminal::TerminalView>>,
     threads: HashMap<Key, Thread>,
@@ -536,6 +548,10 @@ impl KynexApp {
             command_starting: HashSet::new(),
             user_commands: Vec::new(),
             command_popup: None,
+            agent_rules: Vec::new(),
+            agent_trackers: HashMap::new(),
+            agent_watch: false,
+            agent_rules_asked: false,
             appearances: HashMap::new(),
             claude_settings: HashMap::new(),
             threads: HashMap::new(),

@@ -22,6 +22,19 @@ pub struct TermPane {
     /// The custom command it runs ([`crate::user_commands`]), by name; `None` for a shell.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// The agent CLI it runs ([`crate::agent_panes`]), by rule id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    /// The id the agent printed to be resumed with, for after a restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<String>,
+}
+
+impl TermPane {
+    /// A plain shell, which Ctrl+` and the run buttons use.
+    pub fn is_shell(&self) -> bool {
+        self.command.is_none() && self.agent.is_none()
+    }
 }
 
 /// What a pane holds besides a session, as saved.
@@ -62,6 +75,8 @@ pub struct TabInfo {
     pub name: String,
     /// The sessions in its panes, in reading order.
     pub sessions: Vec<Key>,
+    /// Every pane in it, in reading order.
+    pub panes: Vec<PaneId>,
     pub active: bool,
 }
 
@@ -220,8 +235,33 @@ impl Tiling {
 
     /// The shell panes of the active tab (not a custom command's), in reading order.
     pub fn tab_terminals(&self) -> Vec<PaneId> {
-        let shell = |p: &PaneId| matches!(self.tools.get(p), Some(Tool::Terminal(t)) if t.command.is_none());
+        let shell = |p: &PaneId| matches!(self.tools.get(p), Some(Tool::Terminal(t)) if t.is_shell());
         self.tab_panes_of(Content::Terminal).into_iter().filter(shell).collect()
+    }
+
+    /// What terminal pane `pane` is beyond being one.
+    pub fn term_pane(&self, pane: PaneId) -> Option<&TermPane> {
+        match self.tools.get(&pane) {
+            Some(Tool::Terminal(t)) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// The agent panes of every tab, with their agents' ids.
+    pub fn agents(&self) -> Vec<(PaneId, String)> {
+        let of = |p: PaneId| Some((p, self.term_pane(p)?.agent.clone()?));
+        self.layout.panes().into_iter().filter_map(of).collect()
+    }
+
+    /// Notes the id agent pane `pane` can be resumed with. True if it changed.
+    pub fn set_resume(&mut self, pane: PaneId, id: String) -> bool {
+        match self.tools.get_mut(&pane) {
+            Some(Tool::Terminal(t)) if t.agent.is_some() && t.resume.as_deref() != Some(id.as_str()) => {
+                t.resume = Some(id);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The custom command terminal pane `pane` runs, if it runs one.
@@ -321,6 +361,7 @@ impl Tiling {
             .map(|(i, t)| TabInfo {
                 name: t.name.clone(),
                 sessions: t.panes().into_iter().filter_map(|p| self.key_of(p)).collect(),
+                panes: t.panes(),
                 active: i == active,
             })
             .collect()

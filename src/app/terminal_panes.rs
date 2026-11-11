@@ -8,7 +8,7 @@ use std::path::Path;
 use gpui::{AnyElement, Context, Entity, Focusable, Window, prelude::*};
 use kynex_core::layout::{Direction, PaneId};
 use kynex_core::terminal::ShellKind;
-use kynex_core::tiling::{Content, TERMINAL_RATIO};
+use kynex_core::tiling::{Content, TERMINAL_RATIO, TermPane};
 use kynex_core::toasts::Toast;
 use kynex_core::workspace::same_folder;
 
@@ -33,10 +33,10 @@ impl KynexApp {
         if let Some(p) = self.term_panes.get(&pane) {
             return p.clone();
         }
-        // A command's pane runs its own program, never the folder's hidden shells.
-        let command =
-            self.tiling_scope().and_then(|(_, ws, _)| self.tiles.get(&ws)?.command_of(pane).map(str::to_string));
-        if command.is_some() {
+        // A command's or an agent's pane runs its own program, never the folder's hidden shells.
+        let own =
+            self.tiling_scope().and_then(|(_, ws, _)| self.tiles.get(&ws)?.term_pane(pane).map(|t| !t.is_shell()));
+        if own == Some(true) {
             let panel = Self::new_term_panel(cwd, window, cx);
             self.term_panes.insert(pane, panel.clone());
             return panel;
@@ -98,7 +98,7 @@ impl KynexApp {
         let Some(t) = self.tiles.get(&ws) else { return };
         let focus = t.focus();
         // A custom command's pane isn't the terminal Ctrl+` means.
-        let shell = focus.filter(|f| t.is_terminal(*f) && t.command_of(*f).is_none());
+        let shell = focus.filter(|f| t.term_pane(*f).is_some_and(TermPane::is_shell));
         match (shell, t.tab_terminals().first().copied()) {
             (Some(f), _) => self.hide_terminal(f, window, cx),
             (None, Some(p)) => {
@@ -229,13 +229,19 @@ impl KynexApp {
     ) -> Option<AnyElement> {
         let (_, ws, _) = self.tiling_scope()?;
         let panel = self.term_panel(pane, &ws, window, cx);
+        let tp = self.tiles.get(&ws).and_then(|t| t.term_pane(pane)).cloned().unwrap_or_default();
         if panel.read(cx).is_empty() {
-            match self.tiles.get(&ws).and_then(|t| t.command_of(pane)).map(str::to_string) {
-                Some(name) => self.restart_command_pane(pane, name, window, cx),
-                None => panel.update(cx, |p, cx| p.ensure_open(window, cx)),
+            match (&tp.command, &tp.agent) {
+                (Some(name), _) => self.restart_command_pane(pane, name.clone(), window, cx),
+                (None, Some(_)) => self.restart_agent_pane(pane, window, cx),
+                (None, None) => panel.update(cx, |p, cx| p.ensure_open(window, cx)),
             }
         }
-        Some(gpui::div().size_full().child(panel).into_any_element())
+        let body = gpui::div().size_full().child(panel).into_any_element();
+        Some(match &tp.agent {
+            Some(id) => self.render_agent_pane(pane, id, body, cx),
+            None => body,
+        })
     }
 
     /// The old dock was open: the first workspace shown after the update gets its terminal

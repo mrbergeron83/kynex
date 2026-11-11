@@ -135,6 +135,11 @@ impl TerminalPanel {
         Some(self.open_spec(shell, window, cx))
     }
 
+    /// The shown tab's screen text, once its program runs.
+    pub fn screen_text(&self, cx: &App) -> Option<String> {
+        self.tabs.get(self.active)?.view.read(cx).screen_text()
+    }
+
     /// Whether it was opened for a custom command rather than as a shell.
     pub fn is_command(&self) -> bool {
         self.command

@@ -190,7 +190,15 @@ impl KynexApp {
                     .map(|s| Lamp::of(s.busy, s.waiting(), s.finished)),
             )
         };
-        let states: Vec<Lamp> = tabs.iter().map(|tab| state_of(&tab.sessions)).collect();
+        // Agent panes roll up with the sessions.
+        let states: Vec<Lamp> = tabs
+            .iter()
+            .map(|tab| {
+                Lamp::most_urgent(
+                    [state_of(&tab.sessions)].into_iter().chain(tab.panes.iter().map(|p| self.agent_lamp(*p))),
+                )
+            })
+            .collect();
         let renaming = self.pane_tab_rename.clone();
         let row: Vec<AnyElement> =
             tabs.iter()

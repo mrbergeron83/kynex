@@ -165,6 +165,11 @@ impl TerminalView {
         self.terminal.as_ref().and_then(Terminal::title).map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
     }
 
+    /// The screen's text as the program last drew it, once it's running.
+    pub fn screen_text(&self) -> Option<String> {
+        self.terminal.as_ref().map(Terminal::screen_text)
+    }
+
     /// Why it couldn't start, if it couldn't.
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()

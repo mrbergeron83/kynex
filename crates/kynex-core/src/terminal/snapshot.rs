@@ -92,6 +92,22 @@ pub struct Snapshot {
     pub mode_mouse: bool,
 }
 
+/// The text on the screen as the program left it (not scrolled back): a line per row,
+/// trailing blanks dropped. For reading a program's state off its screen.
+pub(super) fn screen_text<T: EventListener>(term: &Term<T>) -> String {
+    use alacritty_terminal::index::{Column, Line};
+    let grid = term.grid();
+    let mut out = String::new();
+    for l in 0..grid.screen_lines() {
+        let row = &grid[Line(l as i32)];
+        let line: String =
+            (0..grid.columns()).map(|c| row[Column(c)].c).map(|c| if c == '\0' { ' ' } else { c }).collect();
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
 pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette) -> Snapshot {
     let content = term.renderable_content();
     let offset = content.display_offset as i32;

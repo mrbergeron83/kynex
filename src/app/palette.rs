@@ -95,6 +95,14 @@ pub(super) enum Target {
     Command(Cmd),
     /// A custom command, by name.
     UserCommand(String),
+    /// A new agent pane running the agent with this rule id.
+    Agent(String),
+    /// An agent pane that's open.
+    AgentPane {
+        project: PathBuf,
+        workspace: PathBuf,
+        pane: kynex_core::layout::PaneId,
+    },
 }
 
 /// What an action in the palette does.
@@ -290,6 +298,7 @@ impl KynexApp {
         }
         self.menu = None;
         self.refresh_user_commands(cx);
+        self.refresh_agent_rules(cx);
         let input = cx.new(|cx| TextInput::new(cx).placeholder("Go to a session, project or action…"));
         input.read(cx).focus_handle(cx).focus(window, cx);
         let view = PaletteView {
@@ -409,47 +418,7 @@ impl KynexApp {
                 state: None,
             });
         }
-        // The focused pane to another tab of its workspace.
-        if let Some((_, ws, _)) = self.tiling_scope()
-            && let Some(t) = self.tiles.get(&ws)
-        {
-            let tabs = t.tabs();
-            let alone =
-                t.focus().and_then(|f| t.layout().tab_of(f)).is_none_or(|i| t.layout().tabs()[i].panes().len() < 2);
-            let mut moves = Vec::new();
-            if !alone {
-                moves.push((Cmd::MovePaneToNewTab, "Move pane to a new tab".to_string()));
-            }
-            for (i, tab) in tabs.iter().enumerate().filter(|(_, tab)| !tab.active) {
-                moves.push((Cmd::MovePaneToTab(i), format!("Move pane to tab {}", tab.name)));
-            }
-            for (cmd, title) in moves {
-                rows.push(Row { target: Target::Command(cmd), detail: "".into(), hint: "".into() });
-                entries.push(Entry {
-                    kind: Kind::Action,
-                    title,
-                    keywords: "pane move tab".into(),
-                    when: None,
-                    section: None,
-                    state: None,
-                });
-            }
-        }
-        for c in &self.user_commands {
-            rows.push(Row {
-                target: Target::UserCommand(c.name.clone()),
-                detail: c.argv.join(" ").into(),
-                hint: c.key.clone().unwrap_or_default().into(),
-            });
-            entries.push(Entry {
-                kind: Kind::Action,
-                title: format!("Run {}", c.name),
-                keywords: format!("custom command {}", c.argv.join(" ")),
-                when: None,
-                section: None,
-                state: None,
-            });
-        }
+        self.palette_more_rows(&mut rows, &mut entries);
         let view = self.palette.as_mut().unwrap();
         view.rows = Rc::new(rows);
         view.palette = Rc::new(Palette::new(entries));
@@ -535,6 +504,16 @@ impl KynexApp {
                 self.focus_input(window, cx);
             }
             Target::UserCommand(name) => self.run_user_command(name, window, cx),
+            Target::Agent(id) => self.open_agent_pane(id, None, window, cx),
+            Target::AgentPane { project, workspace, pane } => {
+                if let Some(i) = self.saved.projects.iter().position(|p| p.path == project) {
+                    self.select(Active::Project(i), window, cx);
+                    self.select_workspace(&workspace, cx);
+                    self.sync_tiles(window, cx);
+                    self.focus_pane(pane, window, cx);
+                }
+                self.focus_input(window, cx);
+            }
             Target::Command(cmd) => {
                 let title = view.palette.entries[m.index].title.clone();
                 self.palette_recent.retain(|r| *r != title);

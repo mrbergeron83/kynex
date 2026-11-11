@@ -170,7 +170,7 @@ impl KynexApp {
         let Some(target) = self.tiles.get(&ws).and_then(|t| t.session_focus()) else { return };
         let id = self.next_pane;
         let bounds = self.layout_bounds(cx);
-        let tool = Tool::Terminal(TermPane { command: Some(name) });
+        let tool = Tool::Terminal(TermPane { command: Some(name), ..TermPane::default() });
         let Some(t) = self.tiles.get_mut(&ws) else { return };
         if !t.split_tool(target, Direction::Right, id, tool, 0.5, bounds) {
             self.toast(Toast::error("No room to split here: the panes would get too small.".to_string()));

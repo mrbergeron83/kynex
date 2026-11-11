@@ -203,6 +203,11 @@ impl Terminal {
         }
     }
 
+    /// The screen's text, as the program last drew it.
+    pub fn screen_text(&self) -> String {
+        snapshot::screen_text(&self.term.lock())
+    }
+
     pub fn snapshot(&self, palette: &Palette) -> Snapshot {
         snapshot::snapshot(&self.term.lock(), palette)
     }
