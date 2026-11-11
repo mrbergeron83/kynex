@@ -54,9 +54,11 @@ struct CliInfo {
 }
 
 const SECTIONS: [&str; 6] = ["General", "Providers", "Agents", "Appearance", "Keyboard", "Storage"];
-/// Where Providers, Agents and Storage are in [`SECTIONS`], for opening Settings on them.
+/// Where Providers, Agents, Appearance, Keyboard and Storage are in [`SECTIONS`], for opening Settings on them.
 pub(super) const PROVIDERS_SECTION: usize = 1;
 pub(super) const AGENTS_SECTION: usize = 2;
+pub(super) const APPEARANCE_SECTION: usize = 3;
+pub(super) const KEYBOARD_SECTION: usize = 4;
 pub(super) const STORAGE_SECTION: usize = 5;
 
 impl KynexApp {

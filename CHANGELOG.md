@@ -7,7 +7,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Settings → Keyboard lists every shortcut with the keys it has now (your `keymap.json` included), with a search box.
+- Settings → Keyboard lists every shortcut with the keys it has now (your `keymap.json` included), with a search box. Its key (Ctrl+B ?) and the palette's Appearance, Keyboard and Storage entries opened the wrong Settings section; they open the right one now.
 - The terminal is a pane: it splits, moves between tabs and zooms like a session, and two can sit side by side.
   Ctrl+` shows one below the workspace, focuses it, or hides it; an open dock comes back as a pane where it was.
 - A terminal pane shows what was on it before a restart, above a fresh shell (Settings → Terminal scrollback turns it
