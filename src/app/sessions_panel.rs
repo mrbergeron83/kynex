@@ -209,7 +209,7 @@ impl KynexApp {
             String::new()
         };
         let matches = |title: &str| query.is_empty() || title.to_lowercase().contains(&query);
-        let shown: Vec<SessionInfo> = all.iter().filter(|i| matches(&i.title)).cloned().collect();
+        let shown: Vec<&SessionInfo> = all.iter().filter(|i| matches(&i.title)).collect();
         let items = &shown;
         self.sync_picks(&cwd, &items.iter().map(|i| i.id.clone()).collect::<Vec<_>>());
         let picking = self.organize.selection.on;
@@ -326,184 +326,34 @@ impl KynexApp {
                     .into_any_element(),
             );
         }
-        // Each past session's row, placed below by group.
-        let mut past: HashMap<String, AnyElement> = HashMap::new();
-        for (n, info) in items.iter().enumerate() {
-            let is_current = current.as_deref() == Some(info.id.as_str());
-            let confirming = self.confirm_delete.as_deref() == Some(info.id.as_str());
-            let id = info.id.clone();
-            let (open_id, del_id) = (id.clone(), id.clone());
-            let (kind2, cwd2, cwd3) = (kind, cwd.clone(), cwd.clone());
-            let picked = self.organize.selection.contains(&id);
-            let (busy, waiting, finished) = open_state(&id);
-            let delete = if confirming {
-                div()
-                    .id(("confirm-delete", n))
-                    .px_1p5()
-                    .h(px(20.))
-                    .flex()
-                    .items_center()
-                    .rounded_sm()
-                    .text_xs()
-                    .text_color(t.error)
-                    .cursor_pointer()
-                    .hover(|s| s.bg(t.hover))
-                    .child("Delete?")
-            } else {
-                icon_button(("delete", n), Icon::Trash, cx).invisible().group_hover("session-row", |s| s.visible())
-            };
-            // A picked row takes the other picked ones with it, in a drag or its menu.
-            let with_picks = picked && picked_ids.len() > 1;
-            let group_ids = if with_picks { picked_ids.clone() } else { vec![id.clone()] };
-            let drag = DraggedSession { ids: group_ids.clone(), title: info.title.clone().into() };
-            let menu = if with_picks { Menu::Sessions(group_ids) } else { Menu::Session(id.clone()) };
-            let elsewhere = info.ran_elsewhere(&cwd, default_branch.as_deref()).map(str::to_string);
-            // When it was last used is in the tooltip; the row is just its title,
-            // or the field renaming it.
-            let title = match self.session_name_field(&id, false, cx) {
-                Some(field) => field.flex_1().into_any_element(),
-                None => {
-                    let text = match &elsewhere {
-                        // Only as wide as the title, so the branch follows it.
-                        Some(_) => div()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(if is_current || picked { t.text } else { t.text_muted })
-                            .child(info.title.clone())
-                            .into_any_element(),
-                        None => title_text(info.title.clone().into(), is_current || picked, &t),
-                    };
-                    match &elsewhere {
-                        // Where it ran, after its title: small, muted, mono.
-                        Some(branch) => div()
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .items_center()
-                            .gap_1p5()
-                            .child(text)
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .max_w(px(120.))
-                                    .truncate()
-                                    .font_family(mono())
-                                    .text_xs()
-                                    .text_color(t.text_placeholder)
-                                    .child(branch.clone()),
-                            )
-                            .into_any_element(),
-                        None => text,
-                    }
-                }
-            };
-            let title = match picking {
-                true => div()
-                    .flex()
-                    .flex_1()
-                    .min_w_0()
-                    .items_center()
-                    .gap_1p5()
-                    .child(self.pick_box(picked, cx))
-                    .child(title)
-                    .into_any_element(),
-                false => title,
-            };
-            let provider = self.groups_for(&cwd).provider_of(&id);
-            let row = session_row_with(("session", n), title, is_current || picked, &t)
-                .when(provider.is_openrouter(), |r| r.child(openrouter_mark(("session-provider", n), &t)))
-                .when(provider == kynex_core::provider::Provider::Grok, |r| r.child(grok_mark(("session-grok", n), &t)))
-                .group("session-row")
-                .tooltip(Tooltip::with_meta(
-                    info.title.clone(),
-                    match &elsewhere {
-                        Some(branch) => format!("{} · on {branch}", ago(info.modified)),
-                        None => ago(info.modified),
-                    },
-                ))
-                .when(cursor.as_deref() == Some(id.as_str()), |row| row.bg(t.hover))
-                .children(news_lamp(("session-status", n), busy, waiting, finished, cx))
-                .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                        this.open_menu(menu.clone(), ev.position, Anchor::TopLeft, cx)
-                    }),
-                )
-                .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, window, cx| {
-                    this.confirm_delete = None;
-                    this.organize.cursor = Some(open_id.clone());
-                    if this.pick_click(&cwd2, &open_id, &ev.modifiers(), cx) {
-                        // Picking: the list keeps the keys (Delete, Shift+Delete, Esc).
-                        this.sessions_focus.focus(window, cx);
-                        return;
-                    }
-                    this.show_code_view();
-                    if !is_current {
-                        this.switch_session(kind2, cwd2.clone(), open_id.clone());
-                    }
-                    this.focus_input(window, cx);
-                    cx.notify();
-                }))
-                .when(!picking, |row| {
-                    row.child(
-                        delete
-                            .when(busy, |d| d.opacity(0.4))
-                            .tooltip(Tooltip::text(if busy {
-                                "Stop it first to delete it"
-                            } else {
-                                "Delete this session's transcript"
-                            }))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                if busy {
-                                    return;
-                                }
-                                if this.confirm_delete.as_deref() != Some(del_id.as_str()) {
-                                    this.confirm_delete = Some(del_id.clone());
-                                    return cx.notify();
-                                }
-                                this.confirm_delete = None;
-                                this.forget_past_session(kind2, &cwd3, &del_id);
-                                if let Err(e) = session::delete_session(&cwd3, &del_id) {
-                                    this.toast(Toast::error(e));
-                                }
-                                this.relist_sessions(std::slice::from_ref(&del_id));
-                                cx.notify();
-                            })),
-                    )
-                });
-            // A pinned row takes other sessions dropped on it in its place,
-            // which reorders the pinned ones.
-            let row = match self.groups_for(&cwd).is_pinned(&id) {
-                true => {
-                    let (pin_id, pin_cwd, hover) = (id.clone(), cwd.clone(), t.hover);
-                    row.drag_over::<DraggedSession>(move |s, _, _, _| s.bg(hover)).on_drop(cx.listener(
-                        move |this, d: &DraggedSession, _, cx| {
-                            cx.stop_propagation();
-                            this.edit_groups(&pin_cwd, |g| {
-                                d.ids.iter().filter(|i| **i != pin_id).for_each(|i| g.move_pin(i, Some(&pin_id)))
-                            });
-                            cx.notify();
-                        },
-                    ))
-                }
-                false => row,
-            };
-            past.insert(id, row.into_any_element());
-        }
+        // Past sessions' rows are built only where they show: not in a folded
+        // date section, a collapsed group or the closed archive.
+        let index: HashMap<&str, usize> = items.iter().enumerate().map(|(n, i)| (i.id.as_str(), n)).collect();
+        let ctx = RowCtx {
+            kind,
+            cwd: cwd.clone(),
+            current: current.clone(),
+            picking,
+            cursor: cursor.clone(),
+            picked_ids: picked_ids.clone(),
+            default_branch: default_branch.clone(),
+            open: &open,
+            t: t.clone(),
+        };
+        let take = |this: &mut Self, ids: Vec<String>, cx: &mut Context<Self>| -> Vec<AnyElement> {
+            ids.iter().filter_map(|id| index.get(id.as_str()).map(|&n| this.past_row(n, items[n], &ctx, cx))).collect()
+        };
 
         // Pinned first, then the dates, each group, the archive. Busy sessions
         // stay in their places; their lamps tell them apart.
         let arranged = self.groups_for(&cwd).arrange(items.iter().map(|i| i.id.as_str()));
         // Headers only when there's more than one section to tell apart.
         let headers = arranged.sections() > 1;
-        let mut take = |ids: Vec<String>| ids.iter().filter_map(|id| past.remove(id)).collect::<Vec<_>>();
         // The rows in the order drawn, for Shift+click runs, "All" and the list's keys.
         let mut order: Vec<String> = arranged.pinned.clone();
         // A new session, before its first message: above everything.
         rows.extend(fresh);
-        let pinned = take(arranged.pinned);
+        let pinned = take(self, arranged.pinned, cx);
         if !pinned.is_empty() {
             if headers {
                 rows.push(list_header("Pinned", rows.is_empty(), cx).into_any_element());
@@ -533,7 +383,7 @@ impl KynexApp {
                 for (provider, ids) in split {
                     rows.push(list_header(provider.label(), rows.is_empty(), cx).into_any_element());
                     order.extend(ids.iter().cloned());
-                    rows.extend(take(ids));
+                    rows.extend(take(self, ids, cx));
                 }
             }
             (None, Some(sections)) => {
@@ -544,15 +394,14 @@ impl KynexApp {
                     if open {
                         order.extend(ids.iter().cloned());
                     }
-                    let shown = take(ids);
                     if open {
-                        rows.extend(shown);
+                        rows.extend(take(self, ids, cx));
                     }
                 }
             }
             (None, None) => {
                 order.extend(arranged.top.iter().cloned());
-                rows.extend(take(arranged.top));
+                rows.extend(take(self, arranged.top, cx));
             }
         }
         for (i, ids) in arranged.groups.iter().enumerate() {
@@ -578,17 +427,24 @@ impl KynexApp {
                     .collect()
             })
             .collect();
-        let groups: Vec<Vec<AnyElement>> = arranged.groups.into_iter().map(&mut take).collect();
-        let archived = take(arranged.archived);
-        for ((i, group), news) in groups.into_iter().enumerate().zip(news) {
+        // Each group's count and, unless it's folded, its rows.
+        let mut groups: Vec<(usize, Vec<AnyElement>)> = Vec::new();
+        for (i, ids) in arranged.groups.into_iter().enumerate() {
+            let folded = self.groups_for(&cwd).groups.get(i).is_some_and(|g| g.collapsed);
+            let count = ids.len();
+            groups.push((count, if folded { Vec::new() } else { take(self, ids, cx) }));
+        }
+        let archived_count = arranged.archived.len();
+        let archived = if self.organize.show_archived { take(self, arranged.archived, cx) } else { Vec::new() };
+        for ((i, (count, group)), news) in groups.into_iter().enumerate().zip(news) {
             // Filtering, groups with nothing that matches step aside.
-            if !query.is_empty() && group.is_empty() {
+            if !query.is_empty() && count == 0 {
                 continue;
             }
-            rows.push(self.render_group(&cwd, i, group, &news, cx));
+            rows.push(self.render_group(&cwd, i, count, group, &news, cx));
         }
-        if !archived.is_empty() {
-            rows.push(self.render_archived(&cwd, archived, cx));
+        if archived_count > 0 {
+            rows.push(self.render_archived(&cwd, archived_count, archived, cx));
         }
         let drop_cwd = cwd.clone();
         let filter = self.filtering_sessions.then(|| {
@@ -784,4 +640,193 @@ fn news_lamp(
     cx: &mut Context<KynexApp>,
 ) -> Option<AnyElement> {
     (busy || waiting || finished).then(|| lamp(id, Lamp::of(busy, waiting, finished), cx).into_any_element())
+}
+
+/// What a past session's row needs from the panel around it.
+struct RowCtx<'a> {
+    kind: Kind,
+    cwd: PathBuf,
+    current: Option<String>,
+    picking: bool,
+    cursor: Option<String>,
+    picked_ids: Vec<String>,
+    default_branch: Option<String>,
+    open: &'a [OpenSession],
+    t: Palette,
+}
+
+impl KynexApp {
+    /// The row of past session number `n` of the list.
+    fn past_row(&mut self, n: usize, info: &SessionInfo, ctx: &RowCtx, cx: &mut Context<Self>) -> AnyElement {
+        let this = self;
+        let RowCtx { kind, cwd, current, picking, cursor, picked_ids, default_branch, open, t } = ctx;
+        let (kind, picking) = (*kind, *picking);
+        let open_state = |id: &str| {
+            open.iter()
+                .find(|o| o.id.as_deref() == Some(id))
+                .map_or((false, false, false), |o| (o.busy, o.waiting, o.finished))
+        };
+        let is_current = current.as_deref() == Some(info.id.as_str());
+        let confirming = this.confirm_delete.as_deref() == Some(info.id.as_str());
+        let id = info.id.clone();
+        let (open_id, del_id) = (id.clone(), id.clone());
+        let (kind2, cwd2, cwd3) = (kind, cwd.clone(), cwd.clone());
+        let picked = this.organize.selection.contains(&id);
+        let (busy, waiting, finished) = open_state(&id);
+        let delete = if confirming {
+            div()
+                .id(("confirm-delete", n))
+                .px_1p5()
+                .h(px(20.))
+                .flex()
+                .items_center()
+                .rounded_sm()
+                .text_xs()
+                .text_color(t.error)
+                .cursor_pointer()
+                .hover(|s| s.bg(t.hover))
+                .child("Delete?")
+        } else {
+            icon_button(("delete", n), Icon::Trash, cx).invisible().group_hover("session-row", |s| s.visible())
+        };
+        // A picked row takes the other picked ones with it, in a drag or its menu.
+        let with_picks = picked && picked_ids.len() > 1;
+        let group_ids = if with_picks { picked_ids.clone() } else { vec![id.clone()] };
+        let drag = DraggedSession { ids: group_ids.clone(), title: info.title.clone().into() };
+        let menu = if with_picks { Menu::Sessions(group_ids) } else { Menu::Session(id.clone()) };
+        let elsewhere = info.ran_elsewhere(cwd, default_branch.as_deref()).map(str::to_string);
+        // When it was last used is in the tooltip; the row is just its title,
+        // or the field renaming it.
+        let title = match this.session_name_field(&id, false, cx) {
+            Some(field) => field.flex_1().into_any_element(),
+            None => {
+                let text = match &elsewhere {
+                    // Only as wide as the title, so the branch follows it.
+                    Some(_) => div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(if is_current || picked { t.text } else { t.text_muted })
+                        .child(info.title.clone())
+                        .into_any_element(),
+                    None => title_text(info.title.clone().into(), is_current || picked, t),
+                };
+                match &elsewhere {
+                    // Where it ran, after its title: small, muted, mono.
+                    Some(branch) => div()
+                        .flex()
+                        .flex_1()
+                        .min_w_0()
+                        .items_center()
+                        .gap_1p5()
+                        .child(text)
+                        .child(
+                            div()
+                                .flex_none()
+                                .max_w(px(120.))
+                                .truncate()
+                                .font_family(mono())
+                                .text_xs()
+                                .text_color(t.text_placeholder)
+                                .child(branch.clone()),
+                        )
+                        .into_any_element(),
+                    None => text,
+                }
+            }
+        };
+        let title = match picking {
+            true => div()
+                .flex()
+                .flex_1()
+                .min_w_0()
+                .items_center()
+                .gap_1p5()
+                .child(this.pick_box(picked, cx))
+                .child(title)
+                .into_any_element(),
+            false => title,
+        };
+        let provider = this.groups_for(cwd).provider_of(&id);
+        let row = session_row_with(("session", n), title, is_current || picked, t)
+            .when(provider.is_openrouter(), |r| r.child(openrouter_mark(("session-provider", n), t)))
+            .when(provider == kynex_core::provider::Provider::Grok, |r| r.child(grok_mark(("session-grok", n), t)))
+            .group("session-row")
+            .tooltip(Tooltip::with_meta(
+                info.title.clone(),
+                match &elsewhere {
+                    Some(branch) => format!("{} · on {branch}", ago(info.modified)),
+                    None => ago(info.modified),
+                },
+            ))
+            .when(cursor.as_deref() == Some(id.as_str()), |row| row.bg(t.hover))
+            .children(news_lamp(("session-status", n), busy, waiting, finished, cx))
+            .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                    this.open_menu(menu.clone(), ev.position, Anchor::TopLeft, cx)
+                }),
+            )
+            .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, window, cx| {
+                this.confirm_delete = None;
+                this.organize.cursor = Some(open_id.clone());
+                if this.pick_click(&cwd2, &open_id, &ev.modifiers(), cx) {
+                    // Picking: the list keeps the keys (Delete, Shift+Delete, Esc).
+                    this.sessions_focus.focus(window, cx);
+                    return;
+                }
+                this.show_code_view();
+                if !is_current {
+                    this.switch_session(kind2, cwd2.clone(), open_id.clone());
+                }
+                this.focus_input(window, cx);
+                cx.notify();
+            }))
+            .when(!picking, |row| {
+                row.child(
+                    delete
+                        .when(busy, |d| d.opacity(0.4))
+                        .tooltip(Tooltip::text(if busy {
+                            "Stop it first to delete it"
+                        } else {
+                            "Delete this session's transcript"
+                        }))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            if busy {
+                                return;
+                            }
+                            if this.confirm_delete.as_deref() != Some(del_id.as_str()) {
+                                this.confirm_delete = Some(del_id.clone());
+                                return cx.notify();
+                            }
+                            this.confirm_delete = None;
+                            this.forget_past_session(kind2, &cwd3, &del_id);
+                            if let Err(e) = session::delete_session(&cwd3, &del_id) {
+                                this.toast(Toast::error(e));
+                            }
+                            this.relist_sessions(std::slice::from_ref(&del_id));
+                            cx.notify();
+                        })),
+                )
+            });
+        // A pinned row takes other sessions dropped on it in its place,
+        // which reorders the pinned ones.
+        let row = match this.groups_for(cwd).is_pinned(&id) {
+            true => {
+                let (pin_id, pin_cwd, hover) = (id.clone(), cwd.clone(), t.hover);
+                row.drag_over::<DraggedSession>(move |s, _, _, _| s.bg(hover)).on_drop(cx.listener(
+                    move |this, d: &DraggedSession, _, cx| {
+                        cx.stop_propagation();
+                        this.edit_groups(&pin_cwd, |g| {
+                            d.ids.iter().filter(|i| **i != pin_id).for_each(|i| g.move_pin(i, Some(&pin_id)))
+                        });
+                        cx.notify();
+                    },
+                ))
+            }
+            false => row,
+        };
+        row.into_any_element()
+    }
 }

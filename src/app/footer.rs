@@ -23,6 +23,17 @@ impl KynexApp {
         cx.spawn(async move |this, cx| {
             let mut sampler = Sampler::default();
             loop {
+                // Nobody sees the numbers with the footer off or the window in the
+                // background: skip the process scan.
+                let wanted = this.read_with(cx, |this, _| this.saved.footer && this.window_active);
+                match wanted {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        cx.background_executor().timer(SAMPLE_EVERY).await;
+                        continue;
+                    }
+                    Err(_) => break,
+                }
                 let (back, usage) = cx
                     .background_executor()
                     .spawn(async move {

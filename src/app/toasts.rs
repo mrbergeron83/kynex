@@ -20,6 +20,9 @@ use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, spinner};
 /// How often the stack's time moves: smooth enough for a toast fading out.
 const TICK: Duration = Duration::from_millis(16);
 
+/// Between toasts closing, a slower tick is enough to age them.
+const IDLE_TICK: Duration = Duration::from_millis(250);
+
 impl KynexApp {
     /// Puts a toast up (or merges it into a like one).
     pub(super) fn toast(&mut self, toast: Toast) -> &mut Toast {
@@ -41,7 +44,8 @@ impl KynexApp {
         cx.spawn(async move |this, cx| {
             let mut last = Instant::now();
             loop {
-                cx.background_executor().timer(TICK).await;
+                let smooth = this.read_with(cx, |this, _| this.toasts.closing()).unwrap_or(false);
+                cx.background_executor().timer(if smooth { TICK } else { IDLE_TICK }).await;
                 let now = Instant::now();
                 let dt = now - last;
                 last = now;

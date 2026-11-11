@@ -145,19 +145,32 @@ impl KynexApp {
     pub(super) fn working_worktree(&mut self, key: Key, cx: &mut Context<Self>) -> Option<Worktree> {
         let s = self.session_by_key(key).filter(|s| s.kind == Kind::Code)?;
         let cwd = s.cwd.clone();
-        let inputs: Vec<String> = s
+        let len = s.items.len();
+        let project = self.workspace_project().unwrap_or_else(|| cwd.clone());
+        let entity = self.worktrees(&project, cx);
+        // Drawn every frame: the scan reruns only when the session grew or the list changed.
+        if let Some((n, list, found)) = self.working_cache.get(&key)
+            && *n == len
+            && *list == entity.read(cx).list
+        {
+            return found.clone();
+        }
+        let list = entity.read(cx).list.clone();
+        let s = self.session_by_key(key)?;
+        let found = s
             .items
             .iter()
             .rev()
             .filter_map(|i| match i {
-                Item::ToolUse { input, .. } => Some(input.clone()),
+                Item::ToolUse { input, .. } => Some(input.as_str()),
                 _ => None,
             })
             .take(300)
-            .collect();
-        let project = self.workspace_project().unwrap_or_else(|| cwd.clone());
-        let list = self.worktrees(&project, cx).read(cx).list.clone();
-        inputs.iter().find_map(|input| git::worktree_in(input, &list)).filter(|w| w.path != cwd).cloned()
+            .find_map(|input| git::worktree_in(input, &list))
+            .filter(|w| w.path != cwd)
+            .cloned();
+        self.working_cache.insert(key, (len, list, found.clone()));
+        found
     }
 
     /// Re-reads the worktrees of these folders, where they're being watched.

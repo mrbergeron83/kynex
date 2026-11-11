@@ -342,6 +342,9 @@ pub struct KynexApp {
     /// Ctrl+G: the message is open in the user's editor; the id of the toast saying so.
     editing_outside: Option<u64>,
     toast_hover: bool,
+    /// Per session: item count and worktree list `working_worktree` last scanned, and what it found.
+    working_cache:
+        HashMap<kynex_core::live::Key, (usize, Vec<kynex_core::git::Worktree>, Option<kynex_core::git::Worktree>)>,
     toasts_paused: bool,
     toasts_ticking: bool,
     /// What Kynex and its processes use, as last read (`footer.rs`).
@@ -507,6 +510,7 @@ impl KynexApp {
         .detach();
         cx.observe_window_activation(window, |this, window, cx| {
             this.window_active = window.is_window_active();
+            crate::ui::motion::set_active(this.window_active);
             if window.is_window_active() {
                 let folders: Vec<PathBuf> = this.worktrees.keys().cloned().collect();
                 this.refresh_worktrees(&folders, cx);
@@ -618,6 +622,7 @@ impl KynexApp {
             toasts: Default::default(),
             editing_outside: None,
             toast_hover: false,
+            working_cache: HashMap::new(),
             toasts_paused: false,
             toasts_ticking: false,
             resources: None,

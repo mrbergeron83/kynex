@@ -66,6 +66,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Less CPU when Kynex is idle or in the background (#333): looping animations slow down, and the resources footer,
+  toast timer and Git view stop polling. Streaming replies are re-parsed a few times a second, the sessions panel builds
+  only the rows it shows, and session titles are read again only for logs that changed.
 - Everything follows the workspace you're in: switching workspace switches the sessions, the
   terminal (each checkout keeps its own shells), the Git view, the path and open-in buttons and
   the session header together, and switching back finds each as you left it. The header's
