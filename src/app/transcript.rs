@@ -172,6 +172,7 @@ impl KynexApp {
         if self.session_by_key(key).is_none() {
             return div().into_any_element();
         }
+        crate::markdown::set_streaming(busy);
         self.render_thread_rows(key, count, busy, window, cx)
     }
 

@@ -366,6 +366,10 @@ pub struct Session {
     tool_input: String,
     /// Goes up when an item changes in a way that changes the transcript's layout.
     revision: u64,
+    /// Goes up when a permission prompt changes state; with the item count it keys `waiting_cache`.
+    perm_gen: u64,
+    /// `waiting()` as last scanned: (item count, `perm_gen`, answer). It is asked every frame.
+    waiting_cache: std::cell::Cell<Option<(usize, u64, bool)>>,
     next_request: u64,
     /// `mcp_reconnect` and `mcp_status` requests awaiting an answer.
     mcp_requests: Vec<String>,
@@ -535,6 +539,8 @@ impl Session {
             active_at: Instant::now(),
             tool_input: String::new(),
             revision: 0,
+            perm_gen: 0,
+            waiting_cache: std::cell::Cell::new(None),
             next_request: 0,
             stopping: HashMap::new(),
             mcp_requests: Vec::new(),
@@ -685,6 +691,7 @@ impl Session {
     pub fn rewind_to(&mut self, point: &crate::rewind::Point) {
         self.kill();
         self.items.clear();
+        self.perm_gen += 1;
         self.context = ContextUse::default();
         self.queue = Queue::default();
         self.finished = false;
@@ -752,7 +759,15 @@ impl Session {
 
     /// Whether a permission prompt or question is waiting on the user.
     pub fn waiting(&self) -> bool {
-        self.items.iter().any(|i| matches!(i, Item::Permission { state: PermState::Pending, .. }))
+        let key = (self.items.len(), self.perm_gen);
+        if let Some((n, g, answer)) = self.waiting_cache.get()
+            && (n, g) == key
+        {
+            return answer;
+        }
+        let answer = self.items.iter().any(|i| matches!(i, Item::Permission { state: PermState::Pending, .. }));
+        self.waiting_cache.set(Some((key.0, key.1, answer)));
+        answer
     }
 
     /// Whether this session wants the user: a turn ended unseen, or a prompt waits.
@@ -1157,6 +1172,7 @@ impl Session {
     }
 
     fn answer_inner(&mut self, index: usize, answer: Answer) -> Vec<String> {
+        self.perm_gen += 1;
         let Some(Item::Permission { request_id, tool, input, suggestions, state, .. }) = self.items.get_mut(index)
         else {
             return Vec::new();
@@ -1284,6 +1300,7 @@ impl Session {
 
     /// Marks the pending permission prompts `which` picks as cancelled.
     fn cancel_permissions(&mut self, which: impl Fn(&str) -> bool) {
+        self.perm_gen += 1;
         for item in &mut self.items {
             if let Item::Permission { request_id, state, .. } = item
                 && *state == PermState::Pending
@@ -2005,6 +2022,7 @@ pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
     sessions
 }
 
+#[derive(Clone)]
 struct Names {
     /// The latest `custom-title`, else the latest `ai-title`.
     title: Option<String>,
@@ -2029,10 +2047,34 @@ pub fn title_of(path: &Path) -> Option<String> {
     Some(names.title.or_else(|| crate::titles::stored(&id)).unwrap_or(names.first))
 }
 
+/// [`read_names_uncached`], remembered per file until its size or modification
+/// time moves: the list is re-read whenever any session starts or finishes a
+/// reply, and most logs haven't changed since the last time.
+fn read_names(path: &Path) -> Option<Names> {
+    type Cache = HashMap<PathBuf, (u64, SystemTime, Option<Names>)>;
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Mutex::default);
+    let meta = std::fs::metadata(path).ok()?;
+    let stamp = (meta.len(), meta.modified().ok()?);
+    if let Some((len, at, names)) = cache.lock().unwrap().get(path)
+        && (*len, *at) == stamp
+    {
+        return names.clone();
+    }
+    let names = read_names_uncached(path);
+    let mut all = cache.lock().unwrap();
+    // Logs of long-gone projects: dropped wholesale now and then, read again if listed.
+    if all.len() >= 8192 {
+        all.clear();
+    }
+    all.insert(path.to_path_buf(), (stamp.0, stamp.1, names.clone()));
+    names
+}
+
 /// A transcript's names, or `None` for one with no conversation in it. Only
 /// its ends are read: the first message is near the top, and the CLI writes
 /// the title again every turn, so the newest is near the end. Blocks on the file.
-fn read_names(path: &Path) -> Option<Names> {
+fn read_names_uncached(path: &Path) -> Option<Names> {
     let mut file = std::fs::File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
     // A first message too big for the head (a pasted screenshot) is looked for further.

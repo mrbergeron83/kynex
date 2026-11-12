@@ -2,11 +2,12 @@
 //! `kynex_core::markdown` once per change and cached; every render (a streaming
 //! reply, each frame of a scroll or an animation) only draws the blocks.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::{BuildHasher, RandomState};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use crate::ui::px;
 use gpui::{
@@ -80,17 +81,36 @@ pub fn render_wide(
 }
 
 /// Parsed messages by selection group and item, with a hash of their text.
-type Cache = HashMap<(u64, usize), (u64, Rc<Doc>)>;
+type Cache = HashMap<(u64, usize), (u64, Rc<Doc>, Instant)>;
+
+/// The least time between two parses of a message that keeps changing while a reply streams.
+const REPARSE_EVERY: Duration = Duration::from_millis(150);
 
 thread_local! {
     static PARSED: RefCell<(RandomState, Cache)> = RefCell::default();
+    static STREAMING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// While a reply streams in, a changed message is parsed at most a few times a
+/// second instead of every frame (parsing it whole each time is quadratic over a
+/// long reply). Set each frame by the transcript; the end of the turn clears it,
+/// and the redraw that follows parses the final text.
+pub fn set_streaming(on: bool) {
+    STREAMING.set(on);
 }
 
 /// `src` parsed, from the cache while it's unchanged.
 fn parsed(group: u64, item: usize, src: &str) -> Rc<Doc> {
     PARSED.with_borrow_mut(|(hasher, cache)| {
+        let streaming = STREAMING.get();
+        if streaming
+            && let Some((_, doc, at)) = cache.get(&(group, item))
+            && at.elapsed() < REPARSE_EVERY
+        {
+            return doc.clone();
+        }
         let hash = hasher.hash_one(src);
-        if let Some((h, doc)) = cache.get(&(group, item))
+        if let Some((h, doc, _)) = cache.get(&(group, item))
             && *h == hash
         {
             return doc.clone();
@@ -100,7 +120,7 @@ fn parsed(group: u64, item: usize, src: &str) -> Rc<Doc> {
             cache.clear();
         }
         let doc = Rc::new(markdown::parse(src));
-        cache.insert((group, item), (hash, doc.clone()));
+        cache.insert((group, item), (hash, doc.clone(), Instant::now()));
         doc
     })
 }

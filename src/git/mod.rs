@@ -23,7 +23,7 @@ mod history;
 mod top_bar;
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::ui::px;
 use gpui::{Context, Entity, FontWeight, SharedString, UniformListScrollHandle, Window, div, prelude::*};
@@ -86,6 +86,8 @@ pub struct GitView {
     error: Option<String>,
     /// A status read is running.
     polling: bool,
+    /// When the view last drew; polling waits while it isn't on screen.
+    drawn: Option<Instant>,
     message: Entity<TextInput>,
     amend: bool,
     branch_menu: bool,
@@ -149,6 +151,7 @@ impl GitView {
             cancel: None,
             error: None,
             polling: false,
+            drawn: None,
             message,
             amend: false,
             branch_menu: false,
@@ -197,7 +200,8 @@ impl GitView {
 
     /// The cheap periodic check: status only, and everything else if HEAD moved.
     fn poll(&mut self, cx: &mut Context<Self>) {
-        if self.polling || self.busy.is_some() {
+        let on_screen = self.drawn.is_some_and(|t| t.elapsed() < POLL_EVERY * 2);
+        if self.polling || self.busy.is_some() || !on_screen || cx.active_window().is_none() {
             return;
         }
         self.polling = true;
@@ -432,6 +436,7 @@ impl GitView {
 
 impl Render for GitView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.drawn = Some(Instant::now());
         let t = theme(cx).clone();
         let top = self.render_top_bar(window, cx);
 

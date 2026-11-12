@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A new icon: a K whose stem is a text caret and whose arms are a prompt chevron. In the title bar the caret is the lamp: it takes the shown session's state colour and pulses while Claude works.
+
 ### Added
 
 - The sessions list and the workspaces can be panes: "Sessions beside" and "Workspaces beside" on a pane's right-click menu, or the command palette. The sidebar shows whatever isn't a pane in the tab, and steps aside when both are.
@@ -73,6 +77,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Less CPU while Kynex is busy or in the background (#333): the Git view stops polling when it isn't on screen,
+  streaming replies are re-parsed a few times a second, the sessions panel builds only the rows it shows, and session
+  titles are read again only for logs that changed.
 - Everything follows the workspace you're in: switching workspace switches the sessions, the
   terminal (each checkout keeps its own shells), the Git view, the path and open-in buttons and
   the session header together, and switching back finds each as you left it. The header's

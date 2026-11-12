@@ -1,17 +1,11 @@
-//! The Kynex mark, live: a housing, the petrol knob (the operator's control) and an
-//! indicator lamp showing the shown session's state. The knob is lit from the top
-//! left. While Claude works the lamp pulses, the housing glows with it, rings ripple
-//! out from the knob and the pointer sweeps. Geometry and colours from the dark mark in
-//! docs/design/branding.md, on a 100-unit canvas, whatever the theme: the logo has one look.
+//! The Kynex mark, live: a housing with a K whose stem is a text caret (the operator's,
+//! in petrol) and whose arms are a prompt chevron. The caret is the lamp: it takes the
+//! shown session's state colour, and while Claude works it pulses and the housing glows
+//! with it. Geometry and colours from the dark mark in docs/design/branding.md, on a
+//! 100-unit canvas, whatever the theme: the logo has one look.
 
-use std::time::Duration;
+use gpui::{AnimationExt, AnyElement, App, BoxShadow, ElementId, Hsla, Pixels, div, point, prelude::*, px};
 
-use gpui::{
-    AnimationExt, AnyElement, App, BoxShadow, ElementId, Hsla, Pixels, Transformation, div, linear_color_stop,
-    linear_gradient, point, prelude::*, px, radians,
-};
-
-use super::motion::looping;
 use super::{Icon, Lamp, icon, pulse};
 
 /// A soft halo of `color` around an element, `blur` wide.
@@ -21,65 +15,28 @@ fn glow(color: Hsla, blur: Pixels) -> Vec<BoxShadow> {
 
 pub fn mark(id: impl Into<ElementId>, size: Pixels, lamp: Lamp, cx: &App) -> AnyElement {
     let id = id.into();
-    let [housing_c, rim, accent, pointer_c] = crate::theme::mark_colours();
+    let [housing_c, rim, accent, chevron_c] = crate::theme::mark_colours();
     let u = move |v: f32| size * (v / 100.);
-    let knob = u(62.);
     let working = lamp == Lamp::Working;
 
-    // The knob box is centred on (50, 54); the pointer svg fills it and rotates
-    // about its centre. Below ~20 px the rim, pointer and ripples are too fine to read.
+    // Below ~20 px the rim is too fine to read.
     let detailed = size >= px(20.);
-    let pointer = icon(Icon::MarkPointer, pointer_c).size(knob).absolute().left(u(19.)).top(u(23.));
-    let pointer = if !detailed {
-        None
-    } else if working {
-        let sweep = looping(Duration::from_millis(4800)).with_easing(gpui::bounce(gpui::ease_in_out));
-        Some(
-            pointer
-                .with_animation((id.clone(), "pointer"), sweep, |p, d| {
-                    p.with_transformation(Transformation::rotate(radians((d * 80. - 40.).to_radians())))
-                })
-                .into_any_element(),
-        )
+
+    // The arms: an svg over the whole housing, so its 24-unit grid is the mark's 100.
+    let chevron = icon(Icon::MarkChevron, chevron_c).size(size).absolute().left(px(0.)).top(px(0.));
+
+    // The caret keeps the theme's state colours, but idle and working are the mark's petrol.
+    let c = if working { accent } else { lamp.color(cx).unwrap_or(accent) };
+    let caret = div().absolute().left(u(26.)).top(u(20.)).w(u(12.)).h(u(60.)).rounded_full().bg(c);
+    let caret = if working {
+        caret
+            .with_animation((id.clone(), "caret"), pulse(), move |d, a| d.opacity(a).shadow(glow(c.opacity(a), u(14.))))
+            .into_any_element()
+    } else if lamp == Lamp::Idle {
+        caret.into_any_element()
     } else {
-        Some(pointer.into_any_element())
+        caret.shadow(glow(c.opacity(0.6), u(14.))).into_any_element()
     };
-
-    // A spotlight on the knob: lighter where the light hits, the accent itself below.
-    let lit = Hsla { l: (accent.l + 0.08).min(0.95), ..accent };
-    let knob_el = div().absolute().left(u(19.)).top(u(23.)).size(knob).rounded_full().bg(linear_gradient(
-        135.,
-        linear_color_stop(lit, 0.),
-        linear_color_stop(accent, 0.7),
-    ));
-
-    // While working, a ring grows out of the knob and fades, stopping short of the lamp.
-    let ripple = (detailed && working).then(|| {
-        let ring = looping(Duration::from_millis(1600)).with_easing(gpui::ease_out_quint());
-        div()
-            .absolute()
-            .rounded_full()
-            .border_1()
-            .border_color(accent)
-            .with_animation((id.clone(), "ripple"), ring, move |d, a| {
-                let s = 62. + a * 14.;
-                d.left(u(50. - s / 2.)).top(u(54. - s / 2.)).size(u(s)).opacity((1. - a) * 0.6)
-            })
-            .into_any_element()
-    });
-
-    // The lamp keeps the theme's state colours, but working glows in the knob's petrol.
-    let lamp_el = if working { Some(accent) } else { lamp.color(cx) }.map(|c| {
-        let dot = div().absolute().left(u(15.)).top(u(14.)).size(u(12.)).rounded_full().bg(c);
-        if working {
-            dot.with_animation((id.clone(), "lamp"), pulse(), move |d, a| {
-                d.opacity(a).shadow(glow(c.opacity(a), u(14.)))
-            })
-            .into_any_element()
-        } else {
-            dot.shadow(glow(c.opacity(0.6), u(14.))).into_any_element()
-        }
-    });
 
     let housing = div()
         .id(id.clone())
@@ -89,12 +46,10 @@ pub fn mark(id: impl Into<ElementId>, size: Pixels, lamp: Lamp, cx: &App) -> Any
         .rounded(u(20.))
         .bg(housing_c)
         .when(detailed, |d| d.border_1().border_color(rim))
-        .child(knob_el)
-        .children(ripple)
-        .children(pointer)
-        .children(lamp_el);
+        .child(chevron)
+        .child(caret);
 
-    // The housing glows with the lamp's pulse while working.
+    // The housing glows with the caret's pulse while working.
     if working {
         let blur = size.max(px(20.)) * 0.4;
         housing

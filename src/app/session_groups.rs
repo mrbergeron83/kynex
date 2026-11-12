@@ -351,6 +351,7 @@ impl KynexApp {
         &mut self,
         cwd: &Path,
         i: usize,
+        count: usize,
         rows: Vec<AnyElement>,
         news: &[Lamp],
         cx: &mut Context<Self>,
@@ -358,7 +359,7 @@ impl KynexApp {
         let t = theme(cx).clone();
         let Some(group) = self.groups_for(cwd).groups.get(i).cloned() else { return div().into_any_element() };
         let editing = matches!(&self.organize.editing, Some(Editing::Group(p, e)) if p == cwd && *e == i);
-        let (count, hover) = (rows.len(), t.hover);
+        let hover = t.hover;
         let (toggle_cwd, drop_cwd) = (cwd.to_path_buf(), cwd.to_path_buf());
         // A section header like the date ones: its name, and its count while folded.
         let label = if group.collapsed { format!("{} · {count}", group.name) } else { group.name.clone() };
@@ -427,10 +428,16 @@ impl KynexApp {
     }
 
     /// The archive: a header that opens it, and its rows while open.
-    pub(super) fn render_archived(&mut self, cwd: &Path, rows: Vec<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_archived(
+        &mut self,
+        cwd: &Path,
+        count: usize,
+        rows: Vec<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let t = theme(cx).clone();
         let open = self.organize.show_archived;
-        let (count, hover, text) = (rows.len(), t.hover, t.text);
+        let (hover, text) = (t.hover, t.text);
         let drop_cwd = cwd.to_path_buf();
         div()
             .id("archived-block")
