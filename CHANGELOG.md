@@ -21,6 +21,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Windows: the taskbar, Start menu and desktop show Kynex's new icon after an update, not the old one the shell had cached; Kynex tells the shell once per version, and `install.ps1` does too.
 - Right-clicking a workspace, a session or a group in a pane opens its own menu again, not the pane's, so "Remove workspace" can be reached; right-click in a terminal pane no longer pops the pane menu over the copy / paste.
 
 ## [0.0.27] - 2026-11-11

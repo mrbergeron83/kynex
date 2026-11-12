@@ -117,6 +117,9 @@ pub struct Saved {
     pub sounds: bool,
     /// Kynex's shortcuts from an older `install.ps1` got its app ID (Windows; once).
     pub shortcuts_stamped: bool,
+    /// The version whose icon the shell was last told to show (Windows; once per version, as
+    /// an update replaces the exe in place and the shell keeps the icon it cached).
+    pub icons_shown_for: Option<String>,
     /// How wide the transcript and composer are.
     pub column: ColumnWidth,
     /// What Appearance changes of the pane tiles' look; the theme gives the rest.
@@ -182,6 +185,7 @@ impl Default for Saved {
             notify: false,
             sounds: false,
             shortcuts_stamped: false,
+            icons_shown_for: None,
             column: ColumnWidth::default(),
             tiles: Default::default(),
             toast_corner: Corner::default(),

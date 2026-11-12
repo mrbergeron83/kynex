@@ -82,19 +82,33 @@ namespace KynexInstall {
                 Marshal.ReleaseComObject(store);
             }
         }
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        static extern void SHChangeNotify(int eventId, uint flags, string item1, IntPtr item2);
+        [DllImport("shell32.dll", EntryPoint = "SHChangeNotify")]
+        static extern void SHChangeNotifyAll(int eventId, uint flags, IntPtr item1, IntPtr item2);
+        // An update replaces kynex.exe in place; the shell would keep the icon it cached.
+        public static void RefreshIcons(string[] paths) {
+            foreach (string p in paths) SHChangeNotify(0x2000 /* SHCNE_UPDATEITEM */, 5 /* SHCNF_PATHW */, p, IntPtr.Zero);
+            SHChangeNotifyAll(0x8000000 /* SHCNE_ASSOCCHANGED */, 0 /* SHCNF_IDLIST */, IntPtr.Zero, IntPtr.Zero);
+        }
     }
 }
 '@
     }
     $shell = New-Object -ComObject WScript.Shell
+    $links = @()
     foreach ($folder in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
         $path = Join-Path $folder 'Kynex.lnk'
         $link = $shell.CreateShortcut($path)
         $link.TargetPath = $exe
         $link.WorkingDirectory = $dir
         $link.Save()
+        $links += $path
         try { [KynexInstall.Shortcut]::SetAppId($path, 'Kynex.Kynex') } catch { Write-Warning "Couldn't set Kynex's app ID on ${path}: $_" }
     }
+    $pinned = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\Kynex.lnk'
+    if (Test-Path $pinned) { $links += $pinned }
+    try { [KynexInstall.Shortcut]::RefreshIcons(@($exe) + $links) } catch { Write-Warning "Couldn't refresh Kynex's icon: $_" }
 
     # `knx` from any terminal: a shim that starts Kynex without holding the console. The control
     # subcommands (`knx session list` …) run in the terminal instead, to print there.
