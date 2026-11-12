@@ -245,6 +245,8 @@ impl KynexApp {
                             .on_mouse_down(
                                 MouseButton::Right,
                                 cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                                    // Not the pane's menu as well.
+                                    cx.stop_propagation();
                                     this.open_menu(Menu::Workspace(menu_path.clone()), ev.position, Anchor::TopLeft, cx)
                                 }),
                             ),
