@@ -14,8 +14,10 @@
 //! | `tree.rs`       | the file tree's rows and their stage boxes               |
 //! | `actions.rs`    | staging, discarding, a row's menu                        |
 //! | `file_modal.rs` | `FileDiffView`: one file's whole diff, change by change  |
+//! | `detail_modal.rs` | `DetailView`: a commit picked in History, in a modal |
 
 mod actions;
+pub mod detail_modal;
 pub mod file_modal;
 mod tree;
 mod worktrees;
@@ -35,6 +37,7 @@ use crate::app::ToggleGit;
 use crate::app::worktrees::Worktrees;
 use crate::git::{GitEvent, GitView};
 use crate::theme::theme;
+use crate::ui::wash::row_wash;
 use crate::ui::{Icon, Tooltip, icon_button, outline_button};
 
 /// How often the working tree is re-read while the pane is on screen.
@@ -51,6 +54,10 @@ pub enum GitPaneEvent {
     OpenFull(PathBuf),
     /// Something was done to this worktree (staged, committed…): other views of it are old.
     Changed(PathBuf),
+    /// A commit was picked in History: show it, as this view has it, in a modal.
+    OpenDetail(Entity<GitView>),
+    /// The History tab was picked (`true`) or Changes, for the workspace to remember.
+    Tab(bool),
     /// Close the pane.
     Close,
 }
@@ -83,6 +90,8 @@ pub struct GitPane {
     confirm: Option<Confirm>,
     /// How wide the pane is, as the app last laid it out.
     width: f32,
+    /// The History tab is shown, not Changes.
+    history: bool,
 }
 
 /// Status and line counts of every changed file in `root`. Blocking.
@@ -131,6 +140,7 @@ impl GitPane {
             menu: None,
             confirm: None,
             width: f32::MAX,
+            history: false,
         };
         pane.load(cx);
         pane
@@ -149,6 +159,14 @@ impl GitPane {
         }
         self.load(cx);
         cx.notify();
+    }
+
+    /// Shows the History tab, or Changes: as the workspace last had it.
+    pub fn set_history(&mut self, history: bool, cx: &mut Context<Self>) {
+        if self.history != history {
+            self.history = history;
+            cx.notify();
+        }
     }
 
     /// How wide the app lays the pane out, for folding its bars.
@@ -171,12 +189,13 @@ impl GitPane {
         let root = self.selected.clone();
         let view = cx.new(|cx| GitView::new(root.clone(), cx));
         cx.observe(&view, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&view, move |this, _, ev: &GitEvent, cx| match ev {
+        cx.subscribe(&view, move |this, view, ev: &GitEvent, cx| match ev {
             GitEvent::Changed => {
                 this.load(cx);
                 this.worktrees.update(cx, |w, cx| w.refresh(cx));
                 cx.emit(GitPaneEvent::Changed(root.clone()));
             }
+            GitEvent::ShowDetail => cx.emit(GitPaneEvent::OpenDetail(view)),
             GitEvent::OpenFolder(_) => {}
         })
         .detach();
@@ -242,6 +261,45 @@ impl GitPane {
         cx.notify();
     }
 
+    /// Changes (with how many files) and History.
+    fn render_tabs(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let t = theme(cx).clone();
+        let n = self.files.len();
+        let tab = |id: &'static str, label: String, history: bool, cx: &mut Context<Self>| {
+            let on = self.history == history;
+            div()
+                .id(id)
+                .relative()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .h(px(24.))
+                .rounded_md()
+                .text_sm()
+                .cursor_pointer()
+                .text_color(if on { t.text } else { t.text_muted })
+                .when(on, |d| d.font_weight(FontWeight::MEDIUM))
+                .child(row_wash(on, t.hover, t.active))
+                .child(label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.menu = None;
+                    this.set_history(history, cx);
+                    cx.emit(GitPaneEvent::Tab(history));
+                }))
+        };
+        let changes = if n > 0 { format!("Changes ({n})") } else { "Changes".into() };
+        div()
+            .flex()
+            .flex_none()
+            .gap_1()
+            .p_1()
+            .border_b_1()
+            .border_color(t.border_variant)
+            .child(tab("git-pane-tab-changes", changes, false, cx))
+            .child(tab("git-pane-tab-history", "History".into(), true, cx))
+    }
+
     /// The selected worktree's folder name, for the bar (its branch is the picker below).
     fn name(&self) -> String {
         self.selected
@@ -295,12 +353,9 @@ impl Render for GitPane {
             );
         let sync = view.update(cx, |v, cx| v.render_sync_bar(compact, window, cx));
         let worktrees = self.render_worktrees(cx);
+        let tabs = self.render_tabs(cx);
         let notices = view.update(cx, |v, cx| v.render_notices(cx));
-        let tools = self.render_tree_bar(&view, cx);
-        let body = self.render_tree(cx);
-        let commit = view.update(cx, |v, cx| v.render_commit_area(window, cx));
-        let menu = self.render_menu(cx);
-        div()
+        let pane = div()
             .size_full()
             .flex()
             .flex_col()
@@ -309,8 +364,17 @@ impl Render for GitPane {
             .child(header)
             .child(sync)
             .child(worktrees)
-            .children(notices)
-            .children(tools)
+            .child(tabs)
+            .children(notices);
+        if self.history {
+            let list = view.update(cx, |v, cx| v.render_history_list(cx));
+            return pane.child(div().flex().flex_col().flex_1().min_h_0().child(list));
+        }
+        let tools = self.render_tree_bar(&view, cx);
+        let body = self.render_tree(cx);
+        let commit = view.update(cx, |v, cx| v.render_commit_area(window, cx));
+        let menu = self.render_menu(cx);
+        pane.children(tools)
             .child(body)
             .child(div().flex_none().border_t_1().border_color(t.border_variant).child(commit))
             .children(menu)

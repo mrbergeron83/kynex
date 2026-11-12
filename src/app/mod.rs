@@ -216,7 +216,7 @@ pub struct KynexApp {
     /// The folder whose Git view is open in a modal over the conversation.
     git_modal: Option<PathBuf>,
     /// A changed file's whole diff, in a modal over the window.
-    git_file: Option<Entity<crate::git_pane::file_modal::FileDiffView>>,
+    git_file: Option<git_file_modal::GitDiffModal>,
     /// The Git pane of each workspace folder.
     git_panes: HashMap<PathBuf, Entity<crate::git_pane::GitPane>>,
     /// Each open project's git worktrees, kept fresh in the background.

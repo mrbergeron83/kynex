@@ -38,7 +38,6 @@ use crate::ui::wash::row_wash;
 
 /// How often the working tree is re-read while the view exists.
 const POLL_EVERY: Duration = Duration::from_secs(3);
-const HISTORY_LIMIT: usize = 500;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -65,6 +64,8 @@ pub enum GitEvent {
     OpenFolder(PathBuf),
     /// An operation ran (staged, committed, switched…): what was read of the folder is old.
     Changed,
+    /// A commit was picked in a hosted history list: show its details (`render_detail`).
+    ShowDetail,
 }
 
 impl gpui::EventEmitter<GitEvent> for GitView {}
@@ -76,6 +77,10 @@ pub struct GitView {
     commits: Vec<Commit>,
     /// The history has been read once, so an empty one is really empty.
     history_read: bool,
+    /// How many commits are read; more as the list scrolls (`git::more_history`).
+    history_limit: usize,
+    /// A read of more history is running.
+    history_more: bool,
     branches: Vec<Branch>,
     tab: Tab,
     selected: Option<Selection>,
@@ -145,6 +150,8 @@ impl GitView {
             status: None,
             commits: Vec::new(),
             history_read: false,
+            history_limit: git::HISTORY_PAGE,
+            history_more: false,
             branches: Vec::new(),
             tab: Tab::Changes,
             selected: None,
@@ -175,12 +182,10 @@ impl GitView {
         if self.tab == Tab::Branches {
             self.load_branches(false, cx);
         }
-        let root = self.root.clone();
+        let (root, limit) = (self.root.clone(), self.history_limit);
         cx.spawn(async move |this, cx| {
             let (status, commits, branches) = cx
-                .background_spawn(
-                    async move { (git::status(&root), git::log(&root, HISTORY_LIMIT), git::branches(&root)) },
-                )
+                .background_spawn(async move { (git::status(&root), git::log(&root, limit), git::branches(&root)) })
                 .await;
             this.update(cx, |this, cx| {
                 match status {
@@ -488,7 +493,7 @@ impl Render for GitView {
             .child(tab_button("git-tab-branches", "Branches".into(), Tab::Branches, cx));
         let left = match self.tab {
             Tab::Changes => self.render_changes(window, cx).into_any_element(),
-            Tab::History => self.render_history(cx).into_any_element(),
+            Tab::History => self.render_history(false, cx),
             Tab::Branches => self.render_branches(window, cx),
         };
         let undo = self.render_undo(cx);

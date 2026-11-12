@@ -241,6 +241,7 @@ mod tests {
             tools: None,
             seeded: false,
             git_spot: None,
+            git_history: false,
         }
     }
 
@@ -253,6 +254,7 @@ mod tests {
             tools: None,
             seeded: false,
             git_spot: None,
+            git_history: false,
         }
     }
 

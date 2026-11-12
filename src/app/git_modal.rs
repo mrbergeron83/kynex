@@ -40,7 +40,7 @@ impl KynexApp {
                 }
                 cx.notify();
             }
-            GitEvent::Changed => {}
+            GitEvent::Changed | GitEvent::ShowDetail => {}
         })
         .detach();
         self.git.insert(path.to_path_buf(), g.clone());

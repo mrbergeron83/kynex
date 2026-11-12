@@ -11,6 +11,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - The Git pane has a toolbar button, a key (Ctrl+Shift+G, ⌘⇧G on macOS) and a palette entry ("Toggle Git pane"), and a close button of its own. It opens where it was last, beside the same panes at the same size, so the other panes get their sizes back; the first time it opens on the right of the focused session.
 - Stage, unstage, discard and commit from the Git pane: each file and folder has a box (ticked when staged, a dash when partly staged) that stages it or unstages it, with Stage all / Unstage all above the tree; a row's right-click menu stages, unstages, opens the diff or discards (asking once more on the row); the commit box with Amend sits at the foot, for the worktree picked in the pane.
 - Fetch, pull, push and the branch picker (switch or create a branch) in the Git pane's bar, with how many commits there are to push and pull, for the worktree picked in the pane. In a narrow pane the buttons fold to icons.
+- A History tab in the Git pane: the branch's commits (subject, author, age), more loading as you scroll. Clicking one opens its message, files and diff in a modal over the window; Esc or a click outside closes it. Each workspace remembers which tab its pane shows.
 - "Purge…" in the sessions panel's Archived section deletes the archived sessions, all or those older than 30 days, 90 days or a year, after asking. Open sessions are kept and the toast says so.
 ### Fixed
 

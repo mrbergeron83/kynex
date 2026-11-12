@@ -116,6 +116,9 @@ pub struct SavedLayout {
     /// Where the Git pane was when it was closed last, for [`Tiling::open_git`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_spot: Option<Spot>,
+    /// The Git pane shows its History tab rather than its Changes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub git_history: bool,
 }
 
 impl SavedLayout {
@@ -137,6 +140,8 @@ pub struct Tiling {
     seeded: bool,
     /// Where the Git pane was when it was closed last.
     git_spot: Option<Spot>,
+    /// The Git pane shows its History tab.
+    git_history: bool,
 }
 
 impl Tiling {
@@ -151,6 +156,7 @@ impl Tiling {
             tools: Some(tools),
             seeded: self.seeded,
             git_spot: self.git_spot.clone(),
+            git_history: self.git_history,
         }
     }
 
@@ -230,6 +236,7 @@ impl Tiling {
             shown: None,
             seeded: saved.seeded,
             git_spot,
+            git_history: saved.git_history,
         })
     }
 
@@ -243,6 +250,7 @@ impl Tiling {
             seeded: false,
             shown: None,
             git_spot: None,
+            git_history: false,
         }
     }
 
@@ -395,6 +403,15 @@ impl Tiling {
         };
         let (side, ratio) = spot.map_or((Direction::Right, 0.5), |s| (s.side(), s.ratio()));
         self.split_tool(target, side, pane, Tool::Git, ratio, bounds)
+    }
+
+    /// Whether the Git pane shows its History tab (else its Changes).
+    pub fn git_history(&self) -> bool {
+        self.git_history
+    }
+
+    pub fn set_git_history(&mut self, history: bool) {
+        self.git_history = history;
     }
 
     pub fn layout(&self) -> &Layout {

@@ -27,7 +27,7 @@ pub(super) struct Exits {
     pub extensions: Leaving<ExtensionsView>,
     pub about: Leaving<()>,
     pub git_modal: Leaving<PathBuf>,
-    pub git_file: Leaving<Entity<crate::git_pane::file_modal::FileDiffView>>,
+    pub git_file: Leaving<super::git_file_modal::GitDiffModal>,
     pub scratch: Leaving<ScratchModal>,
     pub viewer: Leaving<Entity<ImageViewer>>,
     pub sessions: Leaving<()>,

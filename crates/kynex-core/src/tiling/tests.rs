@@ -607,3 +607,17 @@ fn the_git_pane_keeps_its_side_and_share_when_its_neighbours_changed() {
     assert!(git.y > session.y);
     assert!((git.h - 0.25 * BIG.h).abs() < 2.0);
 }
+
+#[test]
+fn the_git_pane_s_tab_is_kept_with_the_layout() {
+    let mut t = Tiling::new(1, 10);
+    assert!(!t.git_history());
+    t.set_git_history(true);
+    let saved: SavedLayout = serde_json::from_str(&serde_json::to_string(&t.save(id_of)).unwrap()).unwrap();
+    assert!(Tiling::restore(&saved, &mut 5, None, key_of_id).unwrap().git_history());
+    // A layout from before has none: Changes.
+    let old = serde_json::to_string(&Tiling::new(1, 10).save(id_of)).unwrap();
+    assert!(!old.contains("git_history"));
+    let saved: SavedLayout = serde_json::from_str(&old).unwrap();
+    assert!(!Tiling::restore(&saved, &mut 5, None, key_of_id).unwrap().git_history());
+}

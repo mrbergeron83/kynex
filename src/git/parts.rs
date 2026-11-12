@@ -64,6 +64,18 @@ impl GitView {
         self.render_top_bar(compact, false, window, cx).into_any_element()
     }
 
+    /// The commit list of the branch, narrow; a click asks for the commit's details
+    /// ([`GitEvent::ShowDetail`]), drawn by [`Self::render_detail`].
+    pub fn render_history_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        self.touch();
+        self.render_history(true, cx)
+    }
+
+    /// What is picked (a commit, a branch to compare) with its diff, for a modal.
+    pub fn render_detail(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        self.render_diff(cx)
+    }
+
     /// What went wrong last (until dismissed), and a note while there are conflicts.
     pub fn render_notices(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let t = theme(cx).clone();

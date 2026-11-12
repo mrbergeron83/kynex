@@ -102,13 +102,26 @@ impl KynexApp {
         }
         let project = self.workspace_project().unwrap_or_else(|| ws.to_path_buf());
         let worktrees = self.worktrees(&project, cx);
-        let pane = cx.new(|cx| GitPane::new(ws.to_path_buf(), worktrees, cx));
+        let history = self.tiles.get(ws).is_some_and(|t| t.git_history());
+        let pane = cx.new(|cx| {
+            let mut pane = GitPane::new(ws.to_path_buf(), worktrees, cx);
+            pane.set_history(history, cx);
+            pane
+        });
         cx.subscribe_in(&pane, window, |this, _, ev: &GitPaneEvent, window, cx| match ev {
             GitPaneEvent::OpenFile { root, path, untracked } => {
                 this.open_git_file_diff(root.clone(), path.clone(), *untracked, cx)
             }
             GitPaneEvent::OpenFull(path) => this.open_git_modal(path.clone(), cx),
             GitPaneEvent::Close => this.close_git_pane(window, cx),
+            GitPaneEvent::OpenDetail(view) => this.open_git_detail(view.clone(), "Commit", cx),
+            GitPaneEvent::Tab(history) => {
+                if let Some((_, ws, _)) = this.tiling_scope()
+                    && let Some(t) = this.tiles.get_mut(&ws)
+                {
+                    t.set_git_history(*history);
+                }
+            }
             // The Git view of that folder (the full view, the modal) reads it again.
             GitPaneEvent::Changed(root) => {
                 for (folder, view) in &this.git {
