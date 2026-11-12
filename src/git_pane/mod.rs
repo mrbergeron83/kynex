@@ -22,6 +22,7 @@ use gpui::{Context, Entity, EventEmitter, FontWeight, UniformListScrollHandle, W
 use kynex_core::git::{self, Change, TreeFile, TreeRow, tree_files, tree_rows};
 use kynex_core::workspace::same_folder;
 
+use crate::app::ToggleGit;
 use crate::app::worktrees::Worktrees;
 use crate::git::diff_view::counts;
 use crate::theme::theme;
@@ -37,6 +38,8 @@ pub enum GitPaneEvent {
     OpenFile { root: PathBuf, path: String, untracked: bool },
     /// Open the full Git view (commit box, history, branches) for this worktree.
     OpenFull(PathBuf),
+    /// Close the pane.
+    Close,
 }
 
 impl EventEmitter<GitPaneEvent> for GitPane {}
@@ -212,6 +215,11 @@ impl Render for GitPane {
                 outline_button("git-pane-full", "Commit & history…", cx)
                     .tooltip(Tooltip::text("Commit, history and branches"))
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(GitPaneEvent::OpenFull(full.clone())))),
+            )
+            .child(
+                icon_button("git-pane-close", Icon::Close, cx)
+                    .tooltip(Tooltip::for_action("Close the Git pane", ToggleGit, ""))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(GitPaneEvent::Close))),
             );
 
         // One row per worktree; a project with a single checkout still shows it.

@@ -11,6 +11,9 @@
 
 use serde::{Deserialize, Serialize};
 
+mod spot;
+pub use spot::Spot;
+
 /// A pane's id. The caller owns what it means.
 pub type PaneId = u64;
 

@@ -11,7 +11,7 @@ use kynex_core::open::{Opener, open_project};
 use kynex_core::toasts::Toast;
 
 use super::KynexApp;
-use super::keys::{ToggleSessions, ToggleTerminal, ToggleTimeline};
+use super::keys::{ToggleGit, ToggleSessions, ToggleTerminal, ToggleTimeline};
 use super::state::{Active, View};
 use crate::theme::theme;
 use crate::ui::{Icon, Tooltip, icon, icon_button};
@@ -99,7 +99,14 @@ impl KynexApp {
                     .text_color(t.text_placeholder)
                     .child(here.display().to_string()),
             )
-            .when(view == View::Code, |d| d.child(timeline))
+            .when(view == View::Code, |d| {
+                d.child(timeline).child(
+                    icon_button("toggle-git-pane", Icon::GitCommit, cx)
+                        .when(self.git_pane_shown(), |b| b.bg(t.active))
+                        .tooltip(Tooltip::for_action("Git pane", ToggleGit, "changes, commit, sync and history"))
+                        .on_click(cx.listener(|this, _, window, cx| this.toggle_git(&ToggleGit, window, cx))),
+                )
+            })
             .child({
                 // The project's Claude settings: permissions, mode, effort.
                 let path = path.clone();

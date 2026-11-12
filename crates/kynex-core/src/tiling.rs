@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
-use crate::layout::{Axis, Direction, Layout, PaneId, Rect, Rects};
+use crate::layout::{Axis, Direction, Layout, PaneId, Rect, Rects, Spot};
 use crate::live::Key;
 
 /// What a terminal pane is, beyond being one.
@@ -113,6 +113,9 @@ pub struct SavedLayout {
     /// [`Tiling::seed_side_panes`]); not again once they were closed.
     #[serde(default)]
     pub seeded: bool,
+    /// Where the Git pane was when it was closed last, for [`Tiling::open_git`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_spot: Option<Spot>,
 }
 
 impl SavedLayout {
@@ -132,6 +135,8 @@ pub struct Tiling {
     shown: Option<Key>,
     /// The tabs got their Sessions and Workspaces panes (once; closing them is the user's say).
     seeded: bool,
+    /// Where the Git pane was when it was closed last.
+    git_spot: Option<Spot>,
 }
 
 impl Tiling {
@@ -140,7 +145,13 @@ impl Tiling {
     pub fn save(&self, id_of: impl Fn(Key) -> Option<String>) -> SavedLayout {
         let sessions = self.layout.panes().into_iter().filter_map(|p| Some((p, id_of(self.key_of(p)?)?))).collect();
         let tools = self.tools.iter().map(|(p, t)| (*p, t.clone())).collect();
-        SavedLayout { layout: self.layout.clone(), sessions, tools: Some(tools), seeded: self.seeded }
+        SavedLayout {
+            layout: self.layout.clone(),
+            sessions,
+            tools: Some(tools),
+            seeded: self.seeded,
+            git_spot: self.git_spot.clone(),
+        }
     }
 
     /// Brings a saved layout back. Its panes get fresh ids from `*next_pane` up (advancing
@@ -198,6 +209,7 @@ impl Tiling {
         {
             t.set_focus(p);
         }
+        let mut git_spot = saved.git_spot.as_ref().and_then(|s| s.renamed(|p| renamed.get(&p).copied()));
         // The focused session pane takes `keep`.
         let focus = layout.focus().filter(|f| keys.contains_key(f)).or_else(|| keys.keys().min().copied());
         if let Some(k) = keep
@@ -208,6 +220,7 @@ impl Tiling {
             if let Some(key) = keys.remove(&focus) {
                 keys.insert(k, key);
             }
+            git_spot = git_spot.and_then(|s| s.renamed(|p| Some(if p == focus { k } else { p })));
         }
         (!layout.is_empty()).then_some(Self {
             layout,
@@ -216,6 +229,7 @@ impl Tiling {
             last_session: None,
             shown: None,
             seeded: saved.seeded,
+            git_spot,
         })
     }
 
@@ -228,6 +242,7 @@ impl Tiling {
             last_session: Some(pane),
             seeded: false,
             shown: None,
+            git_spot: None,
         }
     }
 
@@ -356,6 +371,30 @@ impl Tiling {
         }
         self.tools.insert(pane, tool);
         true
+    }
+
+    /// Opens the workspace's Git pane as `pane` in the active tab, focused: where it was when
+    /// it was closed last (beside the same panes, the same size, so theirs are as they were
+    /// then), else on that side of the tab's session pane focused last with the same share,
+    /// else on its right with half its room. False if there is one already, or no room.
+    pub fn open_git(&mut self, pane: PaneId, bounds: Rect) -> bool {
+        if !self.panes_of(Content::Git).is_empty() || self.layout.tab_of(pane).is_some() {
+            return false;
+        }
+        let spot = self.git_spot.clone();
+        if let Some(s) = &spot
+            && self.layout.tab_mut().is_some_and(|t| t.put_back(pane, s, bounds))
+        {
+            self.tools.insert(pane, Tool::Git);
+            return true;
+        }
+        let tab = self.layout.tab().map(|t| t.panes()).unwrap_or_default();
+        let session = |p: &PaneId| self.keys.contains_key(p) && tab.contains(p);
+        let Some(target) = self.session_focus().filter(session).or_else(|| tab.iter().copied().find(session)) else {
+            return false;
+        };
+        let (side, ratio) = spot.map_or((Direction::Right, 0.5), |s| (s.side(), s.ratio()));
+        self.split_tool(target, side, pane, Tool::Git, ratio, bounds)
     }
 
     pub fn layout(&self) -> &Layout {
@@ -643,8 +682,15 @@ impl Tiling {
     pub fn close_pane(&mut self, pane: PaneId) -> Option<Content> {
         let content = self.content(pane)?;
         let last_session = matches!(content, Content::Session(_)) && self.keys.len() < 2;
-        if last_session || self.layout.panes().len() < 2 || !self.layout.close_pane(pane) {
+        if last_session || self.layout.panes().len() < 2 {
             return None;
+        }
+        let spot = self.layout.tab_of(pane).and_then(|i| self.layout.tabs()[i].spot(pane));
+        if !self.layout.close_pane(pane) {
+            return None;
+        }
+        if content == Content::Git && spot.is_some() {
+            self.git_spot = spot;
         }
         self.keys.remove(&pane);
         self.tools.remove(&pane);

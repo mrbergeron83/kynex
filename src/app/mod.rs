@@ -27,7 +27,8 @@
 //! | `session_tidy.rs`   | many sessions at once: menu, tidying, list keys      |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `terminal_panes.rs` | terminal panes: Ctrl+`, run buttons, hide and show   |
-//! | `tool_panes.rs`     | the Git view and the timeline as panes               |
+//! | `tool_panes.rs`     | the timeline, sessions and workspaces as panes       |
+//! | `git_pane.rs`       | the Git pane: toggling, placing, what it asks for    |
 //! | `custom_commands.rs`| custom commands: keys, popup, pane, background       |
 //! | `agent_panes.rs`    | other agent CLIs in panes, their state off the screen |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
@@ -111,6 +112,7 @@ pub(crate) mod find;
 mod footer;
 mod git_file_modal;
 mod git_modal;
+mod git_pane;
 mod goto;
 mod grok_setup;
 mod handoff;
@@ -184,7 +186,7 @@ use kynex_core::session::{self, Kind, Session};
 pub use control::OPEN_AT_START;
 pub use custom_commands::bind_command_keys;
 use drafts::Draft;
-pub use keys::{SHELL_KEYS, SendPrefix, ToggleTerminal, bind_keys, prefix_key};
+pub use keys::{SHELL_KEYS, SendPrefix, ToggleGit, ToggleTerminal, bind_keys, prefix_key};
 use menus::OpenMenu;
 use palette::PaletteView;
 use scratch_modal::ScratchModal;
