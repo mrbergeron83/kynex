@@ -387,9 +387,9 @@ impl Palette {
 
 /// `over` laid on `base` at `amount` (0 to 1), as one opaque colour.
 /// The app mark's colours (`mark-dark.svg`), the same in every theme: housing,
-/// rim, knob and pointer.
+/// rim, caret and chevron.
 pub fn mark_colours() -> [Hsla; 4] {
-    [0x0f0e0c, 0x33312e, 0x77becf, 0x22201e].map(c)
+    [0x0f0e0c, 0x33312e, 0x77becf, 0xe5e2df].map(c)
 }
 
 pub fn mix(base: Hsla, over: Hsla, amount: f32) -> Hsla {

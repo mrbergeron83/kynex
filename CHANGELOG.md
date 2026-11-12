@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- A new icon: a K whose stem is a text caret and whose arms are a prompt chevron. In the title bar the caret is the lamp: it takes the shown session's state colour and pulses while Claude works.
+
 ### Added
 
 - The sessions list and the workspaces can be panes: "Sessions beside" and "Workspaces beside" on a pane's right-click menu, or the command palette. The sidebar shows whatever isn't a pane in the tab, and steps aside when both are.

@@ -68,8 +68,8 @@ pub enum Icon {
     Search,
     File,
     Files,
-    /// The pointer on the mark's knob, drawn filled.
-    MarkPointer,
+    /// The arms of the mark's K: a chevron on the mark's own grid.
+    MarkChevron,
 }
 
 impl Icon {
@@ -112,7 +112,7 @@ impl Icon {
             Icon::Search => "icons/search.svg",
             Icon::File => "icons/file.svg",
             Icon::Files => "icons/files.svg",
-            Icon::MarkPointer => "icons/mark-pointer.svg",
+            Icon::MarkChevron => "icons/mark-chevron.svg",
         }
     }
 }
@@ -187,12 +187,9 @@ const ICONS: [(&str, &str); 38] = [
         "files",
         r#"<path d="M15 2H9a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7z"/><path d="M15 2v5h5"/><path d="M4 7v12a2 2 0 0 0 2 2h9"/>"#,
     ),
-    // The knob's box: the mark's pointer (x 47 y 27, 6×21, rotated 38° about the
-    // knob centre) scaled from the 62-unit knob to 24, so the svg rotates about the knob.
-    (
-        "mark-pointer",
-        r#"<rect x="10.839" y="1.548" width="2.323" height="8.129" rx="1.161" fill="black" stroke="none" transform="rotate(38 12 12)"/>"#,
-    ),
+    // The mark's chevron (68,26 → 48,50 → 68,74, 12 wide on the 100-unit canvas) scaled
+    // to 24, so the svg laid over the whole mark lines up with it.
+    ("mark-chevron", r#"<path d="M16.32 6.24 11.52 12l4.8 5.76" stroke-width="2.88"/>"#),
 ];
 
 /// Serves the icons to gpui's `svg()` element.

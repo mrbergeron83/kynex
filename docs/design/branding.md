@@ -48,8 +48,10 @@ Four rules drive every decision:
 
 ## The mark
 
-A device seen from the front: a housing, one **knob** (the operator control, in petrol) and one
-**indicator lamp** (session state).
+A **K** on a housing: its stem is a text **caret** (the operator's, in petrol) and its arms are a
+prompt **chevron**. The caret is also the **indicator lamp** (session state). It replaced the first
+mark, a knob with a pointer and a separate lamp, in November 2026; the colour and type studies
+still show that one.
 
 The mark has **one look**, the dark one, whatever the theme or the viewer's colour scheme: its own
 dark housing is the background, so it reads on a light title bar too. Geometry on a 100×100
@@ -59,18 +61,16 @@ canvas (see the SVG); the colours are the dark palette's:
 | --- | --- | --- |
 | Housing | rect 100×100, rx 20 | `#0f0e0c` (dark `title_bar`) |
 | Rim | 1.5 stroke, inset .75, rx 19.25 | `#33312e` (dark `border`) |
-| Knob | circle (50, 54) r 31 | `#77becf` (dark `accent`) |
-| Pointer | rect x 47 y 27, 6×21, rx 3, rotated 38° about (50, 54) | `#22201e` (dark `elevated`) |
-| Lamp | circle (21, 20) r 6 | state colour (static icon: amber `#f2af48`) |
+| Caret | line (32, 26) to (32, 74), 12 wide, round caps | `#77becf` (dark `accent`), or the state colour |
+| Chevron | (68, 26) to (48, 50) to (68, 74), 12 wide, round caps and joins | `#e5e2df` (dark `text`) |
 
 Behaviour in the app (the mark is live, not just a logo):
 
-- **Title bar icon:** the lamp shows the shown session's state: accent pulsing (1.6 s ease) =
-  working, amber = needs you, green = done, red = failed, no lamp = idle. While working, the pointer
-  may sweep ±40° (2.4 s ease-in-out, alternate).
+- **Title bar icon:** the caret shows the shown session's state: accent pulsing (1.6 s ease) =
+  working, amber = needs you, green = done, red = failed, plain accent = idle.
 - **Taskbar / dock:** the app icon is the static mark. Showing "needs you" on the taskbar (Windows
   overlay icon, macOS dock badge) is a later nice-to-have.
-- Below ~20 px the rim and pointer can be dropped; the knob and lamp still carry it.
+- Below ~20 px the rim is dropped; the K still carries it.
 
 App icon files to generate from `mark-dark.svg`: Windows `.ico` (16, 20, 24, 32, 40, 48, 64, 256),
 macOS `.icns` (16–1024 @1x/2x), Linux PNGs (16–512) + SVG, all from the dark mark.
