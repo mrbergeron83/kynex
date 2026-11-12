@@ -18,7 +18,7 @@
 mod branch_ops;
 mod branches;
 mod changes;
-mod diff_view;
+pub(crate) mod diff_view;
 mod history;
 mod top_bar;
 

@@ -7,6 +7,7 @@ mod app;
 mod chrome;
 mod file_links;
 mod git;
+mod git_pane;
 mod markdown;
 mod pane;
 mod prompt;

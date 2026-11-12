@@ -3,9 +3,9 @@
 //! last). One of each per workspace; asking for another focuses it. A project's Git view
 //! (the toolbar's Git switch) is still the Git view filling the window.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use gpui::{AnyElement, Context, Window, div, prelude::*};
+use gpui::{AnyElement, Context, Entity, Window, div, prelude::*};
 use kynex_core::layout::{Direction, PaneId};
 use kynex_core::tiling::{Content, Tool};
 use kynex_core::toasts::Toast;
@@ -13,6 +13,7 @@ use kynex_core::toasts::Toast;
 use super::KynexApp;
 use super::sessions_panel::Parts;
 use super::timeline::WIDTH;
+use crate::git_pane::{GitPane, GitPaneEvent};
 
 /// How wide the sessions column is made, in pixels, as far as the window allows.
 const SIDE_WIDTH: f32 = 280.0;
@@ -29,12 +30,8 @@ impl KynexApp {
         let t = self.tiles.get(&ws)?;
         match t.content(pane)? {
             Content::Terminal => self.render_terminal_pane(pane, window, cx),
-            // The modal over the window draws this folder's view: one place at a time.
-            Content::Git if self.git_modal.as_deref().is_some_and(|m| kynex_core::workspace::same_folder(m, &ws)) => {
-                Some(div().size_full().bg(crate::theme::theme(cx).panel).into_any_element())
-            }
             Content::Git => {
-                let git = self.git_view(&ws, cx);
+                let git = self.git_pane(&ws, cx);
                 Some(div().size_full().child(git).into_any_element())
             }
             Content::Timeline => {
@@ -172,10 +169,40 @@ impl KynexApp {
     /// The workspace's changes on the right of pane `target`, sharing its room.
     pub(super) fn show_git_pane(&mut self, target: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, ws, _)) = self.tiling_scope() {
-            let git = self.git_view(&ws, cx);
+            let git = self.git_pane(&ws, cx);
             git.update(cx, |g, cx| g.refresh(cx));
         }
         self.open_tool(target, Tool::Git, 0.5, window, cx);
+    }
+
+    /// The Git pane beside the focused session, on worktree `path`'s changes. Outside
+    /// a project's panes (chat) the Git modal shows them instead.
+    pub(super) fn show_git_worktree(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((_, ws, _)) = self.tiling_scope() else { return self.open_git_modal(path, cx) };
+        let Some(target) = self.tiles.get(&ws).and_then(|t| t.session_focus()) else {
+            return self.open_git_modal(path, cx);
+        };
+        self.show_git_pane(target, window, cx);
+        self.git_pane(&ws, cx).update(cx, |g, cx| g.select(path, cx));
+    }
+
+    /// The Git pane for workspace folder `ws`, made the first time it's needed.
+    pub(super) fn git_pane(&mut self, ws: &Path, cx: &mut Context<Self>) -> Entity<GitPane> {
+        if let Some(p) = self.git_panes.get(ws) {
+            return p.clone();
+        }
+        let project = self.workspace_project().unwrap_or_else(|| ws.to_path_buf());
+        let worktrees = self.worktrees(&project, cx);
+        let pane = cx.new(|cx| GitPane::new(ws.to_path_buf(), worktrees, cx));
+        cx.subscribe(&pane, |this, _, ev: &GitPaneEvent, cx| match ev {
+            GitPaneEvent::OpenFile { root, path, untracked } => {
+                this.open_git_file_diff(root.clone(), path.clone(), *untracked, cx)
+            }
+            GitPaneEvent::OpenFull(path) => this.open_git_modal(path.clone(), cx),
+        })
+        .detach();
+        self.git_panes.insert(ws.to_path_buf(), pane.clone());
+        pane
     }
 
     /// The timeline on the right of pane `target`, the timeline's usual width.

@@ -418,6 +418,7 @@ impl KynexApp {
     pub(super) fn scroll_keys(&mut self, by: Scroll, cx: &mut Context<Self>) {
         // Not under the Git view or a modal: those keys are theirs.
         let covered = self.git_modal.is_some()
+            || self.git_file.is_some()
             || self.settings.is_some()
             || self.app_settings.is_some()
             || self.extensions.is_some()

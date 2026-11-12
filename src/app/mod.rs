@@ -42,6 +42,7 @@
 //! | `workspace_list.rs` | the workspaces and their open sessions in the sidebar |
 //! | `workspace_new.rs`  | making and removing workspaces, folding worktree tabs |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, from the header    |
+//! | `git_file_modal.rs` | a changed file's whole diff in a modal, from the Git pane |
 //! | `scratch_modal.rs`  | the file explorer in a modal: session or project     |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
@@ -108,6 +109,7 @@ mod extensions_plugins;
 mod extensions_servers;
 pub(crate) mod find;
 mod footer;
+mod git_file_modal;
 mod git_modal;
 mod goto;
 mod grok_setup;
@@ -166,7 +168,7 @@ mod viewer;
 mod workspace_list;
 mod workspace_new;
 mod workspaces;
-mod worktrees;
+pub(crate) mod worktrees;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -211,6 +213,10 @@ pub struct KynexApp {
     git: HashMap<PathBuf, Entity<GitView>>,
     /// The folder whose Git view is open in a modal over the conversation.
     git_modal: Option<PathBuf>,
+    /// A changed file's whole diff, in a modal over the window.
+    git_file: Option<Entity<crate::git_pane::file_modal::FileDiffView>>,
+    /// The Git pane of each workspace folder.
+    git_panes: HashMap<PathBuf, Entity<crate::git_pane::GitPane>>,
     /// Each open project's git worktrees, kept fresh in the background.
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
     /// Each project's saved workspaces (selection, sessions, order), read on first use.
@@ -596,6 +602,8 @@ impl KynexApp {
             chat,
             git: HashMap::new(),
             git_modal: None,
+            git_file: None,
+            git_panes: HashMap::new(),
             worktrees: HashMap::new(),
             workspaces: HashMap::new(),
             workspace_ui: Default::default(),

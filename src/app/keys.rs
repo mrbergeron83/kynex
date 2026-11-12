@@ -733,6 +733,12 @@ impl KynexApp {
             cx.stop_propagation();
             return;
         }
+        if k.key == "escape" && self.git_file.is_some() {
+            self.close_git_file_modal(cx);
+            self.focus_input(window, cx);
+            cx.stop_propagation();
+            return;
+        }
         // The scratch explorer: its preview, then the modal.
         if k.key == "escape" && self.menu.is_none() && self.close_scratch(cx) {
             cx.stop_propagation();

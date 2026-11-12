@@ -13,6 +13,7 @@ pub(crate) mod log;
 pub mod native;
 mod ops;
 pub(crate) mod status;
+pub(crate) mod tree;
 pub(crate) mod worktree;
 
 use std::ffi::{OsStr, OsString};
@@ -26,10 +27,14 @@ pub use branch::{
     Branch, branches, create_branch, create_branch_at, default_branch, delete_branch, delete_remote_branch,
     publish_branch, rename_branch, switch_branch,
 };
-pub use diff::{DiffLine, FileDiff, Hunk, LineKind, commit_diff, compare_diff, diff_stat, file_diff};
+pub use diff::{
+    DiffLine, FileDiff, Hunk, LineKind, change_starts, commit_diff, compare_diff, diff_stat, file_diff, file_stats,
+    whole_file_diff,
+};
 pub use log::{Commit, CommitDetail, Ref, RefKind, commit_detail, log};
 pub use ops::{Sync, commit, discard, last_message, stage, stage_all, sync, unstage, unstage_all};
 pub use status::{Change, FileStatus, Head, Status, status};
+pub use tree::{TreeFile, TreeRow, TreeStatus, tree_files, tree_rows};
 pub use worktree::{
     Worktree, add_worktree, add_worktree_from, default_worktree_path, fill_worktrees, list_worktrees,
     list_worktrees_quick, prune_worktrees, remove_worktree, worktree_in,

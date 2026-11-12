@@ -23,7 +23,7 @@ const ROW_HEIGHT: f32 = 20.;
 const GUTTER: f32 = 104.;
 
 #[derive(Clone)]
-enum Row {
+pub(crate) enum Row {
     File { path: SharedString, old_path: Option<SharedString>, added: usize, removed: usize },
     Hunk(SharedString),
     Line { kind: LineKind, old: Option<u32>, new: Option<u32>, text: SharedString, tokens: Rc<[(Range<usize>, Token)]> },
@@ -49,6 +49,15 @@ impl DiffState {
 
     pub fn failed(error: String) -> Self {
         Self { error: Some(error), ..Default::default() }
+    }
+
+    pub(crate) fn rows(&self) -> Rc<Vec<Row>> {
+        self.rows.clone()
+    }
+
+    /// Index of the row with the most characters, which sizes the list's width.
+    pub(crate) fn widest(&self) -> usize {
+        self.widest
     }
 
     /// `headers` adds a row naming each file, for diffs with more than one.
@@ -307,7 +316,7 @@ fn files_label(diff: &DiffState) -> String {
 }
 
 /// `scrolled`: how far the list is scrolled sideways.
-fn render_row(row: &Row, scrolled: f32, t: &Palette) -> AnyElement {
+pub(crate) fn render_row(row: &Row, scrolled: f32, t: &Palette) -> AnyElement {
     // The font is set here, not on the list: the list measures its widest row
     // outside its own text style, and that width is how far it scrolls.
     let base = div()
@@ -414,7 +423,7 @@ fn side(kind: LineKind) -> Side {
 }
 
 /// `+12 −3` in green and red.
-pub(super) fn counts(added: usize, removed: usize, t: &Palette) -> impl IntoElement + use<> {
+pub(crate) fn counts(added: usize, removed: usize, t: &Palette) -> impl IntoElement + use<> {
     div()
         .flex()
         .flex_none()
@@ -425,7 +434,7 @@ pub(super) fn counts(added: usize, removed: usize, t: &Palette) -> impl IntoElem
         .when(removed > 0, |d| d.child(div().text_color(t.error).child(format!("−{removed}"))))
 }
 
-pub(super) fn chip(label: &'static str, color: Hsla, t: &Palette) -> impl IntoElement + use<> {
+pub(crate) fn chip(label: &'static str, color: Hsla, t: &Palette) -> impl IntoElement + use<> {
     div()
         .flex_none()
         .px_1p5()
@@ -450,7 +459,7 @@ fn centered(text: impl Into<SharedString>, t: &Palette) -> gpui::Div {
 }
 
 /// `src/app/mod.rs` → (`src/app`, `mod.rs`).
-pub(super) fn split_path(path: &str) -> (String, String) {
+pub(crate) fn split_path(path: &str) -> (String, String) {
     match path.rsplit_once('/') {
         Some((dir, name)) => (dir.to_string(), name.to_string()),
         None => (String::new(), path.to_string()),

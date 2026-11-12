@@ -149,6 +149,8 @@ impl KynexApp {
         let palette = self.draw_leaving(|s| &mut s.palette, |e| &mut e.palette, window, cx, Self::render_palette);
         let git_modal =
             self.draw_leaving(|s| &mut s.git_modal, |e| &mut e.git_modal, window, cx, Self::render_git_modal);
+        let git_file =
+            self.draw_leaving(|s| &mut s.git_file, |e| &mut e.git_file, window, cx, Self::render_git_file_modal);
         let scratch = self.draw_leaving(|s| &mut s.scratch, |e| &mut e.scratch, window, cx, Self::render_scratch_modal);
         let viewer =
             self.draw_leaving(|s| &mut s.viewer, |e| &mut e.viewer, window, cx, |s, l, _, _| s.render_image_viewer(l));
@@ -156,6 +158,7 @@ impl KynexApp {
         root.children(toasts)
             .children(popup)
             .children(git_modal)
+            .children(git_file)
             .children(scratch)
             .children(settings)
             .children(app_settings)

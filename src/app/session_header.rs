@@ -102,7 +102,7 @@ impl KynexApp {
                 .when(!w.main, |d| d.child(div().text_color(t.info).child("worktree")))
                 .children(git_stats(&w, &t))
                 .tooltip(Tooltip::with_meta(format!("{where_} at {}", w.path.display()), "Click to see its changes"))
-                .on_click(cx.listener(move |this, _, _, cx| this.open_git_modal(path.clone(), cx)))
+                .on_click(cx.listener(move |this, _, window, cx| this.show_git_worktree(path.clone(), window, cx)))
         });
 
         // Where Claude is actually working, when that's another worktree: one
