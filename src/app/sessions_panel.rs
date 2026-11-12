@@ -104,6 +104,35 @@ impl KynexApp {
         }
     }
 
+    /// Runs `f` once the list of `cwd` is read: now if it is, else after reading it off the
+    /// UI thread (a folded workspace's isn't). The tree reads it again when it's drawn.
+    pub(super) fn with_list(
+        &mut self,
+        cwd: &Path,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
+    ) {
+        if self.sessions.contains_key(cwd) {
+            return f(self, cx);
+        }
+        let dir = cwd.to_path_buf();
+        cx.spawn(async move |this, cx| {
+            let read = dir.clone();
+            let (items, default_branch) = cx
+                .background_spawn(
+                    async move { (session::list_sessions(&read), kynex_core::git::default_branch(&read)) },
+                )
+                .await;
+            this.update(cx, |this, cx| {
+                let read = ListRead { cwd: dir.clone(), current: None, live: Vec::new() };
+                this.sessions.entry(dir).or_insert(SessionList { read, items, default_branch, stale: true });
+                f(this, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Has the list of `cwd` read if it isn't, or is out of date for its `open` sessions
     /// and the shown one (`current`, when it's there). Returns whether it's still to come.
     pub(super) fn want_list(

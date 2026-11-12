@@ -178,8 +178,13 @@ impl KynexApp {
     }
 
     /// Archives the listed sessions of `cwd` not used in `days`; pinned and grouped ones
-    /// stay. Says how many went.
+    /// stay. Says how many went. A folded workspace's list is read first.
     pub(super) fn archive_older_than(&mut self, cwd: &Path, days: u32, cx: &mut Context<Self>) {
+        let dir = cwd.to_path_buf();
+        self.with_list(cwd, cx, move |this, cx| this.archive_listed_older_than(&dir, days, cx));
+    }
+
+    fn archive_listed_older_than(&mut self, cwd: &Path, days: u32, cx: &mut Context<Self>) {
         let listed = self.listed_times(cwd);
         let cutoff = Self::now_secs() - i64::from(days) * 86_400;
         let mut archived = 0;
@@ -193,8 +198,14 @@ impl KynexApp {
     }
 
     /// Purging: asks to delete the archived sessions of `cwd` (those not used in `days`,
-    /// if given); open ones are kept.
+    /// if given); open ones are kept. A folded workspace's list is read first, and the
+    /// workspace opens in the tree so the sessions to delete show.
     pub(super) fn purge_archived(&mut self, cwd: &Path, days: Option<u32>, cx: &mut Context<Self>) {
+        let dir = cwd.to_path_buf();
+        self.with_list(cwd, cx, move |this, cx| this.purge_listed_archived(&dir, days, cx));
+    }
+
+    fn purge_listed_archived(&mut self, cwd: &Path, days: Option<u32>, cx: &mut Context<Self>) {
         let listed = self.listed_times(cwd);
         let cutoff = days.map(|d| Self::now_secs() - i64::from(d) * 86_400);
         let open: Vec<String> = self
@@ -218,6 +229,10 @@ impl KynexApp {
             self.toast(Toast::info(msg));
         } else {
             self.organize.archive_open.insert(cwd.to_path_buf());
+            let shown = self.panel_folder().is_some_and(|(_, c)| kynex_core::workspace::same_folder(&c, cwd));
+            if !shown {
+                self.edit_groups(cwd, |g| g.tree_open = true);
+            }
             self.ask_delete_sessions(cwd, &ids);
             if !kept.is_empty() {
                 self.toast(Toast::info(kept));
