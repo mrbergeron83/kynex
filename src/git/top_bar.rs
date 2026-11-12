@@ -34,8 +34,14 @@ impl GitView {
         let branch_button = ghost_button("git-branch", cx)
             .font_weight(FontWeight::MEDIUM)
             .child(icon(Icon::GitBranch, t.text_muted).size_3p5())
-            .min_w_0()
-            .child(div().min_w_0().truncate().font_family(mono()).child(head_label))
+            .flex_none()
+            .child(
+                div()
+                    .font_family(mono())
+                    .whitespace_nowrap()
+                    .when(compact, |d| d.max_w(px(120.)).truncate())
+                    .child(head_label),
+            )
             .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
             .tooltip(Tooltip::text("Switch or create a branch"))
             .on_click(cx.listener(|this, _, window, cx| {
@@ -54,10 +60,13 @@ impl GitView {
             } else {
                 (format!("{} to push", status.ahead), format!("{} to pull", status.behind))
             };
+            // What gives way first when the bar is short of room.
             div()
                 .id("git-upstream")
                 .flex()
-                .flex_none()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
                 .items_center()
                 .gap_1p5()
                 .text_xs()
@@ -111,7 +120,7 @@ impl GitView {
             .px_2()
             .border_b_1()
             .border_color(t.border_variant)
-            .child(div().relative().min_w_0().flex_shrink(1.).child(branch_button).children(menu))
+            .child(div().relative().flex_none().child(branch_button).children(menu))
             .children(upstream)
             .when(no_upstream && !compact, |d| {
                 d.child(div().flex_none().text_xs().text_color(t.text_placeholder).child("not published"))

@@ -128,6 +128,18 @@ impl Status {
     }
 }
 
+/// The changed file `wanted` names: absolute, or as Claude wrote it (status paths are from the
+/// repository's root, which may sit above the folder it was said from). The longest path
+/// that `wanted` ends with wins.
+pub fn find_file<'a>(status: &'a Status, wanted: &Path) -> Option<&'a FileStatus> {
+    let wanted = wanted.to_string_lossy().replace('\\', "/");
+    status
+        .files
+        .iter()
+        .filter(|f| wanted == f.path || wanted.ends_with(&format!("/{}", f.path)))
+        .max_by_key(|f| f.path.len())
+}
+
 /// The status of the working tree at `root`: read in-process, or by `git status` when
 /// that can't answer (see [`super::native`]). Blocking.
 pub fn status(root: &Path) -> Result<Status, String> {
@@ -217,6 +229,19 @@ pub(crate) fn parse(s: &str) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_linked_file_is_found_by_its_end() {
+        let f =
+            |p: &str| FileStatus { path: p.into(), orig_path: None, staged: None, unstaged: Some(Change::Modified) };
+        let st = Status { files: vec![f("a.rs"), f("src/a.rs"), f("lib/b.rs")], ..Default::default() };
+        let at = |w: &str| find_file(&st, Path::new(w)).map(|f| f.path.as_str());
+        assert_eq!(at("C:\\repo\\src\\a.rs"), Some("src/a.rs"));
+        assert_eq!(at("/repo/a.rs"), Some("a.rs"));
+        assert_eq!(at("lib/b.rs"), Some("lib/b.rs"));
+        assert_eq!(at("/repo/xa.rs"), None);
+        assert_eq!(at("/repo/c.rs"), None);
+    }
 
     const SAMPLE: &str = "# branch.oid cc450cc644cecaa5f6871f1fae3b84102351caaf\0\
         # branch.head main\0\

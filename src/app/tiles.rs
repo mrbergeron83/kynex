@@ -18,7 +18,7 @@ use kynex_core::tiling::{Content, Tiling};
 
 use super::KynexApp;
 use super::session_groups::DraggedSession;
-use super::state::{Active, View};
+use super::state::Active;
 use crate::pane::SessionPane;
 use crate::theme::theme;
 use crate::ui::input::{InputEvent, TextInput};
@@ -67,15 +67,15 @@ impl KynexApp {
     }
 
     /// The code project's workspace you're in: (project folder, workspace folder, shown session).
-    /// `None` outside the Code view and in chat, which stays a single pane.
+    /// `None` in chat, which stays a single pane.
     pub(super) fn tiling_scope(&self) -> Option<(PathBuf, PathBuf, Key)> {
         let Active::Project(i) = self.saved.active else { return None };
-        let p = self.saved.projects.get(i).filter(|p| p.view == View::Code)?;
+        let p = self.saved.projects.get(i)?;
         let s = self.code.get(&p.path)?.current()?;
         Some((p.path.clone(), s.cwd.clone(), s.uid))
     }
 
-    /// The workspace's tiling: a project's Code view always draws its panes as tiles, one
+    /// The workspace's tiling: a project always draws its panes as tiles, one
     /// pane included.
     fn tiled(&self) -> Option<&Tiling> {
         let (_, cwd, _) = self.tiling_scope()?;
@@ -392,7 +392,7 @@ impl KynexApp {
     /// The panes of a project's workspace, one or several: each in a tile (a rounded,
     /// bordered surface with a gap round it; the focused tile's border is in the project's
     /// colour and a pixel thicker), with a handle on every divider to drag. With no gap the
-    /// panes are flush, split by 1px dividers. `None` outside a project's Code view (chat),
+    /// panes are flush, split by 1px dividers. `None` outside a project (chat),
     /// which `render_code_main` draws as one plain pane.
     pub(super) fn render_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let t = theme(cx).clone();

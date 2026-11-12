@@ -136,12 +136,13 @@ impl GitPane {
         if let Owned::File(path) = &what
             && let Some(f) = self.files.iter().find(|f| f.path == *path)
         {
-            let (root, path, untracked) = (self.selected.clone(), path.clone(), f.status == TreeStatus::Untracked);
+            let (root, path, untracked, staged) =
+                (self.selected.clone(), path.clone(), f.status == TreeStatus::Untracked, f.staged());
             item(
                 "diff",
                 "Open diff".into(),
                 Box::new(move |_, cx| {
-                    cx.emit(GitPaneEvent::OpenFile { root: root.clone(), path: path.clone(), untracked })
+                    cx.emit(GitPaneEvent::OpenFile { root: root.clone(), path: path.clone(), untracked, staged })
                 }),
                 cx,
             );

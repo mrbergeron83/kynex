@@ -261,7 +261,9 @@ impl KynexApp {
                         .text_color(t.text_muted)
                         .child(fmt::file_name(f).to_string())
                         .tooltip(Tooltip::with_meta("Show its changes", path.display().to_string()))
-                        .on_click(cx.listener(move |this, _, _, cx| this.open_git_file(cwd.clone(), path.clone(), cx)))
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.open_file_changes(cwd.clone(), path.clone(), cx)),
+                        )
                 });
                 let more = files.len().saturating_sub(MAX_CHIPS);
                 let rule = || div().flex_1().min_w(px(16.)).h(px(1.)).bg(t.border_variant);

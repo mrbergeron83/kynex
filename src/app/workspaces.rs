@@ -12,7 +12,6 @@ use kynex_core::toasts::Toast;
 use kynex_core::workspace::{self, Workspaces};
 
 use super::KynexApp;
-use super::state::{Active, View};
 
 /// A checkout with the worktree it came from (for its changes).
 pub(super) type Entry = (workspace::Workspace, Option<Worktree>);
@@ -97,7 +96,7 @@ impl KynexApp {
     }
 
     /// The folder you're in: the shown session's, which is the selected workspace's.
-    /// The terminal, the Git view and the toolbar's path follow it.
+    /// The terminal and the toolbar's path follow it.
     pub(super) fn workspace_cwd(&self) -> Option<PathBuf> {
         let p = self.active_project()?;
         Some(self.code.get(&p.path).and_then(|l| l.current()).map_or_else(|| p.path.clone(), |s| s.cwd.clone()))
@@ -113,6 +112,7 @@ impl KynexApp {
                 || cwds.iter().any(|c| workspace::same_folder(c, f))
         };
         self.git.retain(|f, _| !ours(f));
+        self.git_panes.retain(|f, _| !ours(f));
         // Dropping a panel ends its shells.
         self.terminals.retain(|(f, _)| !ours(f));
     }
@@ -137,9 +137,6 @@ impl KynexApp {
         workspaces.select(target);
         let remembered = workspaces.session(target).map(str::to_string);
         self.save_workspaces(&project, cx);
-        // Sessions are reached through the Code view; the view you were in comes back after.
-        let was_git = self.active_project().is_some_and(|p| p.view == View::Git);
-        self.show_code_view();
         let there = |s: &Session| s.kind == Kind::Code && workspace::same_folder(&s.cwd, target);
         // The workspace's remembered session if it's open, else any session there.
         let remembered_open = |s: &Session| there(s) && remembered.is_some() && s.session_id == remembered;
@@ -149,13 +146,6 @@ impl KynexApp {
                 Some(id) => Session::resume(Kind::Code, cwd, id, self.wake.clone()),
                 None => Session::new(Kind::Code, cwd),
             });
-        }
-        if was_git
-            && let Active::Project(i) = self.saved.active
-            && let Some(p) = self.saved.projects.get_mut(i)
-        {
-            p.view = View::Git;
-            self.save();
         }
         cx.notify();
     }

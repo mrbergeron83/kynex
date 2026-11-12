@@ -6,12 +6,15 @@
 use std::path::{Path, PathBuf};
 
 use gpui::{AppContext, Context, Entity, Window};
+use kynex_core::git::{self, Change, Staged};
 use kynex_core::layout::PaneId;
 use kynex_core::tiling::{Content, Tool};
 use kynex_core::toasts::Toast;
+use kynex_core::workspace::same_folder;
 
 use super::KynexApp;
 use super::keys::ToggleGit;
+use super::state::Active;
 use crate::git_pane::{GitPane, GitPaneEvent};
 
 impl KynexApp {
@@ -102,30 +105,33 @@ impl KynexApp {
         }
         let project = self.workspace_project().unwrap_or_else(|| ws.to_path_buf());
         let worktrees = self.worktrees(&project, cx);
-        let history = self.tiles.get(ws).is_some_and(|t| t.git_history());
+        let tab = self.tiles.get(ws).map(|t| t.git_tab()).unwrap_or_default();
         let pane = cx.new(|cx| {
             let mut pane = GitPane::new(ws.to_path_buf(), worktrees, cx);
-            pane.set_history(history, cx);
+            pane.set_tab(tab, cx);
             pane
         });
         cx.subscribe_in(&pane, window, |this, _, ev: &GitPaneEvent, window, cx| match ev {
-            GitPaneEvent::OpenFile { root, path, untracked } => {
-                this.open_git_file_diff(root.clone(), path.clone(), *untracked, cx)
+            GitPaneEvent::OpenFile { root, path, untracked, staged } => {
+                this.open_git_file_diff(root.clone(), path.clone(), *untracked, *staged, cx)
             }
-            GitPaneEvent::OpenFull(path) => this.open_git_modal(path.clone(), cx),
+            GitPaneEvent::OpenDetail(view) => {
+                let title = view.read(cx).detail_title();
+                this.open_git_detail(view.clone(), title, cx)
+            }
+            GitPaneEvent::OpenFolder(folder) => this.open_folder_with_git(folder.clone(), cx),
             GitPaneEvent::Close => this.close_git_pane(window, cx),
-            GitPaneEvent::OpenDetail(view) => this.open_git_detail(view.clone(), "Commit", cx),
-            GitPaneEvent::Tab(history) => {
+            GitPaneEvent::Tab(tab) => {
                 if let Some((_, ws, _)) = this.tiling_scope()
                     && let Some(t) = this.tiles.get_mut(&ws)
                 {
-                    t.set_git_history(*history);
+                    t.set_git_tab(*tab);
                 }
             }
-            // The Git view of that folder (the full view, the modal) reads it again.
+            // A Git view of that folder (chat's modal) reads it again.
             GitPaneEvent::Changed(root) => {
                 for (folder, view) in &this.git {
-                    if kynex_core::workspace::same_folder(folder, root) {
+                    if same_folder(folder, root) {
                         view.update(cx, |v, cx| v.refresh(cx));
                     }
                 }
@@ -134,5 +140,83 @@ impl KynexApp {
         .detach();
         self.git_panes.insert(ws.to_path_buf(), pane.clone());
         pane
+    }
+
+    /// Opens `folder` (a worktree) as one of its project's workspaces, or as a project tab of
+    /// its own, with the Git pane open there.
+    pub(super) fn open_folder_with_git(&mut self, folder: PathBuf, cx: &mut Context<Self>) {
+        self.git_modal = None;
+        // A worktree of an open project is one of its workspaces, not a tab.
+        if !self.open_as_workspace(&folder, cx) {
+            self.add_project(folder.clone());
+            // A worktree is another view of a project you have: no setup checklist for it.
+            self.setup_for = None;
+        }
+        self.want_git_pane = Some((folder, std::time::Instant::now()));
+        self.save();
+        cx.notify();
+    }
+
+    /// Each frame, in a project's panes: the Git pane opens where it was asked for (a folder
+    /// opened from Git, a project left on the old full-window Git view) once its panes exist.
+    pub(super) fn sync_git_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((_, ws, _)) = self.tiling_scope() else { return };
+        if !self.tiles.contains_key(&ws) {
+            return;
+        }
+        // Asked for a folder that didn't come up (soon): it isn't wanted any more.
+        let wanted = self.want_git_pane.as_ref().map(|(w, at)| (same_folder(w, &ws), at.elapsed().as_secs() > 10));
+        let mut wanted = match wanted {
+            Some((here, stale)) if here || stale => {
+                self.want_git_pane = None;
+                here && !stale
+            }
+            _ => false,
+        };
+        if let Active::Project(i) = self.saved.active
+            && let Some(p) = self.saved.projects.get_mut(i)
+            && p.was_on_git()
+        {
+            p.left_git();
+            self.save();
+            wanted = true;
+        }
+        if wanted && self.tool_pane(Content::Git).is_none() {
+            self.open_git_pane(window, cx);
+        }
+    }
+
+    /// A file link in the transcript (or the scratch files): its diff. In a project's panes,
+    /// the file's whole diff in a modal; in chat, the Git modal on it.
+    pub(super) fn open_file_changes(&mut self, cwd: PathBuf, file: PathBuf, cx: &mut Context<Self>) {
+        if self.tiling_scope().is_none() {
+            return self.open_git_file(cwd, file, cx);
+        }
+        cx.spawn(async move |this, cx| {
+            let at = cwd.clone();
+            let status = cx.background_spawn(async move { git::status(&at) }).await;
+            this.update(cx, |this, cx| {
+                let found = status.as_ref().ok().and_then(|s| git::find_file(s, &file)).cloned();
+                match found {
+                    Some(f) => {
+                        let untracked = f.unstaged == Some(Change::Untracked);
+                        let staged = match (f.staged, f.unstaged) {
+                            (Some(_), Some(_)) => Staged::Partly,
+                            (Some(_), None) => Staged::All,
+                            _ => Staged::No,
+                        };
+                        this.open_git_file_diff(cwd.clone(), f.path, untracked, staged, cx);
+                    }
+                    None => {
+                        let name =
+                            file.file_name().map_or_else(|| file.display().to_string(), |n| n.to_string_lossy().into());
+                        this.toast(Toast::info(format!("{name} has no changes")));
+                        cx.notify();
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 }

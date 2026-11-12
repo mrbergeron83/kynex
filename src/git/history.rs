@@ -5,15 +5,14 @@ use gpui::{AnyElement, Context, FontWeight, Hsla, div, prelude::*, uniform_list}
 use kynex_core::fmt::ago_unix;
 use kynex_core::git::{self, Commit, Ref, RefKind};
 
-use super::{GitEvent, GitView, Selection};
+use super::{GitView, Selection};
 use crate::theme::{Palette, mono, theme};
 use crate::ui::wash::row_wash;
 use crate::ui::{Tooltip, scrollbar, spinner};
 
 impl GitView {
-    /// The commit list. `hosted` (the Git pane's): a click asks for the commit's details in a
-    /// modal ([`GitEvent::ShowDetail`]) rather than beside the list.
-    pub(super) fn render_history(&mut self, hosted: bool, cx: &mut Context<Self>) -> AnyElement {
+    /// The commit list; more is read as it scrolls.
+    pub(super) fn render_history(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         if self.commits.is_empty() {
             return div()
@@ -41,7 +40,7 @@ impl GitView {
                     .map(|i| {
                         let c = &commits[i];
                         let is_selected = selected.as_deref() == Some(c.sha.as_str());
-                        commit_row(i, c, is_selected, hosted, &t, cx)
+                        commit_row(i, c, is_selected, &t, cx)
                     })
                     .collect()
             }),
@@ -79,14 +78,7 @@ impl GitView {
     }
 }
 
-fn commit_row(
-    i: usize,
-    c: &Commit,
-    selected: bool,
-    hosted: bool,
-    t: &Palette,
-    cx: &mut Context<GitView>,
-) -> gpui::AnyElement {
+fn commit_row(i: usize, c: &Commit, selected: bool, t: &Palette, cx: &mut Context<GitView>) -> gpui::AnyElement {
     let hover = t.hover;
     let sha = c.sha.clone();
     div()
@@ -129,12 +121,7 @@ fn commit_row(
                 .child(div().flex_none().child(ago_unix(c.time))),
         )
         .tooltip(Tooltip::with_meta(c.subject.clone(), format!("{} · {}", c.short, c.author)))
-        .on_click(cx.listener(move |this, _, _, cx| {
-            this.select(Selection::Commit(sha.clone()), cx);
-            if hosted {
-                cx.emit(GitEvent::ShowDetail);
-            }
-        }))
+        .on_click(cx.listener(move |this, _, _, cx| this.select(Selection::Commit(sha.clone()), cx)))
         .into_any_element()
 }
 

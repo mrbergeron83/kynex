@@ -611,13 +611,15 @@ fn the_git_pane_keeps_its_side_and_share_when_its_neighbours_changed() {
 #[test]
 fn the_git_pane_s_tab_is_kept_with_the_layout() {
     let mut t = Tiling::new(1, 10);
-    assert!(!t.git_history());
-    t.set_git_history(true);
+    assert_eq!(t.git_tab(), GitTab::Changes);
+    t.set_git_tab(GitTab::Branches);
     let saved: SavedLayout = serde_json::from_str(&serde_json::to_string(&t.save(id_of)).unwrap()).unwrap();
-    assert!(Tiling::restore(&saved, &mut 5, None, key_of_id).unwrap().git_history());
-    // A layout from before has none: Changes.
+    assert_eq!(Tiling::restore(&saved, &mut 5, None, key_of_id).unwrap().git_tab(), GitTab::Branches);
+    // A layout from before has none, and a tab this Kynex doesn't know reads as Changes.
     let old = serde_json::to_string(&Tiling::new(1, 10).save(id_of)).unwrap();
-    assert!(!old.contains("git_history"));
+    assert!(!old.contains("git_tab"));
     let saved: SavedLayout = serde_json::from_str(&old).unwrap();
-    assert!(!Tiling::restore(&saved, &mut 5, None, key_of_id).unwrap().git_history());
+    assert_eq!(saved.git_tab, GitTab::Changes);
+    let newer = old.replace("\"seeded\":false", "\"seeded\":false,\"git_tab\":\"Blame\"");
+    assert_eq!(serde_json::from_str::<SavedLayout>(&newer).unwrap().git_tab, GitTab::Changes);
 }

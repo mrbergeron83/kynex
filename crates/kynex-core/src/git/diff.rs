@@ -142,10 +142,34 @@ pub(crate) fn parse_numstat_files(s: &str) -> Vec<(String, usize, usize)> {
 /// as all removed, and an unchanged one (or any file in a repo with no commits yet) as
 /// all context. Blocking.
 pub fn whole_file_diff(root: &Path, path: &str, untracked: bool) -> Result<FileDiff, String> {
+    whole_file_diff_side(root, path, untracked, DiffSide::All)
+}
+
+/// Which of a file's changes a diff shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiffSide {
+    /// Everything since the last commit, staged or not (working tree vs HEAD).
+    All,
+    /// What the next commit gets (index vs HEAD).
+    Staged,
+    /// What isn't staged (working tree vs index).
+    Unstaged,
+}
+
+/// [`whole_file_diff`] of one `side` of the file's changes, for a file partly staged.
+/// Blocking.
+pub fn whole_file_diff_side(root: &Path, path: &str, untracked: bool, side: DiffSide) -> Result<FileDiff, String> {
     if untracked {
         return file_diff(root, path, false, true);
     }
-    let text = git(root, &["diff", "HEAD", "--no-ext-diff", "-M", "--unified=1000000", "--", path]).unwrap_or_default();
+    let mut args = vec!["diff"];
+    match side {
+        DiffSide::All => args.push("HEAD"),
+        DiffSide::Staged => args.push("--cached"),
+        DiffSide::Unstaged => {}
+    }
+    args.extend(["--no-ext-diff", "-M", "--unified=1000000", "--", path]);
+    let text = git(root, &args).unwrap_or_default();
     if let Some(d) = parse(&text).into_iter().next() {
         return Ok(d);
     }

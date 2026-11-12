@@ -573,7 +573,6 @@ impl KynexApp {
             None if by > 0 => 0,
             None => n - 1,
         };
-        self.show_code_view();
         self.switch_session(kind, cwd, order[next as usize].clone());
         self.focus_input(window, cx);
         cx.notify();

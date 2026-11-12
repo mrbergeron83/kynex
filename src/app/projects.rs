@@ -9,7 +9,7 @@ use kynex_core::paths::chat_dir;
 use kynex_core::session::{Kind, Session};
 
 use super::KynexApp;
-use super::state::{Active, ProjectState, View};
+use super::state::{Active, ProjectState};
 
 impl KynexApp {
     /// Every open session, in every tab.
@@ -105,8 +105,7 @@ impl KynexApp {
     }
 
     /// The key of the session the composer talks to: like `focused_key()`, but
-    /// `None` in the Git view, and a folder with no
-    /// session gets one. For actions that used to go through `session_mut()`.
+    /// a folder with no session gets one. For actions that used to go through `session_mut()`.
     pub(super) fn composer_key(&mut self) -> Option<Key> {
         self.session_mut().map(|s| s.uid)
     }
@@ -138,9 +137,6 @@ impl KynexApp {
             Active::Chat => (Kind::Chat, chat_dir(), None),
             Active::Project(i) => {
                 let p = self.saved.projects.get(i)?;
-                if p.view != View::Code {
-                    return None;
-                }
                 (Kind::Code, p.path.clone(), p.session_id.clone())
             }
         };
@@ -186,18 +182,6 @@ impl KynexApp {
         self.live_mut()?.current_mut()
     }
 
-    /// Puts the active project back on its conversation, for picking a session
-    /// in the sessions panel while the Git view is up.
-    pub(super) fn show_code_view(&mut self) {
-        if let Active::Project(i) = self.saved.active
-            && let Some(p) = self.saved.projects.get_mut(i)
-            && p.view != View::Code
-        {
-            p.view = View::Code;
-            self.save();
-        }
-    }
-
     /// Shows `s` in the active tab. Sessions it replaces keep running if
     /// they're working; idle ones close.
     pub(super) fn open_session(&mut self, mut s: Session) {
@@ -227,7 +211,6 @@ impl KynexApp {
 
     /// A new session in the active tab, unless the shown one is still new.
     pub(super) fn new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.show_code_view();
         cx.notify();
         if let Some(s) = self.session_mut()
             && s.session_id.is_some()
@@ -299,7 +282,7 @@ impl KynexApp {
             None => {
                 // A folder opened for the first time starts on its setup checklist (open_pending_setup).
                 self.setup_for = Some(path.clone());
-                self.saved.projects.push(ProjectState { path, view: View::Code, session_id: None, own_tab: false });
+                self.saved.projects.push(ProjectState::new(path));
                 self.saved.projects.len() - 1
             }
         };

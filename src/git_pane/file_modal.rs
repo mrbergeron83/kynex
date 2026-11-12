@@ -1,5 +1,6 @@
 //! One changed file as a whole: every line of it, the changes tinted, with buttons (and
-//! keys) to jump to the previous / next change. Shown in a modal over the window.
+//! keys) to jump to the previous / next change. A file partly staged can show all its
+//! changes, the staged ones or the unstaged ones. Shown in a modal over the window.
 
 use std::path::PathBuf;
 
@@ -8,10 +9,11 @@ use gpui::{
     AnyElement, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent, ListHorizontalSizingBehavior,
     ScrollStrategy, SharedString, UniformListScrollHandle, Window, div, prelude::*, uniform_list,
 };
-use kynex_core::git::{self, FileDiff};
+use kynex_core::git::{self, DiffSide, FileDiff, Staged};
 
 use crate::git::diff_view::{DiffState, chip, counts, render_row, split_path};
 use crate::theme::theme;
+use crate::ui::wash::row_wash;
 use crate::ui::{Icon, Tooltip, icon_button, scrollbar, spinner};
 
 /// What the view asks of the app.
@@ -25,7 +27,12 @@ impl EventEmitter<FileDiffEvent> for FileDiffView {}
 const CONTEXT_ABOVE: usize = 3;
 
 pub struct FileDiffView {
+    root: PathBuf,
     path: String,
+    untracked: bool,
+    /// How much of the file is staged: partly, and the sides can be shown apart.
+    staged: Staged,
+    side: DiffSide,
     state: DiffState,
     /// The file's flags and counts; its lines live in `state`.
     meta: Option<FileDiff>,
@@ -40,12 +47,42 @@ pub struct FileDiffView {
 }
 
 impl FileDiffView {
-    pub fn new(root: PathBuf, path: String, untracked: bool, cx: &mut Context<Self>) -> Self {
-        let p = path.clone();
+    pub fn new(root: PathBuf, path: String, untracked: bool, staged: Staged, cx: &mut Context<Self>) -> Self {
+        let mut view = Self {
+            root,
+            path,
+            untracked,
+            staged,
+            side: DiffSide::All,
+            state: DiffState::loading(),
+            meta: None,
+            loading: true,
+            error: None,
+            starts: Vec::new(),
+            current: 0,
+            scroll: UniformListScrollHandle::new(),
+            focus: cx.focus_handle(),
+            focused: false,
+        };
+        view.load(cx);
+        view
+    }
+
+    /// Reads the side of the file's changes picked, and opens on its first change.
+    fn load(&mut self, cx: &mut Context<Self>) {
+        let (root, p, untracked, side) = (self.root.clone(), self.path.clone(), self.untracked, self.side);
+        self.loading = true;
+        self.error = None;
         cx.spawn(async move |this, cx| {
-            let diff = cx.background_spawn(async move { git::whole_file_diff(&root, &p, untracked) }).await;
+            let diff = cx.background_spawn(async move { git::whole_file_diff_side(&root, &p, untracked, side) }).await;
             this.update(cx, |this, cx| {
+                // Another side was picked meanwhile.
+                if this.side != side {
+                    return;
+                }
                 this.loading = false;
+                this.starts.clear();
+                this.current = 0;
                 match diff {
                     Ok(mut d) => {
                         // A hunk's header is a row before its lines.
@@ -67,20 +104,52 @@ impl FileDiffView {
             .ok();
         })
         .detach();
-        Self {
-            path,
-            state: DiffState::loading(),
-            meta: None,
-            loading: true,
-            error: None,
-            starts: Vec::new(),
-            current: 0,
-            scroll: UniformListScrollHandle::new(),
-            focus: cx.focus_handle(),
-            focused: false,
+    }
+
+    fn show_side(&mut self, side: DiffSide, cx: &mut Context<Self>) {
+        if self.side != side {
+            self.side = side;
+            self.load(cx);
+            cx.notify();
         }
     }
 
+    /// All / Staged / Unstaged, for a file with changes on both sides.
+    fn sides(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.staged != Staged::Partly {
+            return None;
+        }
+        let t = theme(cx).clone();
+        let button =
+            |id: &'static str, label: &'static str, side: DiffSide, tip: &'static str, cx: &mut Context<Self>| {
+                let on = self.side == side;
+                div()
+                    .id(id)
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .h(px(22.))
+                    .px_2()
+                    .rounded_md()
+                    .text_xs()
+                    .cursor_pointer()
+                    .text_color(if on { t.text } else { t.text_muted })
+                    .child(row_wash(on, t.hover, t.active))
+                    .child(label)
+                    .tooltip(Tooltip::text(tip))
+                    .on_click(cx.listener(move |this, _, _, cx| this.show_side(side, cx)))
+            };
+        Some(
+            div()
+                .flex()
+                .flex_none()
+                .gap_0p5()
+                .child(button("file-diff-all", "All", DiffSide::All, "Every change since the last commit", cx))
+                .child(button("file-diff-staged", "Staged", DiffSide::Staged, "What the next commit gets", cx))
+                .child(button("file-diff-unstaged", "Unstaged", DiffSide::Unstaged, "What isn't staged yet", cx))
+                .into_any_element(),
+        )
+    }
     fn goto(&mut self, n: usize) {
         if let Some(&row) = self.starts.get(n) {
             self.current = n;
@@ -127,6 +196,7 @@ impl FileDiffView {
             }
         });
         let (added, removed) = self.meta.as_ref().map_or((0, 0), |d| (d.added, d.removed));
+        let sides = self.sides(cx);
         let total = self.starts.len();
         let counter: SharedString =
             if total == 0 { "No changes".into() } else { format!("{} of {total}", self.current + 1).into() };
@@ -143,6 +213,7 @@ impl FileDiffView {
             .child(div().min_w_0().truncate().text_xs().text_color(t.text_placeholder).child(dir))
             .when_some(status, |d, (label, color)| d.child(chip(label, color, &t)))
             .child(div().flex_1())
+            .children(sides)
             .child(counts(added, removed, &t))
             .child(div().flex_none().text_xs().text_color(t.text_muted).child(counter))
             .child(

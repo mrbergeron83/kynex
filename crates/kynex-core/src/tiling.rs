@@ -116,9 +116,26 @@ pub struct SavedLayout {
     /// Where the Git pane was when it was closed last, for [`Tiling::open_git`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub git_spot: Option<Spot>,
-    /// The Git pane shows its History tab rather than its Changes.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub git_history: bool,
+    /// The tab the Git pane shows.
+    #[serde(default, skip_serializing_if = "GitTab::is_changes")]
+    pub git_tab: GitTab,
+}
+
+/// The Git pane's tabs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GitTab {
+    History,
+    Branches,
+    /// Last, so that a tab a newer Kynex added reads as this one.
+    #[default]
+    #[serde(other)]
+    Changes,
+}
+
+impl GitTab {
+    fn is_changes(&self) -> bool {
+        *self == Self::Changes
+    }
 }
 
 impl SavedLayout {
@@ -140,8 +157,8 @@ pub struct Tiling {
     seeded: bool,
     /// Where the Git pane was when it was closed last.
     git_spot: Option<Spot>,
-    /// The Git pane shows its History tab.
-    git_history: bool,
+    /// The tab the Git pane shows.
+    git_tab: GitTab,
 }
 
 impl Tiling {
@@ -156,7 +173,7 @@ impl Tiling {
             tools: Some(tools),
             seeded: self.seeded,
             git_spot: self.git_spot.clone(),
-            git_history: self.git_history,
+            git_tab: self.git_tab,
         }
     }
 
@@ -236,7 +253,7 @@ impl Tiling {
             shown: None,
             seeded: saved.seeded,
             git_spot,
-            git_history: saved.git_history,
+            git_tab: saved.git_tab,
         })
     }
 
@@ -250,7 +267,7 @@ impl Tiling {
             seeded: false,
             shown: None,
             git_spot: None,
-            git_history: false,
+            git_tab: GitTab::Changes,
         }
     }
 
@@ -405,13 +422,13 @@ impl Tiling {
         self.split_tool(target, side, pane, Tool::Git, ratio, bounds)
     }
 
-    /// Whether the Git pane shows its History tab (else its Changes).
-    pub fn git_history(&self) -> bool {
-        self.git_history
+    /// The tab the Git pane shows.
+    pub fn git_tab(&self) -> GitTab {
+        self.git_tab
     }
 
-    pub fn set_git_history(&mut self, history: bool) {
-        self.git_history = history;
+    pub fn set_git_tab(&mut self, tab: GitTab) {
+        self.git_tab = tab;
     }
 
     pub fn layout(&self) -> &Layout {

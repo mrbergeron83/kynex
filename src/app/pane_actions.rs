@@ -233,7 +233,7 @@ impl KynexApp {
     }
 
     /// The single pane's conversation as a place to drop a session row: on an edge it
-    /// splits, in the middle it opens there. Outside a project's Code view, just `body`.
+    /// splits, in the middle it opens there. Outside a project (chat), just `body`.
     pub(super) fn single_pane_drop(&mut self, body: AnyElement, cx: &mut Context<Self>) -> AnyElement {
         if self.tiling_scope().is_none() {
             return body;

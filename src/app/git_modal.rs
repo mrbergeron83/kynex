@@ -1,6 +1,7 @@
-//! A worktree's Git view in a modal over the conversation, opened from the
-//! branch chips in the session header: its changes and diffs, history and
-//! commit box, without leaving the session. Esc or a click outside closes it.
+//! A worktree's Git view in a modal over the conversation, in chat (which has no panes for
+//! the Git pane): from the branch chips, Ctrl+Shift+G and file links. Its changes and diffs,
+//! history, branches and commit box, without leaving the session. Esc or a click outside
+//! closes it.
 
 use std::path::{Path, PathBuf};
 
@@ -32,14 +33,7 @@ impl KynexApp {
         }
         let g = cx.new(|cx| GitView::new(path.to_path_buf(), cx));
         cx.subscribe(&g, |this, _, ev: &GitEvent, cx| match ev {
-            GitEvent::OpenFolder(folder) => {
-                this.git_modal = None;
-                // A worktree of an open project is one of its workspaces, not a tab.
-                if !this.open_as_workspace(folder, cx) {
-                    this.add_project(folder.clone());
-                }
-                cx.notify();
-            }
+            GitEvent::OpenFolder(folder) => this.open_folder_with_git(folder.clone(), cx),
             GitEvent::Changed | GitEvent::ShowDetail => {}
         })
         .detach();
@@ -112,14 +106,11 @@ impl KynexApp {
             .child(
                 outline_button("git-modal-tab", if linked { "Switch to workspace" } else { "Open as tab" }, cx)
                     .tooltip(Tooltip::text(if linked {
-                        "Show this worktree's sessions, terminal and Git view"
+                        "Show this worktree's sessions, terminal and Git pane"
                     } else {
-                        "Open this folder as a project tab, on its Git view"
+                        "Open this folder as a project tab, with its Git pane"
                     }))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.git_modal = None;
-                        this.open_worktree_changes(open_path.clone(), cx);
-                    })),
+                    .on_click(cx.listener(move |this, _, _, cx| this.open_folder_with_git(open_path.clone(), cx))),
             )
             .child(
                 icon_button("git-modal-close", Icon::Close, cx)

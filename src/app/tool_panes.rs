@@ -104,7 +104,7 @@ impl KynexApp {
     }
 
     /// Ctrl+B b and the toolbar's button: the tab's Sessions and Workspaces panes away, or back.
-    /// False outside a project's panes (chat and the Git view have the sidebar).
+    /// False outside a project's panes (chat has the sidebar).
     pub(super) fn toggle_side_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some((_, cwd, _)) = self.tiling_scope() else { return false };
         let (ratio, bounds) = (self.side_share(cx), self.layout_bounds(cx));

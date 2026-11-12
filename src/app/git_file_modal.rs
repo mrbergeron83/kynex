@@ -6,6 +6,8 @@ use std::path::PathBuf;
 
 use gpui::{AnyElement, AppContext, Context, Entity, MouseButton, Window, div, prelude::*};
 
+use kynex_core::git::Staged;
+
 use super::KynexApp;
 use crate::git::GitView;
 use crate::git_pane::detail_modal::{DetailEvent, DetailView};
@@ -21,8 +23,15 @@ pub(super) enum GitDiffModal {
 }
 
 impl KynexApp {
-    pub(super) fn open_git_file_diff(&mut self, root: PathBuf, path: String, untracked: bool, cx: &mut Context<Self>) {
-        let view = cx.new(|cx| FileDiffView::new(root, path, untracked, cx));
+    pub(super) fn open_git_file_diff(
+        &mut self,
+        root: PathBuf,
+        path: String,
+        untracked: bool,
+        staged: Staged,
+        cx: &mut Context<Self>,
+    ) {
+        let view = cx.new(|cx| FileDiffView::new(root, path, untracked, staged, cx));
         cx.subscribe(&view, |this, _, ev: &FileDiffEvent, cx| match ev {
             FileDiffEvent::Close => this.close_git_file_modal(cx),
         })

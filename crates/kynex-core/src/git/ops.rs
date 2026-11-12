@@ -238,6 +238,33 @@ mod tests {
     }
 
     #[test]
+    fn a_partly_staged_file_shows_each_side_whole() {
+        use super::super::diff::{DiffSide, LineKind, whole_file_diff_side};
+        let repo = Repo::new("sides");
+        let root = &repo.0;
+        repo.write("f.txt", "one\ntwo\nthree\n");
+        stage_all(root).unwrap();
+        commit(root, "base", false).unwrap();
+        repo.write("f.txt", "ONE\ntwo\nthree\n");
+        stage_all(root).unwrap();
+        repo.write("f.txt", "ONE\ntwo\nTHREE\n");
+        let added = |side| -> Vec<String> {
+            let d = whole_file_diff_side(root, "f.txt", false, side).unwrap();
+            let lines = d.hunks.iter().flat_map(|h| &h.lines);
+            lines.filter(|l| l.kind == LineKind::Added).map(|l| l.text.clone()).collect()
+        };
+        assert_eq!(added(DiffSide::All), ["ONE", "THREE"]);
+        assert_eq!(added(DiffSide::Staged), ["ONE"]);
+        assert_eq!(added(DiffSide::Unstaged), ["THREE"]);
+        // Whole: every line of the file is there, not only the hunks.
+        let d = whole_file_diff_side(root, "f.txt", false, DiffSide::Unstaged).unwrap();
+        assert_eq!(
+            d.hunks.iter().map(|h| h.lines.iter().filter(|l| l.kind != LineKind::Removed).count()).sum::<usize>(),
+            3
+        );
+    }
+
+    #[test]
     fn push_without_a_remote_says_so() {
         let repo = Repo::new("push");
         repo.write("a.txt", "x");

@@ -270,7 +270,6 @@ impl KynexApp {
     /// Enter: opens the session under the cursor.
     pub(super) fn list_open(&mut self, _: &ListOpen, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(id), Some((kind, cwd))) = (self.organize.cursor.clone(), self.panel_folder()) else { return };
-        self.show_code_view();
         if self.focused_key().and_then(|k| self.session_by_key(k)).and_then(|s| s.session_id.as_deref())
             != Some(id.as_str())
         {

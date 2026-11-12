@@ -126,7 +126,7 @@ impl KynexApp {
     }
 
     /// The panel with its drag-to-resize right edge, or nothing while collapsed. Only where
-    /// there are no panes to hold the sessions and workspaces: chat and a project's Git view.
+    /// there are no panes to hold the sessions and workspaces: chat.
     pub(super) fn render_sessions_column(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let parts = Parts { workspaces: true, sessions: true };
         let open = !self.saved.sessions_collapsed;
@@ -319,7 +319,6 @@ impl KynexApp {
                     .children(news_lamp(("open-status", uid as usize), o.busy, o.waiting, o.finished, cx))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.confirm_delete = None;
-                        this.show_code_view();
                         if !is_current {
                             this.show_open(|s| s.uid == uid);
                         }
@@ -806,7 +805,6 @@ impl KynexApp {
                     this.sessions_focus.focus(window, cx);
                     return;
                 }
-                this.show_code_view();
                 if !is_current {
                     this.switch_session(kind2, cwd2.clone(), open_id.clone());
                 }

@@ -38,7 +38,6 @@ impl KynexApp {
     ) {
         let Some(i) = self.saved.projects.iter().position(|p| p.path == project) else { return };
         self.select(Active::Project(i), window, cx);
-        self.show_code_view();
         let here = self.workspace_cwd().is_some_and(|c| workspace::same_folder(&c, workspace));
         if !here {
             self.select_workspace(workspace, cx);

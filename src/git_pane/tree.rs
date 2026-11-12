@@ -183,8 +183,8 @@ impl GitPane {
                 let file = self.files[*index].clone();
                 let what = Owned::File(file.path.clone());
                 let (letter, color) = status_mark(file.status, &t);
-                let (root, path, untracked) =
-                    (self.selected.clone(), file.path.clone(), file.status == TreeStatus::Untracked);
+                let (root, path, untracked, staged) =
+                    (self.selected.clone(), file.path.clone(), file.status == TreeStatus::Untracked, file.staged());
                 let check = self.row_box(SharedString::from(format!("git-pane-box-f:{path}")), &what, cx);
                 let confirm = self.confirm_chip(i, &what, cx);
                 base(*depth)
@@ -227,7 +227,7 @@ impl GitPane {
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.confirm = None;
-                        cx.emit(GitPaneEvent::OpenFile { root: root.clone(), path: path.clone(), untracked })
+                        cx.emit(GitPaneEvent::OpenFile { root: root.clone(), path: path.clone(), untracked, staged })
                     }))
                     .into_any_element()
             }

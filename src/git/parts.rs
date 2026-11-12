@@ -7,7 +7,7 @@ use std::time::Instant;
 use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*};
 use kynex_core::git::{self, FileStatus, Status};
 
-use super::{GitEvent, GitView};
+use super::{GitEvent, GitView, Selection, Tab};
 use crate::theme::theme;
 use crate::ui::{Icon, icon, icon_button};
 
@@ -68,12 +68,36 @@ impl GitView {
     /// ([`GitEvent::ShowDetail`]), drawn by [`Self::render_detail`].
     pub fn render_history_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
         self.touch();
-        self.render_history(true, cx)
+        self.render_history(cx)
+    }
+
+    /// The Branches tab: local and remote branches with their menus (switch, rename,
+    /// publish, compare, delete…), the worktrees, and a new branch or worktree.
+    pub fn render_branches_list(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.touch();
+        if self.tab != Tab::Branches {
+            self.tab = Tab::Branches;
+            self.load_branches(false, cx);
+        }
+        self.render_branches(window, cx)
+    }
+
+    /// Over the hosting pane: "Deleted N branches · Undo", and a delete's confirmation.
+    pub fn render_overlays(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        self.render_undo(cx).into_iter().chain(self.render_confirm(cx)).collect()
     }
 
     /// What is picked (a commit, a branch to compare) with its diff, for a modal.
     pub fn render_detail(&mut self, cx: &mut Context<Self>) -> AnyElement {
         self.render_diff(cx)
+    }
+
+    /// What [`Self::render_detail`] shows, in a word.
+    pub fn detail_title(&self) -> &'static str {
+        match self.selected {
+            Some(Selection::Compare(_)) => "Compare",
+            _ => "Commit",
+        }
     }
 
     /// What went wrong last (until dismissed), and a note while there are conflicts.

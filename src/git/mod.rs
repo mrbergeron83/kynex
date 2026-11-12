@@ -64,7 +64,7 @@ pub enum GitEvent {
     OpenFolder(PathBuf),
     /// An operation ran (staged, committed, switched…): what was read of the folder is old.
     Changed,
-    /// A commit was picked in a hosted history list: show its details (`render_detail`).
+    /// A commit or a compare was picked in a hosted view: show it (`render_detail`).
     ShowDetail,
 }
 
@@ -109,6 +109,8 @@ pub struct GitView {
     branch_tab: branches::BranchTab,
     /// The Branches tab's name field: rename, new branch, new worktree.
     name_input: Entity<TextInput>,
+    /// Drawn in parts by the Git pane: what is picked (a commit, a compare) shows in a modal.
+    hosted: bool,
 }
 
 impl GitView {
@@ -172,9 +174,16 @@ impl GitView {
             show_pending: None,
             branch_tab: branches::BranchTab::default(),
             name_input,
+            hosted: false,
         };
         view.refresh(cx);
         view
+    }
+
+    /// A Git view the Git pane draws in parts: a commit or a compare picked in it asks for a
+    /// modal ([`GitEvent::ShowDetail`]) instead of showing beside the list.
+    pub fn hosted(root: PathBuf, cx: &mut Context<Self>) -> Self {
+        Self { hosted: true, ..Self::new(root, cx) }
     }
 
     /// Re-reads everything: status, history and branches.
@@ -263,14 +272,7 @@ impl GitView {
             self.show_pending = Some(path.to_path_buf());
             return;
         };
-        // Status paths are from the repository's root, which may sit above `root`.
-        let wanted = path.to_string_lossy().replace('\\', "/");
-        let file = status
-            .files
-            .iter()
-            .filter(|f| wanted == f.path || wanted.ends_with(&format!("/{}", f.path)))
-            .max_by_key(|f| f.path.len());
-        if let Some(f) = file {
+        if let Some(f) = git::find_file(status, path) {
             let staged = f.unstaged.is_none() && f.staged.is_some();
             let selection = Selection::File { path: f.path.clone(), staged };
             self.tab = Tab::Changes;
@@ -279,6 +281,10 @@ impl GitView {
     }
 
     fn select(&mut self, selection: Selection, cx: &mut Context<Self>) {
+        // Picked again after its modal closed: it opens again.
+        if self.hosted && matches!(selection, Selection::Commit(_) | Selection::Compare(_)) {
+            cx.emit(GitEvent::ShowDetail);
+        }
         if self.selected.as_ref() == Some(&selection) {
             return;
         }
@@ -493,7 +499,7 @@ impl Render for GitView {
             .child(tab_button("git-tab-branches", "Branches".into(), Tab::Branches, cx));
         let left = match self.tab {
             Tab::Changes => self.render_changes(window, cx).into_any_element(),
-            Tab::History => self.render_history(false, cx),
+            Tab::History => self.render_history(cx),
             Tab::Branches => self.render_branches(window, cx),
         };
         let undo = self.render_undo(cx);

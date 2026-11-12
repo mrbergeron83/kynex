@@ -7,12 +7,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- The Git pane: a worktree list and the selected worktree's changed files as a folder tree beside the session. Click a file for its whole diff in a modal, with previous / next change buttons (N / P, F7, Alt+Up / Down); "Commit & history…" opens the full Git view, and the session header's branch chip opens the pane.
+- The Git pane: a worktree list and the selected worktree's changed files as a folder tree beside the session. Click a file for its whole diff in a modal, with previous / next change buttons (N / P, F7, Alt+Up / Down); the session header's branch chip opens the pane.
 - The Git pane has a toolbar button, a key (Ctrl+Shift+G, ⌘⇧G on macOS) and a palette entry ("Toggle Git pane"), and a close button of its own. It opens where it was last, beside the same panes at the same size, so the other panes get their sizes back; the first time it opens on the right of the focused session.
 - Stage, unstage, discard and commit from the Git pane: each file and folder has a box (ticked when staged, a dash when partly staged) that stages it or unstages it, with Stage all / Unstage all above the tree; a row's right-click menu stages, unstages, opens the diff or discards (asking once more on the row); the commit box with Amend sits at the foot, for the worktree picked in the pane.
 - Fetch, pull, push and the branch picker (switch or create a branch) in the Git pane's bar, with how many commits there are to push and pull, for the worktree picked in the pane. In a narrow pane the buttons fold to icons.
 - A History tab in the Git pane: the branch's commits (subject, author, age), more loading as you scroll. Clicking one opens its message, files and diff in a modal over the window; Esc or a click outside closes it. Each workspace remembers which tab its pane shows.
+- A Branches tab in the Git pane, with what the Git view's had: switch, new branch from here, rename, publish, open the pull request, compare with the default branch (in a modal), delete with undo, delete on the remote, and the worktrees.
 - "Purge…" in the sessions panel's Archived section deletes the archived sessions, all or those older than 30 days, 90 days or a year, after asking. Open sessions are kept and the toast says so.
+
+### Changed
+
+- Git is done from the Git pane beside the session: the toolbar's Code / Git tabs and the full-window Git view are gone, and the Git pane's button takes their place. A project left on its Git view opens on its conversation with the Git pane open. File links in the transcript open the file's whole diff in a modal (with All / Staged / Unstaged for a file partly staged); chat, which has no panes, keeps the Git modal.
+
 ### Fixed
 
 - Right-clicking a workspace, a session or a group in a pane opens its own menu again, not the pane's, so "Remove workspace" can be reached; right-click in a terminal pane no longer pops the pane menu over the copy / paste.

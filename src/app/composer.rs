@@ -18,7 +18,7 @@ use kynex_core::toasts::Toast;
 
 use super::keys::{CycleMode, Interrupt};
 use super::menus::Menu;
-use super::state::{Active, View};
+use super::state::Active;
 use super::{KynexApp, models};
 use crate::theme::theme;
 use crate::ui::completions::completions;
@@ -142,10 +142,6 @@ impl KynexApp {
     }
 
     pub(super) fn attach_bytes(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
-        let in_code = self.active_project().is_none_or(|p| p.view == View::Code);
-        if !in_code {
-            return;
-        }
         match prepare_image(bytes) {
             Ok(png) => self.pane.attachments.push(Attachment {
                 media_type: "image/png".into(),
