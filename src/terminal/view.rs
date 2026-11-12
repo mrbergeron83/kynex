@@ -356,6 +356,8 @@ impl TerminalView {
 
     /// Right click: copy the selection, or paste when there is none.
     fn right_click(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        // Copy / paste is the whole of it: no pane menu on top.
+        cx.stop_propagation();
         self.focus.focus(window, cx);
         if !self.copy(cx) {
             self.paste_clipboard(cx);
