@@ -7,6 +7,10 @@
 //! would show apart from the running window. `install.ps1` puts the ID on the
 //! shortcuts it makes, as Windows expects of an installer; [`stamp_shortcuts`]
 //! does it once for those made by an older `install.ps1`.
+//!
+//! An update replaces `kynex.exe` in place, and the shell keeps showing the icon it
+//! cached for that path (the taskbar takes it from the shortcut with Kynex's ID), so a
+//! new icon wouldn't show: [`refresh_icons`] has it read again.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -15,10 +19,14 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, IPersistFile, STGM_READWRITE,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, IPersistFile, STGM_READ,
+    STGM_READWRITE,
 };
 use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
-use windows::Win32::UI::Shell::{IShellLinkW, ITaskbarList3, ShellLink, TaskbarList};
+use windows::Win32::UI::Shell::{
+    IShellLinkW, ITaskbarList3, SHCNE_ASSOCCHANGED, SHCNE_UPDATEITEM, SHCNF_IDLIST, SHCNF_PATHW, SHChangeNotify,
+    ShellLink, TaskbarList,
+};
 use windows::Win32::UI::WindowsAndMessaging::{CreateIcon, HICON};
 use windows::core::{HSTRING, Interface};
 
@@ -95,6 +103,54 @@ pub fn stamp_shortcuts(folders: &[PathBuf], exe: &Path, id: &str) -> Vec<PathBuf
     links.filter(|link| matches!(stamp(link, &exe, id), Ok(true))).collect()
 }
 
+/// [`shortcut_folders`] and where the taskbar keeps its pins: every shortcut whose icon
+/// the shell may have cached.
+pub fn icon_folders() -> Vec<PathBuf> {
+    let mut out = shortcut_folders();
+    if let Some(roaming) = std::env::var_os("APPDATA").map(PathBuf::from) {
+        out.push(roaming.join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"));
+    }
+    out
+}
+
+/// Tells the shell that `exe` and every shortcut in `folders` that starts it changed, then
+/// that icons did, so the taskbar, the Start menu and the desktop show the icon `exe` has
+/// now rather than a cached one. Blocks on COM and the files; run it off the UI thread.
+pub fn refresh_icons(folders: &[PathBuf], exe: &Path) {
+    // SAFETY: as in `stamp_shortcuts`.
+    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    let target = same_path(exe);
+    let links = folders
+        .iter()
+        .filter_map(|f| std::fs::read_dir(f).ok())
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("lnk")))
+        .filter(|link| link_target(link).is_ok_and(|t| same_path(Path::new(&t)) == target));
+    for path in std::iter::once(exe.to_path_buf()).chain(links) {
+        let wide = HSTRING::from(path.as_os_str());
+        // SAFETY: a NUL-terminated path that outlives the call, as SHCNF_PATHW asks.
+        unsafe { SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW, Some(wide.as_ptr().cast()), None) };
+    }
+    // SAFETY: no items, as SHCNE_ASSOCCHANGED takes; it has the shell drop its cached icons.
+    unsafe { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None) };
+}
+
+/// What shortcut `link` starts.
+fn link_target(link: &Path) -> windows::core::Result<String> {
+    // SAFETY: COM objects used and dropped on this thread; the path buffer is ours.
+    unsafe {
+        let shell: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+        let file: IPersistFile = shell.cast()?;
+        file.Load(&HSTRING::from(link.as_os_str()), STGM_READ)?;
+        let mut target = [0u16; 1024];
+        shell.GetPath(&mut target, std::ptr::null_mut(), 0)?;
+        let len = target.iter().position(|c| *c == 0).unwrap_or(target.len());
+        Ok(String::from_utf16_lossy(&target[..len]))
+    }
+}
+
 /// A path to compare with others: long names (not `RUNNER~1`), any case.
 fn same_path(path: &Path) -> String {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()).to_string_lossy().to_lowercase()
@@ -155,6 +211,21 @@ mod tests {
         // Already stamped: left alone.
         assert!(stamp_shortcuts(&folders, &exe, "Kynex.Test").is_empty());
         assert_eq!(stamp_shortcuts(&folders, &exe, "Kynex.Other"), [ours]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reads_where_a_shortcut_points_and_refreshes_without_failing() {
+        let dir = std::env::temp_dir().join(format!("kynex-icons-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("kynex.exe");
+        std::fs::write(&exe, b"").unwrap();
+        let ours = link(&dir, "Kynex.lnk", &exe.to_string_lossy());
+        assert_eq!(same_path(Path::new(&link_target(&ours).unwrap())), same_path(&exe));
+        assert!(link_target(&dir.join("missing.lnk")).is_err());
+        // Folders that aren't there (no pins yet) are skipped.
+        refresh_icons(&[dir.clone(), dir.join("nowhere")], &exe);
+        assert!(icon_folders().iter().any(|f| f.ends_with(r"User Pinned\TaskBar")));
         let _ = std::fs::remove_dir_all(dir);
     }
 

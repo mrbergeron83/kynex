@@ -112,9 +112,29 @@ pub(crate) fn parse_refs(s: &str) -> Vec<Ref> {
     refs
 }
 
+/// How many commits a history list reads at a time.
+pub const HISTORY_PAGE: usize = 500;
+
+/// How many commits to ask [`log`] for next as a history list scrolls: a page more once the
+/// rows in sight reach within a quarter page of the end of the `loaded` ones, if the last
+/// read (of `limit`) came back full, so there may be more. `None`: nothing more to read yet.
+pub fn more_history(loaded: usize, limit: usize, seen_to: usize) -> Option<usize> {
+    (loaded >= limit && seen_to + HISTORY_PAGE / 4 >= loaded).then_some(limit + HISTORY_PAGE)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn more_history_is_read_near_the_end_of_a_full_page() {
+        let p = HISTORY_PAGE;
+        assert_eq!(more_history(p, p, 10), None, "far from the end");
+        assert_eq!(more_history(p, p, p - 5), Some(2 * p));
+        assert_eq!(more_history(2 * p, 2 * p, 2 * p), Some(3 * p));
+        assert_eq!(more_history(120, p, 119), None, "the whole history is read");
+        assert_eq!(more_history(0, p, 0), None, "no commits");
+    }
 
     #[test]
     fn parses_records() {

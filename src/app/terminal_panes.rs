@@ -14,7 +14,6 @@ use kynex_core::workspace::same_folder;
 
 use super::KynexApp;
 use super::keys::ToggleTerminal;
-use super::state::{Active, View};
 use crate::terminal::{PanelEvent, TerminalPanel};
 
 /// A terminal opened by Ctrl+` is never smaller than this, nor leaves less above it.
@@ -181,18 +180,8 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// The toolbar's terminal button: from the Git view it switches to Code and shows a
-    /// terminal; otherwise it does what Ctrl+` does.
+    /// The toolbar's terminal button: what Ctrl+` does.
     pub(super) fn terminal_button(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Active::Project(i) = self.saved.active
-            && let Some(p) = self.saved.projects.get_mut(i)
-            && p.view != View::Code
-        {
-            p.view = View::Code;
-            self.save();
-            self.show_terminal(window, cx);
-            return;
-        }
         self.toggle_terminal(&ToggleTerminal, window, cx);
     }
 
@@ -389,7 +378,7 @@ impl KynexApp {
         }
     }
 
-    /// Where the keys go when a tool pane has the focus: a terminal's shell; the Git view
+    /// Where the keys go when a tool pane has the focus: a terminal's shell; the Git pane
     /// and the timeline keep what they have, short of the message box. False when a session
     /// pane has the focus.
     pub(super) fn focus_tool_input(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {

@@ -54,7 +54,7 @@ impl ScratchView {
                     ghost_button("preview-changes", cx)
                         .text_xs()
                         .child("Show changes")
-                        .tooltip(Tooltip::text("Its diff, in the Git view"))
+                        .tooltip(Tooltip::text("Its diff"))
                         .on_click(cx.listener(move |_, _, _, cx| cx.emit(ScratchEvent::ShowChanges(changes.clone())))),
                 )
             })

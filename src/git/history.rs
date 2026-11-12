@@ -1,9 +1,9 @@
 //! The History tab: commits newest first, with branch and tag labels.
 
 use crate::ui::px;
-use gpui::{Context, FontWeight, Hsla, div, prelude::*, uniform_list};
+use gpui::{AnyElement, Context, FontWeight, Hsla, div, prelude::*, uniform_list};
 use kynex_core::fmt::ago_unix;
-use kynex_core::git::{Commit, Ref, RefKind};
+use kynex_core::git::{self, Commit, Ref, RefKind};
 
 use super::{GitView, Selection};
 use crate::theme::{Palette, mono, theme};
@@ -11,7 +11,8 @@ use crate::ui::wash::row_wash;
 use crate::ui::{Tooltip, scrollbar, spinner};
 
 impl GitView {
-    pub(super) fn render_history(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The commit list; more is read as it scrolls.
+    pub(super) fn render_history(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         if self.commits.is_empty() {
             return div()
@@ -33,7 +34,8 @@ impl GitView {
         let list = uniform_list(
             "git-history",
             commits.len(),
-            cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
+            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                this.more_history(range.end, cx);
                 range
                     .map(|i| {
                         let c = &commits[i];
@@ -50,6 +52,29 @@ impl GitView {
         .py_1();
         let bar = scrollbar::vertical("git-history-bar", self.history_scroll.clone());
         div().relative().flex().flex_col().flex_1().min_h_0().child(list).child(bar).into_any_element()
+    }
+
+    /// Reads a page more of history when the rows in sight near the end of what is read.
+    fn more_history(&mut self, seen_to: usize, cx: &mut Context<Self>) {
+        let Some(limit) = git::more_history(self.commits.len(), self.history_limit, seen_to) else { return };
+        if self.history_more {
+            return;
+        }
+        self.history_more = true;
+        let root = self.root.clone();
+        cx.spawn(async move |this, cx| {
+            let commits = cx.background_spawn(async move { git::log(&root, limit) }).await;
+            this.update(cx, |this, cx| {
+                this.history_more = false;
+                this.history_limit = limit;
+                if let Ok(c) = commits {
+                    this.commits = c;
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 }
 

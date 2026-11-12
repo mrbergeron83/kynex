@@ -163,6 +163,69 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// The archive's "Purge…": asks to delete the archived sessions (those not
+    /// used in `days`, if given) of the shown folder; open ones are kept.
+    pub(super) fn purge_archived(&mut self, days: Option<u32>, cx: &mut Context<Self>) {
+        let Some((_, cwd)) = self.panel_folder() else { return };
+        let secs = |t: std::time::SystemTime| t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        let listed: Vec<(String, i64)> = self
+            .sessions
+            .as_ref()
+            .filter(|l| l.read.cwd == cwd)
+            .map(|l| l.items.iter().map(|i| (i.id.clone(), secs(i.modified))).collect())
+            .unwrap_or_default();
+        let cutoff = days.map(|d| secs(std::time::SystemTime::now()) - i64::from(d) * 86_400);
+        let open: Vec<String> = self
+            .live_mut()
+            .map(|l| l.sessions.iter().filter_map(|s| s.session_id.clone()).collect())
+            .unwrap_or_default();
+        let (ids, skipped) = self.groups_for(&cwd).purge_candidates(&listed, cutoff, &open);
+        let kept = match skipped {
+            0 => String::new(),
+            1 => "Kept 1 open session; close it to purge it".to_string(),
+            n => format!("Kept {n} open sessions; close them to purge them"),
+        };
+        if ids.is_empty() {
+            let older = days
+                .and_then(|d| TIDY_AGES.iter().find(|(a, _)| *a == d))
+                .map_or(String::new(), |(_, label)| format!(" older than {label}"));
+            let mut msg = format!("No archived sessions{older} to purge");
+            if !kept.is_empty() {
+                msg = format!("{msg}. {kept}");
+            }
+            self.toast(Toast::info(msg));
+        } else {
+            self.organize.show_archived = true;
+            self.ask_delete_sessions(&ids);
+            if !kept.is_empty() {
+                self.toast(Toast::info(kept));
+            }
+        }
+        cx.notify();
+    }
+
+    /// The archive header's menu: purge all archived sessions, or the older ones.
+    pub(super) fn purge_menu_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut items = vec![
+            menu_item("purge-all", "Purge all archived", false, cx)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.menu = None;
+                    this.purge_archived(None, cx);
+                }))
+                .into_any_element(),
+        ];
+        items.extend(TIDY_AGES.iter().enumerate().map(|(i, (days, label))| {
+            let days = *days;
+            menu_item(("purge", i), format!("Purge archived older than {label}"), false, cx)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.menu = None;
+                    this.purge_archived(Some(days), cx);
+                }))
+                .into_any_element()
+        }));
+        items
+    }
+
     /// Picks `ids` and asks to delete them, with the panel's one confirmation.
     pub(super) fn ask_delete_sessions(&mut self, ids: &[String]) {
         self.organize.selection.clear();
@@ -207,7 +270,6 @@ impl KynexApp {
     /// Enter: opens the session under the cursor.
     pub(super) fn list_open(&mut self, _: &ListOpen, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(id), Some((kind, cwd))) = (self.organize.cursor.clone(), self.panel_folder()) else { return };
-        self.show_code_view();
         if self.focused_key().and_then(|k| self.session_by_key(k)).and_then(|s| s.session_id.as_deref())
             != Some(id.as_str())
         {

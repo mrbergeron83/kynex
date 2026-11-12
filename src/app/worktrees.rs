@@ -1,7 +1,6 @@
 //! The project's git worktrees, kept up to date in the background: their
 //! branch, changed files and distance from main, for the workspaces section of the
-//! sessions panel (`workspaces.rs`) and the session header. A worktree can also be
-//! opened as a project tab, on its Git view.
+//! sessions panel (`workspaces.rs`) and the session header.
 
 use kynex_core::live::Key;
 use std::path::{Path, PathBuf};
@@ -14,7 +13,6 @@ use kynex_core::git::{self, Worktree};
 use kynex_core::session::{Item, Kind};
 
 use super::KynexApp;
-use super::state::{Active, View};
 
 /// Worktrees change behind our back (Claude makes and removes them). The git folder
 /// is watched for that; this is the net under it, for what a watcher can miss (the
@@ -171,24 +169,5 @@ impl KynexApp {
                 w.update(cx, |w, cx| w.refresh(cx));
             }
         }
-    }
-
-    /// Opens a worktree to look at its changes: its project's workspace when it has
-    /// one, else a tab on its Git view.
-    pub(super) fn open_worktree_changes(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        // A worktree of an open project is one of its workspaces: switch to it.
-        if self.open_as_workspace(&path, cx) {
-            return cx.notify();
-        }
-        self.add_project(path);
-        // A worktree is another view of a project you have: no setup checklist for it.
-        self.setup_for = None;
-        if let Active::Project(i) = self.saved.active
-            && let Some(p) = self.saved.projects.get_mut(i)
-        {
-            p.view = View::Git;
-        }
-        self.save();
-        cx.notify();
     }
 }

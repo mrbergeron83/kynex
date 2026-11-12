@@ -3,7 +3,7 @@
 
 use crate::ui::px;
 use gpui::{AnyElement, Context, FontWeight, Hsla, SharedString, Window, div, prelude::*};
-use kynex_core::git::{self, Change, FileStatus};
+use kynex_core::git::{self, Change, FileStatus, Staged};
 
 use super::diff_view::split_path;
 use super::{GitView, Selection};
@@ -61,7 +61,7 @@ impl GitView {
         })
     }
 
-    fn commit_box(
+    pub(super) fn commit_box(
         &mut self,
         staged: usize,
         unstaged: usize,
@@ -335,6 +335,23 @@ pub(super) fn change_color(change: Change, t: &Palette) -> Hsla {
         Change::Renamed | Change::Copied => t.info,
         Change::Modified | Change::TypeChanged => t.warning,
     }
+}
+
+/// A box ticked, half ticked (a dash) or empty: how much of a file or folder is staged.
+pub(crate) fn stage_box(state: Staged, t: &Palette) -> impl IntoElement + use<> {
+    let on = state != Staged::No;
+    div()
+        .size(px(13.))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_sm()
+        .border_1()
+        .border_color(if on { t.accent } else { t.border })
+        .when(on, |d| d.bg(t.accent))
+        .when(state == Staged::All, |d| d.child(icon(Icon::Check, t.on_accent).size_2p5()))
+        .when(state == Staged::Partly, |d| d.child(div().w(px(7.)).h(px(1.5)).rounded_sm().bg(t.on_accent)))
 }
 
 fn checkbox(checked: bool, t: &Palette) -> impl IntoElement + use<> {

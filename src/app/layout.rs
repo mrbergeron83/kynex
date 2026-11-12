@@ -1,6 +1,5 @@
-//! The window's layout pieces `render` stacks: the Code view, the Git view,
-//! the overlays over them, and the drag that resizes the sessions panel and
-//! the terminal.
+//! The window's layout pieces `render` stacks: the conversation or the panes, the
+//! overlays over them, and the drag that resizes the sessions panel and the terminal.
 
 use gpui::{AnyElement, Context, MouseButton, MouseMoveEvent, Stateful, Window, div, prelude::*};
 
@@ -8,43 +7,10 @@ use kynex_core::live::Key;
 
 use super::KynexApp;
 use super::keys::{self, CopySelection, copy_selection};
-use super::state::{Active, View};
 use super::transcript::Scroll;
 use crate::theme::theme;
-use crate::ui::motion::{self, fade_in};
 
 impl KynexApp {
-    /// The Git view beside the sessions panel.
-    pub(super) fn render_git_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let t = theme(cx).clone();
-        // The selected workspace's checkout.
-        let path = self.workspace_cwd().unwrap();
-        let git = self.git_view(&path, cx);
-        // The sessions panel stays, so the toolbar (and its Code / Git switch)
-        // doesn't move when the view changes.
-        div()
-            .flex()
-            .flex_1()
-            .min_h_0()
-            .children(self.render_sessions_column(window, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .bg(t.editor)
-                    .child(self.render_toolbar(cx))
-                    // Fades in when you switch to it, as the transcript does.
-                    .child(fade_in(
-                        ("git-view-in", git.entity_id().as_u64() as usize),
-                        div().flex_1().min_h_0().child(git),
-                        motion::NORMAL,
-                    )),
-            )
-            .into_any_element()
-    }
-
     /// The conversation: header, transcript, composer and timeline, or the workspace's panes.
     pub(super) fn render_code_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
@@ -149,6 +115,8 @@ impl KynexApp {
         let palette = self.draw_leaving(|s| &mut s.palette, |e| &mut e.palette, window, cx, Self::render_palette);
         let git_modal =
             self.draw_leaving(|s| &mut s.git_modal, |e| &mut e.git_modal, window, cx, Self::render_git_modal);
+        let git_file =
+            self.draw_leaving(|s| &mut s.git_file, |e| &mut e.git_file, window, cx, Self::render_git_file_modal);
         let scratch = self.draw_leaving(|s| &mut s.scratch, |e| &mut e.scratch, window, cx, Self::render_scratch_modal);
         let viewer =
             self.draw_leaving(|s| &mut s.viewer, |e| &mut e.viewer, window, cx, |s, l, _, _| s.render_image_viewer(l));
@@ -156,6 +124,7 @@ impl KynexApp {
         root.children(toasts)
             .children(popup)
             .children(git_modal)
+            .children(git_file)
             .children(scratch)
             .children(settings)
             .children(app_settings)
@@ -228,6 +197,7 @@ impl KynexApp {
             .on_action(cx.listener(Self::edit_in_editor_action))
             .on_action(cx.listener(Self::rewind_action))
             .on_action(cx.listener(Self::toggle_timeline))
+            .on_action(cx.listener(Self::toggle_git))
             .on_action(cx.listener(Self::run_command_action))
             .on_action(cx.listener(Self::prev_turn))
             .on_action(cx.listener(Self::next_turn))
@@ -243,25 +213,19 @@ impl KynexApp {
         self.with_pane_actions(root, cx)
     }
 
-    /// What each frame settles before drawing; returns the project's view.
-    pub(super) fn sync_before_render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<View> {
-        if let Active::Project(i) = self.saved.active
-            && let Some(p) = self.saved.projects.get_mut(i).filter(|p| p.view == View::Settings)
-        {
-            p.view = View::Code;
-        }
-        let view = self.active_project().map(|p| p.view);
+    /// What each frame settles before drawing.
+    pub(super) fn sync_before_render(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // Create (or resume) the project's session as soon as its tab is shown,
         // so a restored transcript is visible before the first message.
         // Showing it counts as seeing it finish, while Kynex is in front.
         let active = window.is_window_active();
-        if view != Some(View::Git)
-            && let Some(s) = self.session_mut()
+        if let Some(s) = self.session_mut()
             && active
         {
             s.finished = false;
         }
         self.sync_tiles(window, cx);
+        self.sync_git_pane(window, cx);
         self.sync_resize_mode();
         self.sync_attention(cx);
         self.sync_awake();
@@ -275,6 +239,5 @@ impl KynexApp {
         if window.focused(cx).is_none() {
             self.focus.focus(window, cx);
         }
-        view
     }
 }

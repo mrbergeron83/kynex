@@ -77,7 +77,7 @@ impl KynexApp {
         let project = self.workspace_project().unwrap_or_else(|| cwd.clone());
         let place = if kind == Kind::Code { self.worktrees(&project, cx).read(cx).at(&cwd).cloned() } else { None };
         // Where a project session runs: its branch, flagged when it's a linked
-        // worktree, and what's changed there. A click opens its Git view.
+        // worktree, and what's changed there. A click opens the Git pane on it.
         let place = place.map(|w| {
             let where_ = if w.main { "Main worktree" } else { "Worktree" };
             let path = w.path.clone();
@@ -102,7 +102,7 @@ impl KynexApp {
                 .when(!w.main, |d| d.child(div().text_color(t.info).child("worktree")))
                 .children(git_stats(&w, &t))
                 .tooltip(Tooltip::with_meta(format!("{where_} at {}", w.path.display()), "Click to see its changes"))
-                .on_click(cx.listener(move |this, _, _, cx| this.open_git_modal(path.clone(), cx)))
+                .on_click(cx.listener(move |this, _, window, cx| this.show_git_worktree(path.clone(), window, cx)))
         });
 
         // Where Claude is actually working, when that's another worktree: one

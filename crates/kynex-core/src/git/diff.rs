@@ -1,5 +1,6 @@
 //! Unified diffs, parsed into files, hunks and numbered lines.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use super::git;
@@ -94,6 +95,111 @@ pub(crate) fn parse_numstat(s: &str) -> (usize, usize) {
         let mut cols = line.split('\t').map(|n| n.parse::<usize>().unwrap_or(0));
         (added.saturating_add(cols.next().unwrap_or(0)), removed.saturating_add(cols.next().unwrap_or(0)))
     })
+}
+
+/// Lines `(added, removed)` per changed file in the working tree against HEAD, keyed by
+/// repo-relative path. Each of `untracked` (the first 200, up to 1 MB) counts as all
+/// added. A repo with no commits yet has nothing to diff against: tracked files count
+/// as no lines. Blocking.
+pub fn file_stats(root: &Path, untracked: &[&str]) -> Result<HashMap<String, (usize, usize)>, String> {
+    let text = git(root, &["diff", "HEAD", "--numstat", "-z", "--no-ext-diff", "-M"]).unwrap_or_default();
+    let mut stats: HashMap<String, (usize, usize)> =
+        parse_numstat_files(&text).into_iter().map(|(path, a, r)| (path, (a, r))).collect();
+    for p in untracked.iter().take(200) {
+        if !std::fs::metadata(root.join(p)).is_ok_and(|m| m.len() <= 1 << 20) {
+            continue;
+        }
+        if let Ok(bytes) = std::fs::read(root.join(p)) {
+            stats.insert((*p).to_string(), (untracked_diff("", bytes).added, 0));
+        }
+    }
+    Ok(stats)
+}
+
+/// Parses `git diff --numstat -z -M`: `<added>\t<removed>\t<path>\0` per file, `-` for
+/// binary (read as 0). A rename is `<added>\t<removed>\t\0<old>\0<new>\0`, keyed by `<new>`.
+pub(crate) fn parse_numstat_files(s: &str) -> Vec<(String, usize, usize)> {
+    let mut out = Vec::new();
+    let mut recs = s.split('\0');
+    while let Some(rec) = recs.next() {
+        let mut cols = rec.splitn(3, '\t');
+        let (Some(added), Some(removed), Some(path)) = (cols.next(), cols.next(), cols.next()) else { continue };
+        let path = if path.is_empty() { recs.nth(1).unwrap_or_default() } else { path };
+        if !path.is_empty() {
+            out.push((
+                path.to_string(),
+                added.trim_start_matches('\n').parse().unwrap_or(0),
+                removed.parse().unwrap_or(0),
+            ));
+        }
+    }
+    out
+}
+
+/// One file as a whole: the working tree against HEAD (staged and unstaged together)
+/// with every line of it as context around the changes, for a viewer that shows the
+/// file and jumps between changes. An untracked file reads as all added, a deleted one
+/// as all removed, and an unchanged one (or any file in a repo with no commits yet) as
+/// all context. Blocking.
+pub fn whole_file_diff(root: &Path, path: &str, untracked: bool) -> Result<FileDiff, String> {
+    whole_file_diff_side(root, path, untracked, DiffSide::All)
+}
+
+/// Which of a file's changes a diff shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiffSide {
+    /// Everything since the last commit, staged or not (working tree vs HEAD).
+    All,
+    /// What the next commit gets (index vs HEAD).
+    Staged,
+    /// What isn't staged (working tree vs index).
+    Unstaged,
+}
+
+/// [`whole_file_diff`] of one `side` of the file's changes, for a file partly staged.
+/// Blocking.
+pub fn whole_file_diff_side(root: &Path, path: &str, untracked: bool, side: DiffSide) -> Result<FileDiff, String> {
+    if untracked {
+        return file_diff(root, path, false, true);
+    }
+    let mut args = vec!["diff"];
+    match side {
+        DiffSide::All => args.push("HEAD"),
+        DiffSide::Staged => args.push("--cached"),
+        DiffSide::Unstaged => {}
+    }
+    args.extend(["--no-ext-diff", "-M", "--unified=1000000", "--", path]);
+    let text = git(root, &args).unwrap_or_default();
+    if let Some(d) = parse(&text).into_iter().next() {
+        return Ok(d);
+    }
+    let bytes = std::fs::read(root.join(path)).map_err(|e| format!("Couldn't read {path}: {e}"))?;
+    let mut d = FileDiff { path: path.to_string(), ..Default::default() };
+    if bytes.contains(&0) {
+        d.binary = true;
+        return Ok(d);
+    }
+    let lines: Vec<DiffLine> = String::from_utf8_lossy(&bytes)
+        .lines()
+        .enumerate()
+        .map(|(i, l)| DiffLine {
+            kind: LineKind::Context,
+            old: Some(i as u32 + 1),
+            new: Some(i as u32 + 1),
+            text: l.to_string(),
+        })
+        .collect();
+    if !lines.is_empty() {
+        d.hunks.push(Hunk { header: format!("@@ -1,{0} +1,{0} @@", lines.len()), lines });
+    }
+    Ok(d)
+}
+
+/// The indices in `lines` where a change starts: the first of each run of added or
+/// removed lines. Context and `\ No newline` lines end a run.
+pub fn change_starts(lines: &[DiffLine]) -> Vec<usize> {
+    let changed = |l: &DiffLine| matches!(l.kind, LineKind::Added | LineKind::Removed);
+    (0..lines.len()).filter(|&i| changed(&lines[i]) && (i == 0 || !changed(&lines[i - 1]))).collect()
 }
 
 fn untracked_diff(path: &str, bytes: Vec<u8>) -> FileDiff {
@@ -314,6 +420,49 @@ Binary files /dev/null and b/logo.png differ
     fn git_line_path_with_multibyte_middle() {
         assert_eq!(git_line_path("éa"), "éa");
         assert_eq!(git_line_path("a/é b/é"), "é");
+    }
+
+    #[test]
+    fn parses_numstat_records() {
+        let s = "3\t1\tsrc/a.rs\0-\t-\tlogo.png\x0010\t0\tnew file.rs\0";
+        assert_eq!(
+            parse_numstat_files(s),
+            vec![("src/a.rs".to_string(), 3, 1), ("logo.png".to_string(), 0, 0), ("new file.rs".to_string(), 10, 0)]
+        );
+        assert!(parse_numstat_files("").is_empty());
+    }
+
+    #[test]
+    fn numstat_renames_are_keyed_by_the_new_path() {
+        let s = "1\t2\ta.rs\0".to_string() + "4\t5\t\0old name.rs\0new name.rs\0" + "7\t0\tz.rs\0";
+        assert_eq!(
+            parse_numstat_files(&s),
+            vec![("a.rs".to_string(), 1, 2), ("new name.rs".to_string(), 4, 5), ("z.rs".to_string(), 7, 0)]
+        );
+    }
+
+    fn line(kind: LineKind) -> DiffLine {
+        DiffLine { kind, old: None, new: None, text: String::new() }
+    }
+
+    #[test]
+    fn change_starts_mark_each_run() {
+        use LineKind::*;
+        let lines: Vec<DiffLine> =
+            [Added, Removed, Context, Context, Removed, NoNewline, Added, Added].into_iter().map(line).collect();
+        assert_eq!(change_starts(&lines), vec![0, 4, 6]);
+        assert!(change_starts(&[line(Context)]).is_empty());
+        assert!(change_starts(&[]).is_empty());
+    }
+
+    #[test]
+    fn big_context_diff_is_one_hunk() {
+        let s = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,5 +1,5 @@\n a\n-b\n+B\n c\n d\n e\n";
+        let d = &parse(s)[0];
+        assert_eq!(d.hunks.len(), 1);
+        assert_eq!(d.hunks[0].lines.len(), 6);
+        assert_eq!(change_starts(&d.hunks[0].lines), vec![1]);
+        assert_eq!(d.hunks[0].lines[5].new, Some(5));
     }
 
     #[test]

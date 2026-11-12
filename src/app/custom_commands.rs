@@ -164,7 +164,7 @@ impl KynexApp {
     /// A terminal pane running the command, on the right of the session pane.
     fn open_command_pane(&mut self, name: String, spec: ShellSpec, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, ws, _)) = self.tiling_scope() else {
-            self.toast(Toast::error("A command pane opens in a project's Code view.".to_string()));
+            self.toast(Toast::error("A command pane opens in a project.".to_string()));
             return;
         };
         let Some(target) = self.tiles.get(&ws).and_then(|t| t.session_focus()) else { return };

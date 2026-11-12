@@ -11,7 +11,15 @@ use crate::theme::{Palette, mono, theme};
 use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, outline_button, popover, scrollbar, spinner};
 
 impl GitView {
-    pub(super) fn render_top_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// `compact` folds the buttons to icons and the upstream to arrows, for a narrow Git pane;
+    /// `refresh` adds the re-read button (the pane has its own).
+    pub(super) fn render_top_bar(
+        &mut self,
+        compact: bool,
+        refresh: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         let status = self.status.clone().unwrap_or_default();
         let head_label = match &status.head {
@@ -26,7 +34,14 @@ impl GitView {
         let branch_button = ghost_button("git-branch", cx)
             .font_weight(FontWeight::MEDIUM)
             .child(icon(Icon::GitBranch, t.text_muted).size_3p5())
-            .child(div().font_family(mono()).child(head_label))
+            .flex_none()
+            .child(
+                div()
+                    .font_family(mono())
+                    .whitespace_nowrap()
+                    .when(compact, |d| d.max_w(px(120.)).truncate())
+                    .child(head_label),
+            )
             .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
             .tooltip(Tooltip::text("Switch or create a branch"))
             .on_click(cx.listener(|this, _, window, cx| {
@@ -40,20 +55,27 @@ impl GitView {
 
         let upstream = status.upstream.clone().map(|u| {
             let in_sync = status.ahead == 0 && status.behind == 0;
+            let (push, pull) = if compact {
+                (format!("↑{}", status.ahead), format!("↓{}", status.behind))
+            } else {
+                (format!("{} to push", status.ahead), format!("{} to pull", status.behind))
+            };
+            // What gives way first when the bar is short of room.
             div()
+                .id("git-upstream")
                 .flex()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
                 .items_center()
                 .gap_1p5()
                 .text_xs()
                 .text_color(t.text_placeholder)
-                .child(format!("→ {u}"))
-                .when(in_sync, |d| d.child("up to date"))
-                .when(status.ahead > 0, |d| {
-                    d.child(div().text_color(t.info).child(format!("{} to push", status.ahead)))
-                })
-                .when(status.behind > 0, |d| {
-                    d.child(div().text_color(t.warning).child(format!("{} to pull", status.behind)))
-                })
+                .when(!compact, |d| d.child(format!("→ {u}")))
+                .when(in_sync, |d| d.child(if compact { "✓" } else { "up to date" }))
+                .when(status.ahead > 0, |d| d.child(div().text_color(t.info).child(push)))
+                .when(status.behind > 0, |d| d.child(div().text_color(t.warning).child(pull)))
+                .when(compact, |d| d.tooltip(Tooltip::text(format!("Tracks {u}"))))
         });
         let no_upstream = has_branch && status.upstream.is_none();
 
@@ -65,13 +87,15 @@ impl GitView {
                            highlight: bool,
                            cx: &mut Context<Self>| {
             let button = ghost_button(id, cx)
+                .flex_none()
                 .text_color(if highlight { t.text } else { t.text_muted })
                 .child(icon(which, if highlight { t.accent } else { t.text_muted }).size_3p5())
-                .child(label);
+                .when(!compact, |d| d.child(label.clone()));
             // One operation at a time: the others wait, and say so.
             if busy {
                 return button.opacity(0.5).cursor_default().tooltip(Tooltip::text("Wait for the current operation"));
             }
+            let tip = if compact { format!("{label}: {tip}") } else { tip.to_string() };
             button.tooltip(Tooltip::text(tip)).on_click(cx.listener(move |this, _, _, cx| {
                 // After a fetch, pull requests and gone remotes may have changed.
                 if op == Sync::Fetch {
@@ -91,25 +115,30 @@ impl GitView {
             .flex()
             .flex_none()
             .items_center()
-            .gap_2()
+            .gap(if compact { px(4.) } else { px(8.) })
             .h(px(40.))
             .px_2()
             .border_b_1()
             .border_color(t.border_variant)
-            .child(div().relative().child(branch_button).children(menu))
+            .child(div().relative().flex_none().child(branch_button).children(menu))
             .children(upstream)
-            .when(no_upstream, |d| d.child(div().text_xs().text_color(t.text_placeholder).child("not published")))
+            .when(no_upstream && !compact, |d| {
+                d.child(div().flex_none().text_xs().text_color(t.text_placeholder).child("not published"))
+            })
             .child(div().flex_1())
             .when_some(self.busy.clone(), |d, label| {
                 d.child(
                     div()
+                        .id("git-busy-label")
                         .flex()
+                        .flex_none()
                         .items_center()
                         .gap_1p5()
                         .text_xs()
                         .text_color(t.text_muted)
                         .child(spinner("git-busy", t.accent, px(12.)))
-                        .child(format!("{label}…"))
+                        .when(!compact, |d| d.child(format!("{label}…")))
+                        .when(compact, |d| d.tooltip(Tooltip::text(format!("{label}…"))))
                         .when_some(self.cancel.clone(), |d, cancel| {
                             d.child(
                                 ghost_button("git-cancel", cx)
@@ -162,14 +191,16 @@ impl GitView {
                     cx,
                 ))
             })
-            .child(
-                icon_button("git-refresh", Icon::Refresh, cx)
-                    .tooltip(Tooltip::text("Re-read the repository"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.branch_tab.forget_github();
-                        this.refresh(cx)
-                    })),
-            )
+            .when(refresh, |d| {
+                d.child(
+                    icon_button("git-refresh", Icon::Refresh, cx)
+                        .tooltip(Tooltip::text("Re-read the repository"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.branch_tab.forget_github();
+                            this.refresh(cx)
+                        })),
+                )
+            })
     }
 
     fn branch_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {

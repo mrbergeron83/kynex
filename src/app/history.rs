@@ -112,6 +112,7 @@ impl KynexApp {
             || self.extensions.is_some()
             || self.about_open
             || self.git_modal.is_some()
+            || self.git_file.is_some()
             || self.viewer.is_some();
         let empty = text.trim().is_empty();
         if covered

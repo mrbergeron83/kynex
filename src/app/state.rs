@@ -25,22 +25,14 @@ pub enum Active {
     Project(usize),
 }
 
-/// What a project tab shows.
-#[derive(Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum View {
-    #[default]
-    Code,
-    Git,
-    /// Old Settings tab, now the Claude settings modal. Kept so saved state
-    /// still loads; switched back to Code on sight.
-    Settings,
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct ProjectState {
     pub path: PathBuf,
-    #[serde(default)]
-    pub view: View,
+    /// What the tab showed when a project had views: `"Git"` was the full-window Git view,
+    /// which is the Git pane now. Read from an older `state.json` and kept (written back as it
+    /// was, for an older Kynex) until the pane has opened in its place; anything else is dropped.
+    #[serde(default, rename = "view", skip_serializing_if = "Option::is_none")]
+    old_view: Option<String>,
     /// Claude Code session to resume when the project is reopened.
     #[serde(default)]
     pub session_id: Option<String>,
@@ -48,6 +40,22 @@ pub struct ProjectState {
     /// fold into its project at startup.
     #[serde(default)]
     pub own_tab: bool,
+}
+
+impl ProjectState {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path, old_view: None, session_id: None, own_tab: false }
+    }
+
+    /// It was left on the old full-window Git view: the Git pane opens in its place.
+    pub fn was_on_git(&self) -> bool {
+        self.old_view.as_deref() == Some("Git")
+    }
+
+    /// The Git pane has taken the old Git view's place.
+    pub fn left_git(&mut self) {
+        self.old_view = None;
+    }
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -109,6 +117,9 @@ pub struct Saved {
     pub sounds: bool,
     /// Kynex's shortcuts from an older `install.ps1` got its app ID (Windows; once).
     pub shortcuts_stamped: bool,
+    /// The version whose icon the shell was last told to show (Windows; once per version, as
+    /// an update replaces the exe in place and the shell keeps the icon it cached).
+    pub icons_shown_for: Option<String>,
     /// How wide the transcript and composer are.
     pub column: ColumnWidth,
     /// What Appearance changes of the pane tiles' look; the theme gives the rest.
@@ -174,6 +185,7 @@ impl Default for Saved {
             notify: false,
             sounds: false,
             shortcuts_stamped: false,
+            icons_shown_for: None,
             column: ColumnWidth::default(),
             tiles: Default::default(),
             toast_corner: Corner::default(),
@@ -194,13 +206,25 @@ impl Saved {
     pub fn load() -> Self {
         let (mut saved, newer): (Saved, _) = kynex_core::migrate::read(&data_dir().join("state.json"));
         saved.newer_than_us = newer;
+        saved.settle()
+    }
+
+    /// What was read, made sound: an active tab that exists, sizes in range, old views dropped.
+    fn settle(mut self) -> Self {
+        let saved = &mut self;
         if matches!(saved.active, Active::Project(i) if i >= saved.projects.len()) {
             saved.active = Active::Chat;
         }
         saved.sessions_width = saved.sessions_width.clamp(180., 480.);
         saved.terminal_height = saved.terminal_height.max(120.);
         saved.zoom = kynex_core::scale::clamp(saved.zoom);
-        saved
+        // Only the Git view is worth keeping of the old views (Code was the default).
+        for p in &mut saved.projects {
+            if !p.was_on_git() {
+                p.left_git();
+            }
+        }
+        self
     }
 
     pub fn write(&self) {
@@ -211,5 +235,32 @@ impl Saved {
         if let Ok(s) = kynex_core::migrate::stamp(self) {
             let _ = std::fs::write(data_dir().join("state.json"), s);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read(json: &str) -> Saved {
+        serde_json::from_str::<Saved>(json).unwrap().settle()
+    }
+
+    #[test]
+    fn a_project_left_on_its_git_view_still_loads_and_asks_for_the_git_pane() {
+        let saved = read(
+            r#"{"projects":[{"path":"a","view":"Git"},{"path":"b","view":"Code"},
+                {"path":"c","view":"Settings"},{"path":"d"}],"active":{"Project":0}}"#,
+        );
+        let git: Vec<bool> = saved.projects.iter().map(ProjectState::was_on_git).collect();
+        assert_eq!(git, [true, false, false, false]);
+        assert!(matches!(saved.active, Active::Project(0)));
+        // Until the pane has opened, an older Kynex reads it as it wrote it; after, not at all.
+        let mut p = serde_json::from_str::<ProjectState>(r#"{"path":"a","view":"Git"}"#).unwrap();
+        assert!(serde_json::to_string(&p).unwrap().contains(r#""view":"Git""#));
+        p.left_git();
+        assert!(!serde_json::to_string(&p).unwrap().contains("view"));
+        let code = &saved.projects[1];
+        assert!(!serde_json::to_string(code).unwrap().contains("view"));
     }
 }

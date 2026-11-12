@@ -6,7 +6,7 @@
 //! |---------------------|------------------------------------------------------|
 //! | `state.rs`          | `Saved`: what persists to `state.json`               |
 //! | `keys.rs`           | actions, `keymap.json`, tab / Esc / mode shortcuts   |
-//! | `layout.rs`         | Code and Git layouts, overlays, shortcuts, resize drags |
+//! | `layout.rs`         | the conversation or panes, overlays, shortcuts, resize drags |
 //! | `projects.rs`       | tabs, projects, and which session is shown           |
 //! | `title_bar.rs`      | title bar and project tabs                           |
 //! | `footer.rs`         | status footer: Kynex's CPU / memory, meters, update  |
@@ -20,14 +20,15 @@
 //! | `control_workspaces.rs` | its `workspace` commands: list, show, make, remove |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
 //! | `layout_history.rs` | undo / redo of pane changes, reopening a pane, older layouts |
-//! | `toolbar.rs`        | Code / Git switch, path, cost, open-in buttons       |
+//! | `toolbar.rs`        | path, panes' buttons (timeline, Git), open-in buttons |
 //! | `sessions_panel.rs` | open and past sessions                               |
 //! | `session_groups.rs` | session groups and the archive, their menus          |
 //! | `session_select.rs` | picking sessions to archive or delete together       |
 //! | `session_tidy.rs`   | many sessions at once: menu, tidying, list keys      |
 //! | `session_header.rs` | the session's title, branch / worktree, turns, cost  |
 //! | `terminal_panes.rs` | terminal panes: Ctrl+`, run buttons, hide and show   |
-//! | `tool_panes.rs`     | the Git view and the timeline as panes               |
+//! | `tool_panes.rs`     | the timeline, sessions and workspaces as panes       |
+//! | `git_pane.rs`       | the Git pane: toggling, placing, what it asks for    |
 //! | `custom_commands.rs`| custom commands: keys, popup, pane, background       |
 //! | `agent_panes.rs`    | other agent CLIs in panes, their state off the screen |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
@@ -41,7 +42,8 @@
 //! | `workspaces.rs`     | workspaces: listing, selecting, their folders        |
 //! | `workspace_list.rs` | the workspaces and their open sessions in the sidebar |
 //! | `workspace_new.rs`  | making and removing workspaces, folding worktree tabs |
-//! | `git_modal.rs`      | a worktree's Git view in a modal, from the header    |
+//! | `git_modal.rs`      | a worktree's Git view in a modal, in chat            |
+//! | `git_file_modal.rs` | the Git pane's modals: a file's whole diff, a commit |
 //! | `scratch_modal.rs`  | the file explorer in a modal: session or project     |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
@@ -108,7 +110,9 @@ mod extensions_plugins;
 mod extensions_servers;
 pub(crate) mod find;
 mod footer;
+mod git_file_modal;
 mod git_modal;
+mod git_pane;
 mod goto;
 mod grok_setup;
 mod handoff;
@@ -166,7 +170,7 @@ mod viewer;
 mod workspace_list;
 mod workspace_new;
 mod workspaces;
-mod worktrees;
+pub(crate) mod worktrees;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -182,7 +186,7 @@ use kynex_core::session::{self, Kind, Session};
 pub use control::OPEN_AT_START;
 pub use custom_commands::bind_command_keys;
 use drafts::Draft;
-pub use keys::{SHELL_KEYS, SendPrefix, ToggleTerminal, bind_keys, prefix_key};
+pub use keys::{SHELL_KEYS, SendPrefix, ToggleGit, ToggleTerminal, bind_keys, prefix_key};
 use menus::OpenMenu;
 use palette::PaletteView;
 use scratch_modal::ScratchModal;
@@ -191,7 +195,7 @@ use sessions_panel::{ListRead, SessionList};
 use settings::SettingsView;
 use setup::{CliCheck, Setup};
 pub use state::Saved;
-use state::{View, WindowState};
+use state::WindowState;
 use storage::StorageView;
 use transcript::Thread;
 use worktrees::Worktrees;
@@ -211,6 +215,12 @@ pub struct KynexApp {
     git: HashMap<PathBuf, Entity<GitView>>,
     /// The folder whose Git view is open in a modal over the conversation.
     git_modal: Option<PathBuf>,
+    /// A changed file's whole diff, in a modal over the window.
+    git_file: Option<git_file_modal::GitDiffModal>,
+    /// The Git pane of each workspace folder.
+    git_panes: HashMap<PathBuf, Entity<crate::git_pane::GitPane>>,
+    /// A workspace folder whose Git pane opens once its panes are up (a worktree opened from Git).
+    want_git_pane: Option<(PathBuf, std::time::Instant)>,
     /// Each open project's git worktrees, kept fresh in the background.
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
     /// Each project's saved workspaces (selection, sessions, order), read on first use.
@@ -596,6 +606,9 @@ impl KynexApp {
             chat,
             git: HashMap::new(),
             git_modal: None,
+            git_file: None,
+            git_panes: HashMap::new(),
+            want_git_pane: None,
             worktrees: HashMap::new(),
             workspaces: HashMap::new(),
             workspace_ui: Default::default(),
@@ -844,22 +857,16 @@ impl Render for KynexApp {
         // The UI zoom: everything sized in rems scales with it.
         window.set_rem_size(gpui::px(16.) * self.saved.zoom);
         let t = theme(cx).clone();
-        let view = self.sync_before_render(window, cx);
+        self.sync_before_render(window, cx);
 
         // Toasts sit in the corner picked in Settings, the same in every view;
         // the conversation's own bars and composer are measured to stay clear of.
         let toasts = self.render_toasts(window, cx);
-        let in_conversation = self.workspace_ready() && view != Some(View::Git);
+        let in_conversation = self.workspace_ready();
         if !in_conversation {
             self.pane.toast_room.set(None);
         }
-        let main = if let Some(setup) = self.render_setup(cx) {
-            setup
-        } else if view == Some(View::Git) {
-            self.render_git_main(window, cx)
-        } else {
-            self.render_code_main(window, cx)
-        };
+        let main = if let Some(setup) = self.render_setup(cx) { setup } else { self.render_code_main(window, cx) };
 
         let key = self.focused_key();
         let root = div()

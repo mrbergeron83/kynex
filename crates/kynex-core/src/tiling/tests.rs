@@ -552,3 +552,74 @@ fn side_panes_may_be_thinner_than_a_conversation() {
     // 500 wide: the conversation is under what one needs.
     assert!(t.too_narrow(Rect::new(0.0, 0.0, 500.0, 900.0), 360.0));
 }
+
+#[test]
+fn the_git_pane_opens_right_of_the_session_the_first_time() {
+    let mut t = Tiling::new(1, 10);
+    t.reconcile(&[10], 10);
+    assert!(t.split_tool(1, Direction::Left, 9, Tool::Sessions, 0.2, BIG));
+    t.focus_pane(1);
+    assert!(t.open_git(2, BIG));
+    assert_eq!(t.tab_panes_of(Content::Git), [2]);
+    assert_eq!(t.focus(), Some(2));
+    let r = t.rects(BIG);
+    assert!(r.pane(2).unwrap().x > r.pane(1).unwrap().x, "on the right");
+    assert!((r.pane(2).unwrap().w - r.pane(1).unwrap().w).abs() < 2.0, "half the session's room");
+    // One per workspace.
+    assert!(!t.open_git(3, BIG));
+}
+
+#[test]
+fn the_git_pane_toggled_off_and_on_leaves_the_other_panes_as_they_were() {
+    let mut t = Tiling::new(1, 10);
+    t.reconcile(&[10], 10);
+    assert!(t.split_tool(1, Direction::Left, 9, Tool::Sessions, 0.2, BIG));
+    assert!(t.split_tool(1, Direction::Down, 5, Tool::Terminal(TermPane::default()), 0.7, BIG));
+    // On the left of the session, above the terminal.
+    assert!(t.split_tool(1, Direction::Left, 2, Tool::Git, 0.3, BIG));
+    let before = t.rects(BIG);
+    assert_eq!(t.close_pane(2), Some(Content::Git));
+    assert_ne!(t.rects(BIG), before);
+    assert!(t.open_git(2, BIG));
+    assert_eq!(t.rects(BIG), before);
+    // Again with the id the app hands out next, and after a restart.
+    assert_eq!(t.close_pane(2), Some(Content::Git));
+    let saved: SavedLayout = serde_json::from_str(&serde_json::to_string(&t.save(id_of)).unwrap()).unwrap();
+    let mut back = Tiling::restore(&saved, &mut 100, None, key_of_id).unwrap();
+    assert!(back.open_git(7, BIG));
+    let after = back.rects(BIG);
+    let shape = |r: &Rects| r.panes.iter().map(|(_, r)| *r).collect::<Vec<_>>();
+    assert_eq!(shape(&after), shape(&before));
+}
+
+#[test]
+fn the_git_pane_keeps_its_side_and_share_when_its_neighbours_changed() {
+    let mut t = Tiling::new(1, 10);
+    t.reconcile(&[10], 10);
+    assert!(t.split_tool(1, Direction::Down, 2, Tool::Git, 0.75, BIG));
+    assert_eq!(t.close_pane(2), Some(Content::Git));
+    // The pane it sat under is gone: under the session pane, a quarter of it.
+    assert!(t.split(Axis::Row, 3, 30, BIG));
+    t.reconcile(&[30], 30);
+    assert!(t.open_git(4, BIG));
+    let r = t.rects(BIG);
+    let (git, session) = (r.pane(4).unwrap(), r.pane(t.session_focus().unwrap()).unwrap());
+    assert!(git.y > session.y);
+    assert!((git.h - 0.25 * BIG.h).abs() < 2.0);
+}
+
+#[test]
+fn the_git_pane_s_tab_is_kept_with_the_layout() {
+    let mut t = Tiling::new(1, 10);
+    assert_eq!(t.git_tab(), GitTab::Changes);
+    t.set_git_tab(GitTab::Branches);
+    let saved: SavedLayout = serde_json::from_str(&serde_json::to_string(&t.save(id_of)).unwrap()).unwrap();
+    assert_eq!(Tiling::restore(&saved, &mut 5, None, key_of_id).unwrap().git_tab(), GitTab::Branches);
+    // A layout from before has none, and a tab this Kynex doesn't know reads as Changes.
+    let old = serde_json::to_string(&Tiling::new(1, 10).save(id_of)).unwrap();
+    assert!(!old.contains("git_tab"));
+    let saved: SavedLayout = serde_json::from_str(&old).unwrap();
+    assert_eq!(saved.git_tab, GitTab::Changes);
+    let newer = old.replace("\"seeded\":false", "\"seeded\":false,\"git_tab\":\"Blame\"");
+    assert_eq!(serde_json::from_str::<SavedLayout>(&newer).unwrap().git_tab, GitTab::Changes);
+}

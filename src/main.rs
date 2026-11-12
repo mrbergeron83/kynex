@@ -7,6 +7,7 @@ mod app;
 mod chrome;
 mod file_links;
 mod git;
+mod git_pane;
 mod markdown;
 mod pane;
 mod prompt;
@@ -55,15 +56,24 @@ fn main() {
         #[cfg_attr(not(windows), allow(unused_mut))]
         let mut saved = app::Saved::load();
         // `install.ps1` gives its shortcuts the same ID; those from before it did get it once.
+        // A new version may have a new icon, which the shell won't show until told to.
         #[cfg(windows)]
-        if !saved.shortcuts_stamped
-            && let Ok(exe) = std::env::current_exe()
-        {
-            saved.shortcuts_stamped = true;
-            std::thread::spawn(move || {
-                use kynex_core::win_shell;
-                win_shell::stamp_shortcuts(&win_shell::shortcut_folders(), &exe, kynex_core::attention::APP_ID)
-            });
+        if let Ok(exe) = std::env::current_exe() {
+            let stamp = !std::mem::replace(&mut saved.shortcuts_stamped, true);
+            let version = env!("CARGO_PKG_VERSION");
+            let icons = saved.icons_shown_for.as_deref() != Some(version);
+            saved.icons_shown_for = Some(version.to_string());
+            if stamp || icons {
+                std::thread::spawn(move || {
+                    use kynex_core::win_shell;
+                    if stamp {
+                        win_shell::stamp_shortcuts(&win_shell::shortcut_folders(), &exe, kynex_core::attention::APP_ID);
+                    }
+                    if icons {
+                        win_shell::refresh_icons(&win_shell::icon_folders(), &exe);
+                    }
+                });
+            }
         }
         theme::set_saved(saved.theme, saved.custom_theme.as_deref(), cx);
         theme::init_fonts(cx);

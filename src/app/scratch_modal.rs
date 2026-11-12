@@ -60,7 +60,7 @@ impl KynexApp {
             ScratchEvent::ShowChanges(file) => {
                 let Some(cwd) = cwd.clone() else { return };
                 this.scratch = None;
-                this.open_git_file(cwd, file.clone(), cx);
+                this.open_file_changes(cwd, file.clone(), cx);
             }
         })
         .detach();

@@ -15,7 +15,7 @@ use kynex_core::tasks::{self, Notice, Status};
 use kynex_core::toasts::{Action, Toast};
 
 use super::KynexApp;
-use super::state::{Active, View};
+use super::state::Active;
 use crate::theme::{Palette, theme};
 use crate::ui::{Icon, Tooltip, ghost_button, icon, spinner};
 
@@ -70,11 +70,6 @@ impl KynexApp {
         {
             self.reveal_session(&project, &cwd, super::goto::Which::Open(key), window, cx);
             return;
-        }
-        if let Active::Project(i) = target
-            && let Some(p) = self.saved.projects.get_mut(i)
-        {
-            p.view = View::Code;
         }
         self.select(target, window, cx);
         self.show_open(|s| s.uid == key);

@@ -12,14 +12,16 @@
 //! | `branches.rs`   | the Branches tab: branch rows, their menu, picking         |
 //! | `branch_ops.rs` | its name field, delete confirmation and undo, worktrees    |
 //! | `diff_view.rs`  | a diff (a file, a commit, a branch) as numbered rows       |
+//! | `parts.rs`      | what the Git pane hosts: staging by path, commit box, notices |
 //!
 //! Git itself is `kynex_core::git`; every call runs on the background executor.
 
 mod branch_ops;
 mod branches;
-mod changes;
-mod diff_view;
+pub(crate) mod changes;
+pub(crate) mod diff_view;
 mod history;
+mod parts;
 mod top_bar;
 
 use std::path::{Path, PathBuf};
@@ -33,11 +35,9 @@ use self::diff_view::DiffState;
 use crate::theme::theme;
 use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::wash::row_wash;
-use crate::ui::{Icon, icon, icon_button};
 
 /// How often the working tree is re-read while the view exists.
 const POLL_EVERY: Duration = Duration::from_secs(3);
-const HISTORY_LIMIT: usize = 500;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -62,6 +62,10 @@ enum Selection {
 pub enum GitEvent {
     /// Open this folder (a worktree) as a project tab.
     OpenFolder(PathBuf),
+    /// An operation ran (staged, committed, switched…): what was read of the folder is old.
+    Changed,
+    /// A commit or a compare was picked in a hosted view: show it (`render_detail`).
+    ShowDetail,
 }
 
 impl gpui::EventEmitter<GitEvent> for GitView {}
@@ -73,6 +77,10 @@ pub struct GitView {
     commits: Vec<Commit>,
     /// The history has been read once, so an empty one is really empty.
     history_read: bool,
+    /// How many commits are read; more as the list scrolls (`git::more_history`).
+    history_limit: usize,
+    /// A read of more history is running.
+    history_more: bool,
     branches: Vec<Branch>,
     tab: Tab,
     selected: Option<Selection>,
@@ -101,6 +109,8 @@ pub struct GitView {
     branch_tab: branches::BranchTab,
     /// The Branches tab's name field: rename, new branch, new worktree.
     name_input: Entity<TextInput>,
+    /// Drawn in parts by the Git pane: what is picked (a commit, a compare) shows in a modal.
+    hosted: bool,
 }
 
 impl GitView {
@@ -142,6 +152,8 @@ impl GitView {
             status: None,
             commits: Vec::new(),
             history_read: false,
+            history_limit: git::HISTORY_PAGE,
+            history_more: false,
             branches: Vec::new(),
             tab: Tab::Changes,
             selected: None,
@@ -162,9 +174,16 @@ impl GitView {
             show_pending: None,
             branch_tab: branches::BranchTab::default(),
             name_input,
+            hosted: false,
         };
         view.refresh(cx);
         view
+    }
+
+    /// A Git view the Git pane draws in parts: a commit or a compare picked in it asks for a
+    /// modal ([`GitEvent::ShowDetail`]) instead of showing beside the list.
+    pub fn hosted(root: PathBuf, cx: &mut Context<Self>) -> Self {
+        Self { hosted: true, ..Self::new(root, cx) }
     }
 
     /// Re-reads everything: status, history and branches.
@@ -172,12 +191,10 @@ impl GitView {
         if self.tab == Tab::Branches {
             self.load_branches(false, cx);
         }
-        let root = self.root.clone();
+        let (root, limit) = (self.root.clone(), self.history_limit);
         cx.spawn(async move |this, cx| {
             let (status, commits, branches) = cx
-                .background_spawn(
-                    async move { (git::status(&root), git::log(&root, HISTORY_LIMIT), git::branches(&root)) },
-                )
+                .background_spawn(async move { (git::status(&root), git::log(&root, limit), git::branches(&root)) })
                 .await;
             this.update(cx, |this, cx| {
                 match status {
@@ -255,14 +272,7 @@ impl GitView {
             self.show_pending = Some(path.to_path_buf());
             return;
         };
-        // Status paths are from the repository's root, which may sit above `root`.
-        let wanted = path.to_string_lossy().replace('\\', "/");
-        let file = status
-            .files
-            .iter()
-            .filter(|f| wanted == f.path || wanted.ends_with(&format!("/{}", f.path)))
-            .max_by_key(|f| f.path.len());
-        if let Some(f) = file {
+        if let Some(f) = git::find_file(status, path) {
             let staged = f.unstaged.is_none() && f.staged.is_some();
             let selection = Selection::File { path: f.path.clone(), staged };
             self.tab = Tab::Changes;
@@ -271,6 +281,10 @@ impl GitView {
     }
 
     fn select(&mut self, selection: Selection, cx: &mut Context<Self>) {
+        // Picked again after its modal closed: it opens again.
+        if self.hosted && matches!(selection, Selection::Commit(_) | Selection::Compare(_)) {
+            cx.emit(GitEvent::ShowDetail);
+        }
         if self.selected.as_ref() == Some(&selection) {
             return;
         }
@@ -362,6 +376,7 @@ impl GitView {
                     Err(e) => this.error = Some(e),
                 }
                 this.refresh(cx);
+                this.changed(cx);
                 cx.notify();
             })
             .ok();
@@ -438,7 +453,7 @@ impl Render for GitView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.drawn = Some(Instant::now());
         let t = theme(cx).clone();
-        let top = self.render_top_bar(window, cx);
+        let top = self.render_top_bar(false, true, window, cx);
 
         let tab_button = |id: &'static str, label: String, tab: Tab, cx: &mut Context<Self>| {
             let selected = self.tab == tab;
@@ -484,41 +499,13 @@ impl Render for GitView {
             .child(tab_button("git-tab-branches", "Branches".into(), Tab::Branches, cx));
         let left = match self.tab {
             Tab::Changes => self.render_changes(window, cx).into_any_element(),
-            Tab::History => self.render_history(cx).into_any_element(),
+            Tab::History => self.render_history(cx),
             Tab::Branches => self.render_branches(window, cx),
         };
         let undo = self.render_undo(cx);
         let confirm = self.render_confirm(cx);
 
-        let error = self.error.clone().map(|e| {
-            div()
-                .flex()
-                .flex_none()
-                .items_start()
-                .gap_2()
-                .px_3()
-                .py_1p5()
-                .border_b_1()
-                .border_color(t.border_variant)
-                .bg(t.error.opacity(0.08))
-                .child(icon(Icon::Dot, t.error).size_3().mt_1())
-                .child(div().flex_1().min_w_0().text_sm().text_color(t.text).child(e))
-                .child(icon_button("git-dismiss-error", Icon::Close, cx).on_click(cx.listener(|this, _, _, cx| {
-                    this.error = None;
-                    cx.notify();
-                })))
-        });
-        let conflicts = self.status.as_ref().is_some_and(Status::has_conflicts).then(|| {
-            div()
-                .flex_none()
-                .px_3()
-                .py_1p5()
-                .border_b_1()
-                .border_color(t.border_variant)
-                .bg(t.warning.opacity(0.08))
-                .text_sm()
-                .child("Conflicts: resolve the files marked ! in your editor, then stage them to continue.")
-        });
+        let notices = self.render_notices(cx);
 
         div()
             .relative()
@@ -526,9 +513,8 @@ impl Render for GitView {
             .flex_col()
             .size_full()
             .child(top)
-            .children(error)
+            .children(notices)
             .children(undo)
-            .children(conflicts)
             .child(
                 div()
                     .flex()

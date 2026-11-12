@@ -76,7 +76,7 @@ impl KynexApp {
         cx: &mut Context<Self>,
     ) {
         let Some((_, ws, _)) = self.tiling_scope() else {
-            self.toast(Toast::error("Agent panes open in a project's Code view.".to_string()));
+            self.toast(Toast::error("Agent panes open in a project.".to_string()));
             cx.notify();
             return;
         };

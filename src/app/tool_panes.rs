@@ -1,7 +1,6 @@
-//! The workspace's Git view and the timeline as panes: the changes next to the session
-//! that made them, the timeline beside the session it outlines (the session pane focused
-//! last). One of each per workspace; asking for another focuses it. A project's Git view
-//! (the toolbar's Git switch) is still the Git view filling the window.
+//! Tool panes: the timeline beside the session it outlines (the session pane focused last),
+//! the sessions list and the workspaces; the Git pane's own part is `git_pane.rs`. One of
+//! each per workspace; asking for another focuses it.
 
 use std::path::Path;
 
@@ -29,12 +28,10 @@ impl KynexApp {
         let t = self.tiles.get(&ws)?;
         match t.content(pane)? {
             Content::Terminal => self.render_terminal_pane(pane, window, cx),
-            // The modal over the window draws this folder's view: one place at a time.
-            Content::Git if self.git_modal.as_deref().is_some_and(|m| kynex_core::workspace::same_folder(m, &ws)) => {
-                Some(div().size_full().bg(crate::theme::theme(cx).panel).into_any_element())
-            }
             Content::Git => {
-                let git = self.git_view(&ws, cx);
+                let width = t.rects(self.layout_bounds(cx)).pane(pane).map_or(f32::MAX, |r| r.w);
+                let git = self.git_pane(&ws, window, cx);
+                git.update(cx, |g, _| g.set_width(width));
                 Some(div().size_full().child(git).into_any_element())
             }
             Content::Timeline => {
@@ -107,7 +104,7 @@ impl KynexApp {
     }
 
     /// Ctrl+B b and the toolbar's button: the tab's Sessions and Workspaces panes away, or back.
-    /// False outside a project's panes (chat and the Git view have the sidebar).
+    /// False outside a project's panes (chat has the sidebar).
     pub(super) fn toggle_side_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some((_, cwd, _)) = self.tiling_scope() else { return false };
         let (ratio, bounds) = (self.side_share(cx), self.layout_bounds(cx));
@@ -142,14 +139,21 @@ impl KynexApp {
     }
 
     /// The workspace's pane holding `kind`, in any tab.
-    fn tool_pane(&self, kind: Content) -> Option<PaneId> {
+    pub(super) fn tool_pane(&self, kind: Content) -> Option<PaneId> {
         let (_, ws, _) = self.tiling_scope()?;
         self.tiles.get(&ws)?.panes_of(kind).first().copied()
     }
 
     /// Puts `tool` on the right of pane `target`, `ratio` of the room left to `target`, or
     /// focuses the workspace's pane that has it already.
-    fn open_tool(&mut self, target: PaneId, tool: Tool, ratio: f32, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_tool(
+        &mut self,
+        target: PaneId,
+        tool: Tool,
+        ratio: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(p) = self.tool_pane(tool.content()) {
             self.focus_pane(p, window, cx);
             self.focus_input(window, cx);
@@ -167,15 +171,6 @@ impl KynexApp {
         self.next_pane += 1;
         self.show_focused_pane(window, cx);
         self.focus_input(window, cx);
-    }
-
-    /// The workspace's changes on the right of pane `target`, sharing its room.
-    pub(super) fn show_git_pane(&mut self, target: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some((_, ws, _)) = self.tiling_scope() {
-            let git = self.git_view(&ws, cx);
-            git.update(cx, |g, cx| g.refresh(cx));
-        }
-        self.open_tool(target, Tool::Git, 0.5, window, cx);
     }
 
     /// The timeline on the right of pane `target`, the timeline's usual width.

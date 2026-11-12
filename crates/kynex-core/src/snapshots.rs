@@ -240,6 +240,8 @@ mod tests {
             sessions: BTreeMap::from([(1, session.to_string())]),
             tools: None,
             seeded: false,
+            git_spot: None,
+            git_tab: Default::default(),
         }
     }
 
@@ -251,6 +253,8 @@ mod tests {
             sessions: BTreeMap::from([(1, "a".to_string()), (2, "b".to_string())]),
             tools: None,
             seeded: false,
+            git_spot: None,
+            git_tab: Default::default(),
         }
     }
 

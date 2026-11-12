@@ -42,6 +42,7 @@ actions!(
         EditInEditor,
         Rewind,
         ToggleTimeline,
+        ToggleGit,
         PrevTurn,
         NextTurn,
         PageUp,
@@ -122,7 +123,7 @@ const LIST_KEYS: [(&str, &str); 6] = [
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 38] = [
+const SHORTCUTS: [(&str, &str); 39] = [
     ("command_palette", "secondary-k"),
     ("find", "secondary-f"),
     ("open_project", "secondary-o"),
@@ -158,6 +159,8 @@ const SHORTCUTS: [(&str, &str); 38] = [
     // `history.rs`): a key sequence would hold every single Esc back.
     ("rewind", ESC_ESC),
     ("toggle_timeline", "secondary-shift-t"),
+    // The workspace's Git pane, or the Git modal in chat.
+    ("toggle_git_pane", "secondary-shift-g"),
     // The next session, in any project, that wants you.
     ("next_needs_you", "secondary-shift-a"),
     // The timeline's turns, previous and next.
@@ -459,6 +462,7 @@ pub fn bind_keys(cx: &mut App) {
             "edit_in_editor" => KeyBinding::new(keys, EditInEditor, c),
             "rewind" => KeyBinding::new(keys, Rewind, c),
             "toggle_timeline" => KeyBinding::new(keys, ToggleTimeline, c),
+            "toggle_git_pane" => KeyBinding::new(keys, ToggleGit, c),
             "next_needs_you" => KeyBinding::new(keys, NextNeedsYou, c),
             "prev_turn" => KeyBinding::new(keys, PrevTurn, c),
             "next_turn" => KeyBinding::new(keys, NextTurn, c),
@@ -569,7 +573,6 @@ impl KynexApp {
             None if by > 0 => 0,
             None => n - 1,
         };
-        self.show_code_view();
         self.switch_session(kind, cwd, order[next as usize].clone());
         self.focus_input(window, cx);
         cx.notify();
@@ -733,6 +736,12 @@ impl KynexApp {
             cx.stop_propagation();
             return;
         }
+        if k.key == "escape" && self.git_file.is_some() {
+            self.close_git_file_modal(cx);
+            self.focus_input(window, cx);
+            cx.stop_propagation();
+            return;
+        }
         // The scratch explorer: its preview, then the modal.
         if k.key == "escape" && self.menu.is_none() && self.close_scratch(cx) {
             cx.stop_propagation();
@@ -776,3 +785,6 @@ impl KynexApp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

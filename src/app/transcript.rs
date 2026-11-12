@@ -17,7 +17,7 @@ use kynex_core::paths::project_name;
 use kynex_core::transcript::{self, Row};
 
 use super::KynexApp;
-use super::state::{Active, View};
+use super::state::Active;
 use crate::theme::{Palette, label_font, theme};
 use crate::ui::motion::{self, fade_in, pop_in};
 use crate::ui::scrollbar;
@@ -416,14 +416,15 @@ impl KynexApp {
     /// gliding like the wheel. A page keeps a little of the last one in view;
     /// reaching the end follows new output again.
     pub(super) fn scroll_keys(&mut self, by: Scroll, cx: &mut Context<Self>) {
-        // Not under the Git view or a modal: those keys are theirs.
+        // Not under a modal: those keys are its own.
         let covered = self.git_modal.is_some()
+            || self.git_file.is_some()
             || self.settings.is_some()
             || self.app_settings.is_some()
             || self.extensions.is_some()
             || self.about_open
             || self.viewer.is_some();
-        if covered || self.active_project().is_some_and(|p| p.view == View::Git) {
+        if covered {
             return cx.propagate();
         }
         if by == Scroll::Bottom {

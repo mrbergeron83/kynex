@@ -52,9 +52,58 @@ pub fn display(keys: &str, mac: bool) -> String {
         .join(" ")
 }
 
+/// One keystroke the same however it was written: modifiers sorted, `secondary` as the
+/// OS's (`cmd` on macOS, `ctrl` elsewhere), lower case.
+fn normal(stroke: &str, mac: bool) -> String {
+    let mut mods = Vec::new();
+    let mut rest = stroke;
+    while let Some((m, tail)) = rest.split_once('-').filter(|(_, tail)| !tail.is_empty()) {
+        mods.push(match m.to_lowercase().as_str() {
+            "secondary" if mac => "cmd".to_string(),
+            "secondary" | "control" => "ctrl".to_string(),
+            "super" | "win" => "cmd".to_string(),
+            other => other.to_string(),
+        });
+        rest = tail;
+    }
+    mods.sort();
+    mods.push(rest.to_lowercase());
+    mods.join("-")
+}
+
+/// The pairs of shortcuts in `bindings` (name, keys) that would take the same keys on
+/// macOS (`mac`) or elsewhere. Unbound ones (empty keys) clash with nothing.
+pub fn clashes<'a>(bindings: &[(&'a str, &str)], mac: bool) -> Vec<(&'a str, &'a str)> {
+    let keys: Vec<(&str, String)> = bindings
+        .iter()
+        .filter(|(_, k)| !k.trim().is_empty())
+        .map(|(n, k)| (*n, k.split_whitespace().map(|s| normal(s, mac)).collect::<Vec<_>>().join(" ")))
+        .collect();
+    let mut out = Vec::new();
+    for (i, (a, ka)) in keys.iter().enumerate() {
+        out.extend(keys[i + 1..].iter().filter(|(_, kb)| kb == ka).map(|(b, _)| (*a, *b)));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clashes_are_the_same_keys_however_written() {
+        let b = [
+            ("a", "secondary-shift-g"),
+            ("b", "shift-ctrl-G"),
+            ("c", "cmd-shift-g"),
+            ("d", ""),
+            ("e", ""),
+            ("f", "ctrl-b g"),
+        ];
+        assert_eq!(clashes(&b, false), [("a", "b")]);
+        assert_eq!(clashes(&b, true), [("a", "c")]);
+        assert!(clashes(&[("x", "ctrl--"), ("y", "ctrl-=")], false).is_empty());
+    }
 
     #[test]
     fn labels_read_as_words() {

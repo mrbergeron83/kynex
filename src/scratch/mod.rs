@@ -6,7 +6,7 @@
 //!
 //! Its own entity, like `GitView`; the app draws the modal around it, closes
 //! it, and handles what it asks for ([`ScratchEvent`]: an image for the
-//! viewer, a file's changes for the Git view). The scratch folder is watched
+//! viewer, a file's changes for its diff). The scratch folder is watched
 //! while it's open, so the lists keep up as Claude works.
 //!
 //! | file          | what                                                   |
@@ -37,7 +37,7 @@ use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, scrollbar};
 pub enum ScratchEvent {
     /// Show image `index` of item `item` in the image viewer.
     OpenImage { item: usize, index: usize },
-    /// Show a project file's changes in the Git view.
+    /// Show a project file's changes: its diff (the Git modal in chat).
     ShowChanges(PathBuf),
 }
 

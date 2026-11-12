@@ -53,7 +53,6 @@ impl KynexApp {
         self.app_settings = None;
         self.saved.active = Active::Project(i);
         self.save();
-        self.show_code_view();
         self.switch_session(Kind::Code, path, id);
         cx.notify();
     }

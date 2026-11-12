@@ -347,6 +347,31 @@ impl SessionGroups {
         old.len()
     }
 
+    /// The archived ids among `listed` (id, last used in unix seconds) used
+    /// before `cutoff` (all when `None`), without the `open` ones, in archive
+    /// order; and how many were left out for being open.
+    pub fn purge_candidates(
+        &self,
+        listed: &[(String, i64)],
+        cutoff: Option<i64>,
+        open: &[String],
+    ) -> (Vec<String>, usize) {
+        let mut skipped = 0;
+        let mut ids = Vec::new();
+        for id in &self.archived {
+            let Some((_, used)) = listed.iter().find(|(l, _)| l == id) else { continue };
+            if cutoff.is_some_and(|c| *used >= c) {
+                continue;
+            }
+            if open.contains(id) {
+                skipped += 1;
+            } else {
+                ids.push(id.clone());
+            }
+        }
+        (ids, skipped)
+    }
+
     pub fn toggle_group(&mut self, i: usize) {
         if let Some(g) = self.groups.get_mut(i) {
             g.collapsed = !g.collapsed;
@@ -392,6 +417,22 @@ mod tests {
 
     fn ids(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn purge_candidates_are_old_closed_archived_ones() {
+        let mut g = SessionGroups::default();
+        for id in ["a", "b", "c", "gone"] {
+            g.archive(id);
+        }
+        let listed: Vec<(String, i64)> =
+            [("a", 10), ("b", 100), ("c", 20), ("live", 1)].iter().map(|(i, t)| (i.to_string(), *t)).collect();
+        // Everything archived and listed; "live" isn't archived, "gone" isn't listed.
+        assert_eq!(g.purge_candidates(&listed, None, &[]), (ids(&["a", "b", "c"]), 0));
+        // Cutoff drops the recent one.
+        assert_eq!(g.purge_candidates(&listed, Some(50), &[]), (ids(&["a", "c"]), 0));
+        // Open ones are skipped and counted, but only when they would have gone.
+        assert_eq!(g.purge_candidates(&listed, Some(50), &ids(&["c", "b"])), (ids(&["a"]), 1));
     }
 
     #[test]
