@@ -34,7 +34,7 @@ pub use diff::{
 pub use log::{Commit, CommitDetail, Ref, RefKind, commit_detail, log};
 pub use ops::{Sync, commit, discard, last_message, stage, stage_all, sync, unstage, unstage_all};
 pub use status::{Change, FileStatus, Head, Status, status};
-pub use tree::{TreeFile, TreeRow, TreeStatus, tree_files, tree_rows};
+pub use tree::{Staged, Target, TreeFile, TreeRow, TreeStatus, files_of, stage_paths, tree_files, tree_rows};
 pub use worktree::{
     Worktree, add_worktree, add_worktree_from, default_worktree_path, fill_worktrees, list_worktrees,
     list_worktrees_quick, prune_worktrees, remove_worktree, worktree_in,

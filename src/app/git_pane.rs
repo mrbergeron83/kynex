@@ -109,6 +109,14 @@ impl KynexApp {
             }
             GitPaneEvent::OpenFull(path) => this.open_git_modal(path.clone(), cx),
             GitPaneEvent::Close => this.close_git_pane(window, cx),
+            // The Git view of that folder (the full view, the modal) reads it again.
+            GitPaneEvent::Changed(root) => {
+                for (folder, view) in &this.git {
+                    if kynex_core::workspace::same_folder(folder, root) {
+                        view.update(cx, |v, cx| v.refresh(cx));
+                    }
+                }
+            }
         })
         .detach();
         self.git_panes.insert(ws.to_path_buf(), pane.clone());

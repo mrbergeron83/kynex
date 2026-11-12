@@ -1,16 +1,24 @@
 //! The Git pane: the changes of a workspace's worktrees next to the session that made
 //! them. A compact worktree list on top, the selected worktree's changed files as a
-//! folder tree below; a click on a file asks the app for its whole-file diff, and
-//! "Commit & history…" for the full Git view.
+//! folder tree below, each with a box that stages it, and the commit box at the foot. A
+//! click on a file asks the app for its whole-file diff, and "Commit & history…" for the
+//! full Git view.
+//!
+//! Each worktree's operations go through a [`GitView`] of its own that the pane hosts
+//! without showing it whole: staging, the commit box, errors act as they do in the Git view.
 //!
 //! | file            | what                                                     |
 //! |-----------------|----------------------------------------------------------|
 //! | `mod.rs`        | state, reading and polling, the pane's layout            |
-//! | `tree.rs`       | the file tree's rows                                     |
+//! | `worktrees.rs`  | the worktree list on top                                 |
+//! | `tree.rs`       | the file tree's rows and their stage boxes               |
+//! | `actions.rs`    | staging, discarding, a row's menu                        |
 //! | `file_modal.rs` | `FileDiffView`: one file's whole diff, change by change  |
 
+mod actions;
 pub mod file_modal;
 mod tree;
+mod worktrees;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -22,11 +30,11 @@ use gpui::{Context, Entity, EventEmitter, FontWeight, UniformListScrollHandle, W
 use kynex_core::git::{self, Change, TreeFile, TreeRow, tree_files, tree_rows};
 use kynex_core::workspace::same_folder;
 
+use self::actions::{Confirm, RowMenu};
 use crate::app::ToggleGit;
 use crate::app::worktrees::Worktrees;
-use crate::git::diff_view::counts;
+use crate::git::{GitEvent, GitView};
 use crate::theme::theme;
-use crate::ui::wash::row_wash;
 use crate::ui::{Icon, Tooltip, icon, icon_button, outline_button};
 
 /// How often the working tree is re-read while the pane is on screen.
@@ -38,6 +46,8 @@ pub enum GitPaneEvent {
     OpenFile { root: PathBuf, path: String, untracked: bool },
     /// Open the full Git view (commit box, history, branches) for this worktree.
     OpenFull(PathBuf),
+    /// Something was done to this worktree (staged, committed…): other views of it are old.
+    Changed(PathBuf),
     /// Close the pane.
     Close,
 }
@@ -49,6 +59,8 @@ pub struct GitPane {
     root: PathBuf,
     selected: PathBuf,
     worktrees: Entity<Worktrees>,
+    /// Each worktree's Git view, for its operations and the parts drawn here.
+    views: HashMap<PathBuf, Entity<GitView>>,
     files: Rc<Vec<TreeFile>>,
     rows: Rc<Vec<TreeRow>>,
     /// The selected worktree has been read, so an empty list is really empty.
@@ -56,11 +68,16 @@ pub struct GitPane {
     error: Option<String>,
     /// Collapsed folders, per worktree.
     closed: HashMap<PathBuf, HashSet<String>>,
-    /// A read is running.
+    /// A read is running; `again` asks for another once it's done.
     busy: bool,
+    again: bool,
     /// When the pane last drew; polling waits while it isn't on screen.
     drawn: Option<Instant>,
     scroll: UniformListScrollHandle,
+    /// A row's right-click menu.
+    menu: Option<RowMenu>,
+    /// A row whose discard was asked for and awaits a second click.
+    confirm: Option<Confirm>,
 }
 
 /// Status and line counts of every changed file in `root`. Blocking.
@@ -96,14 +113,18 @@ impl GitPane {
             selected: root.clone(),
             root,
             worktrees,
+            views: HashMap::new(),
             files: Rc::default(),
             rows: Rc::default(),
             loaded: false,
             error: None,
             closed: HashMap::new(),
             busy: false,
+            again: false,
             drawn: None,
             scroll: UniformListScrollHandle::new(),
+            menu: None,
+            confirm: None,
         };
         pane.load(cx);
         pane
@@ -117,6 +138,8 @@ impl GitPane {
             self.rows = Rc::default();
             self.loaded = false;
             self.error = None;
+            self.menu = None;
+            self.confirm = None;
         }
         self.load(cx);
         cx.notify();
@@ -125,6 +148,29 @@ impl GitPane {
     /// Re-reads the selected worktree now.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.load(cx);
+        let view = self.view(cx);
+        view.update(cx, |v, cx| v.refresh(cx));
+    }
+
+    /// The selected worktree's Git view, made the first time it's needed.
+    fn view(&mut self, cx: &mut Context<Self>) -> Entity<GitView> {
+        if let Some(v) = self.views.get(&self.selected) {
+            return v.clone();
+        }
+        let root = self.selected.clone();
+        let view = cx.new(|cx| GitView::new(root.clone(), cx));
+        cx.observe(&view, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&view, move |this, _, ev: &GitEvent, cx| match ev {
+            GitEvent::Changed => {
+                this.load(cx);
+                this.worktrees.update(cx, |w, cx| w.refresh(cx));
+                cx.emit(GitPaneEvent::Changed(root.clone()));
+            }
+            GitEvent::OpenFolder(_) => {}
+        })
+        .detach();
+        self.views.insert(self.selected.clone(), view.clone());
+        view
     }
 
     fn poll(&mut self, cx: &mut Context<Self>) {
@@ -136,6 +182,7 @@ impl GitPane {
 
     fn load(&mut self, cx: &mut Context<Self>) {
         if self.busy {
+            self.again = true;
             return;
         }
         self.busy = true;
@@ -145,10 +192,12 @@ impl GitPane {
             let files = cx.background_spawn(async move { read(&at) }).await;
             this.update(cx, |this, cx| {
                 this.busy = false;
-                // Another worktree was picked meanwhile: read that one.
-                if this.selected != path {
+                // Another worktree was picked meanwhile, or something changed: read again.
+                if this.selected != path || std::mem::take(&mut this.again) {
                     this.load(cx);
-                    return;
+                    if this.selected != path {
+                        return;
+                    }
                 }
                 match files {
                     Ok(files) => {
@@ -181,26 +230,34 @@ impl GitPane {
         self.rebuild();
         cx.notify();
     }
+
+    /// The selected worktree's folder name and branch, for the bar.
+    fn names(&self, cx: &Context<Self>) -> (String, Option<String>) {
+        let list = &self.worktrees.read(cx).list;
+        let branch = list.iter().find(|w| same_folder(&w.path, &self.selected)).map(|w| w.label().to_string());
+        let name = self.selected.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        (name, branch)
+    }
 }
 
 impl Render for GitPane {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.drawn = Some(Instant::now());
         let t = theme(cx).clone();
-        let list = self.worktrees.read(cx).list.clone();
-        let branch = list.iter().find(|w| same_folder(&w.path, &self.selected)).map(|w| w.label().to_string());
+        let view = self.view(cx);
+        let (name, branch) = self.names(cx);
 
         let full = self.selected.clone();
         let header = div()
             .flex()
             .flex_none()
             .items_center()
-            .gap_2()
+            .gap_1p5()
             .h(px(36.))
             .px_3()
             .border_b_1()
             .border_color(t.border_variant)
-            .child(div().text_sm().font_weight(FontWeight::MEDIUM).child("Changes"))
+            .child(div().flex_none().text_sm().font_weight(FontWeight::MEDIUM).child(name))
             .when_some(branch, |d, b| {
                 d.child(icon(Icon::GitBranch, t.text_muted).size_3())
                     .child(div().min_w_0().truncate().text_xs().text_color(t.text_muted).child(b))
@@ -222,70 +279,24 @@ impl Render for GitPane {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(GitPaneEvent::Close))),
             );
 
-        // One row per worktree; a project with a single checkout still shows it.
-        let mut rows = Vec::new();
-        for (i, w) in list.iter().enumerate() {
-            let selected = same_folder(&w.path, &self.selected);
-            let path = w.path.clone();
-            rows.push(
-                div()
-                    .id(("git-pane-wt", i))
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .h(px(26.))
-                    .px_2()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .child(row_wash(selected, t.hover, t.active))
-                    .child(icon(Icon::GitBranch, t.text_muted).size_3())
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_sm()
-                            .text_color(if selected { t.text } else { t.text_muted })
-                            .child(w.label().to_string()),
-                    )
-                    .when(!w.main, |d| d.child(div().flex_none().text_xs().text_color(t.info).child("worktree")))
-                    .when_some(w.changes.filter(|&n| n > 0), |d, n| {
-                        d.child(div().flex_none().text_xs().text_color(t.warning).child(n.to_string()))
-                            .when_some(w.lines, |d, (a, r)| d.child(counts(a, r, &t)))
-                    })
-                    .tooltip(Tooltip::text(w.path.display().to_string()))
-                    .on_click(cx.listener(move |this, _, _, cx| this.select(path.clone(), cx)))
-                    .into_any_element(),
-            );
-        }
-        if rows.is_empty() {
-            let name = self.root.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-            rows.push(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .h(px(26.))
-                    .px_2()
-                    .rounded_md()
-                    .bg(t.active)
-                    .child(icon(Icon::GitBranch, t.text_muted).size_3())
-                    .child(div().text_sm().child(name))
-                    .into_any_element(),
-            );
-        }
-        let worktrees = div()
-            .id("git-pane-worktrees")
-            .flex_none()
-            .max_h(px(150.))
-            .overflow_y_scroll()
-            .p_1()
-            .border_b_1()
-            .border_color(t.border_variant)
-            .children(rows);
-
+        let worktrees = self.render_worktrees(cx);
+        let notices = view.update(cx, |v, cx| v.render_notices(cx));
+        let tools = self.render_tree_bar(&view, cx);
         let body = self.render_tree(cx);
-        div().size_full().flex().flex_col().bg(t.panel).text_color(t.text).child(header).child(worktrees).child(body)
+        let commit = view.update(cx, |v, cx| v.render_commit_area(window, cx));
+        let menu = self.render_menu(cx);
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(t.panel)
+            .text_color(t.text)
+            .child(header)
+            .child(worktrees)
+            .children(notices)
+            .children(tools)
+            .child(body)
+            .child(div().flex_none().border_t_1().border_color(t.border_variant).child(commit))
+            .children(menu)
     }
 }

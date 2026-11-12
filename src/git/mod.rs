@@ -12,14 +12,16 @@
 //! | `branches.rs`   | the Branches tab: branch rows, their menu, picking         |
 //! | `branch_ops.rs` | its name field, delete confirmation and undo, worktrees    |
 //! | `diff_view.rs`  | a diff (a file, a commit, a branch) as numbered rows       |
+//! | `parts.rs`      | what the Git pane hosts: staging by path, commit box, notices |
 //!
 //! Git itself is `kynex_core::git`; every call runs on the background executor.
 
 mod branch_ops;
 mod branches;
-mod changes;
+pub(crate) mod changes;
 pub(crate) mod diff_view;
 mod history;
+mod parts;
 mod top_bar;
 
 use std::path::{Path, PathBuf};
@@ -33,7 +35,6 @@ use self::diff_view::DiffState;
 use crate::theme::theme;
 use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::wash::row_wash;
-use crate::ui::{Icon, icon, icon_button};
 
 /// How often the working tree is re-read while the view exists.
 const POLL_EVERY: Duration = Duration::from_secs(3);
@@ -62,6 +63,8 @@ enum Selection {
 pub enum GitEvent {
     /// Open this folder (a worktree) as a project tab.
     OpenFolder(PathBuf),
+    /// An operation ran (staged, committed, switched…): what was read of the folder is old.
+    Changed,
 }
 
 impl gpui::EventEmitter<GitEvent> for GitView {}
@@ -362,6 +365,7 @@ impl GitView {
                     Err(e) => this.error = Some(e),
                 }
                 this.refresh(cx);
+                this.changed(cx);
                 cx.notify();
             })
             .ok();
@@ -490,35 +494,7 @@ impl Render for GitView {
         let undo = self.render_undo(cx);
         let confirm = self.render_confirm(cx);
 
-        let error = self.error.clone().map(|e| {
-            div()
-                .flex()
-                .flex_none()
-                .items_start()
-                .gap_2()
-                .px_3()
-                .py_1p5()
-                .border_b_1()
-                .border_color(t.border_variant)
-                .bg(t.error.opacity(0.08))
-                .child(icon(Icon::Dot, t.error).size_3().mt_1())
-                .child(div().flex_1().min_w_0().text_sm().text_color(t.text).child(e))
-                .child(icon_button("git-dismiss-error", Icon::Close, cx).on_click(cx.listener(|this, _, _, cx| {
-                    this.error = None;
-                    cx.notify();
-                })))
-        });
-        let conflicts = self.status.as_ref().is_some_and(Status::has_conflicts).then(|| {
-            div()
-                .flex_none()
-                .px_3()
-                .py_1p5()
-                .border_b_1()
-                .border_color(t.border_variant)
-                .bg(t.warning.opacity(0.08))
-                .text_sm()
-                .child("Conflicts: resolve the files marked ! in your editor, then stage them to continue.")
-        });
+        let notices = self.render_notices(cx);
 
         div()
             .relative()
@@ -526,9 +502,8 @@ impl Render for GitView {
             .flex_col()
             .size_full()
             .child(top)
-            .children(error)
+            .children(notices)
             .children(undo)
-            .children(conflicts)
             .child(
                 div()
                     .flex()

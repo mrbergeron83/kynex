@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::status::{Change, Status};
+use super::status::{Change, FileStatus, Status};
 
 /// What happened to a file, staged and unstaged together.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,6 +16,28 @@ pub enum TreeStatus {
     Conflicted,
 }
 
+/// How much of a file's changes is staged; for a folder, of the files below it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Staged {
+    No,
+    /// Some staged, some not: a file with changes on both sides, or a folder of mixed files.
+    Partly,
+    All,
+}
+
+impl Staged {
+    /// Whether a click on its box unstages (it is all staged) rather than stages the rest.
+    pub fn unstages(self) -> bool {
+        self == Self::All
+    }
+
+    fn of(all: impl IntoIterator<Item = Self>) -> Self {
+        let mut it = all.into_iter();
+        let Some(first) = it.next() else { return Self::No };
+        it.fold(first, |acc, s| if acc == s { acc } else { Self::Partly })
+    }
+}
+
 /// One changed file in the tree.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeFile {
@@ -26,6 +48,76 @@ pub struct TreeFile {
     pub status: TreeStatus,
     pub added: usize,
     pub removed: usize,
+    /// The change in the index, and the one in the working tree, as `git status` has them.
+    pub index: Option<Change>,
+    pub worktree: Option<Change>,
+}
+
+impl TreeFile {
+    pub fn staged(&self) -> Staged {
+        match (self.index, self.worktree) {
+            (Some(_), Some(_)) => Staged::Partly,
+            (Some(_), None) => Staged::All,
+            _ => Staged::No,
+        }
+    }
+
+    /// The file as `git status` gave it, for [`super::discard`].
+    pub fn file_status(&self) -> FileStatus {
+        FileStatus {
+            path: self.path.clone(),
+            orig_path: self.orig_path.clone(),
+            staged: self.index,
+            unstaged: self.worktree,
+        }
+    }
+
+    /// It has changes in the working tree to throw away (a conflict is resolved, not discarded).
+    pub fn discardable(&self) -> bool {
+        self.worktree.is_some_and(|c| c != Change::Conflicted)
+    }
+}
+
+/// What a row of the tree acts on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target<'a> {
+    /// `files[i]`.
+    File(usize),
+    /// Every file below this folder (a [`TreeRow::Folder`]'s `path`).
+    Folder(&'a str),
+}
+
+/// The indices of the files `target` covers.
+pub fn files_of(files: &[TreeFile], target: Target) -> Vec<usize> {
+    match target {
+        Target::File(i) => (i < files.len()).then_some(i).into_iter().collect(),
+        Target::Folder(dir) => {
+            let prefix = format!("{dir}/");
+            (0..files.len()).filter(|&i| files[i].path.starts_with(&prefix)).collect()
+        }
+    }
+}
+
+/// The paths to hand `git add` ([`super::stage`]) or `git restore --staged`
+/// ([`super::unstage`]) for `target`: a file's path, or a folder's (a pathspec for all
+/// below it, however many). Unstaging also names where a staged rename came from, so the
+/// old path is put back in the index rather than left staged as deleted.
+pub fn stage_paths(files: &[TreeFile], target: Target, unstage: bool) -> Vec<String> {
+    let mut out = match target {
+        Target::File(i) => files.get(i).map(|f| f.path.clone()).into_iter().collect(),
+        Target::Folder(dir) => vec![dir.to_string()],
+    };
+    if unstage {
+        for i in files_of(files, target) {
+            let f = &files[i];
+            if let (Some(Change::Renamed | Change::Copied), Some(old)) = (f.index, &f.orig_path)
+                && !out.iter().any(|p| p == old || old.starts_with(&format!("{p}/")))
+            {
+                out.push(old.clone());
+            }
+        }
+    }
+    out
 }
 
 /// A row of the tree, top to bottom.
@@ -33,7 +125,16 @@ pub struct TreeFile {
 pub enum TreeRow {
     /// A folder (or a chain of single-child folders, `src/app`). `path` is the deepest
     /// folder's full path, which is what `closed` holds.
-    Folder { path: String, name: String, depth: usize, open: bool, files: usize, added: usize, removed: usize },
+    Folder {
+        path: String,
+        name: String,
+        depth: usize,
+        open: bool,
+        files: usize,
+        added: usize,
+        removed: usize,
+        staged: Staged,
+    },
     /// `files[index]`, shown under its folder's `depth`.
     File { index: usize, name: String, depth: usize },
 }
@@ -63,7 +164,15 @@ pub fn tree_files(status: &Status, stats: &HashMap<String, (usize, usize)>) -> V
                 TreeStatus::Modified
             };
             let (added, removed) = stats.get(&f.path).copied().unwrap_or((0, 0));
-            TreeFile { path: f.path.clone(), orig_path: f.orig_path.clone(), status: kind, added, removed }
+            TreeFile {
+                path: f.path.clone(),
+                orig_path: f.orig_path.clone(),
+                status: kind,
+                added,
+                removed,
+                index: f.staged,
+                worktree: f.unstaged,
+            }
         })
         .collect()
 }
@@ -77,6 +186,12 @@ struct Node {
 }
 
 impl Node {
+    /// How much of what is below this folder is staged.
+    fn staged(&self, files: &[TreeFile]) -> Staged {
+        let mine = self.files.iter().map(|&i| files[i].staged());
+        Staged::of(mine.chain(self.folders.iter().map(|f| f.staged(files))))
+    }
+
     /// Files, added and removed lines below this folder.
     fn totals(&self, files: &[TreeFile]) -> (usize, usize, usize) {
         let mut t = (self.files.len(), 0, 0);
@@ -142,7 +257,17 @@ fn emit(node: &Node, files: &[TreeFile], closed: &HashSet<String>, depth: usize,
         }
         let (count, added, removed) = deepest.totals(files);
         let open = !closed.contains(&deepest.path);
-        rows.push(TreeRow::Folder { path: deepest.path.clone(), name, depth, open, files: count, added, removed });
+        let staged = deepest.staged(files);
+        rows.push(TreeRow::Folder {
+            path: deepest.path.clone(),
+            name,
+            depth,
+            open,
+            files: count,
+            added,
+            removed,
+            staged,
+        });
         if open {
             emit(deepest, files, closed, depth + 1, rows);
         }
@@ -160,7 +285,19 @@ mod tests {
     use super::*;
 
     fn file(path: &str, added: usize, removed: usize) -> TreeFile {
-        TreeFile { path: path.into(), orig_path: None, status: TreeStatus::Modified, added, removed }
+        TreeFile {
+            path: path.into(),
+            orig_path: None,
+            status: TreeStatus::Modified,
+            added,
+            removed,
+            index: None,
+            worktree: Some(Change::Modified),
+        }
+    }
+
+    fn sides(path: &str, index: Option<Change>, worktree: Option<Change>) -> TreeFile {
+        TreeFile { index, worktree, ..file(path, 0, 0) }
     }
 
     fn fs(path: &str, staged: Option<Change>, unstaged: Option<Change>) -> FileStatus {
@@ -251,7 +388,8 @@ mod tests {
                 open: true,
                 files: 2,
                 added: 11,
-                removed: 22
+                removed: 22,
+                staged: Staged::No,
             }
         );
         assert!(matches!(&rows[1], TreeRow::Folder { path, files: 1, added: 10, removed: 20, .. } if path == "a/c"));
@@ -280,5 +418,60 @@ mod tests {
     #[test]
     fn empty_list_has_no_rows() {
         assert!(tree_rows(&[], &HashSet::new()).is_empty());
+    }
+
+    #[test]
+    fn a_file_is_staged_all_partly_or_not() {
+        use Change::*;
+        assert_eq!(sides("a", Some(Modified), None).staged(), Staged::All);
+        assert_eq!(sides("a", Some(Added), Some(Modified)).staged(), Staged::Partly);
+        assert_eq!(sides("a", None, Some(Untracked)).staged(), Staged::No);
+        assert_eq!(sides("a", None, Some(Conflicted)).staged(), Staged::No);
+        assert!(!sides("a", None, Some(Conflicted)).discardable());
+        assert!(!sides("a", Some(Modified), None).discardable());
+        assert!(sides("a", None, Some(Deleted)).discardable());
+        assert!(Staged::All.unstages() && !Staged::Partly.unstages() && !Staged::No.unstages());
+    }
+
+    #[test]
+    fn a_folder_is_staged_as_what_is_below_it() {
+        use Change::*;
+        let staged = |files: &[TreeFile]| match &tree_rows(files, &HashSet::new())[0] {
+            TreeRow::Folder { staged, .. } => *staged,
+            r => panic!("{r:?}"),
+        };
+        let all = [sides("d/a", Some(Modified), None), sides("d/e/b", Some(Added), None)];
+        assert_eq!(staged(&all), Staged::All);
+        let none = [sides("d/a", None, Some(Modified)), sides("d/e/b", None, Some(Untracked))];
+        assert_eq!(staged(&none), Staged::No);
+        let mixed = [sides("d/a", Some(Modified), None), sides("d/e/b", None, Some(Untracked))];
+        assert_eq!(staged(&mixed), Staged::Partly);
+        // A folder deeper down that is itself partly staged makes its parent partly staged.
+        let deep = [sides("d/a", Some(Modified), None), sides("d/e/b", Some(Modified), Some(Modified))];
+        assert_eq!(staged(&deep), Staged::Partly);
+    }
+
+    #[test]
+    fn a_folder_covers_every_file_below_it_and_no_other() {
+        let files = [file("src/a.rs", 0, 0), file("src/app/b.rs", 0, 0), file("srcs/c.rs", 0, 0), file("x.rs", 0, 0)];
+        assert_eq!(files_of(&files, Target::Folder("src")), [0, 1]);
+        assert_eq!(files_of(&files, Target::Folder("src/app")), [1]);
+        assert_eq!(files_of(&files, Target::File(3)), [3]);
+        assert!(files_of(&files, Target::File(9)).is_empty());
+    }
+
+    #[test]
+    fn unstaging_a_rename_names_its_old_path_too() {
+        let mut renamed = sides("new/b.rs", Some(Change::Renamed), None);
+        renamed.orig_path = Some("old/a.rs".into());
+        let files = [renamed, sides("new/c.rs", Some(Change::Added), None)];
+        assert_eq!(stage_paths(&files, Target::File(0), false), ["new/b.rs"]);
+        assert_eq!(stage_paths(&files, Target::File(0), true), ["new/b.rs", "old/a.rs"]);
+        assert_eq!(stage_paths(&files, Target::Folder("new"), false), ["new"]);
+        assert_eq!(stage_paths(&files, Target::Folder("new"), true), ["new", "old/a.rs"]);
+        // A rename inside the folder needs nothing more.
+        let mut inside = sides("new/b.rs", Some(Change::Renamed), None);
+        inside.orig_path = Some("new/old.rs".into());
+        assert_eq!(stage_paths(&[inside], Target::Folder("new"), true), ["new"]);
     }
 }
