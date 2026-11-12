@@ -427,8 +427,7 @@ impl KynexApp {
                     (None, Content::Terminal) => "Terminal".to_string(),
                     (None, Content::Git) => "Changes".to_string(),
                     (None, Content::Timeline) => "Timeline".to_string(),
-                    (None, Content::Sessions) => "Sessions".to_string(),
-                    (None, Content::Workspaces) => "Workspaces".to_string(),
+                    (None, Content::Tree) => "Sessions".to_string(),
                 };
                 (id, label)
             })

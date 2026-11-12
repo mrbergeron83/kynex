@@ -76,7 +76,7 @@ impl KynexApp {
             live.focus(key);
         }
         self.swap_to(id, window, cx);
-        // A new tab starts as the others do, with the sessions list and the workspaces.
+        // A new tab starts as the others do, with the tree.
         let (ratio, bounds) = (self.side_share(cx), self.layout_bounds(cx));
         let mut next = self.next_pane;
         if let Some(t) = self.tiles.get_mut(&cwd) {

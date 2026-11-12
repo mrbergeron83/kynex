@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The Sessions and Workspaces panes are one pane now, the tree. "Sessions beside" opens it, Ctrl+B b and the toolbar button toggle it, and layouts saved with either (or both) open with it.
+
 ## [0.0.28] - 2026-11-12
 
 ### Added

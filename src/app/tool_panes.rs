@@ -38,17 +38,14 @@ impl KynexApp {
                 let key = t.session_focus().and_then(|p| t.key_of(p))?;
                 self.render_timeline(key, true, cx)
             }
-            Content::Sessions => {
-                Some(self.render_sessions_pane(pane, Parts { workspaces: false, sessions: true }, window, cx))
-            }
-            Content::Workspaces => {
-                Some(self.render_sessions_pane(pane, Parts { workspaces: true, sessions: false }, window, cx))
+            Content::Tree => {
+                Some(self.render_sessions_pane(pane, Parts { workspaces: true, sessions: true }, window, cx))
             }
             Content::Session(_) => None,
         }
     }
 
-    /// The sessions list or the workspaces, in a pane: the sidebar's own views, one of them each.
+    /// The tree (workspaces with their sessions), in a pane: the sidebar's own views.
     fn render_sessions_pane(
         &mut self,
         pane: PaneId,
@@ -64,14 +61,9 @@ impl KynexApp {
             .into_any_element()
     }
 
-    /// The sessions list on the right of pane `target`. The sidebar leaves out what a pane shows.
+    /// The tree on the right of pane `target`. The sidebar leaves out what a pane shows.
     pub(super) fn show_sessions_pane(&mut self, target: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_tool(target, Tool::Sessions, 0.7, window, cx);
-    }
-
-    /// The workspaces on the right of pane `target`.
-    pub(super) fn show_workspaces_pane(&mut self, target: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_tool(target, Tool::Workspaces, 0.7, window, cx);
+        self.open_tool(target, Tool::Tree, 0.7, window, cx);
     }
 
     /// The share of the width the sessions column gets: about [`SIDE_WIDTH`] pixels.
@@ -82,8 +74,8 @@ impl KynexApp {
         (SIDE_WIDTH / self.layout_bounds(cx).w).clamp(0.12, 0.4)
     }
 
-    /// Every tab of the workspace `cwd` gets its Sessions and Workspaces panes, once: what the
-    /// sidebar was. A tab where they were closed stays without.
+    /// Every tab of the workspace `cwd` gets its tree pane, once: what the sidebar was. A
+    /// tab where it was closed stays without.
     pub(super) fn seed_side_panes(&mut self, cwd: &Path, cx: &mut Context<Self>) {
         if self.tiles.get(cwd).is_none_or(|t| t.seeded()) {
             return;
@@ -103,7 +95,7 @@ impl KynexApp {
         self.next_pane = next;
     }
 
-    /// Ctrl+B b and the toolbar's button: the tab's Sessions and Workspaces panes away, or back.
+    /// Ctrl+B b and the toolbar's button: the tab's tree pane away, or back.
     /// False outside a project's panes (chat has the sidebar).
     pub(super) fn toggle_side_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some((_, cwd, _)) = self.tiling_scope() else { return false };
@@ -216,10 +208,7 @@ impl KynexApp {
     pub(super) fn close_tool_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, ws, _)) = self.tiling_scope() else { return };
         let Some(t) = self.tiles.get_mut(&ws) else { return };
-        if !matches!(
-            t.close_pane(pane),
-            Some(Content::Git | Content::Timeline | Content::Sessions | Content::Workspaces)
-        ) {
+        if !matches!(t.close_pane(pane), Some(Content::Git | Content::Timeline | Content::Tree)) {
             return;
         }
         self.show_focused_pane(window, cx);
