@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.28] - 2026-11-12
+
 ### Added
 
 - The Git pane: a worktree list and the selected worktree's changed files as a folder tree beside the session. Click a file for its whole diff in a modal, with previous / next change buttons (N / P, F7, Alt+Up / Down); the session header's branch chip opens the pane.
@@ -924,7 +926,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.27...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.28...HEAD
+[0.0.28]: https://github.com/mrbergeron83/kynex/compare/v0.0.27...v0.0.28
 [0.0.27]: https://github.com/mrbergeron83/kynex/compare/v0.0.26...v0.0.27
 [0.0.26]: https://github.com/mrbergeron83/kynex/compare/v0.0.25...v0.0.26
 [0.0.25]: https://github.com/mrbergeron83/kynex/compare/v0.0.24...v0.0.25
