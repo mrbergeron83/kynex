@@ -423,12 +423,10 @@ fn git_and_the_timeline_sit_beside_a_session_and_come_back() {
     let mut t = Tiling::new(1, 10);
     t.reconcile(&[10], 10);
     assert!(t.split_tool(1, Direction::Right, 2, Tool::Timeline, 0.8, BIG));
-    assert!(t.split_tool(1, Direction::Left, 9, Tool::Sessions, 0.3, BIG));
-    assert!(t.split_tool(9, Direction::Down, 10, Tool::Workspaces, 0.4, BIG));
-    assert_eq!((t.content(9), t.content(10)), (Some(Content::Sessions), Some(Content::Workspaces)));
-    assert!(t.is_tool(9) && t.is_tool(10));
-    assert_eq!(t.close_pane(9), Some(Content::Sessions));
-    assert_eq!(t.close_pane(10), Some(Content::Workspaces));
+    assert!(t.split_tool(1, Direction::Left, 9, Tool::Tree, 0.3, BIG));
+    assert_eq!(t.content(9), Some(Content::Tree));
+    assert!(t.is_tool(9));
+    assert_eq!(t.close_pane(9), Some(Content::Tree));
     assert!(t.split_tool(1, Direction::Down, 3, Tool::Git, 0.5, BIG));
     assert_eq!((t.content(2), t.content(3)), (Some(Content::Timeline), Some(Content::Git)));
     assert_eq!(t.tab_panes_of(Content::Git), [3]);
@@ -497,13 +495,12 @@ fn side_panes_go_on_the_left_of_every_tab_once() {
     };
     t.seed_side_panes(&mut ids, 0.2, BIG);
     assert!(t.seeded());
-    // Each tab: the sessions list, the workspaces above it, and the session.
+    // Each tab: the tree and the session.
     for i in 0..2 {
         assert!(t.select_tab(i));
         assert!(t.has_side_panes(), "tab {i}");
-        assert_eq!(t.tab_panes_of(Content::Sessions).len(), 1);
-        assert_eq!(t.tab_panes_of(Content::Workspaces).len(), 1);
-        assert_eq!(t.visible_panes().len(), 3);
+        assert_eq!(t.tab_panes_of(Content::Tree).len(), 1);
+        assert_eq!(t.visible_panes().len(), 2);
     }
     // The tab that was active still is, with a session focused.
     assert!(t.session_focus().is_some());
@@ -529,7 +526,7 @@ fn closing_the_side_panes_sticks_and_they_can_come_back() {
         0.2,
         BIG,
     );
-    assert_eq!(t.remove_side_panes(), 2);
+    assert_eq!(t.remove_side_panes(), 1);
     assert!(!t.has_side_panes());
     assert!(t.seeded(), "closed on purpose: no seeding again");
     assert!(t.add_side_panes(|| 900, 0.2, BIG) || t.add_side_panes(|| 901, 0.2, BIG));
@@ -557,7 +554,7 @@ fn side_panes_may_be_thinner_than_a_conversation() {
 fn the_git_pane_opens_right_of_the_session_the_first_time() {
     let mut t = Tiling::new(1, 10);
     t.reconcile(&[10], 10);
-    assert!(t.split_tool(1, Direction::Left, 9, Tool::Sessions, 0.2, BIG));
+    assert!(t.split_tool(1, Direction::Left, 9, Tool::Tree, 0.2, BIG));
     t.focus_pane(1);
     assert!(t.open_git(2, BIG));
     assert_eq!(t.tab_panes_of(Content::Git), [2]);
@@ -573,7 +570,7 @@ fn the_git_pane_opens_right_of_the_session_the_first_time() {
 fn the_git_pane_toggled_off_and_on_leaves_the_other_panes_as_they_were() {
     let mut t = Tiling::new(1, 10);
     t.reconcile(&[10], 10);
-    assert!(t.split_tool(1, Direction::Left, 9, Tool::Sessions, 0.2, BIG));
+    assert!(t.split_tool(1, Direction::Left, 9, Tool::Tree, 0.2, BIG));
     assert!(t.split_tool(1, Direction::Down, 5, Tool::Terminal(TermPane::default()), 0.7, BIG));
     // On the left of the session, above the terminal.
     assert!(t.split_tool(1, Direction::Left, 2, Tool::Git, 0.3, BIG));

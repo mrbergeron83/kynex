@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{AnyElement, Context, Entity, Focusable, Window, div, prelude::*};
 use kynex_core::git;
+use kynex_core::removed;
 use kynex_core::toasts::Toast;
 use kynex_core::workspace;
 
@@ -36,8 +37,12 @@ pub(super) struct WorkspaceUi {
 struct Removal {
     path: PathBuf,
     label: String,
-    /// Why it asks: what would be lost.
+    /// Why it asks: what would be lost. Empty when only its sessions are the question.
     why: Vec<String>,
+    /// How many sessions the folder has (they stay unless `delete_sessions`).
+    sessions: usize,
+    /// "Also delete its sessions" is ticked.
+    delete_sessions: bool,
 }
 
 impl KynexApp {
@@ -184,11 +189,69 @@ impl KynexApp {
         if running {
             why.push("a session still working".to_string());
         }
-        if why.is_empty() {
-            return self.confirm_remove_workspace(path, false, None, cx);
-        }
-        self.workspace_ui = WorkspaceUi { removing: Some(Removal { path, label, why }), ..WorkspaceUi::default() };
-        cx.notify();
+        // The sessions are counted off the UI thread: a folder that has some asks too, so
+        // the user can pick whether they go with it.
+        let counted = path.clone();
+        cx.spawn(async move |this, cx| {
+            let sessions = cx.background_spawn(async move { kynex_core::session::list_sessions(&counted).len() }).await;
+            this.update(cx, |this, cx| {
+                if why.is_empty() && sessions == 0 {
+                    return this.confirm_remove_workspace(path, false, false, None, cx);
+                }
+                this.workspace_ui = WorkspaceUi {
+                    removing: Some(Removal { path, label, why, sessions, delete_sessions: false }),
+                    ..WorkspaceUi::default()
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// A workspace is gone: its sessions go with it (`delete`), or it is remembered as
+    /// removed if it has any, so they stay in sight. Off the UI thread.
+    fn note_removed(
+        &mut self,
+        project: PathBuf,
+        path: PathBuf,
+        label: String,
+        branch: Option<String>,
+        delete: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let there = path.clone();
+        cx.spawn(async move |this, cx| {
+            let (kept, purged) = cx
+                .background_spawn(async move {
+                    if delete {
+                        let purged = removed::delete_sessions(&there);
+                        (!purged.errors.is_empty(), purged)
+                    } else {
+                        (!kynex_core::session::list_sessions(&there).is_empty(), removed::Purged::default())
+                    }
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                for id in &purged.deleted {
+                    this.drafts.remove(id);
+                    if this.saved.drafts.remove(id).is_some() {
+                        this.save();
+                    }
+                }
+                this.edit_groups(&path, |g| purged.deleted.iter().for_each(|id| g.forget(id)));
+                if let Some(e) = purged.errors.first() {
+                    this.toast(Toast::error(format!("Couldn't delete {} session(s): {e}", purged.errors.len())));
+                }
+                if kept && this.saved_workspaces(&project).remember_removed(&path, &label, branch.as_deref()) {
+                    this.save_workspaces(&project, cx);
+                }
+                this.reread_sessions();
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Closes the workspace's sessions, then `git worktree remove`; the branch stays.
@@ -196,11 +259,18 @@ impl KynexApp {
         &mut self,
         path: PathBuf,
         force: bool,
+        delete_sessions: bool,
         done: Option<std::sync::mpsc::Sender<Result<serde_json::Value, String>>>,
         cx: &mut Context<Self>,
     ) {
         self.workspace_ui = WorkspaceUi::default();
         let Some(project) = self.workspace_project() else { return };
+        let worktree = self.worktrees.get(&project).and_then(|w| w.read(cx).at(&path).cloned());
+        let label = worktree.as_ref().map_or_else(
+            || path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned()),
+            |w| w.label().to_string(),
+        );
+        let branch = worktree.and_then(|w| w.branch);
         // Sessions there go first: a process in the folder keeps Windows from removing it.
         let shown_there =
             self.code.get(&project).and_then(|l| l.current()).is_some_and(|s| workspace::same_folder(&s.cwd, &path));
@@ -235,6 +305,7 @@ impl KynexApp {
             if let Some(done) = done {
                 let _ = done.send(Ok(serde_json::json!({ "removed": path })));
             }
+            self.note_removed(project, path, label, branch, delete_sessions, cx);
             return cx.notify();
         }
         let root = project.clone();
@@ -250,6 +321,7 @@ impl KynexApp {
                         if let Some(done) = &done {
                             let _ = done.send(Ok(serde_json::json!({ "removed": path })));
                         }
+                        this.note_removed(project.clone(), path.clone(), label, branch, delete_sessions, cx);
                     }
                     Err(e) => {
                         if let Some(done) = &done {
@@ -356,6 +428,13 @@ impl KynexApp {
         }
         if let Some(r) = &self.workspace_ui.removing {
             let path = r.path.clone();
+            let (sessions, delete, force) = (r.sessions, r.delete_sessions, !r.why.is_empty());
+            let question = if force {
+                format!("Remove {}? It has {}.", r.label, r.why.join(" and "))
+            } else {
+                format!("Remove {}?", r.label)
+            };
+            let tick = self.pick_box(delete, cx);
             out.push(
                 div()
                     .flex()
@@ -363,18 +442,44 @@ impl KynexApp {
                     .gap_1()
                     .px_2()
                     .pt_1()
-                    .child(div().text_xs().text_color(t.warning).child(format!(
-                        "Remove {}? It has {}.",
-                        r.label,
-                        r.why.join(" and ")
-                    )))
+                    .child(div().text_xs().text_color(if force { t.warning } else { t.text }).child(question))
+                    .when(sessions > 0, |d| {
+                        d.child(
+                            div()
+                                .id("remove-workspace-sessions")
+                                .flex()
+                                .items_center()
+                                .gap_1p5()
+                                .cursor_pointer()
+                                .text_xs()
+                                .text_color(t.text_muted)
+                                .child(tick)
+                                .child(format!(
+                                    "Also delete its {} (they stay under Removed workspaces otherwise)",
+                                    super::storage::count(sessions, "session")
+                                ))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    if let Some(r) = &mut this.workspace_ui.removing {
+                                        r.delete_sessions = !r.delete_sessions;
+                                    }
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .child(
                         div()
                             .flex()
                             .gap_1()
-                            .child(primary_button("remove-workspace-yes", "Remove anyway", cx).on_click(cx.listener(
-                                move |this, _, _, cx| this.confirm_remove_workspace(path.clone(), true, None, cx),
-                            )))
+                            .child(
+                                primary_button(
+                                    "remove-workspace-yes",
+                                    if force { "Remove anyway" } else { "Remove" },
+                                    cx,
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.confirm_remove_workspace(path.clone(), force, delete, None, cx)
+                                })),
+                            )
                             .child(outline_button("remove-workspace-no", "Keep", cx).on_click(cx.listener(
                                 |this, _, _, cx| {
                                     this.cancel_new_workspace();

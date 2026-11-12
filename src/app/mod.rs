@@ -21,7 +21,9 @@
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
 //! | `layout_history.rs` | undo / redo of pane changes, reopening a pane, older layouts |
 //! | `toolbar.rs`        | path, panes' buttons (timeline, Git), open-in buttons |
-//! | `sessions_panel.rs` | open and past sessions                               |
+//! | `sessions_panel.rs` | the sessions tree's header, each workspace's list read |
+//! | `session_tree.rs`   | the tree: workspaces and their sessions in sections |
+//! | `session_rows.rs`   | a session's row: name, lamp, menu, delete, drag     |
 //! | `session_groups.rs` | session groups and the archive, their menus          |
 //! | `session_select.rs` | picking sessions to archive or delete together       |
 //! | `session_tidy.rs`   | many sessions at once: menu, tidying, list keys      |
@@ -40,8 +42,9 @@
 //! | `tool_rows.rs`      | tool calls with their results, runs of calls folded  |
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `workspaces.rs`     | workspaces: listing, selecting, their folders        |
-//! | `workspace_list.rs` | the workspaces and their open sessions in the sidebar |
+//! | `workspace_list.rs` | a workspace's row in the tree: lamp, fold, menu      |
 //! | `workspace_new.rs`  | making and removing workspaces, folding worktree tabs |
+//! | `removed_workspaces.rs` | the "Removed workspaces" section: their sessions, Forget, Continue in |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, in chat            |
 //! | `git_file_modal.rs` | the Git pane's modals: a file's whole diff, a commit |
 //! | `scratch_modal.rs`  | the file explorer in a modal: session or project     |
@@ -138,13 +141,16 @@ pub(crate) mod prompts;
 mod provider_setup;
 mod providers;
 mod queue;
+mod removed_workspaces;
 pub(crate) mod rewind;
 mod rules_view;
 mod scratch_modal;
 mod session_groups;
 mod session_header;
+mod session_rows;
 mod session_select;
 mod session_tidy;
+mod session_tree;
 mod sessions_panel;
 mod settings;
 mod setup;
@@ -191,7 +197,7 @@ use menus::OpenMenu;
 use palette::PaletteView;
 use scratch_modal::ScratchModal;
 use session_groups::Organize;
-use sessions_panel::{ListRead, SessionList};
+use sessions_panel::{Reads, SessionList};
 use settings::SettingsView;
 use setup::{CliCheck, Setup};
 pub use state::Saved;
@@ -226,6 +232,8 @@ pub struct KynexApp {
     /// Each project's saved workspaces (selection, sessions, order), read on first use.
     workspaces: HashMap<PathBuf, kynex_core::workspace::Workspaces>,
     workspace_ui: workspace_new::WorkspaceUi,
+    /// The "Removed workspaces" section: what is unfolded, and what a right-click asked.
+    removed_ui: removed_workspaces::RemovedUi,
     /// Each open project's colour settings, read once.
     appearances: HashMap<PathBuf, kynex_core::project::Appearance>,
     /// Each open project's Claude settings (mode, effort, folders), read once and
@@ -310,11 +318,10 @@ pub struct KynexApp {
     storage: Option<StorageView>,
     /// Actions last run from the palette, newest first.
     palette_recent: Vec<String>,
-    sessions: Option<SessionList>,
-    /// The sessions list being read in the background, for this.
-    sessions_reading: Option<ListRead>,
-    /// Sessions reads started, and the newest one shown: an older read finishing late isn't.
-    sessions_reads: (u64, u64),
+    /// Each workspace's past sessions, as last read.
+    sessions: HashMap<PathBuf, SessionList>,
+    /// The lists being read in the background, and which read is newest.
+    session_reads: Reads,
     /// The sessions panel's title filter, while it's open.
     session_filter: Entity<TextInput>,
     filtering_sessions: bool,
@@ -612,6 +619,7 @@ impl KynexApp {
             worktrees: HashMap::new(),
             workspaces: HashMap::new(),
             workspace_ui: Default::default(),
+            removed_ui: Default::default(),
             terminals: Vec::new(),
             term_panes: HashMap::new(),
             command_starting: HashSet::new(),
@@ -655,9 +663,8 @@ impl KynexApp {
             scratch_counted: None,
             storage: None,
             palette_recent: Vec::new(),
-            sessions: None,
-            sessions_reading: None,
-            sessions_reads: (0, 0),
+            sessions: HashMap::new(),
+            session_reads: Reads::default(),
             session_filter,
             filtering_sessions: false,
             organize: Organize::new(group_name),

@@ -5,6 +5,22 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Removing a workspace keeps its sessions: the confirmation offers "Also delete its N sessions", and the ones kept stay under a folded "Removed workspaces" section, to read, to continue in the project's own folder, or to forget (which deletes them).
+
+### Changed
+
+- The sidebar is one tree: each workspace is a row that folds, with its sessions under it as full session rows (menu, rename, pin, archive, delete, drag, picking, the list keys), so every session is listed once, under the workspace it runs in. The selected workspace is open, others open by hand; a folded one's lamp counts what has news, and clicking a lamp that wants you goes to that session. A project with one workspace, and chat, show just the sessions.
+- Under a workspace: Pinned, Recent (open sessions and those used in the last week, at least the newest five; a new session at the top), the groups, Older (folded) and Archived. The date sections are gone. "Archive sessions older than…" and "Purge archived" are on the workspace's menu.
+- The title filter looks through every workspace and opens what holds a match: folded workspaces, groups, Older and the archive.
+- The Sessions and Workspaces panes are one pane now, the tree. "Sessions beside" opens it, Ctrl+B b and the toolbar button toggle it, and layouts saved with either (or both) open with it.
+
+### Fixed
+
+- Open sessions of another workspace no longer show as rows that can't be closed in the sessions list.
+- A session dragged and let go outside a target no longer leaves its group, the pinned ones or the archive; drop it on Recent to make it loose again.
+
 ## [0.0.28] - 2026-11-12
 
 ### Added

@@ -20,14 +20,20 @@ impl KynexApp {
     /// row doesn't open too.
     pub(super) fn pick_click(&mut self, cwd: &Path, id: &str, m: &Modifiers, cx: &mut Context<Self>) -> bool {
         let o = &mut self.organize;
-        if m.shift {
-            o.selection.extend(&o.shown, id);
-        } else if m.secondary(cx) || o.selection.on {
-            o.selection.toggle(id);
-        } else {
+        if !(m.shift || m.secondary(cx) || o.selection.on) {
             return false;
         }
-        o.selection_cwd = Some(cwd.to_path_buf());
+        // Picks stay in one workspace: picking in another starts again there.
+        if o.selection_cwd.as_deref() != Some(cwd) {
+            o.selection.ids.clear();
+            o.selection_cwd = Some(cwd.to_path_buf());
+        }
+        if m.shift {
+            let here: Vec<String> = o.shown.iter().filter(|(p, _)| p == cwd).map(|(_, id)| id.clone()).collect();
+            o.selection.extend(&here, id);
+        } else {
+            o.selection.toggle(id);
+        }
         o.confirm_bulk_delete = false;
         cx.notify();
         true

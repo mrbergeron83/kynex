@@ -21,6 +21,8 @@ use crate::queue::Queue;
 use crate::session_log::{LoggedImage, Span};
 use crate::tasks::{self, Tasks};
 
+pub use crate::removed::continue_in;
+
 mod launch;
 
 /// How long after a failed start warming up leaves it alone; a message still tries.
@@ -1806,13 +1808,13 @@ impl SessionInfo {
     }
 }
 /// `~/.claude/projects`.
-fn projects_dir() -> Option<PathBuf> {
+pub(crate) fn projects_dir() -> Option<PathBuf> {
     let home = PathBuf::from(std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))?);
     Some(home.join(".claude").join("projects"))
 }
 
 /// The name of `cwd`'s folder in `~/.claude/projects`.
-fn transcripts_name(cwd: &Path) -> String {
+pub(crate) fn transcripts_name(cwd: &Path) -> String {
     cwd.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
 }
 
@@ -1828,7 +1830,7 @@ pub(crate) fn transcript_path(cwd: &Path, id: &str) -> Option<PathBuf> {
 
 /// Claude Code keeps a directory's sessions in `~/.claude/projects/<cwd>`, with
 /// every character that isn't a letter or digit replaced by `-`.
-fn transcripts_dir(cwd: &Path) -> Option<PathBuf> {
+pub(crate) fn transcripts_dir(cwd: &Path) -> Option<PathBuf> {
     let name = transcripts_name(cwd);
     // Looked up once per folder: `~/.claude/projects` can hold hundreds.
     static FOUND: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();

@@ -163,8 +163,3 @@ impl KynexApp {
         self.select_workspace(&list[next].0.path, cx);
     }
 }
-
-/// The workspaces of `list`, without their worktrees.
-pub(super) fn plain(list: &[Entry]) -> Vec<workspace::Workspace> {
-    list.iter().map(|(c, _)| c.clone()).collect()
-}

@@ -64,7 +64,7 @@ impl KynexApp {
         if let Some(name) = self.session_by_key(key).and_then(|s| self.organize.name_of(&s.cwd, id)) {
             return Some(name);
         }
-        let list = self.sessions.as_ref()?;
+        let list = self.sessions.values().find(|l| l.items.iter().any(|s| s.id == id))?;
         list.items.iter().find(|s| s.id == id && s.named).map(|s| s.title.clone())
     }
 }
