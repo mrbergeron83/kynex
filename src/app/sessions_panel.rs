@@ -285,6 +285,8 @@ impl KynexApp {
             )
         });
         let forms = if project.is_some() { self.render_workspace_forms(cx) } else { Vec::new() };
+        // Last in the tree: the sessions of workspaces removed through Kynex.
+        let removed = if project.is_some() { self.render_removed_workspaces(cx) } else { None };
 
         let scroll = scrollbar::handle("session-list");
         let list = div()
@@ -305,7 +307,8 @@ impl KynexApp {
             .on_action(cx.listener(Self::list_archive))
             .on_action(cx.listener(Self::list_delete))
             .children(forms)
-            .children(tree.rows);
+            .children(tree.rows)
+            .children(removed);
         let picks = self.render_pick_bar(kind, pick_cwd, in_pick_folder, tree.busy, cx);
         div()
             .flex()

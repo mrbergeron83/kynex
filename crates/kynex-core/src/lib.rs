@@ -54,6 +54,7 @@ pub mod provider;
 pub mod pulse;
 pub mod questions;
 pub mod queue;
+pub mod removed;
 pub mod resources;
 pub mod rewind;
 pub mod rules;

@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Removing a workspace keeps its sessions: the confirmation offers "Also delete its N sessions", and the ones kept stay under a folded "Removed workspaces" section, to read, to continue in the project's own folder, or to forget (which deletes them).
+
 ### Changed
 
 - The sidebar is one tree: each workspace is a row that folds, with its sessions under it as full session rows (menu, rename, pin, archive, delete, drag, picking, the list keys), so every session is listed once, under the workspace it runs in. The selected workspace is open, others open by hand; a folded one's lamp counts what has news, and clicking a lamp that wants you goes to that session. A project with one workspace, and chat, show just the sessions.

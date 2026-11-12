@@ -168,6 +168,8 @@ pub struct Workspaces {
     /// Each workspace's older layouts, keyed like `layouts` (see `snapshots`).
     #[serde(deserialize_with = "lenient_history")]
     pub history: BTreeMap<String, History>,
+    /// Workspaces removed through Kynex, whose sessions stay in sight (see `removed`).
+    pub removed: Vec<crate::removed::Removed>,
 }
 
 /// The `history` map, less the entries that don't parse.
@@ -231,6 +233,7 @@ impl Workspaces {
             return false;
         }
         self.folders.push(path.to_path_buf());
+        self.forget_removed(path);
         true
     }
 
