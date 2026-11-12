@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- "Purge…" in the sessions panel's Archived section deletes the archived sessions, all or those older than 30 days, 90 days or a year, after asking. Open sessions are kept and the toast says so.
+
 ## [0.0.27] - 2026-11-11
 
 ### Changed

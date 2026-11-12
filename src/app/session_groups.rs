@@ -453,17 +453,42 @@ impl KynexApp {
                 cx.notify();
             }))
             .child(
-                section_label(&if open { "Archived".to_string() } else { format!("Archived · {count}") }, cx)
-                    .id("archived")
-                    .pt_3()
-                    .pb_1()
-                    .px_2()
-                    .cursor_pointer()
-                    .hover(move |s| s.text_color(text))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.organize.show_archived = !this.organize.show_archived;
-                        cx.notify();
-                    })),
+                div()
+                    .flex()
+                    .items_center()
+                    .child(
+                        section_label(&if open { "Archived".to_string() } else { format!("Archived · {count}") }, cx)
+                            .id("archived")
+                            .flex_1()
+                            .pt_3()
+                            .pb_1()
+                            .px_2()
+                            .cursor_pointer()
+                            .hover(move |s| s.text_color(text))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.organize.show_archived = !this.organize.show_archived;
+                                cx.notify();
+                            })),
+                    )
+                    .when(open && count > 0, |d| {
+                        d.child(
+                            div()
+                                .id("archived-purge")
+                                .pt_3()
+                                .pb_1()
+                                .px_2()
+                                .text_xs()
+                                .text_color(t.text_muted)
+                                .cursor_pointer()
+                                .hover(move |s| s.text_color(text))
+                                .child("Purge…")
+                                .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    let at = ev.position();
+                                    this.open_menu(Menu::PurgeArchived, at, gpui::Anchor::TopLeft, cx);
+                                })),
+                        )
+                    }),
             )
             .when(open, |d| d.child(div().pl_3().children(rows)))
             .into_any_element()
