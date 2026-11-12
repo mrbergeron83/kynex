@@ -28,6 +28,13 @@ pub struct SessionGroups {
     /// The provider each session ran on, by session id, when it isn't
     /// Anthropic; a reopened session runs on it again.
     pub providers: BTreeMap<String, crate::provider::Provider>,
+    /// The workspace is open in the sidebar's tree though it isn't the selected one
+    /// (opened by hand; see [`crate::tree`]).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub tree_open: bool,
+    /// Its Older section is open.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub older_open: bool,
 }
 
 /// The longest name a session can be given, in characters.

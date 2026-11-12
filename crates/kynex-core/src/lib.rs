@@ -82,6 +82,7 @@ pub mod toasts;
 pub mod trace;
 pub mod transcript;
 pub mod tray;
+pub mod tree;
 pub mod trust;
 pub mod update;
 pub mod usage;
