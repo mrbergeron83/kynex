@@ -8,6 +8,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ### Added
 
 - The Git pane: a worktree list and the selected worktree's changed files as a folder tree beside the session. Click a file for its whole diff in a modal, with previous / next change buttons (N / P, F7, Alt+Up / Down); "Commit & history…" opens the full Git view, and the session header's branch chip opens the pane.
+- "Purge…" in the sessions panel's Archived section deletes the archived sessions, all or those older than 30 days, 90 days or a year, after asking. Open sessions are kept and the toast says so.
 
 ## [0.0.27] - 2026-11-11
 
