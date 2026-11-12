@@ -141,7 +141,7 @@ impl KynexApp {
                 .bg(t.panel)
                 .border_r_1()
                 .border_color(t.border)
-                .child(self.render_sessions_panel(window, cx, Parts { workspaces: true, sessions: true }, None))
+                .child(self.render_sessions_panel(window, cx, None))
                 .child(
                     div()
                         .id("sessions-resize")
@@ -171,7 +171,6 @@ impl KynexApp {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        _parts: Parts,
         pane: Option<PaneId>,
     ) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
@@ -329,11 +328,4 @@ impl KynexApp {
         }
         cx.notify();
     }
-}
-
-/// Which parts of the sessions panel are drawn: the workspaces, the sessions list, or both.
-#[derive(Clone, Copy)]
-pub(super) struct Parts {
-    pub workspaces: bool,
-    pub sessions: bool,
 }

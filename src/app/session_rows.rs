@@ -88,7 +88,12 @@ pub(super) fn session_row(
 }
 
 /// A session row whose name is `title`: its text, or the field renaming it.
-fn session_row_with(id: impl Into<gpui::ElementId>, title: AnyElement, current: bool, t: &Palette) -> gpui::Stateful<gpui::Div> {
+fn session_row_with(
+    id: impl Into<gpui::ElementId>,
+    title: AnyElement,
+    current: bool,
+    t: &Palette,
+) -> gpui::Stateful<gpui::Div> {
     let hover = t.hover;
     div()
         .id(id)
@@ -107,7 +112,12 @@ fn session_row_with(id: impl Into<gpui::ElementId>, title: AnyElement, current: 
 }
 
 /// A small mark on a session's row: the provider it runs on when it isn't Anthropic.
-fn provider_mark(id: impl Into<gpui::ElementId>, text: &'static str, tip: &'static str, t: &Palette) -> gpui::Stateful<gpui::Div> {
+fn provider_mark(
+    id: impl Into<gpui::ElementId>,
+    text: &'static str,
+    tip: &'static str,
+    t: &Palette,
+) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex_none()
@@ -175,7 +185,9 @@ impl KynexApp {
     /// Shows past session `id` of the workspace at `cwd`: in its pane if it's open,
     /// else the workspace comes up with it.
     pub(super) fn show_in_workspace(&mut self, cwd: &Path, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let open = self.live_mut().and_then(|l| l.sessions.iter().find(|s| s.session_id.as_deref() == Some(id)).map(|s| s.uid));
+        let open = self
+            .live_mut()
+            .and_then(|l| l.sessions.iter().find(|s| s.session_id.as_deref() == Some(id)).map(|s| s.uid));
         if let Some(key) = open {
             return self.focus_open_session(key, window, cx);
         }
@@ -200,7 +212,9 @@ impl KynexApp {
         let key = o.key();
         session_row(("open", uid as usize), title.into(), is_current, t)
             .when(ctx.cursor.as_deref() == Some(key.as_str()), |row| row.bg(t.hover))
-            .when(o.openrouter, |r| r.child(provider_mark(("open-provider", uid as usize), "OR", "Runs on OpenRouter", t)))
+            .when(o.openrouter, |r| {
+                r.child(provider_mark(("open-provider", uid as usize), "OR", "Runs on OpenRouter", t))
+            })
             .when(o.grok, |r| r.child(provider_mark(("open-grok", uid as usize), "Grok", "Runs on Grok", t)))
             .children(news_lamp(("open-status", uid as usize), o.lamp(), cx))
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -219,7 +233,13 @@ impl KynexApp {
     }
 
     /// The row of listed session `info`, number `n` of its workspace's list.
-    pub(super) fn past_row(&mut self, n: usize, info: &SessionInfo, ctx: &RowCtx, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn past_row(
+        &mut self,
+        n: usize,
+        info: &SessionInfo,
+        ctx: &RowCtx,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let this = self;
         let RowCtx { kind, cwd, here, current, picking, cursor, picked_ids, default_branch, t, .. } = ctx;
         let (kind, picking, here) = (*kind, *picking, *here);

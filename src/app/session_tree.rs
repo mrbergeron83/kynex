@@ -161,7 +161,8 @@ impl KynexApp {
         // sessions under a header each, after the new ones.
         let by_provider = (self.saved.sessions_by_provider && !filtering)
             .then(|| {
-                let listed_recent: Vec<String> = sections.recent.iter().filter(|k| index.contains_key(*k)).cloned().collect();
+                let listed_recent: Vec<String> =
+                    sections.recent.iter().filter(|k| index.contains_key(*k)).cloned().collect();
                 groups.by_provider(&listed_recent)
             })
             .filter(|split| split.len() > 1);
@@ -171,19 +172,20 @@ impl KynexApp {
         }
         let archived_open = self.organize.archive_open.contains(&path);
         let view = View { groups: &groups, archived_open, filtering };
-        let is_open = place.row.is_none() || tree::workspace_open(place.selected, groups.tree_open, filtering, sections.len());
-        let branch = Branch { path: path.clone(), open: is_open, rows: if is_open { view.drawn(&sections) } else { Vec::new() } };
+        let is_open =
+            place.row.is_none() || tree::workspace_open(place.selected, groups.tree_open, filtering, sections.len());
+        let branch = Branch {
+            path: path.clone(),
+            open: is_open,
+            rows: if is_open { view.drawn(&sections) } else { Vec::new() },
+        };
 
         let mut rows: Vec<AnyElement> = Vec::new();
         if let Some(row) = &mut place.row {
             row.open = is_open;
             let agents: Vec<Lamp> = self.agents_in(&path).into_iter().map(|(_, _, l)| l).collect();
             row.lamps = open.iter().map(OpenSession::lamp).chain(agents).collect();
-            row.wants_you = open
-                .iter()
-                .filter(|o| o.waiting || o.finished)
-                .max_by_key(|o| o.waiting)
-                .map(|o| o.uid);
+            row.wants_you = open.iter().filter(|o| o.waiting || o.finished).max_by_key(|o| o.waiting).map(|o| o.uid);
             rows.push(self.render_workspace_row(n, row, cx));
             if is_open {
                 rows.extend(self.agent_rows(n, &path, cx));
@@ -252,7 +254,8 @@ impl KynexApp {
             }
             match &by_provider {
                 Some(split) => {
-                    let new: Vec<String> = sections.recent.iter().filter(|k| !index.contains_key(*k)).cloned().collect();
+                    let new: Vec<String> =
+                        sections.recent.iter().filter(|k| !index.contains_key(*k)).cloned().collect();
                     recent.extend(take(self, &new, cx));
                     for (provider, ids) in split {
                         recent.push(list_header(provider.label(), false, cx).into_any_element());

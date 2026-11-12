@@ -271,7 +271,9 @@ impl KynexApp {
         let listed = |id: &String| key_uid(id).is_none();
         let picked = &self.organize.selection.ids;
         match &self.organize.selection_cwd {
-            Some(cwd) if !picked.is_empty() => Some((cwd.clone(), picked.iter().filter(|i| listed(i)).cloned().collect())),
+            Some(cwd) if !picked.is_empty() => {
+                Some((cwd.clone(), picked.iter().filter(|i| listed(i)).cloned().collect()))
+            }
             _ => self.cursor_row().filter(|(_, id)| listed(id)).map(|(cwd, id)| (cwd, vec![id])),
         }
     }

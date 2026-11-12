@@ -125,9 +125,7 @@ impl KynexApp {
                     .size(px(10.))
                     .when(selected, |i| i.opacity(0.4)),
             )
-            .when(!selected, |d| {
-                d.tooltip(Tooltip::text(if open { "Fold its sessions" } else { "Show its sessions" }))
-            })
+            .when(!selected, |d| d.tooltip(Tooltip::text(if open { "Fold its sessions" } else { "Show its sessions" })))
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
                 if !selected {

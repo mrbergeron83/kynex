@@ -138,7 +138,7 @@ pub fn sections(
 ) -> Sections {
     let mut by_time: Vec<&(String, SystemTime)> = listed.iter().collect();
     // Newest first; the same time keeps the given order.
-    by_time.sort_by(|a, b| b.1.cmp(&a.1));
+    by_time.sort_by_key(|s| std::cmp::Reverse(s.1));
     let cutoff = now.checked_sub(RECENT_FOR).unwrap_or(SystemTime::UNIX_EPOCH);
     let mut out = Sections { groups: vec![Vec::new(); groups.groups.len()], ..Sections::default() };
     out.recent.extend(fresh.iter().filter(|f| !listed.iter().any(|(id, _)| id == *f)).cloned());

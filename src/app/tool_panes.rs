@@ -10,7 +10,6 @@ use kynex_core::tiling::{Content, Tool};
 use kynex_core::toasts::Toast;
 
 use super::KynexApp;
-use super::sessions_panel::Parts;
 use super::timeline::WIDTH;
 
 /// How wide the sessions column is made, in pixels, as far as the window allows.
@@ -38,27 +37,15 @@ impl KynexApp {
                 let key = t.session_focus().and_then(|p| t.key_of(p))?;
                 self.render_timeline(key, true, cx)
             }
-            Content::Tree => {
-                Some(self.render_sessions_pane(pane, Parts { workspaces: true, sessions: true }, window, cx))
-            }
+            Content::Tree => Some(self.render_sessions_pane(pane, window, cx)),
             Content::Session(_) => None,
         }
     }
 
     /// The tree (workspaces with their sessions), in a pane: the sidebar's own views.
-    fn render_sessions_pane(
-        &mut self,
-        pane: PaneId,
-        parts: Parts,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_sessions_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = crate::theme::theme(cx).clone();
-        div()
-            .size_full()
-            .bg(t.panel)
-            .child(self.render_sessions_panel(window, cx, parts, Some(pane)))
-            .into_any_element()
+        div().size_full().bg(t.panel).child(self.render_sessions_panel(window, cx, Some(pane))).into_any_element()
     }
 
     /// The tree on the right of pane `target`. The sidebar leaves out what a pane shows.
