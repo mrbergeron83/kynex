@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.27] - 2026-11-11
+
 ### Changed
 
 - A new icon: a K whose stem is a text caret and whose arms are a prompt chevron. In the title bar the caret is the lamp: it takes the shown session's state colour and pulses while Claude works.
@@ -903,7 +905,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.26...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.27...HEAD
+[0.0.27]: https://github.com/mrbergeron83/kynex/compare/v0.0.26...v0.0.27
 [0.0.26]: https://github.com/mrbergeron83/kynex/compare/v0.0.25...v0.0.26
 [0.0.25]: https://github.com/mrbergeron83/kynex/compare/v0.0.24...v0.0.25
 [0.0.24]: https://github.com/mrbergeron83/kynex/compare/v0.0.23...v0.0.24
