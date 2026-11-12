@@ -97,7 +97,7 @@ impl KynexApp {
         if is_main || same_folder(&project, &path) {
             return Err("the project's own folder can't be removed".into());
         }
-        self.confirm_remove_workspace(path, force, Some(reply), cx);
+        self.confirm_remove_workspace(path, force, false, Some(reply), cx);
         Ok(())
     }
 }

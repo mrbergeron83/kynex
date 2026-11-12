@@ -42,6 +42,7 @@
 //! | `workspaces.rs`     | workspaces: listing, selecting, their folders        |
 //! | `workspace_list.rs` | the workspaces and their open sessions in the sidebar |
 //! | `workspace_new.rs`  | making and removing workspaces, folding worktree tabs |
+//! | `removed_workspaces.rs` | the "Removed workspaces" section: their sessions, Forget, Continue in |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, in chat            |
 //! | `git_file_modal.rs` | the Git pane's modals: a file's whole diff, a commit |
 //! | `scratch_modal.rs`  | the file explorer in a modal: session or project     |
@@ -138,6 +139,7 @@ pub(crate) mod prompts;
 mod provider_setup;
 mod providers;
 mod queue;
+mod removed_workspaces;
 pub(crate) mod rewind;
 mod rules_view;
 mod scratch_modal;
@@ -226,6 +228,8 @@ pub struct KynexApp {
     /// Each project's saved workspaces (selection, sessions, order), read on first use.
     workspaces: HashMap<PathBuf, kynex_core::workspace::Workspaces>,
     workspace_ui: workspace_new::WorkspaceUi,
+    /// The "Removed workspaces" section: what is unfolded, and what a right-click asked.
+    removed_ui: removed_workspaces::RemovedUi,
     /// Each open project's colour settings, read once.
     appearances: HashMap<PathBuf, kynex_core::project::Appearance>,
     /// Each open project's Claude settings (mode, effort, folders), read once and
@@ -612,6 +616,7 @@ impl KynexApp {
             worktrees: HashMap::new(),
             workspaces: HashMap::new(),
             workspace_ui: Default::default(),
+            removed_ui: Default::default(),
             terminals: Vec::new(),
             term_panes: HashMap::new(),
             command_starting: HashSet::new(),

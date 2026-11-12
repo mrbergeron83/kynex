@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Removing a workspace keeps its sessions: the confirmation offers "Also delete its N sessions", and the ones kept stay under a folded "Removed workspaces" section, to read, to continue in the project's own folder, or to forget (which deletes them).
+
 ## [0.0.28] - 2026-11-12
 
 ### Added
