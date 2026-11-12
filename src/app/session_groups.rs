@@ -3,7 +3,7 @@
 //! and dragging sessions between them. The rules live in `kynex_core::groups`;
 //! this draws them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::ui::px;
@@ -39,13 +39,14 @@ pub(super) struct Organize {
     /// What's being renamed, if anything.
     editing: Option<Editing>,
     name: Entity<TextInput>,
-    /// The archived section is open (this run only; it starts closed).
-    pub(super) show_archived: bool,
+    /// The workspaces whose Archived section is open (this run only; it starts closed).
+    pub(super) archive_open: HashSet<PathBuf>,
     /// Sessions picked to archive or delete together, and the folder they're in.
     pub(super) selection: Selection,
     pub(super) selection_cwd: Option<PathBuf>,
-    /// The past sessions' rows in the order drawn, for Shift+click runs.
-    pub(super) shown: Vec<String>,
+    /// The tree's session rows in the order drawn, each with its workspace: for
+    /// Shift+click runs and the list's keys.
+    pub(super) shown: Vec<(PathBuf, String)>,
     /// "Delete" was clicked on the picked sessions and waits for Yes.
     pub(super) confirm_bulk_delete: bool,
     /// The row the list's ↑ / ↓ keys are on.
@@ -58,7 +59,7 @@ impl Organize {
             by_folder: HashMap::new(),
             editing: None,
             name,
-            show_archived: false,
+            archive_open: HashSet::new(),
             selection: Selection::default(),
             selection_cwd: None,
             shown: Vec::new(),
@@ -77,6 +78,8 @@ impl Organize {
 /// grabbed, and with it every other picked one.
 #[derive(Clone)]
 pub(super) struct DraggedSession {
+    /// The workspace they're in: they only drop into its own groups and sections.
+    pub cwd: PathBuf,
     pub ids: Vec<String>,
     pub title: SharedString,
 }
@@ -84,6 +87,7 @@ pub(super) struct DraggedSession {
 /// A group header being dragged to another place among the groups.
 #[derive(Clone)]
 pub(super) struct DraggedGroup {
+    pub cwd: PathBuf,
     pub index: usize,
     pub name: SharedString,
 }
@@ -149,7 +153,7 @@ impl KynexApp {
         cx: &mut Context<Self>,
     ) {
         self.commit_rename(cx);
-        let listed = self.sessions.as_ref().and_then(|l| l.items.iter().find(|i| i.id == id)).map(|i| i.title.clone());
+        let listed = self.listed_title(&cwd, &id);
         let name = self.groups_for(&cwd).name_of(&id).map(str::to_string).or(listed).unwrap_or_default();
         self.organize.name.update(cx, |input, cx| input.set_text(name, cx));
         self.organize.name.read(cx).focus_handle(cx).focus(window, cx);
@@ -206,7 +210,9 @@ impl KynexApp {
 
     /// The menu for a session row: rename or pin it, move it between groups, archive it.
     pub(super) fn session_menu_items(&mut self, id: &str, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let Some(cwd) = self.panel_folder().map(|(_, c)| c) else { return Vec::new() };
+        let Some(cwd) = self.folder_of_listed(id).or_else(|| self.panel_folder().map(|(_, c)| c)) else {
+            return Vec::new();
+        };
         let groups = self.groups_for(&cwd).clone();
         let current = groups.group_of(id);
         let mut items = Vec::new();
@@ -314,8 +320,8 @@ impl KynexApp {
     }
 
     /// The menu for a group header: rename or delete it.
-    pub(super) fn group_menu_items(&mut self, i: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let Some(cwd) = self.panel_folder().map(|(_, c)| c) else { return Vec::new() };
+    pub(super) fn group_menu_items(&mut self, cwd: &Path, i: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let cwd = cwd.to_path_buf();
         let t = theme(cx).clone();
         let (rename_cwd, archive_cwd) = (cwd.clone(), cwd.clone());
         vec![
@@ -354,18 +360,20 @@ impl KynexApp {
         count: usize,
         rows: Vec<AnyElement>,
         news: &[Lamp],
+        open: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = theme(cx).clone();
         let Some(group) = self.groups_for(cwd).groups.get(i).cloned() else { return div().into_any_element() };
         let editing = matches!(&self.organize.editing, Some(Editing::Group(p, e)) if p == cwd && *e == i);
         let hover = t.hover;
-        let (toggle_cwd, drop_cwd) = (cwd.to_path_buf(), cwd.to_path_buf());
-        // A section header like the date ones: its name, and its count while folded.
-        let label = if group.collapsed { format!("{} · {count}", group.name) } else { group.name.clone() };
+        let (toggle_cwd, drop_cwd, menu_cwd) = (cwd.to_path_buf(), cwd.to_path_buf(), cwd.to_path_buf());
+        let (reorder_cwd, group_cwd) = (cwd.to_path_buf(), cwd.to_path_buf());
+        // A section header: its name, and its count while folded.
+        let label = if open { group.name.clone() } else { format!("{} · {count}", group.name) };
         // Folded, its sessions' lamps can't be seen: one tell on the header
         // instead, in the most urgent one's colour, with how many have news.
-        let tell = (group.collapsed && !news.is_empty())
+        let tell = (!open && !news.is_empty())
             .then(|| lamp_count(("group-news", i), Lamp::most_urgent(news.iter().copied()), news.len(), cx));
         let text = t.text;
         let header = match editing {
@@ -400,12 +408,13 @@ impl KynexApp {
             cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                 // Not the pane's menu as well.
                 cx.stop_propagation();
-                this.open_menu(Menu::Group(i), ev.position, gpui::Anchor::TopLeft, cx)
+                this.open_menu(Menu::Group(menu_cwd.clone(), i), ev.position, gpui::Anchor::TopLeft, cx)
             }),
         )
         // Dragged onto another group, it takes that group's place.
-        .on_drag(DraggedGroup { index: i, name: group.name.clone().into() }, |d, _, _, cx| cx.new(|_| d.clone()));
-        let reorder_cwd = cwd.to_path_buf();
+        .on_drag(DraggedGroup { cwd: group_cwd, index: i, name: group.name.clone().into() }, |d, _, _, cx| {
+            cx.new(|_| d.clone())
+        });
         div()
             .id(("group-block", i))
             .flex()
@@ -414,6 +423,9 @@ impl KynexApp {
             .drag_over::<DraggedSession>(move |s, _, _, _| s.bg(hover))
             .on_drop(cx.listener(move |this, d: &DraggedSession, _, cx| {
                 cx.stop_propagation();
+                if d.cwd != drop_cwd {
+                    return;
+                }
                 this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.move_to(id, Some(i))));
                 this.organize.selection.clear();
                 cx.notify();
@@ -421,11 +433,14 @@ impl KynexApp {
             .drag_over::<DraggedGroup>(move |s, _, _, _| s.bg(hover))
             .on_drop(cx.listener(move |this, d: &DraggedGroup, _, cx| {
                 cx.stop_propagation();
+                if d.cwd != reorder_cwd {
+                    return;
+                }
                 this.edit_groups(&reorder_cwd, |g| g.move_group(d.index, i));
                 cx.notify();
             }))
             .child(header)
-            .when(!group.collapsed, |d| d.children(rows))
+            .when(open, |d| d.children(rows))
             .into_any_element()
     }
 
@@ -435,12 +450,12 @@ impl KynexApp {
         cwd: &Path,
         count: usize,
         rows: Vec<AnyElement>,
+        open: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = theme(cx).clone();
-        let open = self.organize.show_archived;
         let (hover, text) = (t.hover, t.text);
-        let drop_cwd = cwd.to_path_buf();
+        let (drop_cwd, toggle_cwd, purge_cwd) = (cwd.to_path_buf(), cwd.to_path_buf(), cwd.to_path_buf());
         div()
             .id("archived-block")
             .flex()
@@ -450,6 +465,9 @@ impl KynexApp {
             .drag_over::<DraggedSession>(move |s, _, _, _| s.bg(hover))
             .on_drop(cx.listener(move |this, d: &DraggedSession, _, cx| {
                 cx.stop_propagation();
+                if d.cwd != drop_cwd {
+                    return;
+                }
                 this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.archive(id)));
                 this.organize.selection.clear();
                 cx.notify();
@@ -467,8 +485,11 @@ impl KynexApp {
                             .px_2()
                             .cursor_pointer()
                             .hover(move |s| s.text_color(text))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.organize.show_archived = !this.organize.show_archived;
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let shown = &mut this.organize.archive_open;
+                                if !shown.remove(&toggle_cwd) {
+                                    shown.insert(toggle_cwd.clone());
+                                }
                                 cx.notify();
                             })),
                     )
@@ -484,10 +505,11 @@ impl KynexApp {
                                 .cursor_pointer()
                                 .hover(move |s| s.text_color(text))
                                 .child("Purge…")
-                                .on_click(cx.listener(|this, ev: &ClickEvent, _, cx| {
+                                .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                                     cx.stop_propagation();
                                     let at = ev.position();
-                                    this.open_menu(Menu::PurgeArchived, at, gpui::Anchor::TopLeft, cx);
+                                    let menu = Menu::PurgeArchived(purge_cwd.clone());
+                                    this.open_menu(menu, at, gpui::Anchor::TopLeft, cx);
                                 })),
                         )
                     }),

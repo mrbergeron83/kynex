@@ -1,106 +1,85 @@
-//! The resizable panel left of the transcript: the folder's open and past
-//! sessions (in their groups, see `session_groups.rs`), new / switch / delete,
-//! and the project's Claude settings button.
+//! The sessions panel: the sidebar's tree of workspaces and their sessions
+//! (`session_tree.rs`), its header (filter, select, new workspace, add folder, new
+//! session), and each workspace's list of past sessions, read off the UI thread.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::ui::px;
-use gpui::{
-    Anchor, AnyElement, App, Context, Focusable, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*,
-};
-use kynex_core::dates::{self, Bucket};
-use kynex_core::fmt::ago;
+use gpui::{Anchor, AnyElement, Context, Focusable, MouseButton, Window, div, prelude::*};
 use kynex_core::layout::PaneId;
-use kynex_core::live::Key;
-use kynex_core::session::{self, Item, Kind, SessionInfo};
-
-use kynex_core::toasts::Toast;
+use kynex_core::session::{self, Kind, SessionInfo};
 
 use super::KynexApp;
 use super::keys::{NewSession, ToggleSessions};
 use super::menus::Menu;
-use super::session_groups::DraggedSession;
-use crate::theme::{Palette, mono, theme};
+use super::session_rows::OpenSession;
+use super::session_tree::TreeCtx;
+use crate::theme::theme;
 use crate::ui::motion::grow;
-use crate::ui::wash::row_wash;
-use crate::ui::{Icon, Lamp, Tooltip, icon_button, lamp, scrollbar, section_label, spinner};
+use crate::ui::{Icon, Tooltip, icon_button, scrollbar, section_label};
 
-/// Past sessions for the active conversation's folder, re-read when the folder
-/// or the current session changes, or a reply starts or finishes.
+/// A workspace's past sessions, re-read when its open sessions change (one starts,
+/// gets its id, a reply starts or finishes) or something they show does.
 pub struct SessionList {
     /// What it was read for.
     pub(super) read: ListRead,
     pub items: Vec<SessionInfo>,
-    /// Each session's local day of last activity, for the date headers;
-    /// worked out once per read, not every frame.
-    days: HashMap<String, dates::Day>,
     /// The repository's default branch: sessions on another one say theirs.
-    default_branch: Option<String>,
+    pub(super) default_branch: Option<String>,
     /// Something it shows changed (a rename, a setting): read it again.
     stale: bool,
 }
 
-/// What the sessions list is read again for when it changes.
+/// What a workspace's list is read again for when it changes.
 #[derive(Clone, PartialEq)]
 pub struct ListRead {
     pub(super) cwd: PathBuf,
     current: Option<String>,
-    /// The folder's open sessions and whether each is busy: titles and times
+    /// The workspace's open sessions and whether each is busy: titles and times
     /// move when a reply starts or finishes.
     live: Vec<(Option<String>, bool)>,
 }
 
-/// An open session as the sessions panel shows it.
-struct OpenSession {
-    uid: Key,
-    /// The CLI's session id, once it has one.
-    id: Option<String>,
-    /// The first thing the user said, for a title before the transcript lists it.
-    first: Option<String>,
-    busy: bool,
-    waiting: bool,
-    finished: bool,
-    /// It runs on OpenRouter (the row shows so).
-    openrouter: bool,
-    /// It runs on Grok.
-    grok: bool,
+/// The lists' reads: the newest asked for and the newest shown, per folder.
+#[derive(Default)]
+pub(super) struct Reads {
+    reading: HashMap<PathBuf, ListRead>,
+    reads: HashMap<PathBuf, (u64, u64)>,
 }
 
 impl KynexApp {
-    /// Sessions were deleted: they leave the list now, and it's read again
+    /// Sessions were deleted: they leave the lists now, and they're read again
     /// ([`Self::reread_sessions`]), showing the rest meanwhile.
     pub(super) fn relist_sessions(&mut self, gone: &[String]) {
-        if let Some(l) = &mut self.sessions {
+        for l in self.sessions.values_mut() {
             l.items.retain(|i| !gone.contains(&i.id));
         }
         self.reread_sessions();
     }
 
-    /// Reads the folder's past sessions off the UI thread (each transcript's
-    /// ends); the panel keeps showing the last list until they're in.
+    /// Reads a folder's past sessions off the UI thread (each transcript's ends); the
+    /// tree keeps showing the last list until they're in.
     fn read_sessions(&mut self, read: ListRead, cx: &mut Context<Self>) {
-        self.sessions_reading = Some(read.clone());
-        self.sessions_reads.0 += 1;
-        let n = self.sessions_reads.0;
         let cwd = read.cwd.clone();
+        self.session_reads.reading.insert(cwd.clone(), read.clone());
+        let reads = self.session_reads.reads.entry(cwd.clone()).or_default();
+        reads.0 += 1;
+        let n = reads.0;
         cx.spawn(async move |this, cx| {
             let (mut items, default_branch) = cx
                 .background_spawn(async move { (session::list_sessions(&cwd), kynex_core::git::default_branch(&cwd)) })
                 .await;
             this.update(cx, |this, cx| {
-                // A newer read is on its way. If it's for the same folder, this one is
-                // still shown meanwhile: open sessions starting, getting their ids and
-                // replying all start reads, and dropping each would leave a newly opened
-                // folder saying it's loading until they settle.
-                let newest = this.sessions_reading.as_ref() == Some(&read);
-                let same_folder = this.sessions_reading.as_ref().is_none_or(|r| r.cwd == read.cwd);
-                if n < this.sessions_reads.1 || !(newest || same_folder) {
+                // An older read than one already shown: drop it. A newer one on its way
+                // still lets this one show meanwhile.
+                let reads = this.session_reads.reads.entry(read.cwd.clone()).or_default();
+                if n < reads.1 {
                     return;
                 }
-                this.sessions_reads.1 = n;
-                if newest {
-                    this.sessions_reading = None;
+                reads.1 = n;
+                if this.session_reads.reading.get(&read.cwd) == Some(&read) {
+                    this.session_reads.reading.remove(&read.cwd);
                 }
                 // A name given by hand wins, and counts as named, so none is generated.
                 for i in &mut items {
@@ -109,8 +88,8 @@ impl KynexApp {
                         i.named = true;
                     }
                 }
-                let days = items.iter().map(|i| (i.id.clone(), dates::local_day(i.modified))).collect();
-                this.sessions = Some(SessionList { read, items, days, default_branch, stale: false });
+                let cwd = read.cwd.clone();
+                this.sessions.insert(cwd, SessionList { read, items, default_branch, stale: false });
                 cx.notify();
             })
             .ok();
@@ -118,17 +97,34 @@ impl KynexApp {
         .detach();
     }
 
-    /// Has the sessions list read again, keeping it on screen meanwhile.
+    /// Has every list read again, keeping it on screen meanwhile.
     pub(super) fn reread_sessions(&mut self) {
-        if let Some(l) = &mut self.sessions {
+        for l in self.sessions.values_mut() {
             l.stale = true;
         }
     }
 
+    /// Has the list of `cwd` read if it isn't, or is out of date for its `open` sessions
+    /// and the shown one (`current`, when it's there). Returns whether it's still to come.
+    pub(super) fn want_list(
+        &mut self,
+        cwd: &Path,
+        current: Option<String>,
+        open: &[OpenSession],
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let live = open.iter().map(|o| (o.id.clone(), o.busy)).collect();
+        let read = ListRead { cwd: cwd.to_path_buf(), current, live };
+        let fresh = self.sessions.get(cwd).is_some_and(|l| !l.stale && l.read == read);
+        if !fresh && self.session_reads.reading.get(cwd) != Some(&read) {
+            self.read_sessions(read, cx);
+        }
+        !self.sessions.contains_key(cwd)
+    }
+
     /// The panel with its drag-to-resize right edge, or nothing while collapsed. Only where
-    /// there are no panes to hold the sessions and workspaces: chat.
+    /// there are no panes to hold the tree: chat.
     pub(super) fn render_sessions_column(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let parts = Parts { workspaces: true, sessions: true };
         let open = !self.saved.sessions_collapsed;
         let leaving = self.exits.sessions.track_flag(open, window, cx);
         if !open && leaving.is_none() {
@@ -145,7 +141,7 @@ impl KynexApp {
                 .bg(t.panel)
                 .border_r_1()
                 .border_color(t.border)
-                .child(self.render_sessions_panel(window, cx, parts, None))
+                .child(self.render_sessions_panel(window, cx, Parts { workspaces: true, sessions: true }, None))
                 .child(
                     div()
                         .id("sessions-resize")
@@ -170,81 +166,39 @@ impl KynexApp {
         ))
     }
 
-    /// The sidebar's contents (`pane` is `None`), or a pane's: the sessions list, the workspaces,
-    /// or both, per `parts`.
+    /// The tree, in the sidebar (`pane` is `None`) or in a pane.
     pub(super) fn render_sessions_panel(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        parts: Parts,
+        _parts: Parts,
         pane: Option<PaneId>,
     ) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         let Some(live) = self.live_mut() else { return div() };
         let Some(s) = live.current() else { return div() };
         let (kind, cwd, current, current_uid) = (s.kind, s.cwd.clone(), s.session_id.clone(), s.uid);
-        // Only the workspaces: their own scrolling block.
-        if !parts.sessions {
-            let workspaces = if kind == Kind::Code { self.render_workspaces(cx) } else { None };
-            return div().size_full().child(
-                div().id("workspaces-pane").flex().flex_col().size_full().overflow_y_scroll().children(workspaces),
-            );
-        }
-        let open: Vec<OpenSession> = live
-            .sessions
-            .iter()
-            .map(|s| OpenSession {
-                uid: s.uid,
-                id: s.session_id.clone(),
-                first: s.items.iter().find_map(|i| match i {
-                    Item::User { text, .. } if !text.is_empty() => {
-                        Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
-                    }
-                    _ => None,
-                }),
-                busy: s.busy,
-                openrouter: s.provider().provider().is_openrouter(),
-                grok: s.provider().provider() == kynex_core::provider::Provider::Grok,
-                waiting: s.waiting(),
-                finished: s.finished,
-            })
-            .collect();
-        let live: Vec<(Option<String>, bool)> = open.iter().map(|o| (o.id.clone(), o.busy)).collect();
-        // Re-read when the folder or session changes, and when a reply starts or finishes (titles and times move).
-        let read = ListRead { cwd: cwd.clone(), current: current.clone(), live };
-        let fresh = self.sessions.as_ref().is_some_and(|l| !l.stale && l.read == read);
-        if !fresh && self.sessions_reading.as_ref() != Some(&read) {
-            self.read_sessions(read, cx);
-        }
-        // Until the first read for this folder is in, the list is empty and says it's loading.
-        let loading = self.sessions.as_ref().is_none_or(|l| l.read.cwd != cwd);
-        let all = self.sessions.as_ref().filter(|l| l.read.cwd == cwd).map(|l| l.items.clone()).unwrap_or_default();
-        self.name_sessions(&all, cx);
         // The title filter, while it's open.
         let query = if self.filtering_sessions {
             self.session_filter.read(cx).text().trim().to_lowercase()
         } else {
             String::new()
         };
-        let matches = |title: &str| query.is_empty() || title.to_lowercase().contains(&query);
-        let shown: Vec<&SessionInfo> = all.iter().filter(|i| matches(&i.title)).collect();
-        let items = &shown;
-        self.sync_picks(&cwd, &items.iter().map(|i| i.id.clone()).collect::<Vec<_>>());
-        let picking = self.organize.selection.on;
-        let busy: Vec<String> = open.iter().filter(|o| o.busy).filter_map(|o| o.id.clone()).collect();
-        // Working, waiting for you, or finished and unseen: news for a folded group's header.
-        let active: Vec<String> =
-            open.iter().filter(|o| o.busy || o.waiting || o.finished).filter_map(|o| o.id.clone()).collect();
-        let default_branch = self.sessions.as_ref().and_then(|l| l.default_branch.clone());
         let cursor = self.organize.cursor.clone().filter(|_| self.sessions_focus.is_focused(window));
-        let picked_ids = self.organize.selection.ids.clone();
-        let open_state = |id: &str| {
-            open.iter()
-                .find(|o| o.id.as_deref() == Some(id))
-                .map_or((false, false, false), |o| (o.busy, o.waiting, o.finished))
-        };
+        let ctx = TreeCtx { kind, cwd: cwd.clone(), current: current.clone(), current_uid, query, cursor };
+        let tree = self.render_tree(&ctx, cx);
+        // The rows in the order drawn, for Shift+click runs, "All" and the list's keys.
+        self.organize.shown = tree.order.clone();
+        // Picks stay in one workspace: the one they were made in.
+        let pick_cwd = self.organize.selection_cwd.clone().unwrap_or_else(|| cwd.clone());
+        let in_pick_folder: Vec<String> =
+            tree.order.iter().filter(|(p, _)| *p == pick_cwd).map(|(_, id)| id.clone()).collect();
+        self.sync_picks(&pick_cwd, &in_pick_folder);
+        let picking = self.organize.selection.on;
+        // A project with workspaces to add: new worktrees in a git repository, folders anywhere.
+        let project = self.workspace_project().filter(|_| kind == Kind::Code);
+        let repo = project.as_ref().is_some_and(|p| !self.worktrees(p, cx).read(cx).list.is_empty());
 
-        let workspaces = if kind == Kind::Code && parts.workspaces { self.render_workspaces(cx) } else { None };
         let header = div()
             .flex()
             .flex_none()
@@ -271,11 +225,19 @@ impl KynexApp {
                     }))
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle_picking(cwd.clone(), cx)))
             })
-            .child({
-                let cwd = cwd.clone();
-                icon_button("new-group", Icon::FolderPlus, cx)
-                    .tooltip(Tooltip::text("New group"))
-                    .on_click(cx.listener(move |this, _, window, cx| this.new_group(cwd.clone(), window, cx)))
+            .when(project.is_some(), |d| {
+                d.child(
+                    icon_button("add-workspace-folder", Icon::FolderPlus, cx)
+                        .tooltip(Tooltip::text("Add a folder as a workspace: scripts, notes"))
+                        .on_click(cx.listener(|this, _, _, cx| this.add_folder_workspace(cx))),
+                )
+            })
+            .when(repo, |d| {
+                d.child(
+                    icon_button("new-workspace", Icon::GitBranch, cx)
+                        .tooltip(Tooltip::text("New workspace: a worktree on a branch"))
+                        .on_click(cx.listener(|this, _, window, cx| this.open_new_workspace(window, cx))),
+                )
             })
             .child(
                 icon_button("new-session", Icon::Plus, cx)
@@ -286,7 +248,7 @@ impl KynexApp {
             )
             .child(
                 icon_button("sessions-more", Icon::ChevronDown, cx)
-                    .tooltip(Tooltip::text("Tidy old sessions"))
+                    .tooltip(Tooltip::text("Sessions options"))
                     .on_click(cx.listener(|this, ev: &gpui::ClickEvent, _, cx| {
                         this.open_menu(Menu::SessionsPanel, ev.position(), Anchor::TopLeft, cx)
                     })),
@@ -301,173 +263,6 @@ impl KynexApp {
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_sessions(&ToggleSessions, window, cx))),
             });
 
-        let mut rows: Vec<AnyElement> = Vec::new();
-        // Open sessions with no transcript listed yet: new ones, before or just
-        // after their first message.
-        let mut fresh: Vec<AnyElement> = Vec::new();
-        let unlisted = open.iter().filter(|o| o.id.as_ref().is_none_or(|id| !all.iter().any(|i| i.id == *id)));
-        for o in unlisted {
-            let (uid, is_current) = (o.uid, o.uid == current_uid);
-            let title = o.first.clone().unwrap_or_else(|| "New session".into());
-            if !matches(&title) {
-                continue;
-            }
-            fresh.push(
-                session_row(("open", uid as usize), title.into(), is_current, &t)
-                    .when(o.openrouter, |r| r.child(openrouter_mark(("open-provider", uid as usize), &t)))
-                    .when(o.grok, |r| r.child(grok_mark(("open-grok", uid as usize), &t)))
-                    .children(news_lamp(("open-status", uid as usize), o.busy, o.waiting, o.finished, cx))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.confirm_delete = None;
-                        if !is_current {
-                            this.show_open(|s| s.uid == uid);
-                        }
-                        this.focus_input(window, cx);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
-        }
-        if items.is_empty() {
-            rows.push(
-                div()
-                    .px_3()
-                    .py_2()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_sm()
-                    .text_color(t.text_placeholder)
-                    .when(loading, |d| d.child(spinner("sessions-loading", t.text_placeholder, px(12.))))
-                    .child(match (loading, query.is_empty()) {
-                        (true, _) => "Loading sessions…",
-                        (false, true) => "No past sessions yet",
-                        (false, false) => "No sessions match",
-                    })
-                    .into_any_element(),
-            );
-        }
-        // Past sessions' rows are built only where they show: not in a folded
-        // date section, a collapsed group or the closed archive.
-        let index: HashMap<&str, usize> = items.iter().enumerate().map(|(n, i)| (i.id.as_str(), n)).collect();
-        let ctx = RowCtx {
-            kind,
-            cwd: cwd.clone(),
-            current: current.clone(),
-            picking,
-            cursor: cursor.clone(),
-            picked_ids: picked_ids.clone(),
-            default_branch: default_branch.clone(),
-            open: &open,
-            t: t.clone(),
-        };
-        let take = |this: &mut Self, ids: Vec<String>, cx: &mut Context<Self>| -> Vec<AnyElement> {
-            ids.iter().filter_map(|id| index.get(id.as_str()).map(|&n| this.past_row(n, items[n], &ctx, cx))).collect()
-        };
-
-        // Pinned first, then the dates, each group, the archive. Busy sessions
-        // stay in their places; their lamps tell them apart.
-        let arranged = self.groups_for(&cwd).arrange(items.iter().map(|i| i.id.as_str()));
-        // Headers only when there's more than one section to tell apart.
-        let headers = arranged.sections() > 1;
-        // The rows in the order drawn, for Shift+click runs, "All" and the list's keys.
-        let mut order: Vec<String> = arranged.pinned.clone();
-        // A new session, before its first message: above everything.
-        rows.extend(fresh);
-        let pinned = take(self, arranged.pinned, cx);
-        if !pinned.is_empty() {
-            if headers {
-                rows.push(list_header("Pinned", rows.is_empty(), cx).into_any_element());
-            }
-            rows.extend(pinned);
-        }
-        // The ungrouped sessions under date headers, unless filtering or
-        // headers aren't drawn: then a flat list.
-        let no_days = HashMap::new();
-        let days = self.sessions.as_ref().map_or(&no_days, |l| &l.days);
-        let today = dates::today();
-        let dated: Vec<(String, dates::Day)> =
-            arranged.top.iter().map(|id| (id.clone(), days.get(id).copied().unwrap_or(today))).collect();
-        // Grouped by provider, when picked and there's more than one: a header
-        // each, newest first under it, instead of the dates.
-        let by_provider = match self.saved.sessions_by_provider && query.is_empty() {
-            true => Some(self.groups_for(&cwd).by_provider(&arranged.top)).filter(|split| split.len() > 1),
-            false => None,
-        };
-        let sections = match headers && query.is_empty() {
-            // With other sections about, even a single day gets its header.
-            true => dates::sections(&dated, today).or_else(|| dates::lone_section(&dated, today)),
-            false => dates::sections(&dated, today).filter(|_| query.is_empty()),
-        };
-        match (by_provider, sections) {
-            (Some(split), _) => {
-                for (provider, ids) in split {
-                    rows.push(list_header(provider.label(), rows.is_empty(), cx).into_any_element());
-                    order.extend(ids.iter().cloned());
-                    rows.extend(take(self, ids, cx));
-                }
-            }
-            (None, Some(sections)) => {
-                for (bucket, ids) in sections {
-                    let open = self.groups_for(&cwd).date_open(bucket);
-                    let first = rows.is_empty();
-                    rows.push(self.date_header(&cwd, bucket, ids.len(), open, today, first, cx));
-                    if open {
-                        order.extend(ids.iter().cloned());
-                    }
-                    if open {
-                        rows.extend(take(self, ids, cx));
-                    }
-                }
-            }
-            (None, None) => {
-                order.extend(arranged.top.iter().cloned());
-                rows.extend(take(self, arranged.top, cx));
-            }
-        }
-        for (i, ids) in arranged.groups.iter().enumerate() {
-            if !self.groups_for(&cwd).groups.get(i).is_some_and(|g| g.collapsed) {
-                order.extend(ids.iter().cloned());
-            }
-        }
-        if self.organize.show_archived {
-            order.extend(arranged.archived.iter().cloned());
-        }
-        self.organize.shown = order.clone();
-        // Each group's sessions with news, for the tell on a folded group's header.
-        let news: Vec<Vec<Lamp>> = arranged
-            .groups
-            .iter()
-            .map(|ids| {
-                ids.iter()
-                    .filter(|id| active.contains(id))
-                    .map(|id| {
-                        let (b, w, f) = open_state(id);
-                        Lamp::of(b, w, f)
-                    })
-                    .collect()
-            })
-            .collect();
-        // Each group's count and, unless it's folded, its rows.
-        let mut groups: Vec<(usize, Vec<AnyElement>)> = Vec::new();
-        for (i, ids) in arranged.groups.into_iter().enumerate() {
-            let folded = self.groups_for(&cwd).groups.get(i).is_some_and(|g| g.collapsed);
-            let count = ids.len();
-            groups.push((count, if folded { Vec::new() } else { take(self, ids, cx) }));
-        }
-        let archived_count = arranged.archived.len();
-        let archived = if self.organize.show_archived { take(self, arranged.archived, cx) } else { Vec::new() };
-        for ((i, (count, group)), news) in groups.into_iter().enumerate().zip(news) {
-            // Filtering, groups with nothing that matches step aside.
-            if !query.is_empty() && count == 0 {
-                continue;
-            }
-            rows.push(self.render_group(&cwd, i, count, group, &news, cx));
-        }
-        if archived_count > 0 {
-            rows.push(self.render_archived(&cwd, archived_count, archived, cx));
-        }
-        let drop_cwd = cwd.clone();
         let filter = self.filtering_sessions.then(|| {
             div().flex_none().px_1p5().pb_1().child(
                 div()
@@ -490,6 +285,7 @@ impl KynexApp {
                     })),
             )
         });
+        let forms = if project.is_some() { self.render_workspace_forms(cx) } else { Vec::new() };
 
         let scroll = scrollbar::handle("session-list");
         let list = div()
@@ -500,12 +296,6 @@ impl KynexApp {
             .track_scroll(&scroll)
             .px_1p5()
             .pb_1()
-            // Dropped outside any group: back to the top level.
-            .on_drop(cx.listener(move |this, d: &DraggedSession, _, cx| {
-                this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.move_to(id, None)));
-                this.organize.selection.clear();
-                cx.notify();
-            }))
             // Its own keys while it has the focus: ↑ / ↓, Enter, F2, Delete, Shift+Delete.
             .key_context("SessionList")
             .track_focus(&self.sessions_focus)
@@ -515,44 +305,17 @@ impl KynexApp {
             .on_action(cx.listener(Self::list_rename))
             .on_action(cx.listener(Self::list_archive))
             .on_action(cx.listener(Self::list_delete))
-            .children(rows);
-        let picks = self.render_pick_bar(kind, cwd, order, busy, cx);
+            .children(forms)
+            .children(tree.rows);
+        let picks = self.render_pick_bar(kind, pick_cwd, in_pick_folder, tree.busy, cx);
         div()
             .flex()
             .flex_col()
             .size_full()
-            .children(workspaces)
             .child(header)
             .children(filter)
             .child(scrollbar::vertical_over("session-list-bar", scroll, list, |d| d.flex_1().min_h_0()))
             .children(picks)
-    }
-
-    /// A date header: a section label that folds its sessions away (with
-    /// their count) or opens them. `first` is the list's first row.
-    fn date_header(
-        &self,
-        cwd: &std::path::Path,
-        bucket: Bucket,
-        count: usize,
-        open: bool,
-        today: dates::Day,
-        first: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let t = theme(cx).clone();
-        let label = bucket.label(today);
-        let cwd = cwd.to_path_buf();
-        let text = t.text;
-        list_header(&if open { label } else { format!("{label} · {count}") }, first, cx)
-            .id(SharedString::from(format!("date-{}", bucket.key())))
-            .cursor_pointer()
-            .hover(move |s| s.text_color(text))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.edit_groups(&cwd, |g| g.toggle_date(bucket));
-                cx.notify();
-            }))
-            .into_any_element()
     }
 
     /// Opens the title filter, or closes it and shows every session again.
@@ -573,289 +336,4 @@ impl KynexApp {
 pub(super) struct Parts {
     pub workspaces: bool,
     pub sessions: bool,
-}
-
-fn session_row(
-    id: impl Into<gpui::ElementId>,
-    title: SharedString,
-    current: bool,
-    t: &Palette,
-) -> gpui::Stateful<gpui::Div> {
-    session_row_with(id, title_text(title, current, t), current, t)
-}
-
-/// A session row whose name is `title`: its text, or the field renaming it.
-fn session_row_with(
-    id: impl Into<gpui::ElementId>,
-    title: AnyElement,
-    current: bool,
-    t: &Palette,
-) -> gpui::Stateful<gpui::Div> {
-    let hover = t.hover;
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .gap_1()
-        .h(px(28.))
-        .pl_2()
-        .pr_1()
-        .rounded_md()
-        .cursor_pointer()
-        .text_sm()
-        .relative()
-        .child(row_wash(current, hover, t.selection))
-        .child(title)
-}
-
-/// A small mark on the row of a session that runs on OpenRouter.
-fn openrouter_mark(id: impl Into<gpui::ElementId>, t: &Palette) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .flex_none()
-        .px_1()
-        .rounded_sm()
-        .border_1()
-        .border_color(t.border_variant)
-        .font_family(mono())
-        .text_xs()
-        .text_color(t.text_placeholder)
-        .child("OR")
-        .tooltip(Tooltip::text("Runs on OpenRouter"))
-}
-
-/// A small mark on the row of a session that runs on Grok.
-fn grok_mark(id: impl Into<gpui::ElementId>, t: &Palette) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(id)
-        .flex_none()
-        .px_1()
-        .rounded_sm()
-        .border_1()
-        .border_color(t.border_variant)
-        .font_family(mono())
-        .text_xs()
-        .text_color(t.text_placeholder)
-        .child("Grok")
-        .tooltip(Tooltip::text("Runs on Grok"))
-}
-
-/// A row's name as text, brighter on the shown session.
-/// A section header in the list (Pinned, a date): the section label, with
-/// less room above the list's first one.
-fn list_header(text: &str, first: bool, cx: &App) -> gpui::Div {
-    let label = section_label(text, cx).px_2().pb_1();
-    if first { label.pt_1p5() } else { label.pt_3() }
-}
-
-fn title_text(title: SharedString, current: bool, t: &Palette) -> AnyElement {
-    div()
-        .flex_1()
-        .min_w_0()
-        .truncate()
-        .text_color(if current { t.text } else { t.text_muted })
-        .child(title)
-        .into_any_element()
-}
-
-/// A session's lamp, only when there's news: it's working, waiting for you,
-/// or just finished. Idle rows show none.
-fn news_lamp(
-    id: impl Into<gpui::ElementId>,
-    busy: bool,
-    waiting: bool,
-    finished: bool,
-    cx: &mut Context<KynexApp>,
-) -> Option<AnyElement> {
-    (busy || waiting || finished).then(|| lamp(id, Lamp::of(busy, waiting, finished), cx).into_any_element())
-}
-
-/// What a past session's row needs from the panel around it.
-struct RowCtx<'a> {
-    kind: Kind,
-    cwd: PathBuf,
-    current: Option<String>,
-    picking: bool,
-    cursor: Option<String>,
-    picked_ids: Vec<String>,
-    default_branch: Option<String>,
-    open: &'a [OpenSession],
-    t: Palette,
-}
-
-impl KynexApp {
-    /// The row of past session number `n` of the list.
-    fn past_row(&mut self, n: usize, info: &SessionInfo, ctx: &RowCtx, cx: &mut Context<Self>) -> AnyElement {
-        let this = self;
-        let RowCtx { kind, cwd, current, picking, cursor, picked_ids, default_branch, open, t } = ctx;
-        let (kind, picking) = (*kind, *picking);
-        let open_state = |id: &str| {
-            open.iter()
-                .find(|o| o.id.as_deref() == Some(id))
-                .map_or((false, false, false), |o| (o.busy, o.waiting, o.finished))
-        };
-        let is_current = current.as_deref() == Some(info.id.as_str());
-        let confirming = this.confirm_delete.as_deref() == Some(info.id.as_str());
-        let id = info.id.clone();
-        let (open_id, del_id) = (id.clone(), id.clone());
-        let (kind2, cwd2, cwd3) = (kind, cwd.clone(), cwd.clone());
-        let picked = this.organize.selection.contains(&id);
-        let (busy, waiting, finished) = open_state(&id);
-        let delete = if confirming {
-            div()
-                .id(("confirm-delete", n))
-                .px_1p5()
-                .h(px(20.))
-                .flex()
-                .items_center()
-                .rounded_sm()
-                .text_xs()
-                .text_color(t.error)
-                .cursor_pointer()
-                .hover(|s| s.bg(t.hover))
-                .child("Delete?")
-        } else {
-            icon_button(("delete", n), Icon::Trash, cx).invisible().group_hover("session-row", |s| s.visible())
-        };
-        // A picked row takes the other picked ones with it, in a drag or its menu.
-        let with_picks = picked && picked_ids.len() > 1;
-        let group_ids = if with_picks { picked_ids.clone() } else { vec![id.clone()] };
-        let drag = DraggedSession { ids: group_ids.clone(), title: info.title.clone().into() };
-        let menu = if with_picks { Menu::Sessions(group_ids) } else { Menu::Session(id.clone()) };
-        let elsewhere = info.ran_elsewhere(cwd, default_branch.as_deref()).map(str::to_string);
-        // When it was last used is in the tooltip; the row is just its title,
-        // or the field renaming it.
-        let title = match this.session_name_field(&id, false, cx) {
-            Some(field) => field.flex_1().into_any_element(),
-            None => {
-                let text = match &elsewhere {
-                    // Only as wide as the title, so the branch follows it.
-                    Some(_) => div()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(if is_current || picked { t.text } else { t.text_muted })
-                        .child(info.title.clone())
-                        .into_any_element(),
-                    None => title_text(info.title.clone().into(), is_current || picked, t),
-                };
-                match &elsewhere {
-                    // Where it ran, after its title: small, muted, mono.
-                    Some(branch) => div()
-                        .flex()
-                        .flex_1()
-                        .min_w_0()
-                        .items_center()
-                        .gap_1p5()
-                        .child(text)
-                        .child(
-                            div()
-                                .flex_none()
-                                .max_w(px(120.))
-                                .truncate()
-                                .font_family(mono())
-                                .text_xs()
-                                .text_color(t.text_placeholder)
-                                .child(branch.clone()),
-                        )
-                        .into_any_element(),
-                    None => text,
-                }
-            }
-        };
-        let title = match picking {
-            true => div()
-                .flex()
-                .flex_1()
-                .min_w_0()
-                .items_center()
-                .gap_1p5()
-                .child(this.pick_box(picked, cx))
-                .child(title)
-                .into_any_element(),
-            false => title,
-        };
-        let provider = this.groups_for(cwd).provider_of(&id);
-        let row = session_row_with(("session", n), title, is_current || picked, t)
-            .when(provider.is_openrouter(), |r| r.child(openrouter_mark(("session-provider", n), t)))
-            .when(provider == kynex_core::provider::Provider::Grok, |r| r.child(grok_mark(("session-grok", n), t)))
-            .group("session-row")
-            .tooltip(Tooltip::with_meta(
-                info.title.clone(),
-                match &elsewhere {
-                    Some(branch) => format!("{} · on {branch}", ago(info.modified)),
-                    None => ago(info.modified),
-                },
-            ))
-            .when(cursor.as_deref() == Some(id.as_str()), |row| row.bg(t.hover))
-            .children(news_lamp(("session-status", n), busy, waiting, finished, cx))
-            .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                    // Not the pane's menu as well.
-                    cx.stop_propagation();
-                    this.open_menu(menu.clone(), ev.position, Anchor::TopLeft, cx)
-                }),
-            )
-            .on_click(cx.listener(move |this, ev: &gpui::ClickEvent, window, cx| {
-                this.confirm_delete = None;
-                this.organize.cursor = Some(open_id.clone());
-                if this.pick_click(&cwd2, &open_id, &ev.modifiers(), cx) {
-                    // Picking: the list keeps the keys (Delete, Shift+Delete, Esc).
-                    this.sessions_focus.focus(window, cx);
-                    return;
-                }
-                if !is_current {
-                    this.switch_session(kind2, cwd2.clone(), open_id.clone());
-                }
-                this.focus_input(window, cx);
-                cx.notify();
-            }))
-            .when(!picking, |row| {
-                row.child(
-                    delete
-                        .when(busy, |d| d.opacity(0.4))
-                        .tooltip(Tooltip::text(if busy {
-                            "Stop it first to delete it"
-                        } else {
-                            "Delete this session's transcript"
-                        }))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            if busy {
-                                return;
-                            }
-                            if this.confirm_delete.as_deref() != Some(del_id.as_str()) {
-                                this.confirm_delete = Some(del_id.clone());
-                                return cx.notify();
-                            }
-                            this.confirm_delete = None;
-                            this.forget_past_session(kind2, &cwd3, &del_id);
-                            if let Err(e) = session::delete_session(&cwd3, &del_id) {
-                                this.toast(Toast::error(e));
-                            }
-                            this.relist_sessions(std::slice::from_ref(&del_id));
-                            cx.notify();
-                        })),
-                )
-            });
-        // A pinned row takes other sessions dropped on it in its place,
-        // which reorders the pinned ones.
-        let row = match this.groups_for(cwd).is_pinned(&id) {
-            true => {
-                let (pin_id, pin_cwd, hover) = (id.clone(), cwd.clone(), t.hover);
-                row.drag_over::<DraggedSession>(move |s, _, _, _| s.bg(hover)).on_drop(cx.listener(
-                    move |this, d: &DraggedSession, _, cx| {
-                        cx.stop_propagation();
-                        this.edit_groups(&pin_cwd, |g| {
-                            d.ids.iter().filter(|i| **i != pin_id).for_each(|i| g.move_pin(i, Some(&pin_id)))
-                        });
-                        cx.notify();
-                    },
-                ))
-            }
-            false => row,
-        };
-        row.into_any_element()
-    }
 }

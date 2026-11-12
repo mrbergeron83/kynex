@@ -2,6 +2,8 @@
 //! right-click menus of project tabs, sessions and session groups. One is open at a time, anchored where it was clicked.
 
 use crate::ui::px;
+use std::path::PathBuf;
+
 use gpui::{Anchor, AnyElement, Context, Pixels, Point, SharedString, anchored, deferred, div, prelude::*};
 use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
@@ -26,16 +28,16 @@ pub enum Menu {
     Tab(usize),
     /// A past session's right-click menu, by its id.
     Session(String),
-    /// A session group's right-click menu.
-    Group(usize),
+    /// A session group's right-click menu: group `i` of the workspace at this folder.
+    Group(PathBuf, usize),
     /// The right-click menu for several picked sessions.
     Sessions(Vec<String>),
-    /// The sessions panel header's menu: tidying old sessions.
+    /// The sessions panel header's menu: grouping by provider, tidying old sessions.
     SessionsPanel,
-    /// The archive header's menu: purging archived sessions.
-    PurgeArchived,
+    /// The archive header's menu: purging the archived sessions of the workspace at this folder.
+    PurgeArchived(PathBuf),
     /// A workspace's right-click menu, by its folder.
-    Workspace(std::path::PathBuf),
+    Workspace(PathBuf),
     /// A pane's right-click menu.
     Pane(kynex_core::layout::PaneId),
     /// A pane tab's right-click menu.
@@ -436,10 +438,10 @@ impl KynexApp {
                 );
             }
             Menu::Session(id) => items = self.session_menu_items(id, cx),
-            Menu::Group(i) => items = self.group_menu_items(*i, cx),
+            Menu::Group(cwd, i) => items = self.group_menu_items(&cwd.clone(), *i, cx),
             Menu::Sessions(ids) => items = self.sessions_menu_items(ids, cx),
             Menu::SessionsPanel => items = self.sessions_panel_menu_items(cx),
-            Menu::PurgeArchived => items = self.purge_menu_items(cx),
+            Menu::PurgeArchived(cwd) => items = self.purge_menu_items(&cwd.clone(), cx),
             Menu::Pane(pane) => items = self.pane_menu_items(*pane, cx),
             Menu::PaneTab(tab) => items = self.pane_tab_menu_items(*tab, cx),
             Menu::Workspaces => {
@@ -516,6 +518,9 @@ impl KynexApp {
                             .into_any_element(),
                     );
                 }
+                // Tidying its sessions away.
+                items.push(div().my_1().child(divider(cx)).into_any_element());
+                items.extend(self.tidy_menu_items(&path.clone(), cx));
                 // The project's own tree can't be removed; a linked worktree can (its branch stays).
                 if self.active_project().is_some_and(|p| !kynex_core::workspace::same_folder(&p.path, path)) {
                     let folder = self

@@ -540,7 +540,7 @@ impl KynexApp {
     fn step_session(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(s) = self.focused_key().and_then(|k| self.session_by_key(k)) else { return };
         let cwd = s.cwd.clone();
-        let Some(list) = self.sessions.as_ref().filter(|l| l.read.cwd == cwd) else {
+        let Some(list) = self.sessions.get(&cwd) else {
             // The panel is collapsed, so its list isn't read: read it off the UI thread first.
             let dir = cwd.clone();
             cx.spawn_in(window, async move |this, cx| {

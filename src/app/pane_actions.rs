@@ -6,7 +6,7 @@
 use gpui::{Anchor, AnyElement, Context, MouseButton, MouseDownEvent, Window, canvas, div, prelude::*};
 use kynex_core::layout::{Axis, Direction, PaneId, Rect};
 use kynex_core::live::Key;
-use kynex_core::session::Session;
+use kynex_core::session::{Kind, Session};
 use kynex_core::tiling::Content;
 use kynex_core::toasts::Toast;
 
@@ -40,7 +40,12 @@ impl KynexApp {
         cx: &mut Context<Self>,
     ) {
         let Some((project, ws, _)) = self.tiling_scope() else { return };
-        let Some((kind, cwd)) = self.panel_folder() else { return };
+        let Some((kind, here)) = self.panel_folder() else { return };
+        // A session of another workspace opens there, in its own panes.
+        let cwd = self.folder_of_listed(&id).unwrap_or_else(|| here.clone());
+        if kind == Kind::Code && !kynex_core::workspace::same_folder(&cwd, &here) {
+            return self.show_in_workspace(&cwd, &id, window, cx);
+        }
         self.edit_groups(&cwd, |g| {
             g.unarchive(&id);
         });

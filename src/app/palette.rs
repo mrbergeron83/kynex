@@ -598,7 +598,11 @@ impl KynexApp {
                 self.check_for_update(cx);
                 self.check_cli_now(cx);
             }
-            Cmd::ArchiveOlder(days) => self.archive_older_than(days, cx),
+            Cmd::ArchiveOlder(days) => {
+                if let Some((_, cwd)) = self.panel_folder() {
+                    self.archive_older_than(&cwd, days, cx);
+                }
+            }
             Cmd::Theme(t) => self.set_theme(t, cx),
             _ => {}
         }
