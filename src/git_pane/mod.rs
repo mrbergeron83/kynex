@@ -35,10 +35,13 @@ use crate::app::ToggleGit;
 use crate::app::worktrees::Worktrees;
 use crate::git::{GitEvent, GitView};
 use crate::theme::theme;
-use crate::ui::{Icon, Tooltip, icon, icon_button, outline_button};
+use crate::ui::{Icon, Tooltip, icon_button, outline_button};
 
 /// How often the working tree is re-read while the pane is on screen.
 const POLL_EVERY: Duration = Duration::from_secs(3);
+
+/// Under this width (in pixels) the bars fold their buttons to icons.
+const COMPACT_UNDER: f32 = 400.;
 
 /// What the pane asks of the app.
 pub enum GitPaneEvent {
@@ -78,6 +81,8 @@ pub struct GitPane {
     menu: Option<RowMenu>,
     /// A row whose discard was asked for and awaits a second click.
     confirm: Option<Confirm>,
+    /// How wide the pane is, as the app last laid it out.
+    width: f32,
 }
 
 /// Status and line counts of every changed file in `root`. Blocking.
@@ -125,6 +130,7 @@ impl GitPane {
             scroll: UniformListScrollHandle::new(),
             menu: None,
             confirm: None,
+            width: f32::MAX,
         };
         pane.load(cx);
         pane
@@ -143,6 +149,11 @@ impl GitPane {
         }
         self.load(cx);
         cx.notify();
+    }
+
+    /// How wide the app lays the pane out, for folding its bars.
+    pub fn set_width(&mut self, width: f32) {
+        self.width = width;
     }
 
     /// Re-reads the selected worktree now.
@@ -231,12 +242,11 @@ impl GitPane {
         cx.notify();
     }
 
-    /// The selected worktree's folder name and branch, for the bar.
-    fn names(&self, cx: &Context<Self>) -> (String, Option<String>) {
-        let list = &self.worktrees.read(cx).list;
-        let branch = list.iter().find(|w| same_folder(&w.path, &self.selected)).map(|w| w.label().to_string());
-        let name = self.selected.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-        (name, branch)
+    /// The selected worktree's folder name, for the bar (its branch is the picker below).
+    fn name(&self) -> String {
+        self.selected
+            .file_name()
+            .map_or_else(|| self.selected.display().to_string(), |n| n.to_string_lossy().into_owned())
     }
 }
 
@@ -245,32 +255,37 @@ impl Render for GitPane {
         self.drawn = Some(Instant::now());
         let t = theme(cx).clone();
         let view = self.view(cx);
-        let (name, branch) = self.names(cx);
+        let name = self.name();
 
+        let compact = self.width < COMPACT_UNDER;
+        let linked = self.worktrees.read(cx).list.iter().any(|w| same_folder(&w.path, &self.selected) && !w.main);
         let full = self.selected.clone();
+        let full_button = if compact {
+            icon_button("git-pane-full", Icon::GitCommit, cx)
+        } else {
+            outline_button("git-pane-full", "Commit & history…", cx)
+        };
         let header = div()
             .flex()
             .flex_none()
             .items_center()
             .gap_1p5()
             .h(px(36.))
-            .px_3()
+            .pl_3()
+            .pr_1()
             .border_b_1()
             .border_color(t.border_variant)
-            .child(div().flex_none().text_sm().font_weight(FontWeight::MEDIUM).child(name))
-            .when_some(branch, |d, b| {
-                d.child(icon(Icon::GitBranch, t.text_muted).size_3())
-                    .child(div().min_w_0().truncate().text_xs().text_color(t.text_muted).child(b))
-            })
+            .child(div().min_w_0().truncate().text_sm().font_weight(FontWeight::MEDIUM).child(name))
+            .when(linked, |d| d.child(div().flex_none().text_xs().text_color(t.info).child("worktree")))
             .child(div().flex_1())
             .child(
                 icon_button("git-pane-refresh", Icon::Refresh, cx)
-                    .tooltip(Tooltip::text("Refresh"))
+                    .tooltip(Tooltip::text("Re-read the repository"))
                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
             )
             .child(
-                outline_button("git-pane-full", "Commit & history…", cx)
-                    .tooltip(Tooltip::text("Commit, history and branches"))
+                full_button
+                    .tooltip(Tooltip::text("Commit, history and branches in the full Git view"))
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(GitPaneEvent::OpenFull(full.clone())))),
             )
             .child(
@@ -278,7 +293,7 @@ impl Render for GitPane {
                     .tooltip(Tooltip::for_action("Close the Git pane", ToggleGit, ""))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(GitPaneEvent::Close))),
             );
-
+        let sync = view.update(cx, |v, cx| v.render_sync_bar(compact, window, cx));
         let worktrees = self.render_worktrees(cx);
         let notices = view.update(cx, |v, cx| v.render_notices(cx));
         let tools = self.render_tree_bar(&view, cx);
@@ -292,6 +307,7 @@ impl Render for GitPane {
             .bg(t.panel)
             .text_color(t.text)
             .child(header)
+            .child(sync)
             .child(worktrees)
             .children(notices)
             .children(tools)

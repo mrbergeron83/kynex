@@ -442,7 +442,7 @@ impl Render for GitView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.drawn = Some(Instant::now());
         let t = theme(cx).clone();
-        let top = self.render_top_bar(window, cx);
+        let top = self.render_top_bar(false, true, window, cx);
 
         let tab_button = |id: &'static str, label: String, tab: Tab, cx: &mut Context<Self>| {
             let selected = self.tab == tab;

@@ -57,6 +57,13 @@ impl GitView {
         self.commit_box(staged, unstaged, window, cx).into_any_element()
     }
 
+    /// The bar with the branch picker, how the branch stands against its upstream, and
+    /// fetch / pull / push; `compact` folds it to icons for a narrow pane.
+    pub fn render_sync_bar(&mut self, compact: bool, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.touch();
+        self.render_top_bar(compact, false, window, cx).into_any_element()
+    }
+
     /// What went wrong last (until dismissed), and a note while there are conflicts.
     pub fn render_notices(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let t = theme(cx).clone();

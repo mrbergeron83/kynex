@@ -29,7 +29,9 @@ impl KynexApp {
         match t.content(pane)? {
             Content::Terminal => self.render_terminal_pane(pane, window, cx),
             Content::Git => {
+                let width = t.rects(self.layout_bounds(cx)).pane(pane).map_or(f32::MAX, |r| r.w);
                 let git = self.git_pane(&ws, window, cx);
+                git.update(cx, |g, _| g.set_width(width));
                 Some(div().size_full().child(git).into_any_element())
             }
             Content::Timeline => {
