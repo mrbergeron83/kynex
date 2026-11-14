@@ -66,9 +66,13 @@ impl KynexApp {
         let reads = self.session_reads.reads.entry(cwd.clone()).or_default();
         reads.0 += 1;
         let n = reads.0;
+        let saved = self.groups_for(&cwd).clone();
         cx.spawn(async move |this, cx| {
-            let (mut items, default_branch) = cx
-                .background_spawn(async move { (session::list_sessions(&cwd), kynex_core::git::default_branch(&cwd)) })
+            let (mut items, default_branch, gone) = cx
+                .background_spawn(async move {
+                    let gone = session::gone_sessions(&cwd, &saved);
+                    (session::list_sessions(&cwd), kynex_core::git::default_branch(&cwd), gone)
+                })
                 .await;
             this.update(cx, |this, cx| {
                 // An older read than one already shown: drop it. A newer one on its way
@@ -80,6 +84,14 @@ impl KynexApp {
                 reads.1 = n;
                 if this.session_reads.reading.get(&read.cwd) == Some(&read) {
                     this.session_reads.reading.remove(&read.cwd);
+                }
+                // Sessions deleted outside Kynex leave sessions.json; open ones may not
+                // have a transcript yet.
+                if let Some(gone) = gone.filter(|g| !g.is_empty()) {
+                    let open: Vec<String> = this.all_sessions().filter_map(|s| s.session_id.clone()).collect();
+                    this.edit_groups(&read.cwd, |g| {
+                        g.drop_gone(|id| !gone.iter().any(|x| x == id), &open);
+                    });
                 }
                 // A name given by hand wins, and counts as named, so none is generated.
                 for i in &mut items {
