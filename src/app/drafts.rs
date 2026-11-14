@@ -7,6 +7,7 @@ use kynex_core::live::Key;
 use kynex_core::session::{Attachment, Session};
 
 use super::KynexApp;
+use super::state::Active;
 
 /// A message being written in a session that isn't shown.
 #[derive(Default)]
@@ -60,6 +61,22 @@ impl KynexApp {
         if !text.trim().is_empty() || !attachments.is_empty() {
             self.drafts.insert(key, Draft { text, attachments });
         }
+    }
+
+    /// Closes the new sessions left in the shown folder: not shown, in no pane, no draft
+    /// put aside. Runs after [`Self::sync_draft`], so a draft just left is counted.
+    pub(super) fn close_unused_sessions(&mut self) {
+        let (drafts, saved) = (&self.drafts, &self.saved.drafts);
+        let live = match self.saved.active {
+            Active::Chat => Some(&mut self.chat),
+            Active::Project(i) => self.saved.projects.get(i).and_then(|p| self.code.get_mut(&p.path)),
+        };
+        let Some(live) = live else { return };
+        let closed = live.close_unused(|s| {
+            let key = draft_key(s);
+            drafts.contains_key(&key) || saved.contains_key(&key)
+        });
+        self.forget(&closed);
     }
 
     /// Drops the drafts of sessions that closed before they had a CLI id;

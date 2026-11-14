@@ -231,6 +231,7 @@ impl KynexApp {
         self.sync_awake();
         let key = self.focused_key();
         self.sync_draft(key, cx);
+        self.close_unused_sessions();
         self.sync_prompt(key, window, cx);
         self.sync_toasts(window, cx);
         self.load_project_settings();

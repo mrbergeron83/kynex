@@ -206,6 +206,7 @@ impl KynexApp {
         let Some(live) = self.live_mut() else { return div() };
         let Some(s) = live.current() else { return div() };
         let (kind, cwd, current, current_uid) = (s.kind, s.cwd.clone(), s.session_id.clone(), s.uid);
+        let fresh = s.is_new();
         // The title filter, while it's open.
         let query = if self.filtering_sessions {
             self.session_filter.read(cx).text().trim().to_lowercase()
@@ -269,9 +270,9 @@ impl KynexApp {
             })
             .child(
                 icon_button("new-session", Icon::Plus, cx)
-                    .when(current.is_none(), |b| b.opacity(0.4))
-                    .when(current.is_none(), |b| b.tooltip(Tooltip::text("Already a new session")))
-                    .when(current.is_some(), |b| b.tooltip(Tooltip::for_action("New session", NewSession, "")))
+                    .when(fresh, |b| b.opacity(0.4))
+                    .when(fresh, |b| b.tooltip(Tooltip::text("Already a new session")))
+                    .when(!fresh, |b| b.tooltip(Tooltip::for_action("New session", NewSession, "")))
                     .on_click(cx.listener(|this, _, window, cx| this.new_session(window, cx))),
             )
             .child(

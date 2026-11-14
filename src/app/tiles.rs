@@ -288,7 +288,13 @@ impl KynexApp {
         // come back as they were.
         let held: Vec<Key> = self.tiles.values().flat_map(Tiling::sessions).collect();
         if let Some(live) = self.code.get_mut(&project) {
+            // A pane that let its session go (closed, or given another) tidies as a switch does.
+            let released = live.visible().iter().any(|k| !held.contains(k));
             live.set_visible(&held);
+            if released {
+                let closed = live.prune();
+                self.forget(&closed);
+            }
         }
         if let Some(focus) = focus {
             self.swap_to(focus, window, cx);

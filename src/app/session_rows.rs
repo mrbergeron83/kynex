@@ -210,13 +210,30 @@ impl KynexApp {
         let (uid, is_current, here) = (o.uid, ctx.here && o.uid == ctx.current_uid, ctx.here);
         let title = o.first.clone().unwrap_or_else(|| "New session".into());
         let key = o.key();
+        // One not on show, in no pane and not working can be closed from here.
+        let in_pane = self.tiles.values().any(|t| t.sessions().contains(&uid));
+        let closable = !o.busy && !in_pane && !(ctx.here && uid == ctx.current_uid);
         session_row(("open", uid as usize), title.into(), is_current, t)
+            .group("session-row")
             .when(ctx.cursor.as_deref() == Some(key.as_str()), |row| row.bg(t.hover))
             .when(o.openrouter, |r| {
                 r.child(provider_mark(("open-provider", uid as usize), "OR", "Runs on OpenRouter", t))
             })
             .when(o.grok, |r| r.child(provider_mark(("open-grok", uid as usize), "Grok", "Runs on Grok", t)))
             .children(news_lamp(("open-status", uid as usize), o.lamp(), cx))
+            .when(closable, |r| {
+                r.child(
+                    icon_button(("open-close", uid as usize), Icon::Close, cx)
+                        .invisible()
+                        .group_hover("session-row", |s| s.visible())
+                        .tooltip(Tooltip::text("Close"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.close_open(uid);
+                            cx.notify();
+                        })),
+                )
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.confirm_delete = None;
                 this.organize.cursor = Some(key.clone());
