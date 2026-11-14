@@ -10,6 +10,7 @@
 //! the socket file is private to the user (mode 0600). On Windows the pipe's name is random
 //! for each run, so only a process that can read the user's data dir finds it.
 
+pub mod agent;
 pub mod args;
 pub mod client;
 pub mod protocol;

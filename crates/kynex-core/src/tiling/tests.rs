@@ -620,3 +620,25 @@ fn the_git_pane_s_tab_is_kept_with_the_layout() {
     let newer = old.replace("\"seeded\":false", "\"seeded\":false,\"git_tab\":\"Blame\"");
     assert_eq!(serde_json::from_str::<SavedLayout>(&newer).unwrap().git_tab, GitTab::Changes);
 }
+
+#[test]
+fn a_tool_pane_moves_like_a_session_pane_and_the_move_is_saved() {
+    // [1 | 2 over 3], then the timeline (4) on the right of 1.
+    let mut t = three();
+    assert!(t.split_tool(1, Direction::Right, 4, Tool::Timeline, 0.5, BIG));
+    assert_eq!(t.panes(), [1, 4, 2, 3]);
+    assert!(t.move_pane(4, 3, Some(Direction::Down), BIG));
+    assert_eq!((t.panes(), t.focus()), (vec![1, 2, 3, 4], Some(4)));
+    assert_eq!(t.content(4), Some(Content::Timeline));
+    // A session pane moved becomes the one sessions go to while a tool has the focus.
+    assert!(t.move_dir(2, Direction::Left, BIG));
+    assert_eq!(t.panes(), [2, 1, 3, 4]);
+    assert_eq!(t.session_focus(), Some(2));
+    assert!(t.can_move_dir(4, Direction::Up, BIG));
+    assert!(!t.can_move_dir(4, Direction::Down, BIG));
+    assert_eq!(t.panes(), [2, 1, 3, 4], "asking moves nothing");
+    let mut next = 100;
+    let back = Tiling::restore(&t.save(id_of), &mut next, None, key_of_id).unwrap();
+    assert_eq!(back.sessions(), [20, 10, 30]);
+    assert_eq!(back.content(103), Some(Content::Timeline));
+}

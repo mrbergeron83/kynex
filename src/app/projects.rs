@@ -213,7 +213,7 @@ impl KynexApp {
     pub(super) fn new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.notify();
         if let Some(s) = self.session_mut()
-            && s.session_id.is_some()
+            && !s.is_new()
         {
             let (kind, cwd) = (s.kind, s.cwd.clone());
             self.open_session(Session::new(kind, cwd));

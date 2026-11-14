@@ -37,27 +37,7 @@ impl Render for DraggedPaneTab {
     }
 }
 
-/// What follows the pointer while a pane is dragged by its header, to another tab.
-#[derive(Clone)]
-pub(super) struct DraggedPane {
-    pub pane: kynex_core::layout::PaneId,
-    pub label: SharedString,
-}
-
-impl Render for DraggedPane {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = theme(cx);
-        popover(cx)
-            .font_family(ui_font())
-            .flex_row()
-            .items_center()
-            .h(px(26.))
-            .px_2p5()
-            .text_sm()
-            .text_color(t.text)
-            .child(self.label.clone())
-    }
-}
+pub(super) use crate::ui::pane_drag::DraggedPane;
 
 impl KynexApp {
     /// A new tab in the workspace you're in, with a new session in its one pane.

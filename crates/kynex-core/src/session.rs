@@ -794,6 +794,7 @@ impl Session {
         let grok = self.provider.provider() == crate::provider::Provider::Grok;
         let (tx, rx) = channel();
         let spec = launch::Spec {
+            uid: self.uid,
             kind: self.kind,
             cwd: self.cwd.clone(),
             settings_dir: self.settings_folder().to_path_buf(),
@@ -2024,6 +2025,29 @@ pub fn list_sessions(cwd: &Path) -> Vec<SessionInfo> {
     sessions
 }
 
+/// Which of the sessions saved in `groups` (`cwd`'s `sessions.json`) are gone: no
+/// transcript, and for Grok ones, no record in Grok's own. `None` when that can't be
+/// told, because the transcripts folder can't be found or read in full (a moved project,
+/// a read error): nothing is gone then. Blocks on reading the folder.
+pub fn gone_sessions(cwd: &Path, groups: &crate::groups::SessionGroups) -> Option<Vec<String>> {
+    let mut transcripts = std::collections::HashSet::new();
+    for e in std::fs::read_dir(transcripts_dir(cwd)?).ok()? {
+        let path = e.ok()?.path();
+        if path.extension().is_some_and(|x| x == "jsonl")
+            && let Some(id) = path.file_stem()
+        {
+            transcripts.insert(id.to_string_lossy().into_owned());
+        }
+    }
+    let grok_readable = crate::grok::log::readable();
+    let exists = |id: &str| {
+        transcripts.contains(id)
+            || (groups.provider_of(id) == crate::provider::Provider::Grok
+                && (!grok_readable || crate::grok::log::session_dir(cwd, id).is_some()))
+    };
+    Some(groups.saved_ids().into_iter().filter(|id| !exists(id)).map(str::to_string).collect())
+}
+
 #[derive(Clone)]
 struct Names {
     /// The latest `custom-title`, else the latest `ai-title`.
@@ -2242,6 +2266,14 @@ mod tests {
         assert!(!session_exists(&cwd, "00000000-dead-beef-0000-000000000000"));
         assert!(!session_exists(&cwd, ""));
         assert!(!session_exists(&cwd, "../escape"));
+    }
+
+    #[test]
+    fn nothing_is_gone_from_a_folder_whose_transcripts_cant_be_found() {
+        let cwd = std::env::temp_dir().join("kynex-no-such-folder");
+        let mut g = crate::groups::SessionGroups::default();
+        g.toggle_pin("00000000-dead-beef-0000-000000000000");
+        assert_eq!(gone_sessions(&cwd, &g), None);
     }
 
     #[test]

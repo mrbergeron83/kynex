@@ -187,9 +187,6 @@ impl KynexApp {
             row.lamps = open.iter().map(OpenSession::lamp).chain(agents).collect();
             row.wants_you = open.iter().filter(|o| o.waiting || o.finished).max_by_key(|o| o.waiting).map(|o| o.uid);
             rows.push(self.render_workspace_row(n, row, cx));
-            if is_open {
-                rows.extend(self.agent_rows(n, &path, cx));
-            }
         }
         if !is_open {
             return (vec![div().id(("tree-ws", n)).flex().flex_col().children(rows).into_any_element()], branch, busy);
@@ -277,7 +274,7 @@ impl KynexApp {
                         if d.cwd != drop_cwd {
                             return;
                         }
-                        this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.move_to(id, None)));
+                        this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.drop_into(id, None)));
                         this.organize.selection.clear();
                         cx.notify();
                     }))

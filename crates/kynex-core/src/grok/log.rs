@@ -19,6 +19,12 @@ fn root() -> Option<PathBuf> {
     Some(dirs::home_dir()?.join(".grok").join("sessions"))
 }
 
+/// Whether Grok's records can be read, so a session missing from them is really gone.
+/// Blocks on the file system.
+pub fn readable() -> bool {
+    root().is_some_and(|r| std::fs::read_dir(r).is_ok())
+}
+
 /// `cwd` as Grok names its folder: percent-encoded, all but `A–Z a–z 0–9 - . _ ~`.
 fn folder_name(cwd: &Path) -> String {
     let mut out = String::new();

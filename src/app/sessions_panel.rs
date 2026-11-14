@@ -66,9 +66,13 @@ impl KynexApp {
         let reads = self.session_reads.reads.entry(cwd.clone()).or_default();
         reads.0 += 1;
         let n = reads.0;
+        let saved = self.groups_for(&cwd).clone();
         cx.spawn(async move |this, cx| {
-            let (mut items, default_branch) = cx
-                .background_spawn(async move { (session::list_sessions(&cwd), kynex_core::git::default_branch(&cwd)) })
+            let (mut items, default_branch, gone) = cx
+                .background_spawn(async move {
+                    let gone = session::gone_sessions(&cwd, &saved);
+                    (session::list_sessions(&cwd), kynex_core::git::default_branch(&cwd), gone)
+                })
                 .await;
             this.update(cx, |this, cx| {
                 // An older read than one already shown: drop it. A newer one on its way
@@ -80,6 +84,14 @@ impl KynexApp {
                 reads.1 = n;
                 if this.session_reads.reading.get(&read.cwd) == Some(&read) {
                     this.session_reads.reading.remove(&read.cwd);
+                }
+                // Sessions deleted outside Kynex leave sessions.json; open ones may not
+                // have a transcript yet.
+                if let Some(gone) = gone.filter(|g| !g.is_empty()) {
+                    let open: Vec<String> = this.all_sessions().filter_map(|s| s.session_id.clone()).collect();
+                    this.edit_groups(&read.cwd, |g| {
+                        g.drop_gone(|id| !gone.iter().any(|x| x == id), &open);
+                    });
                 }
                 // A name given by hand wins, and counts as named, so none is generated.
                 for i in &mut items {
@@ -206,6 +218,7 @@ impl KynexApp {
         let Some(live) = self.live_mut() else { return div() };
         let Some(s) = live.current() else { return div() };
         let (kind, cwd, current, current_uid) = (s.kind, s.cwd.clone(), s.session_id.clone(), s.uid);
+        let fresh = s.is_new();
         // The title filter, while it's open.
         let query = if self.filtering_sessions {
             self.session_filter.read(cx).text().trim().to_lowercase()
@@ -227,7 +240,9 @@ impl KynexApp {
         let project = self.workspace_project().filter(|_| kind == Kind::Code);
         let repo = project.as_ref().is_some_and(|p| !self.worktrees(p, cx).read(cx).list.is_empty());
 
+        // In a pane, the header is the handle that drags it.
         let header = div()
+            .id("sessions-header")
             .flex()
             .flex_none()
             .items_center()
@@ -269,9 +284,9 @@ impl KynexApp {
             })
             .child(
                 icon_button("new-session", Icon::Plus, cx)
-                    .when(current.is_none(), |b| b.opacity(0.4))
-                    .when(current.is_none(), |b| b.tooltip(Tooltip::text("Already a new session")))
-                    .when(current.is_some(), |b| b.tooltip(Tooltip::for_action("New session", NewSession, "")))
+                    .when(fresh, |b| b.opacity(0.4))
+                    .when(fresh, |b| b.tooltip(Tooltip::text("Already a new session")))
+                    .when(!fresh, |b| b.tooltip(Tooltip::for_action("New session", NewSession, "")))
                     .on_click(cx.listener(|this, _, window, cx| this.new_session(window, cx))),
             )
             .child(
@@ -343,7 +358,7 @@ impl KynexApp {
             .flex()
             .flex_col()
             .size_full()
-            .child(header)
+            .child(crate::ui::pane_drag::pane_handle(header, pane, "Sessions"))
             .children(filter)
             .child(scrollbar::vertical_over("session-list-bar", scroll, list, |d| d.flex_1().min_h_0()))
             .children(picks)

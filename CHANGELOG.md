@@ -7,10 +7,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A session knows it runs in Kynex: Claude is told so, and its shell has a `knx` for the Kynex it runs in (whatever is installed, a dev build included) with `KYNEX_SESSION`, `KYNEX_WORKSPACE_DIR` and the app's address set, so `knx session list` and the rest work from inside a session and say which session asks.
 - Removing a workspace keeps its sessions: the confirmation offers "Also delete its N sessions", and the ones kept stay under a folded "Removed workspaces" section, to read, to continue in the project's own folder, or to forget (which deletes them).
+- Panes move with the mouse: drag one by its header or bar (sessions, the tree, Git, timeline, terminals, agent panes) onto another pane; near an edge it goes to that side, in the middle the two swap, and the target shows where it will land. The pane menu has Move left / right / up / down too, and the arrangement is saved with the layout.
+- The Agents pane: everything running or wanting you, in every open project, in one list. Sessions waiting on you come first, then finished ones you haven't seen, then working ones (sessions with only background tasks too), each with its workspace and what it's doing; the other agent CLIs in terminal panes are listed with them. Click a row to go there; its menu stops a session, opens it to the side, or goes to its prompt. Open it from a pane's menu ("Agents beside"), the palette ("Toggle Agents pane") or Ctrl+Shift+J (⌘⇧J).
 
 ### Changed
 
+- The other agent CLIs in terminal panes are listed in the Agents pane rather than under their workspace in the tree; the workspace's lamp still counts them.
 - The sidebar is one tree: each workspace is a row that folds, with its sessions under it as full session rows (menu, rename, pin, archive, delete, drag, picking, the list keys), so every session is listed once, under the workspace it runs in. The selected workspace is open, others open by hand; a folded one's lamp counts what has news, and clicking a lamp that wants you goes to that session. A project with one workspace, and chat, show just the sessions.
 - Under a workspace: Pinned, Recent (open sessions and those used in the last week, at least the newest five; a new session at the top), the groups, Older (folded) and Archived. The date sections are gone. "Archive sessions older than…" and "Purge archived" are on the workspace's menu.
 - The title filter looks through every workspace and opens what holds a match: folded workspaces, groups, Older and the archive.
@@ -20,6 +24,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - Open sessions of another workspace no longer show as rows that can't be closed in the sessions list.
 - A session dragged and let go outside a target no longer leaves its group, the pinned ones or the archive; drop it on Recent to make it loose again.
+- Empty new sessions no longer pile up as "New session" rows: one you leave without sending anything closes (unless it holds a draft or a pane shows it), "+" doesn't open a second while the shown one is still new, closing a pane tidies the sessions it let go, and open rows not on show have a close button.
+- Sessions deleted outside Kynex (by hand, or by `claude`'s own clean-up) no longer stay in a workspace's saved pins, names, groups and archive.
+- "Move to" a group and "Remove from group" keep a session pinned; dragging it onto a group or Recent still takes it out of the pinned ones.
 
 ## [0.0.28] - 2026-11-12
 

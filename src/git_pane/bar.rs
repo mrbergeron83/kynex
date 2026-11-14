@@ -18,7 +18,8 @@ impl GitPane {
         let t = theme(cx).clone();
         let name = self.name();
         let linked = self.worktrees.read(cx).list.iter().any(|w| same_folder(&w.path, &self.selected) && !w.main);
-        div()
+        // The bar is the handle that drags the pane.
+        crate::ui::pane_drag::pane_handle(div().id("git-pane-title"), self.pane, "Git")
             .flex()
             .flex_none()
             .items_center()

@@ -43,6 +43,7 @@ actions!(
         Rewind,
         ToggleTimeline,
         ToggleGit,
+        ToggleAgents,
         PrevTurn,
         NextTurn,
         PageUp,
@@ -123,7 +124,7 @@ const LIST_KEYS: [(&str, &str); 6] = [
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 39] = [
+const SHORTCUTS: [(&str, &str); 40] = [
     ("command_palette", "secondary-k"),
     ("find", "secondary-f"),
     ("open_project", "secondary-o"),
@@ -161,6 +162,8 @@ const SHORTCUTS: [(&str, &str); 39] = [
     ("toggle_timeline", "secondary-shift-t"),
     // The workspace's Git pane, or the Git modal in chat.
     ("toggle_git_pane", "secondary-shift-g"),
+    // The Agents pane: what runs or wants you, in every project.
+    ("toggle_agents", "secondary-shift-j"),
     // The next session, in any project, that wants you.
     ("next_needs_you", "secondary-shift-a"),
     // The timeline's turns, previous and next.
@@ -463,6 +466,7 @@ pub fn bind_keys(cx: &mut App) {
             "rewind" => KeyBinding::new(keys, Rewind, c),
             "toggle_timeline" => KeyBinding::new(keys, ToggleTimeline, c),
             "toggle_git_pane" => KeyBinding::new(keys, ToggleGit, c),
+            "toggle_agents" => KeyBinding::new(keys, ToggleAgents, c),
             "next_needs_you" => KeyBinding::new(keys, NextNeedsYou, c),
             "prev_turn" => KeyBinding::new(keys, PrevTurn, c),
             "next_turn" => KeyBinding::new(keys, NextTurn, c),

@@ -57,6 +57,8 @@ pub struct TerminalPanel {
     was_collapsed: bool,
     /// It was opened for a custom command, not as a shell.
     command: bool,
+    /// The pane it fills, whose handle its bar is.
+    pane: Option<kynex_core::layout::PaneId>,
 }
 
 impl TerminalPanel {
@@ -80,7 +82,13 @@ impl TerminalPanel {
             focus: cx.focus_handle(),
             was_collapsed: false,
             command: false,
+            pane: None,
         }
+    }
+
+    /// Makes its bar the handle that drags pane pane.
+    pub fn set_pane(&mut self, pane: kynex_core::layout::PaneId) {
+        self.pane = Some(pane);
     }
 
     /// The folder its shells start in.
@@ -407,7 +415,8 @@ impl Render for TerminalPanel {
                 .tooltip(Tooltip::text("Kynex runs as administrator, so these shells do too"))
         });
 
-        let header = div()
+        // In a pane, the bar is the handle that drags it.
+        let header = crate::ui::pane_drag::pane_handle(div().id("terminal-bar"), self.pane, "Terminal")
             .flex()
             .flex_none()
             .items_center()

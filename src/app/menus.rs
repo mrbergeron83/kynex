@@ -42,6 +42,8 @@ pub enum Menu {
     Pane(kynex_core::layout::PaneId),
     /// A pane tab's right-click menu.
     PaneTab(usize),
+    /// A row of the Agents pane's right-click menu.
+    Running(kynex_core::running::Who),
     /// The workspace picker (`prefix w`): this project's workspaces.
     Workspaces,
     /// The older layouts of this workspace (`prefix s`), to bring one back.
@@ -444,6 +446,7 @@ impl KynexApp {
             Menu::PurgeArchived(cwd) => items = self.purge_menu_items(&cwd.clone(), cx),
             Menu::Pane(pane) => items = self.pane_menu_items(*pane, cx),
             Menu::PaneTab(tab) => items = self.pane_tab_menu_items(*tab, cx),
+            Menu::Running(who) => items = self.running_menu_items(*who, cx),
             Menu::Workspaces => {
                 let list = match self.workspace_project() {
                     Some(project) => self.workspaces_of(&project, cx),

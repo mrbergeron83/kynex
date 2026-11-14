@@ -163,28 +163,49 @@ impl Live {
         self.shown.push(uid);
     }
 
-    /// Closes the idle sessions that aren't shown or among the last shown.
+    /// Closes the idle sessions that aren't shown or among the last shown. New sessions
+    /// don't count among the last shown, and are left to [`Self::close_unused`].
     pub fn prune(&mut self) -> Vec<Key> {
         let active = self.current().map(|s| s.uid);
-        let recent: Vec<Key> =
-            self.shown.iter().rev().filter(|k| Some(**k) != active).take(KEEP_IDLE).copied().collect();
-        let mut closed = Vec::new();
-        self.sessions.retain(|s| {
-            let keep = Some(s.uid) == active
+        let used: Vec<Key> = self.sessions.iter().filter(|s| !s.is_new()).map(|s| s.uid).collect();
+        let recent: Vec<Key> = self
+            .shown
+            .iter()
+            .rev()
+            .filter(|k| Some(**k) != active && used.contains(k))
+            .take(KEEP_IDLE)
+            .copied()
+            .collect();
+        self.close_unless(|this, s| {
+            Some(s.uid) == active
+                || s.is_new()
                 || recent.contains(&s.uid)
-                || self.visible.contains(&s.uid)
+                || this.visible.contains(&s.uid)
                 || s.finished
-                || !s.can_sleep();
-            if !keep {
-                closed.push(s.uid);
-            }
-            keep
-        });
+                || !s.can_sleep()
+        })
+    }
+
+    /// Closes the new sessions (nothing sent, nothing to resume) that were left: not
+    /// shown, in no pane, and not in `keep` (one holding a draft, say). There's nothing to
+    /// come back to in them, so they don't wait their turn like [`Self::prune`]'s.
+    pub fn close_unused(&mut self, keep: impl Fn(&Session) -> bool) -> Vec<Key> {
+        let active = self.current().map(|s| s.uid);
+        self.close_unless(|this, s| !s.is_new() || Some(s.uid) == active || this.visible.contains(&s.uid) || keep(s))
+    }
+
+    /// Closes every session `keep` refuses, keeping the shown one shown.
+    fn close_unless(&mut self, keep: impl Fn(&Self, &Session) -> bool) -> Vec<Key> {
+        let active = self.current().map(|s| s.uid);
+        let gone: Vec<Key> = self.sessions.iter().filter(|s| !keep(self, s)).map(|s| s.uid).collect();
+        if gone.is_empty() {
+            return gone;
+        }
+        self.sessions.retain(|s| !gone.contains(&s.uid));
         self.active = self.sessions.iter().position(|s| Some(s.uid) == active).unwrap_or(0);
-        let open: Vec<Key> = self.sessions.iter().map(|s| s.uid).collect();
-        self.shown.retain(|k| open.contains(k));
-        self.visible.retain(|k| open.contains(k));
-        closed
+        self.shown.retain(|k| !gone.contains(k));
+        self.visible.retain(|k| !gone.contains(k));
+        gone
     }
 
     /// Closes every session `f` picks, working or not (their processes die with
@@ -223,10 +244,53 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::session::Kind;
+    use crate::session::{Item, Kind};
 
+    /// A session that has been used: it has a conversation to come back to.
     fn session() -> Session {
+        let mut s = fresh();
+        s.items.push(Item::Assistant("hi".into()));
+        s
+    }
+
+    /// A new session: nothing sent yet.
+    fn fresh() -> Session {
         Session::new(Kind::Chat, PathBuf::from("."))
+    }
+
+    #[test]
+    fn a_new_session_left_closes_and_takes_no_place_among_the_last_shown() {
+        let mut live = Live::default();
+        let (a, b, n) = (session(), session(), fresh());
+        let (a_uid, b_uid, n_uid) = (a.uid, b.uid, n.uid);
+        live.show(a);
+        live.show(b);
+        assert!(live.show(n).is_empty(), "the new one is shown");
+        // Back to the first: the new one left behind stays until close_unused, and
+        // doesn't push the second out of the last shown.
+        assert!(live.show_where(|s| s.uid == a_uid));
+        assert!(live.prune().is_empty());
+        assert_eq!(live.close_unused(|_| false), [n_uid]);
+        assert_eq!(live.sessions.iter().map(|s| s.uid).collect::<Vec<_>>(), [a_uid, b_uid]);
+        assert_eq!(live.current().map(|s| s.uid), Some(a_uid));
+        assert!(live.close_unused(|_| false).is_empty());
+    }
+
+    #[test]
+    fn close_unused_spares_the_shown_one_panes_and_kept_ones() {
+        let mut live = Live::default();
+        let (p, d, n, shown) = (fresh(), fresh(), fresh(), fresh());
+        let (p_uid, d_uid, n_uid, shown_uid) = (p.uid, d.uid, n.uid, shown.uid);
+        for s in [p, d, n, shown] {
+            live.show(s);
+        }
+        live.set_visible(&[p_uid]);
+        // The pane's, the one with a draft and the shown one stay.
+        assert_eq!(live.close_unused(|s| s.uid == d_uid), [n_uid]);
+        assert_eq!(live.current().map(|s| s.uid), Some(shown_uid));
+        // Out of its pane, the pane's goes too.
+        live.set_visible(&[]);
+        assert_eq!(live.close_unused(|s| s.uid == d_uid), [p_uid]);
     }
 
     #[test]
