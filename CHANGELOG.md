@@ -22,6 +22,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - A session dragged and let go outside a target no longer leaves its group, the pinned ones or the archive; drop it on Recent to make it loose again.
 - Empty new sessions no longer pile up as "New session" rows: one you leave without sending anything closes (unless it holds a draft or a pane shows it), "+" doesn't open a second while the shown one is still new, closing a pane tidies the sessions it let go, and open rows not on show have a close button.
 - Sessions deleted outside Kynex (by hand, or by `claude`'s own clean-up) no longer stay in a workspace's saved pins, names, groups and archive.
+- "Move to" a group and "Remove from group" keep a session pinned; dragging it onto a group or Recent still takes it out of the pinned ones.
 
 ## [0.0.28] - 2026-11-12
 

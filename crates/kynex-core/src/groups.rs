@@ -267,15 +267,22 @@ impl SessionGroups {
         self.archived.len() != before
     }
 
-    /// Puts a session in group `to`, or at the top level with `None`.
-    /// A session moved anywhere is no longer archived, or pinned.
+    /// Puts a session in group `to`, or at the top level with `None`. A session moved
+    /// anywhere is no longer archived; a pin stays, since pinned sessions sit above the
+    /// rest whatever group they're in.
     pub fn move_to(&mut self, id: &str, to: Option<usize>) {
         self.unarchive(id);
-        self.pinned.retain(|s| s != id);
         self.leave_group(id);
         if let Some(g) = to.and_then(|i| self.groups.get_mut(i)) {
             g.sessions.push(id.to_string());
         }
+    }
+
+    /// A session dragged onto group `to` (or loose, with `None`): it goes there and shows
+    /// there, so it leaves the pinned ones too.
+    pub fn drop_into(&mut self, id: &str, to: Option<usize>) {
+        self.pinned.retain(|s| s != id);
+        self.move_to(id, to);
     }
 
     fn leave_group(&mut self, id: &str) {
@@ -649,12 +656,24 @@ mod tests {
         assert_eq!(a.groups, [Vec::<String>::new()]);
         g.toggle_pin("b");
         assert_eq!(g.arrange(["b"]).groups, [vec!["b"]]);
-        // Archiving or moving a session unpins it.
+        // Archiving a session unpins it.
         g.archive("c");
         assert!(!g.is_pinned("c"));
+        // Moving it between groups or out of one keeps the pin (#394)…
+        let other = g.add_group("Other");
         g.toggle_pin("a");
         g.move_to("a", Some(work));
-        assert!(!g.is_pinned("a"));
+        assert!(g.is_pinned("a"));
+        g.move_to("a", Some(other));
+        assert!(g.is_pinned("a") && g.group_of("a") == Some(other));
+        g.move_to("a", None);
+        assert!(g.is_pinned("a") && g.group_of("a").is_none());
+        // …while dragging it onto a group or Recent takes it there, out of the pinned ones.
+        g.drop_into("a", Some(work));
+        assert!(!g.is_pinned("a") && g.group_of("a") == Some(work));
+        g.toggle_pin("a");
+        g.drop_into("a", None);
+        assert!(!g.is_pinned("a") && g.group_of("a").is_none());
     }
 
     #[test]

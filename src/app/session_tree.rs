@@ -277,7 +277,7 @@ impl KynexApp {
                         if d.cwd != drop_cwd {
                             return;
                         }
-                        this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.move_to(id, None)));
+                        this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.drop_into(id, None)));
                         this.organize.selection.clear();
                         cx.notify();
                     }))
