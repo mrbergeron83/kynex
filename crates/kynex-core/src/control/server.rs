@@ -11,11 +11,13 @@ use std::sync::{Arc, Mutex};
 use interprocess::local_socket::{GenericFilePath, ListenerOptions, Stream, ToFsName, prelude::*};
 use serde_json::{Value, json};
 
-use super::protocol::{MAX_LINE, Request, answer, event_line, parse_request};
+use super::protocol::{Incoming, MAX_LINE, Request, answer, event_line, parse_incoming};
 
 /// One request waiting for the app. `reply` takes the answer, once.
 pub struct Call {
     pub request: Request,
+    /// The session it says it comes from (a `knx` run inside one). Not proof: see `agent`.
+    pub caller: Option<u64>,
     pub reply: Sender<Result<Value, String>>,
 }
 
@@ -148,7 +150,7 @@ fn serve(stream: Stream, calls: Calls, subscribers: Subscribers, wake: Arc<dyn F
         if line.trim().is_empty() {
             continue;
         }
-        let (id, request) = match parse_request(&line) {
+        let Incoming { id, caller, request } = match parse_incoming(&line) {
             Ok(r) => r,
             Err(e) => {
                 if !write(&answer(&None, Err(e))) {
@@ -175,7 +177,7 @@ fn serve(stream: Stream, calls: Calls, subscribers: Subscribers, wake: Arc<dyn F
         }
         let (reply, answered) = channel();
         if let Ok(mut q) = calls.lock() {
-            q.push_back(Call { request, reply });
+            q.push_back(Call { request, caller, reply });
         }
         wake();
         let result = answered.recv().unwrap_or_else(|_| Err("Kynex closed".to_string()));

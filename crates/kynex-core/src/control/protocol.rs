@@ -1,7 +1,8 @@
 //! The wire format: one JSON object per line each way.
 //!
 //! A request is `{"id": 1, "cmd": "session_prompt", "session": 3, "text": "hi", "wait": true}`
-//! (`id` is echoed back, and optional). An answer is `{"id": 1, "ok": true, "result": …}` or
+//! (`id` is echoed back, and optional; `caller`, also optional, is the session a `knx` run
+//! inside one says it comes from). An answer is `{"id": 1, "ok": true, "result": …}` or
 //! `{"id": 1, "ok": false, "error": "…"}`. After `{"cmd": "events"}` the connection streams
 //! `{"event": "turn_end", …}` lines until it closes.
 
@@ -78,25 +79,42 @@ pub enum Request {
     Events,
 }
 
-#[derive(Deserialize)]
-struct Envelope {
+/// A line from a client.
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct Incoming {
+    /// Echoed back with the answer.
     #[serde(default)]
-    id: Option<Value>,
+    pub id: Option<Value>,
+    /// The session the request says it comes from (a `knx` run inside one), if any.
+    #[serde(default)]
+    pub caller: Option<u64>,
     #[serde(flatten)]
-    request: Request,
+    pub request: Request,
 }
 
 /// A line from a client: its `id`, and what it asks.
 pub fn parse_request(line: &str) -> Result<(Option<Value>, Request), String> {
-    let e: Envelope = serde_json::from_str(line.trim()).map_err(|e| format!("not a request: {e}"))?;
-    Ok((e.id, e.request))
+    parse_incoming(line).map(|i| (i.id, i.request))
+}
+
+/// A line from a client, with the session it says it comes from.
+pub fn parse_incoming(line: &str) -> Result<Incoming, String> {
+    serde_json::from_str(line.trim()).map_err(|e| format!("not a request: {e}"))
 }
 
 /// A request as a line to send, with `id`.
 pub fn request_line(id: u64, request: &Request) -> String {
+    request_line_from(id, request, None)
+}
+
+/// [`request_line`] from session `caller`, when sent from inside one.
+pub fn request_line_from(id: u64, request: &Request, caller: Option<u64>) -> String {
     let mut v = serde_json::to_value(request).unwrap_or(Value::Null);
     if let Value::Object(m) = &mut v {
         m.insert("id".into(), json!(id));
+        if let Some(c) = caller {
+            m.insert("caller".into(), json!(c));
+        }
     }
     v.to_string()
 }
@@ -144,6 +162,15 @@ mod tests {
         assert_eq!((id, r), (None, Request::PaneList));
         let (_, r) = parse_request(r#"{"cmd":"session_prompt","session":1,"text":"x"}"#).unwrap();
         assert_eq!(r, Request::SessionPrompt { session: 1, text: "x".into(), wait: false });
+    }
+
+    #[test]
+    fn a_request_says_which_session_it_comes_from() {
+        let line = request_line_from(3, &Request::SessionList, Some(12));
+        let i = parse_incoming(&line).unwrap();
+        assert_eq!((i.id, i.caller, i.request), (Some(json!(3)), Some(12), Request::SessionList));
+        assert_eq!(parse_incoming(&request_line(3, &Request::SessionList)).unwrap().caller, None);
+        assert!(parse_incoming(r#"{"cmd":"session_list","caller":"me"}"#).is_err(), "a caller is a uid");
     }
 
     #[test]

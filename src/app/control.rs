@@ -45,7 +45,7 @@ impl KynexApp {
     /// Answers every request that came in on the socket.
     pub(super) fn serve_control(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let calls = self.control.as_ref().map(|c| c.take()).unwrap_or_default();
-        for Call { request, reply } in calls {
+        for Call { request, reply, .. } in calls {
             match self.control_request(request, &reply, window, cx) {
                 // The answer comes when the turn ends.
                 Err(None) => {}
