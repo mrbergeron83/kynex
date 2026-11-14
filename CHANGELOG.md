@@ -20,6 +20,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - Open sessions of another workspace no longer show as rows that can't be closed in the sessions list.
 - A session dragged and let go outside a target no longer leaves its group, the pinned ones or the archive; drop it on Recent to make it loose again.
+- "Move to" a group and "Remove from group" keep a session pinned; dragging it onto a group or Recent still takes it out of the pinned ones.
 
 ## [0.0.28] - 2026-11-12
 
