@@ -20,6 +20,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - Open sessions of another workspace no longer show as rows that can't be closed in the sessions list.
 - A session dragged and let go outside a target no longer leaves its group, the pinned ones or the archive; drop it on Recent to make it loose again.
+- Sessions deleted outside Kynex (by hand, or by `claude`'s own clean-up) no longer stay in a workspace's saved pins, names, groups and archive.
 
 ## [0.0.28] - 2026-11-12
 

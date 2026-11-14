@@ -395,6 +395,29 @@ impl SessionGroups {
         self.providers.remove(id);
     }
 
+    /// Every session id saved here, in any list.
+    pub fn saved_ids(&self) -> std::collections::BTreeSet<&str> {
+        let grouped = self.groups.iter().flat_map(|g| g.sessions.iter());
+        let listed = grouped.chain(&self.archived).chain(&self.pinned).map(String::as_str);
+        let keyed = self.names.keys().chain(self.models.keys()).chain(self.providers.keys()).map(String::as_str);
+        listed.chain(keyed).collect()
+    }
+
+    /// Forgets the saved sessions that no longer exist (`exists` says no), except `open`
+    /// ones, whose transcript may not be written yet. Returns the ids forgotten.
+    pub fn drop_gone(&mut self, exists: impl Fn(&str) -> bool, open: &[String]) -> Vec<String> {
+        let gone: Vec<String> = self
+            .saved_ids()
+            .into_iter()
+            .filter(|id| !exists(id) && !open.iter().any(|o| o == id))
+            .map(str::to_string)
+            .collect();
+        for id in &gone {
+            self.forget(id);
+        }
+        gone
+    }
+
     /// Sorts session ids (newest first) into the pinned ones, the top level,
     /// groups and archive. Ids saved here that aren't in `ids` are left out.
     /// Busy sessions stay in their places like the rest.
@@ -424,6 +447,28 @@ mod tests {
 
     fn ids(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn sessions_that_are_gone_are_forgotten_everywhere_but_open_ones_stay() {
+        let mut g = SessionGroups::default();
+        let i = g.add_group("work");
+        g.move_to("grouped", Some(i));
+        g.archive("archived");
+        g.toggle_pin("pinned");
+        g.rename("named", "A name");
+        g.set_model("modelled", Some("opus"));
+        g.set_provider("grok", crate::provider::Provider::Grok);
+        g.toggle_pin("open");
+        g.toggle_pin("kept");
+        let all = ["grouped", "archived", "pinned", "named", "modelled", "grok", "open", "kept"];
+        assert_eq!(g.saved_ids().into_iter().collect::<Vec<_>>().len(), all.len());
+        let mut gone = g.drop_gone(|id| id == "kept", &ids(&["open"]));
+        gone.sort();
+        assert_eq!(gone, ids(&["archived", "grok", "grouped", "modelled", "named", "pinned"]));
+        assert_eq!(g.saved_ids().into_iter().collect::<Vec<_>>(), ["kept", "open"]);
+        assert_eq!(g.groups.len(), 1, "the group itself stays");
+        assert!(g.drop_gone(|_| true, &[]).is_empty());
     }
 
     #[test]
