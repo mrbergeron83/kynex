@@ -30,7 +30,10 @@ impl KynexApp {
             Content::Git => {
                 let width = t.rects(self.layout_bounds(cx)).pane(pane).map_or(f32::MAX, |r| r.w);
                 let git = self.git_pane(&ws, window, cx);
-                git.update(cx, |g, _| g.set_width(width));
+                git.update(cx, |g, _| {
+                    g.set_width(width);
+                    g.set_pane(pane);
+                });
                 Some(div().size_full().child(git).into_any_element())
             }
             Content::Timeline => {
@@ -38,6 +41,7 @@ impl KynexApp {
                 self.render_timeline(key, true, cx)
             }
             Content::Tree => Some(self.render_sessions_pane(pane, window, cx)),
+            Content::Agents => Some(self.render_agents_pane(pane, cx)),
             Content::Session(_) => None,
         }
     }
@@ -195,7 +199,7 @@ impl KynexApp {
     pub(super) fn close_tool_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, ws, _)) = self.tiling_scope() else { return };
         let Some(t) = self.tiles.get_mut(&ws) else { return };
-        if !matches!(t.close_pane(pane), Some(Content::Git | Content::Timeline | Content::Tree)) {
+        if !matches!(t.close_pane(pane), Some(Content::Git | Content::Timeline | Content::Tree | Content::Agents)) {
             return;
         }
         self.show_focused_pane(window, cx);

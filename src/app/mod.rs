@@ -14,6 +14,7 @@
 //! | `pane_actions.rs`  | a pane's header buttons and menus, opening a session beside one |
 //! | `pane_keys.rs`     | the prefix keys (Ctrl+B …): panes, pane tabs, workspaces, projects, resize mode |
 //! | `pane_tabs.rs`     | the selected workspace's tab bar: new, close, rename, reorder |
+//! | `pane_move.rs`     | moving a pane in its tab: dragged onto another, or Move left / right… |
 //! | `tiles.rs`          | the split panes of a workspace: layouts, focus, drawing |
 //! | `custom_themes.rs`  | themes from JSON files in the data dir: loading, watching, applying |
 //! | `control.rs`        | the control socket: `knx project / workspace / pane / session / events` |
@@ -33,6 +34,7 @@
 //! | `git_pane.rs`       | the Git pane: toggling, placing, what it asks for    |
 //! | `custom_commands.rs`| custom commands: keys, popup, pane, background       |
 //! | `agent_panes.rs`    | other agent CLIs in panes, their state off the screen |
+//! | `agents_pane.rs`    | the Agents pane: what runs or wants you, every project |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
 //! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
@@ -93,6 +95,7 @@
 
 mod about;
 mod agent_panes;
+mod agents_pane;
 mod agents_settings;
 mod app_settings;
 mod app_update;
@@ -134,6 +137,7 @@ mod palette_more;
 mod palette_sessions;
 mod pane_actions;
 mod pane_keys;
+mod pane_move;
 mod pane_tabs;
 mod project_setup;
 mod projects;
@@ -336,6 +340,8 @@ pub struct KynexApp {
     confirm_close: Option<(usize, std::time::Instant)>,
     /// A project tab being dragged along the title bar, and where it's shown.
     tab_drag: Option<title_bar::TabDrag>,
+    /// A pane dragged over another: that pane, and the side it would land on (`None`: swap).
+    pane_drop: Option<(kynex_core::layout::PaneId, Option<kynex_core::layout::Direction>)>,
     /// Each project tab's (left, right) as last drawn, in the order shown.
     tab_spans: std::rc::Rc<std::cell::RefCell<Vec<(f32, f32)>>>,
     /// The session being named right now, and every one tried this run.
@@ -672,6 +678,7 @@ impl KynexApp {
             confirm_delete: None,
             confirm_close: None,
             tab_drag: None,
+            pane_drop: None,
             tab_spans: Default::default(),
             naming: None,
             naming_tried: HashSet::new(),

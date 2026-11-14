@@ -9,8 +9,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - Removing a workspace keeps its sessions: the confirmation offers "Also delete its N sessions", and the ones kept stay under a folded "Removed workspaces" section, to read, to continue in the project's own folder, or to forget (which deletes them).
 
+- Panes move with the mouse: drag one by its header or bar (sessions, the tree, Git, timeline, terminals, agent panes) onto another pane; near an edge it goes to that side, in the middle the two swap, and the target shows where it will land. The pane menu has Move left / right / up / down too, and the arrangement is saved with the layout.
+- The Agents pane: everything running or wanting you, in every open project, in one list. Sessions waiting on you come first, then finished ones you haven't seen, then working ones (sessions with only background tasks too), each with its workspace and what it's doing; the other agent CLIs in terminal panes are listed with them. Click a row to go there; its menu stops a session, opens it to the side, or goes to its prompt. Open it from a pane's menu ("Agents beside"), the palette ("Toggle Agents pane") or Ctrl+Shift+J (⌘⇧J).
+
 ### Changed
 
+- The other agent CLIs in terminal panes are listed in the Agents pane rather than under their workspace in the tree; the workspace's lamp still counts them.
 - The sidebar is one tree: each workspace is a row that folds, with its sessions under it as full session rows (menu, rename, pin, archive, delete, drag, picking, the list keys), so every session is listed once, under the workspace it runs in. The selected workspace is open, others open by hand; a folded one's lamp counts what has news, and clicking a lamp that wants you goes to that session. A project with one workspace, and chat, show just the sessions.
 - Under a workspace: Pinned, Recent (open sessions and those used in the last week, at least the newest five; a new session at the top), the groups, Older (folded) and Archived. The date sections are gone. "Archive sessions older than…" and "Purge archived" are on the workspace's menu.
 - The title filter looks through every workspace and opens what holds a match: folded workspaces, groups, Older and the archive.

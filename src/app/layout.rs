@@ -198,6 +198,7 @@ impl KynexApp {
             .on_action(cx.listener(Self::rewind_action))
             .on_action(cx.listener(Self::toggle_timeline))
             .on_action(cx.listener(Self::toggle_git))
+            .on_action(cx.listener(Self::toggle_agents))
             .on_action(cx.listener(Self::run_command_action))
             .on_action(cx.listener(Self::prev_turn))
             .on_action(cx.listener(Self::next_turn))

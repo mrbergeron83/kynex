@@ -163,7 +163,10 @@ impl KynexApp {
         let foldable = turns.iter().any(|t| !t.steps.is_empty());
         let any_open = fold.any_open(turns, current);
 
+        // As a pane, the header is the handle that drags it.
+        let pane = fill.then(|| self.tool_pane(kynex_core::tiling::Content::Timeline)).flatten();
         let header = div()
+            .id("timeline-header")
             .flex()
             .flex_none()
             .items_center()
@@ -225,7 +228,7 @@ impl KynexApp {
                 .when(fill, |d| d.size_full())
                 .when(!fill, |d| d.flex_none().w(px(WIDTH)).h_full().border_l_1().border_color(t.border))
                 .bg(t.panel)
-                .child(header)
+                .child(crate::ui::pane_drag::pane_handle(header, pane, "Timeline"))
                 .child({
                     let scroll = scrollbar::handle("timeline-scroll");
                     let area =

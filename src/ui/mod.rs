@@ -9,6 +9,7 @@ pub mod image_viewer;
 pub mod input;
 pub mod mark;
 pub mod motion;
+pub mod pane_drag;
 pub mod scrollbar;
 pub mod selectable;
 pub mod smooth_scroll;

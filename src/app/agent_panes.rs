@@ -258,7 +258,8 @@ impl KynexApp {
             .flex()
             .flex_col()
             .child(
-                div()
+                // The bar is the handle that drags the pane.
+                crate::ui::pane_drag::pane_handle(div().id("agent-bar"), Some(pane), &name)
                     .flex()
                     .flex_none()
                     .items_center()
@@ -269,7 +270,7 @@ impl KynexApp {
                     .border_color(t.border_variant)
                     .text_sm()
                     .child(lamp(("agent-lamp", pane as usize), self.agent_lamp(pane), cx))
-                    .child(div().text_color(t.text).child(name))
+                    .child(div().text_color(t.text).child(name.clone()))
                     .on_mouse_down(
                         MouseButton::Right,
                         cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {

@@ -58,6 +58,7 @@ pub mod removed;
 pub mod resources;
 pub mod rewind;
 pub mod rules;
+pub mod running;
 pub mod scale;
 pub mod scrollback;
 pub mod secrets;
