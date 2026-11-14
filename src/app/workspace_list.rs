@@ -193,39 +193,4 @@ impl KynexApp {
             )
             .into_any_element()
     }
-
-    /// The agent CLIs running in the terminal panes of workspace `ws`, as rows under it:
-    /// their lamps read off their screens. Clicking one focuses its pane.
-    pub(super) fn agent_rows(&mut self, n: usize, ws: &Path, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let t = theme(cx).clone();
-        let agents = self.agents_in(ws);
-        agents
-            .into_iter()
-            .enumerate()
-            .map(|(i, (pane, name, state))| {
-                let ws = ws.to_path_buf();
-                div()
-                    .id(("workspace-agent", n * 1000 + i))
-                    .flex()
-                    .items_center()
-                    .gap_1p5()
-                    .h(px(28.))
-                    .pl_2()
-                    .pr_1()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .text_sm()
-                    .hover(|s| s.bg(t.hover))
-                    .child(div().flex_1().min_w_0().truncate().text_color(t.text_muted).child(name))
-                    .child(lamp(("workspace-agent-lamp", n * 1000 + i), state, cx))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.select_workspace(&ws, cx);
-                        this.sync_tiles(window, cx);
-                        this.focus_pane(pane, window, cx);
-                        this.focus_input(window, cx);
-                    }))
-                    .into_any_element()
-            })
-            .collect()
-    }
 }

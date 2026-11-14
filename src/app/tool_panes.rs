@@ -41,6 +41,7 @@ impl KynexApp {
                 self.render_timeline(key, true, cx)
             }
             Content::Tree => Some(self.render_sessions_pane(pane, window, cx)),
+            Content::Agents => Some(self.render_agents_pane(pane, cx)),
             Content::Session(_) => None,
         }
     }
@@ -198,7 +199,7 @@ impl KynexApp {
     pub(super) fn close_tool_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         let Some((_, ws, _)) = self.tiling_scope() else { return };
         let Some(t) = self.tiles.get_mut(&ws) else { return };
-        if !matches!(t.close_pane(pane), Some(Content::Git | Content::Timeline | Content::Tree)) {
+        if !matches!(t.close_pane(pane), Some(Content::Git | Content::Timeline | Content::Tree | Content::Agents)) {
             return;
         }
         self.show_focused_pane(window, cx);

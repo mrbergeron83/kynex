@@ -34,6 +34,7 @@
 //! | `git_pane.rs`       | the Git pane: toggling, placing, what it asks for    |
 //! | `custom_commands.rs`| custom commands: keys, popup, pane, background       |
 //! | `agent_panes.rs`    | other agent CLIs in panes, their state off the screen |
+//! | `agents_pane.rs`    | the Agents pane: what runs or wants you, every project |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
 //! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
@@ -94,6 +95,7 @@
 
 mod about;
 mod agent_panes;
+mod agents_pane;
 mod agents_settings;
 mod app_settings;
 mod app_update;

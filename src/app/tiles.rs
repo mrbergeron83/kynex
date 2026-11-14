@@ -431,6 +431,7 @@ impl KynexApp {
                     (None, Content::Git) => "Changes".to_string(),
                     (None, Content::Timeline) => "Timeline".to_string(),
                     (None, Content::Tree) => "Sessions".to_string(),
+                    (None, Content::Agents) => "Agents".to_string(),
                 };
                 (id, label)
             })

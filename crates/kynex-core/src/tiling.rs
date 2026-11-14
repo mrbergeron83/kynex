@@ -52,6 +52,8 @@ pub enum Tool {
     /// by releases that had the sessions list and the workspaces as two panes, hence the alias.
     #[serde(alias = "Sessions")]
     Tree,
+    /// What runs or wants you, across workspaces and projects.
+    Agents,
     /// What those releases saved as `Workspaces`. Only ever read: [`Tiling::restore`] drops it
     /// where the tab has a tree, else turns it into one, so no live pane holds it.
     #[doc(hidden)]
@@ -66,6 +68,7 @@ impl Tool {
             Self::Git => Content::Git,
             Self::Timeline => Content::Timeline,
             Self::Tree | Self::LegacyWorkspaces => Content::Tree,
+            Self::Agents => Content::Agents,
         }
     }
 }
@@ -78,6 +81,7 @@ pub enum Content {
     Git,
     Timeline,
     Tree,
+    Agents,
 }
 
 /// A tree pane counts as too narrow under this, not the width of a conversation.
