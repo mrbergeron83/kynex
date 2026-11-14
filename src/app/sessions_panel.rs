@@ -227,7 +227,9 @@ impl KynexApp {
         let project = self.workspace_project().filter(|_| kind == Kind::Code);
         let repo = project.as_ref().is_some_and(|p| !self.worktrees(p, cx).read(cx).list.is_empty());
 
+        // In a pane, the header is the handle that drags it.
         let header = div()
+            .id("sessions-header")
             .flex()
             .flex_none()
             .items_center()
@@ -343,7 +345,7 @@ impl KynexApp {
             .flex()
             .flex_col()
             .size_full()
-            .child(header)
+            .child(crate::ui::pane_drag::pane_handle(header, pane, "Sessions"))
             .children(filter)
             .child(scrollbar::vertical_over("session-list-bar", scroll, list, |d| d.flex_1().min_h_0()))
             .children(picks)

@@ -9,7 +9,9 @@
 
 use std::path::PathBuf;
 
-use gpui::{AnyElement, ClickEvent, Context, Entity, Focusable, MouseButton, Window, canvas, div, prelude::*};
+use gpui::{
+    AnyElement, ClickEvent, Context, DragMoveEvent, Entity, Focusable, MouseButton, Window, canvas, div, prelude::*,
+};
 use kynex_core::layout::{Axis, DIVIDER, Divider, PaneId, Rect};
 use kynex_core::live::Key;
 use kynex_core::session::Session;
@@ -17,6 +19,7 @@ use kynex_core::tile_style::TileStyle;
 use kynex_core::tiling::{Content, Tiling};
 
 use super::KynexApp;
+use super::pane_tabs::DraggedPane;
 use super::session_groups::DraggedSession;
 use super::state::Active;
 use crate::pane::SessionPane;
@@ -484,23 +487,34 @@ impl KynexApp {
                     .rounded(px(radius))
                     .child(body);
                 let tile = Rect::new(r.x + half, r.y + half, (r.w - style.gap).max(0.0), (r.h - style.gap).max(0.0));
-                let tile_el = div()
-                    .absolute()
-                    .left(px(r.x + half))
-                    .top(px(r.y + half))
-                    .w(px((r.w - style.gap).max(0.0)))
-                    .h(px((r.h - style.gap).max(0.0)))
-                    .when(!focused && fw > bw, |d| d.p_px())
-                    // The click that focuses a pane comes before what it lands on.
-                    .capture_any_mouse_down(cx.listener(move |this, _, window, cx| {
-                        this.focus_pane(id, window, cx);
-                    }))
-                    // A session row let go here: on an edge it splits, in the middle it opens.
-                    .drag_over::<DraggedSession>(|style, _, _, _| style.opacity(0.7))
-                    .on_drop(cx.listener(move |this, d: &DraggedSession, window, cx| {
-                        this.drop_session_on_pane(d, id, Some(tile), window, cx)
-                    }))
-                    .child(surface);
+                let wash = self.pane_drop_wash(id, tile.w, tile.h, cx);
+                let tile_el =
+                    div()
+                        .absolute()
+                        .left(px(r.x + half))
+                        .top(px(r.y + half))
+                        .w(px((r.w - style.gap).max(0.0)))
+                        .h(px((r.h - style.gap).max(0.0)))
+                        .when(!focused && fw > bw, |d| d.p_px())
+                        // The click that focuses a pane comes before what it lands on.
+                        .capture_any_mouse_down(cx.listener(move |this, _, window, cx| {
+                            this.focus_pane(id, window, cx);
+                        }))
+                        // A session row let go here: on an edge it splits, in the middle it opens.
+                        .drag_over::<DraggedSession>(|style, _, _, _| style.opacity(0.7))
+                        .on_drop(cx.listener(move |this, d: &DraggedSession, window, cx| {
+                            this.drop_session_on_pane(d, id, Some(tile), window, cx)
+                        }))
+                        // Another pane let go here: on an edge it moves to that side, in the
+                        // middle the two swap. The wash shows where before the drop.
+                        .on_drag_move(cx.listener(move |this, ev: &DragMoveEvent<DraggedPane>, _, cx| {
+                            this.drag_pane_over(id, tile, ev, cx)
+                        }))
+                        .on_drop(cx.listener(move |this, d: &DraggedPane, window, cx| {
+                            this.drop_pane_on(d, id, tile, window, cx)
+                        }))
+                        .child(surface)
+                        .children(wash);
                 children.push(if narrow {
                     // A pane change fades in, as everything else does (and not at all with reduced motion).
                     motion::fade_in(("narrow-pane", id as usize), tile_el, motion::QUICK).into_any_element()

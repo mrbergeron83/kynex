@@ -9,6 +9,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - Removing a workspace keeps its sessions: the confirmation offers "Also delete its N sessions", and the ones kept stay under a folded "Removed workspaces" section, to read, to continue in the project's own folder, or to forget (which deletes them).
 
+- Panes move with the mouse: drag one by its header or bar (sessions, the tree, Git, timeline, terminals, agent panes) onto another pane; near an edge it goes to that side, in the middle the two swap, and the target shows where it will land. The pane menu has Move left / right / up / down too, and the arrangement is saved with the layout.
+
 ### Changed
 
 - The sidebar is one tree: each workspace is a row that folds, with its sessions under it as full session rows (menu, rename, pin, archive, delete, drag, picking, the list keys), so every session is listed once, under the workspace it runs in. The selected workspace is open, others open by hand; a folded one's lamp counts what has news, and clicking a lamp that wants you goes to that session. A project with one workspace, and chat, show just the sessions.

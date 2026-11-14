@@ -574,6 +574,30 @@ impl Tiling {
         self.layout.tab_mut().is_some_and(|t| t.swap_dir(dir, bounds))
     }
 
+    /// Moves `pane`, a session's or a tool's, to the `side` of `target` in its tab, or swaps
+    /// the two with `None`; it takes the focus (see [`crate::layout::Tab::move_pane`]). False if they aren't
+    /// in one tab or there's no room.
+    pub fn move_pane(&mut self, pane: PaneId, target: PaneId, side: Option<Direction>, bounds: Rect) -> bool {
+        self.layout.move_pane(pane, target, side, bounds) && self.moved(pane)
+    }
+
+    /// Moves `pane` past its neighbour on the `dir` side (the pane menu's "Move left"…).
+    pub fn move_dir(&mut self, pane: PaneId, dir: Direction, bounds: Rect) -> bool {
+        self.layout.move_dir(pane, dir, bounds) && self.moved(pane)
+    }
+
+    /// Whether `pane` could move `dir` in `bounds`, for the pane menu.
+    pub fn can_move_dir(&self, pane: PaneId, dir: Direction, bounds: Rect) -> bool {
+        self.layout.clone().move_dir(pane, dir, bounds)
+    }
+
+    fn moved(&mut self, pane: PaneId) -> bool {
+        if self.keys.contains_key(&pane) {
+            self.last_session = Some(pane);
+        }
+        true
+    }
+
     /// Grows the focused pane `px` towards `dir`. False if its edge that way is the tab's.
     pub fn resize_focused(&mut self, dir: Direction, px: f32, bounds: Rect) -> bool {
         let Some(t) = self.layout.tab_mut() else { return false };

@@ -12,6 +12,7 @@ use kynex_core::toasts::Toast;
 
 use super::KynexApp;
 use super::menus::Menu;
+use super::pane_move::MOVES;
 use super::pane_tabs::DraggedPane;
 use super::session_groups::DraggedSession;
 use crate::theme::{mono, theme};
@@ -272,8 +273,10 @@ impl KynexApp {
     /// A pane's right-click menu: split, zoom, move to a tab, close.
     pub(super) fn pane_menu_items(&mut self, pane: PaneId, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let Some((_, ws, _)) = self.tiling_scope() else { return Vec::new() };
+        let bounds = self.layout_bounds(cx);
         let Some(t) = self.tiles.get(&ws) else { return Vec::new() };
         let tabs = t.tabs();
+        let moves: Vec<_> = MOVES.into_iter().filter(|(dir, _)| t.can_move_dir(pane, *dir, bounds)).collect();
         let zoomed = t.zoomed().is_some();
         let several = t.visible_panes().len() > 1 || zoomed;
         let here = tabs.iter().position(|t| t.active).unwrap_or(0);
@@ -343,6 +346,15 @@ impl KynexApp {
                 "Move to a new tab".into(),
                 cx,
                 Box::new(move |this, window, cx| this.move_pane(pane, None, window, cx)),
+            ));
+        }
+        // In its tab: past the neighbour on that side (dragging its handle does it too).
+        for (i, (dir, label)) in moves.into_iter().enumerate() {
+            items.push(Self::menu_action(
+                400 + i,
+                label.into(),
+                cx,
+                Box::new(move |this, window, cx| this.move_pane_dir(pane, dir, window, cx)),
             ));
         }
         for (i, tab) in tabs.iter().enumerate().filter(|(i, _)| *i != here) {

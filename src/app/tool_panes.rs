@@ -30,7 +30,10 @@ impl KynexApp {
             Content::Git => {
                 let width = t.rects(self.layout_bounds(cx)).pane(pane).map_or(f32::MAX, |r| r.w);
                 let git = self.git_pane(&ws, window, cx);
-                git.update(cx, |g, _| g.set_width(width));
+                git.update(cx, |g, _| {
+                    g.set_width(width);
+                    g.set_pane(pane);
+                });
                 Some(div().size_full().child(git).into_any_element())
             }
             Content::Timeline => {

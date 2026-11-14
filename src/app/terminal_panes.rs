@@ -218,6 +218,7 @@ impl KynexApp {
     ) -> Option<AnyElement> {
         let (_, ws, _) = self.tiling_scope()?;
         let panel = self.term_panel(pane, &ws, window, cx);
+        panel.update(cx, |p, _| p.set_pane(pane));
         let tp = self.tiles.get(&ws).and_then(|t| t.term_pane(pane)).cloned().unwrap_or_default();
         if panel.read(cx).is_empty() {
             match (&tp.command, &tp.agent) {

@@ -92,6 +92,8 @@ pub struct GitPane {
     width: f32,
     /// The tab shown.
     tab: GitTab,
+    /// The pane it fills, whose handle its title bar is.
+    pane: Option<kynex_core::layout::PaneId>,
 }
 
 /// Status and line counts of every changed file in `root`. Blocking.
@@ -141,6 +143,7 @@ impl GitPane {
             confirm: None,
             width: f32::MAX,
             tab: GitTab::Changes,
+            pane: None,
         };
         pane.load(cx);
         pane
@@ -173,6 +176,11 @@ impl GitPane {
     /// How wide the app lays the pane out, for folding its bars.
     pub fn set_width(&mut self, width: f32) {
         self.width = width;
+    }
+
+    /// Makes its title bar the handle that drags pane pane.
+    pub fn set_pane(&mut self, pane: kynex_core::layout::PaneId) {
+        self.pane = Some(pane);
     }
 
     /// Re-reads the selected worktree now.

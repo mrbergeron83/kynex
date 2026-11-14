@@ -161,6 +161,20 @@ impl Node {
         }
     }
 
+    /// Splits leaf `target` in half with `new` on its `side`.
+    fn insert_beside(&mut self, target: PaneId, side: Direction, new: PaneId) -> bool {
+        match self {
+            Self::Pane(id) if *id == target => {
+                let (a, b) = if side.forward() { (target, new) } else { (new, target) };
+                let (a, b) = (Box::new(Self::Pane(a)), Box::new(Self::Pane(b)));
+                *self = Self::Split { axis: side.axis(), ratio: 0.5, a, b };
+                true
+            }
+            Self::Pane(_) => false,
+            Self::Split { a, b, .. } => a.insert_beside(target, side, new) || b.insert_beside(target, side, new),
+        }
+    }
+
     /// Takes `pane` out; its sibling takes the space. The pane to focus next, if it was there.
     fn remove(&mut self, pane: PaneId) -> Option<PaneId> {
         let Self::Split { a, b, .. } = self else { return None };
@@ -463,6 +477,44 @@ impl Tab {
         true
     }
 
+    /// Moves `pane` to the `side` of `target`, which it splits in half (the room `pane`
+    /// leaves goes to its sibling), or swaps the two with `side` `None`. The moved pane
+    /// is focused, and a zoom ends. Refused (false, nothing changed) when either isn't
+    /// here, they're the same, or a pane would get too small for `bounds`.
+    pub fn move_pane(&mut self, pane: PaneId, target: PaneId, side: Option<Direction>, bounds: Rect) -> bool {
+        if pane == target || !self.contains(pane) || !self.contains(target) {
+            return false;
+        }
+        match side {
+            None => {
+                self.swap(pane, target);
+            }
+            Some(side) => {
+                let mut root = self.root.clone();
+                if root.remove(pane).is_none() || !root.insert_beside(target, side, pane) {
+                    return false;
+                }
+                if root.min_extent(Axis::Row) > bounds.w + EPS || root.min_extent(Axis::Column) > bounds.h + EPS {
+                    return false;
+                }
+                self.root = root;
+            }
+        }
+        self.focus = pane;
+        self.zoomed = None;
+        true
+    }
+
+    /// Moves `pane` past its neighbour in `dir`, to that neighbour's far side ("Move left"
+    /// puts it on the left of the pane on its left). False if it has no neighbour that way
+    /// or there's no room.
+    pub fn move_dir(&mut self, pane: PaneId, dir: Direction, bounds: Rect) -> bool {
+        match self.neighbour(pane, dir, bounds) {
+            Some(target) => self.move_pane(pane, target, Some(dir), bounds),
+            None => false,
+        }
+    }
+
     /// Swaps the focused pane with its neighbour in `dir`.
     pub fn swap_dir(&mut self, dir: Direction, bounds: Rect) -> bool {
         match self.neighbour(self.focus, dir, bounds) {
@@ -721,6 +773,27 @@ impl Layout {
         done
     }
 
+    /// Moves `pane` beside `target` (or swaps them) inside their tab, which comes up (see
+    /// [`Tab::move_pane`]). False if they aren't in the same tab.
+    pub fn move_pane(&mut self, pane: PaneId, target: PaneId, side: Option<Direction>, bounds: Rect) -> bool {
+        let Some(i) = self.tab_of(pane).filter(|i| self.tab_of(target) == Some(*i)) else { return false };
+        let done = self.tabs[i].move_pane(pane, target, side, bounds);
+        if done {
+            self.active = i;
+        }
+        done
+    }
+
+    /// Moves `pane` past its neighbour in `dir` (see [`Tab::move_dir`]).
+    pub fn move_dir(&mut self, pane: PaneId, dir: Direction, bounds: Rect) -> bool {
+        let Some(i) = self.tab_of(pane) else { return false };
+        let done = self.tabs[i].move_dir(pane, dir, bounds);
+        if done {
+            self.active = i;
+        }
+        done
+    }
+
     /// Moves `pane` to tab `tab` of this layout. Nothing changes if it has no room there.
     pub fn move_to_tab(&mut self, pane: PaneId, tab: usize, bounds: Rect) -> bool {
         let Some(from) = self.tab_of(pane) else { return false };
@@ -867,6 +940,94 @@ mod tests {
         assert!(!t.close(9));
         assert!(t.close(2));
         assert!(!t.close(1), "the only pane stays");
+    }
+
+    #[test]
+    fn a_pane_moves_to_each_side_of_another() {
+        // three(): [1 | 2 over 3].
+        let at = |t: &Tab, p| t.rects(B).pane(p).unwrap();
+        let mut t = three();
+        assert!(t.move_pane(3, 1, Some(Direction::Left), B));
+        assert_eq!(t.panes(), vec![3, 1, 2]);
+        assert!(at(&t, 3).x < at(&t, 1).x && close(at(&t, 3).h, B.h));
+        assert!(close(at(&t, 2).h, B.h), "the room 3 left went to 2");
+        let mut t = three();
+        assert!(t.move_pane(3, 1, Some(Direction::Right), B));
+        assert_eq!(t.panes(), vec![1, 3, 2]);
+        let mut t = three();
+        assert!(t.move_pane(3, 1, Some(Direction::Up), B));
+        assert_eq!(t.panes(), vec![3, 1, 2]);
+        assert!(at(&t, 3).y < at(&t, 1).y && close(at(&t, 3).x, at(&t, 1).x));
+        let mut t = three();
+        assert!(t.move_pane(3, 1, Some(Direction::Down), B));
+        assert_eq!(t.panes(), vec![1, 3, 2]);
+        assert!(at(&t, 1).y < at(&t, 3).y);
+        // Beside its own sibling: the two trade places along the new axis.
+        let mut t = three();
+        assert!(t.move_pane(3, 2, Some(Direction::Left), B));
+        assert_eq!(t.panes(), vec![1, 3, 2]);
+        assert!(close(at(&t, 3).y, at(&t, 2).y));
+    }
+
+    #[test]
+    fn a_pane_dropped_in_the_middle_swaps() {
+        let mut t = three();
+        let before = t.rects(B);
+        assert!(t.move_pane(1, 3, None, B));
+        assert_eq!(t.panes(), vec![3, 2, 1]);
+        assert_eq!(t.rects(B).pane(1), before.pane(3));
+        assert_eq!(t.focus(), 1);
+    }
+
+    #[test]
+    fn a_move_without_room_is_refused_and_changes_nothing() {
+        let mut t = three();
+        // Room for [1 | 2 over 3], not for three side by side.
+        let narrow = Rect::new(0.0, 0.0, MIN_W * 2.5, 900.0);
+        let before = t.clone();
+        assert!(!t.move_pane(3, 2, Some(Direction::Right), narrow));
+        assert_eq!(t, before);
+        assert!(!t.move_pane(3, 3, Some(Direction::Left), B), "not onto itself");
+        assert!(!t.move_pane(3, 9, Some(Direction::Left), B), "not onto a pane that isn't here");
+        assert_eq!(t, before);
+    }
+
+    #[test]
+    fn the_moved_pane_has_the_focus_and_a_zoom_ends() {
+        let mut t = three();
+        t.set_focus(3);
+        assert!(t.move_pane(3, 1, Some(Direction::Left), B));
+        assert_eq!(t.focus(), 3, "focus follows the focused pane");
+        assert!(t.move_pane(2, 3, Some(Direction::Up), B));
+        assert_eq!(t.focus(), 2, "the pane moved takes it");
+        t.toggle_zoom();
+        assert_eq!(t.zoomed(), Some(2));
+        assert!(t.move_pane(2, 1, Some(Direction::Right), B));
+        assert_eq!((t.zoomed(), t.focus()), (None, 2));
+        assert_eq!(t.rects(B).panes.len(), 3, "every pane shows again");
+    }
+
+    #[test]
+    fn move_dir_goes_past_the_neighbour() {
+        let mut t = three();
+        assert!(t.move_dir(3, Direction::Left, B));
+        assert_eq!(t.panes(), vec![3, 1, 2]);
+        assert!(!t.move_dir(3, Direction::Left, B), "nothing on its left now");
+        assert!(t.move_dir(3, Direction::Right, B));
+        assert_eq!(t.panes(), vec![1, 3, 2]);
+    }
+
+    #[test]
+    fn a_layout_moves_panes_in_one_tab_and_keeps_the_move_saved() {
+        let mut l = Layout::new("1", 1);
+        assert!(l.split(1, Axis::Row, 2, B));
+        assert!(l.new_tab("2", 3));
+        assert!(!l.move_pane(3, 1, Some(Direction::Left), B), "another tab: move_to_tab does that");
+        assert!(l.move_pane(2, 1, Some(Direction::Left), B));
+        assert_eq!((l.active(), l.tabs()[0].panes()), (0, vec![2, 1]));
+        assert!(l.move_dir(2, Direction::Right, B));
+        let saved = serde_json::to_string(&l).unwrap();
+        assert_eq!(Layout::from_json(&saved), Some(l));
     }
 
     #[test]
