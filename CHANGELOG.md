@@ -9,7 +9,6 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - A session knows it runs in Kynex: Claude is told so, and its shell has a `knx` for the Kynex it runs in (whatever is installed, a dev build included) with `KYNEX_SESSION`, `KYNEX_WORKSPACE_DIR` and the app's address set, so `knx session list` and the rest work from inside a session and say which session asks.
 - Removing a workspace keeps its sessions: the confirmation offers "Also delete its N sessions", and the ones kept stay under a folded "Removed workspaces" section, to read, to continue in the project's own folder, or to forget (which deletes them).
-
 - Panes move with the mouse: drag one by its header or bar (sessions, the tree, Git, timeline, terminals, agent panes) onto another pane; near an edge it goes to that side, in the middle the two swap, and the target shows where it will land. The pane menu has Move left / right / up / down too, and the arrangement is saved with the layout.
 - The Agents pane: everything running or wanting you, in every open project, in one list. Sessions waiting on you come first, then finished ones you haven't seen, then working ones (sessions with only background tasks too), each with its workspace and what it's doing; the other agent CLIs in terminal panes are listed with them. Click a row to go there; its menu stops a session, opens it to the side, or goes to its prompt. Open it from a pane's menu ("Agents beside"), the palette ("Toggle Agents pane") or Ctrl+Shift+J (⌘⇧J).
 
