@@ -794,6 +794,7 @@ impl Session {
         let grok = self.provider.provider() == crate::provider::Provider::Grok;
         let (tx, rx) = channel();
         let spec = launch::Spec {
+            uid: self.uid,
             kind: self.kind,
             cwd: self.cwd.clone(),
             settings_dir: self.settings_folder().to_path_buf(),

@@ -7,7 +7,7 @@
 //! meanwhile goes out then.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
@@ -20,6 +20,8 @@ use crate::provider::{Launch, Provider};
 
 /// What a start needs from its session, taken so it can run on a thread.
 pub(super) struct Spec {
+    /// The session's uid, which a `knx` run inside it says it comes from.
+    pub uid: u64,
     pub kind: Kind,
     pub cwd: PathBuf,
     /// Whose Kynex settings it runs under: its project's, for a session in one of its contexts.
@@ -78,6 +80,10 @@ fn run(mut spec: Spec, events: Sender<Event>) -> Started {
             return started;
         }
     };
+    // A session with tools can call `knx`; a plain chat has none.
+    if spec.kind == Kind::Code {
+        kynex_env(&mut cmd, spec.uid, &spec.cwd);
+    }
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     match crate::process::dies_with_parent(&mut cmd).spawn() {
         Ok(mut child) => {
@@ -90,6 +96,21 @@ fn run(mut spec: Spec, events: Sender<Event>) -> Started {
         Err(e) => started.error = Some(format!("failed to start {what}: {e}")),
     }
     started
+}
+
+/// Tells the process it runs in Kynex: who it is, where the app listens, and a `knx` for
+/// this Kynex first on its `PATH` (the one it would get otherwise, Windows' fresh one included).
+fn kynex_env(cmd: &mut Command, uid: u64, cwd: &Path) {
+    use crate::control::agent;
+    for (name, value) in agent::session_env(uid, cwd, agent::control_address().as_deref()) {
+        cmd.env(name, value);
+    }
+    if let Some(dir) = agent::ensure_shims() {
+        let set =
+            cmd.get_envs().find(|(k, _)| k.eq_ignore_ascii_case("PATH")).and_then(|(_, v)| v.map(|v| v.to_owned()));
+        let path = set.or_else(|| std::env::var_os("PATH"));
+        cmd.env("PATH", agent::path_with(dir, path.as_deref()));
+    }
 }
 
 /// Writes the lines sent on the returned sender to `stdin`, on a thread: one
@@ -125,6 +146,10 @@ fn command(spec: &mut Spec, started: &mut Started) -> Result<(Command, &'static 
     let mut cmd = claude_command(&spec.cwd, &spec.provider.with_model(&spec.model));
     // Checkpoints of the files Claude edits, so a rewind can restore them.
     cmd.env(crate::rewind::CHECKPOINTS_ENV, "1");
+    // It runs in Kynex and has `knx` (see `kynex_env`). Grok's `agent stdio` takes no rules.
+    if spec.kind == Kind::Code {
+        cmd.args(["--append-system-prompt", crate::control::agent::NOTE]);
+    }
     cmd.args([
         "-p",
         "--input-format",

@@ -8,15 +8,26 @@ use std::time::Duration;
 use interprocess::local_socket::{GenericFilePath, Stream, ToFsName, prelude::*};
 
 use super::Request;
-use super::protocol::request_line;
+use super::agent;
+use super::protocol::request_line_from;
 
 const NOT_RUNNING: &str = "Kynex isn't running";
 
+/// Where the app whose data dir is `dir` listens, as its `control.addr` says.
+fn address_in(dir: &Path) -> Result<String, String> {
+    let addr = std::fs::read_to_string(super::addr_file(dir)).map_err(|_| NOT_RUNNING.to_string())?;
+    Ok(addr.trim().to_string())
+}
+
+/// Connects to the control socket at `addr`. Blocks only as long as connecting does.
+fn connect(addr: &str) -> Result<Stream, String> {
+    let name = PathBuf::from(addr).to_fs_name::<GenericFilePath>().map_err(|e| e.to_string())?;
+    Stream::connect(name).map_err(|_| NOT_RUNNING.to_string())
+}
+
 /// Connects to the running app's control socket. Blocks only as long as connecting does.
 fn open(dir: &Path) -> Result<Stream, String> {
-    let addr = std::fs::read_to_string(super::addr_file(dir)).map_err(|_| NOT_RUNNING.to_string())?;
-    let name = PathBuf::from(addr.trim()).to_fs_name::<GenericFilePath>().map_err(|e| e.to_string())?;
-    Stream::connect(name).map_err(|_| NOT_RUNNING.to_string())
+    connect(&address_in(dir)?)
 }
 
 /// Whether an app is answering on the control socket.
@@ -33,8 +44,15 @@ pub fn running_in(dir: &Path) -> bool {
 /// answer, or for [`Request::Events`] every event until the app closes the connection.
 /// Blocks until then (a `wait` can take as long as a turn). `Err` if no app is running or the
 /// connection broke before an answer.
+///
+/// Run inside a session, it asks the app that session runs in (the address it was handed,
+/// whatever the data dir), and says which session asks.
 pub fn call(request: &Request, on_line: impl FnMut(&str)) -> Result<(), String> {
-    call_in(&crate::paths::data_dir(), request, on_line)
+    let addr = match agent::handed_address() {
+        Some(addr) => addr,
+        None => address_in(&crate::paths::data_dir())?,
+    };
+    send(&addr, request, agent::caller(), patience(request), on_line)
 }
 
 /// How long the first answer to `request` may take before the app counts as stuck: a few
@@ -58,11 +76,22 @@ pub fn call_within(
     dir: &Path,
     request: &Request,
     first: Option<Duration>,
+    on_line: impl FnMut(&str),
+) -> Result<(), String> {
+    send(&address_in(dir)?, request, None, first, on_line)
+}
+
+/// Sends `request` (from session `caller`, if any) to the socket at `addr`; see [`call_within`].
+fn send(
+    addr: &str,
+    request: &Request,
+    caller: Option<u64>,
+    first: Option<Duration>,
     mut on_line: impl FnMut(&str),
 ) -> Result<(), String> {
-    let stream = open(dir)?;
+    let stream = connect(addr)?;
     let mut send = &stream;
-    writeln!(send, "{}", request_line(1, request)).map_err(|e| e.to_string())?;
+    writeln!(send, "{}", request_line_from(1, request, caller)).map_err(|e| e.to_string())?;
     send.flush().map_err(|e| e.to_string())?;
     // Read on a thread of its own, so the wait for a line can end. It stops with the process.
     let (tx, rx) = std::sync::mpsc::channel::<String>();

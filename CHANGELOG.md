@@ -7,6 +7,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A session knows it runs in Kynex: Claude is told so, and its shell has a `knx` for the Kynex it runs in (whatever is installed, a dev build included) with `KYNEX_SESSION`, `KYNEX_WORKSPACE_DIR` and the app's address set, so `knx session list` and the rest work from inside a session and say which session asks.
 - Removing a workspace keeps its sessions: the confirmation offers "Also delete its N sessions", and the ones kept stay under a folded "Removed workspaces" section, to read, to continue in the project's own folder, or to forget (which deletes them).
 
 - Panes move with the mouse: drag one by its header or bar (sessions, the tree, Git, timeline, terminals, agent panes) onto another pane; near an edge it goes to that side, in the middle the two swap, and the target shows where it will land. The pane menu has Move left / right / up / down too, and the arrangement is saved with the layout.
