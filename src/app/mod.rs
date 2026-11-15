@@ -299,6 +299,8 @@ pub struct KynexApp {
     tiles: HashMap<PathBuf, kynex_core::tiling::Tiling>,
     /// The project each of `tiles` belongs to (where its layout is saved), by workspace folder.
     tile_projects: HashMap<PathBuf, PathBuf>,
+    /// The workspace whose panes were on screen last: the one you go to takes its shape.
+    tiled_last: Option<PathBuf>,
     /// The pane tab being renamed, and the field its name is typed in.
     pane_tab_rename: Option<(usize, Entity<TextInput>)>,
     /// Resize mode (`prefix r`): h / j / k / l and the arrows grow the focused pane.
@@ -656,6 +658,7 @@ impl KynexApp {
             parked: HashMap::new(),
             tiles: HashMap::new(),
             tile_projects: HashMap::new(),
+            tiled_last: None,
             pane_tab_rename: None,
             resize_mode: None,
             menu_pick: 0,

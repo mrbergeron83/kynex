@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- One pane layout for every project and workspace: switching keeps the panes, their sizes and the tool panes where they are, and only swaps in that workspace's sessions.
+
 ## [0.0.29] - 2026-11-14
 
 ### Added

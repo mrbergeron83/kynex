@@ -82,6 +82,40 @@ impl KynexApp {
         changed
     }
 
+    /// One layout for every workspace: coming to `cwd` from another workspace, its panes take
+    /// the shape the other's had (tabs, splits, sizes, tool panes), its sessions in them.
+    pub(super) fn keep_shape(&mut self, project: &Path, cwd: &Path, cx: &mut Context<Self>) {
+        let prev = self.tiled_last.replace(cwd.to_path_buf());
+        let Some(prev) = prev.filter(|p| !same_folder(p, cwd)) else { return };
+        let Some((_, _, current)) = self.tiling_scope() else { return };
+        let same = match (self.tiles.get(&prev), self.tiles.get(cwd)) {
+            (Some(from), Some(to)) => to.same_shape(from),
+            _ => return,
+        };
+        if same {
+            return;
+        }
+        let (Some(from), Some(mut to)) = (self.tiles.remove(&prev), self.tiles.remove(cwd)) else { return };
+        let before = to.panes();
+        let mut next = self.next_pane;
+        to.adopt_shape(&from, &mut next, current, |placed| {
+            // The workspace's other open sessions first, else a new one.
+            let open = self.code.get(project).and_then(|l| {
+                l.sessions.iter().find(|s| same_folder(&s.cwd, cwd) && !placed.contains(&s.uid)).map(|s| s.uid)
+            });
+            open.or_else(|| self.fresh_session(project, cwd))
+        });
+        self.next_pane = next;
+        // A pane that went keeps its half-written message with its session.
+        for gone in before.into_iter().filter(|p| !to.has(*p)) {
+            if self.parked.contains_key(&gone) {
+                self.with_pane(gone, |this| this.stash_draft(cx));
+            }
+        }
+        self.tiles.insert(prev, from);
+        self.tiles.insert(cwd.to_path_buf(), to);
+    }
+
     /// Stops tracking the panes of workspace `cwd` (removed), so its layout isn't saved again.
     pub(super) fn drop_tiles_of(&mut self, cwd: &Path) {
         self.tiles.retain(|f, _| !same_folder(f, cwd));
