@@ -279,6 +279,7 @@ impl KynexApp {
             self.migrate_timeline(&cwd, cx);
             self.keep_restored_focus(&project, &cwd, current);
         }
+        self.keep_shape(&project, &cwd, cx);
         // Restoring may have changed which session the window talks to.
         let Some((_, _, current)) = self.tiling_scope() else { return };
         let open: Vec<Key> =

@@ -12,6 +12,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - The session header's "working in" chip no longer follows a command that only looks into another worktree (`cd` there to read its log, `ls`, `cat`…): only edits and commands that change something move it.
+- One pane layout for every project and workspace: switching keeps the panes, their sizes and the tool panes where they are, and only swaps in that workspace's sessions.
 
 ## [0.0.29] - 2026-11-14
 
