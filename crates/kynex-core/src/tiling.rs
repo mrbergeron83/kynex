@@ -808,6 +808,7 @@ pub fn drop_side(r: Rect, x: f32, y: f32) -> Option<Direction> {
     (near < 0.3).then_some(side)
 }
 
+mod shape;
 mod side;
 #[cfg(test)]
 mod tests;
