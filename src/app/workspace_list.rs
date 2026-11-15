@@ -46,6 +46,8 @@ pub(super) struct WorkspaceRow {
     pub selected: bool,
     /// Its sessions are drawn under it.
     pub open: bool,
+    /// Folded, how many sessions it holds (once its list is read).
+    pub count: Option<usize>,
     /// The lamps of what runs there: its open sessions and agent panes.
     pub lamps: Vec<Lamp>,
     /// The open session that most wants you, if one does (needs you, or finished).
@@ -157,9 +159,14 @@ impl KynexApp {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(if selected { t.text } else { t.text_muted })
+                    .font_weight(if selected { gpui::FontWeight::SEMIBOLD } else { gpui::FontWeight::MEDIUM })
+                    .text_color(t.text)
                     .child(w.label.clone()),
+            )
+            .children(
+                w.count
+                    .filter(|&c| c > 0)
+                    .map(|c| div().flex_none().text_xs().text_color(t.text_placeholder).child(c.to_string())),
             )
             .children(w.branch.clone().map(|b| {
                 div()

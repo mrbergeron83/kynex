@@ -3,7 +3,7 @@
 //! and dragging sessions between them. The rules live in `kynex_core::groups`;
 //! this draws them.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::ui::px;
@@ -39,8 +39,6 @@ pub(super) struct Organize {
     /// What's being renamed, if anything.
     editing: Option<Editing>,
     name: Entity<TextInput>,
-    /// The workspaces whose Archived section is open (this run only; it starts closed).
-    pub(super) archive_open: HashSet<PathBuf>,
     /// Sessions picked to archive or delete together, and the folder they're in.
     pub(super) selection: Selection,
     pub(super) selection_cwd: Option<PathBuf>,
@@ -59,7 +57,6 @@ impl Organize {
             by_folder: HashMap::new(),
             editing: None,
             name,
-            archive_open: HashSet::new(),
             selection: Selection::default(),
             selection_cwd: None,
             shown: Vec::new(),
@@ -437,23 +434,16 @@ impl KynexApp {
             .into_any_element()
     }
 
-    /// The archive: a header that opens it, and its rows while open.
-    pub(super) fn render_archived(
-        &mut self,
-        cwd: &Path,
-        count: usize,
-        rows: Vec<AnyElement>,
-        open: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let t = theme(cx).clone();
-        let (hover, text) = (t.hover, t.text);
-        let (drop_cwd, toggle_cwd, purge_cwd) = (cwd.to_path_buf(), cwd.to_path_buf(), cwd.to_path_buf());
+    /// The archived sessions, with "Show archived" on: dimmed, last, no header. Dropped
+    /// here, a session is archived.
+    pub(super) fn render_archived(&mut self, cwd: &Path, rows: Vec<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
+        let hover = theme(cx).hover;
+        let drop_cwd = cwd.to_path_buf();
         div()
             .id("archived-block")
             .flex()
             .flex_col()
-            .mt_1()
+            .opacity(0.55)
             .rounded_md()
             .drag_over::<DraggedSession>(move |s, _, _, _| s.bg(hover))
             .on_drop(cx.listener(move |this, d: &DraggedSession, _, cx| {
@@ -465,49 +455,7 @@ impl KynexApp {
                 this.organize.selection.clear();
                 cx.notify();
             }))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .child(
-                        section_label(&if open { "Archived".to_string() } else { format!("Archived · {count}") }, cx)
-                            .id("archived")
-                            .flex_1()
-                            .pt_3()
-                            .pb_1()
-                            .px_2()
-                            .cursor_pointer()
-                            .hover(move |s| s.text_color(text))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                let shown = &mut this.organize.archive_open;
-                                if !shown.remove(&toggle_cwd) {
-                                    shown.insert(toggle_cwd.clone());
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .when(open && count > 0, |d| {
-                        d.child(
-                            div()
-                                .id("archived-purge")
-                                .pt_3()
-                                .pb_1()
-                                .px_2()
-                                .text_xs()
-                                .text_color(t.text_muted)
-                                .cursor_pointer()
-                                .hover(move |s| s.text_color(text))
-                                .child("Purge…")
-                                .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
-                                    cx.stop_propagation();
-                                    let at = ev.position();
-                                    let menu = Menu::PurgeArchived(purge_cwd.clone());
-                                    this.open_menu(menu, at, gpui::Anchor::TopLeft, cx);
-                                })),
-                        )
-                    }),
-            )
-            .when(open, |d| d.child(div().pl_3().children(rows)))
+            .children(rows)
             .into_any_element()
     }
 }

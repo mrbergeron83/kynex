@@ -5,6 +5,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The sessions tree drops its Pinned / Recent / Older / Archived headers: under each workspace, pinned sessions come first and the rest newest first, with older ones behind a "Show N more" row. Archived sessions are hidden unless "Show archived" is on in the panel's menu; then they're last, dimmed. Workspace rows have a line between them and, folded, how many sessions they hold.
+
+### Fixed
+
+- The session header's "working in" chip no longer follows a command that only looks into another worktree (`cd` there to read its log, `ls`, `cat`…): only edits and commands that change something move it.
+
 ## [0.0.29] - 2026-11-14
 
 ### Added

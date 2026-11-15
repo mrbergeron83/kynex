@@ -80,6 +80,7 @@ impl KynexApp {
                     tip,
                     selected: n == selected,
                     open: false,
+                    count: None,
                     lamps: Vec::new(),
                     wants_you: None,
                 };
@@ -170,8 +171,7 @@ impl KynexApp {
             let new: Vec<String> = sections.recent.iter().filter(|k| !index.contains_key(*k)).cloned().collect();
             sections.recent = new.into_iter().chain(split.iter().flat_map(|(_, ids)| ids.iter().cloned())).collect();
         }
-        let archived_open = self.organize.archive_open.contains(&path);
-        let view = View { groups: &groups, archived_open, filtering };
+        let view = View { groups: &groups, show_archived: self.saved.sessions_show_archived, filtering };
         let is_open =
             place.row.is_none() || tree::workspace_open(place.selected, groups.tree_open, filtering, sections.len());
         let branch = Branch {
@@ -181,15 +181,27 @@ impl KynexApp {
         };
 
         let mut rows: Vec<AnyElement> = Vec::new();
+        let shown_count = if view.show_archived { sections.len() } else { sections.len() - sections.archived.len() };
         if let Some(row) = &mut place.row {
             row.open = is_open;
+            // Folded, how many sessions it holds, once its list is read.
+            row.count = (!is_open && self.sessions.contains_key(&path) && !filtering).then_some(shown_count);
             let agents: Vec<Lamp> = self.agents_in(&path).into_iter().map(|(_, _, l)| l).collect();
             row.lamps = open.iter().map(OpenSession::lamp).chain(agents).collect();
             row.wants_you = open.iter().filter(|o| o.waiting || o.finished).max_by_key(|o| o.waiting).map(|o| o.uid);
             rows.push(self.render_workspace_row(n, row, cx));
         }
+        // A line between workspaces, so each one's sessions read as its own.
+        let divided = place.row.is_some() && n > 0;
+        let border = t.border_variant;
+        let block =
+            move |d: gpui::Stateful<gpui::Div>| d.when(divided, |d| d.mt_1().pt_1().border_t_1().border_color(border));
         if !is_open {
-            return (vec![div().id(("tree-ws", n)).flex().flex_col().children(rows).into_any_element()], branch, busy);
+            return (
+                vec![block(div().id(("tree-ws", n))).flex().flex_col().children(rows).into_any_element()],
+                branch,
+                busy,
+            );
         }
 
         let row_ctx = RowCtx {
@@ -214,7 +226,9 @@ impl KynexApp {
                 .collect()
         };
         let mut body: Vec<AnyElement> = Vec::new();
-        if sections.is_empty() {
+        // Nothing to draw: no sessions, or only archived ones while those are hidden.
+        let hidden = if view.is_open(Section::Archived, sections.archived.len()) { 0 } else { sections.archived.len() };
+        if sections.len() == hidden {
             let text = match (loading || (wanted && !self.sessions.contains_key(&path)), filtering) {
                 (true, _) => "Loading sessions…",
                 (false, true) => "No sessions match",
@@ -235,20 +249,12 @@ impl KynexApp {
                     .into_any_element(),
             );
         }
-        let headers = sections.headers();
-        if !sections.pinned.is_empty() {
-            if headers {
-                body.push(list_header("Pinned", body.is_empty(), cx).into_any_element());
-            }
-            body.extend(take(self, &sections.pinned, cx));
-        }
-        if !sections.recent.is_empty() || headers {
+        // No section headers: pinned rows (with their pin) first, then the rest newest first.
+        body.extend(take(self, &sections.pinned, cx));
+        if !sections.recent.is_empty() {
             // Dropped here, a session goes back to the loose ones: out of its group, the
             // archive and the pinned ones.
             let mut recent: Vec<AnyElement> = Vec::new();
-            if headers {
-                recent.push(list_header("Recent", body.is_empty(), cx).into_any_element());
-            }
             match &by_provider {
                 Some(split) => {
                     let new: Vec<String> =
@@ -299,36 +305,47 @@ impl KynexApp {
         }
         if !sections.older.is_empty() {
             let open_older = view.is_open(Section::Older, sections.older.len());
-            let label = if open_older { "Older".to_string() } else { format!("Older · {}", sections.older.len()) };
-            let (toggle, text) = (path.clone(), t.text);
-            body.push(
-                list_header(&label, body.is_empty(), cx)
-                    .id("older")
-                    .cursor_pointer()
-                    .hover(move |s| s.text_color(text))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.edit_groups(&toggle, |g| g.older_open = !g.older_open);
-                        cx.notify();
-                    }))
-                    .into_any_element(),
-            );
             if open_older {
                 body.extend(take(self, &sections.older, cx));
             }
+            // While filtering, matches show without the toggle.
+            if !filtering {
+                let label =
+                    if open_older { "Show less".to_string() } else { format!("Show {} more", sections.older.len()) };
+                body.push(self.render_show_more(&path, label, cx));
+            }
         }
-        if !sections.archived.is_empty() {
-            let open_archive = view.is_open(Section::Archived, sections.archived.len());
-            let archived = if open_archive { take(self, &sections.archived, cx) } else { Vec::new() };
-            body.push(self.render_archived(&path, sections.archived.len(), archived, open_archive, cx));
+        if view.is_open(Section::Archived, sections.archived.len()) {
+            let archived = take(self, &sections.archived, cx);
+            body.push(self.render_archived(&path, archived, cx));
         }
         let nested = place.row.is_some();
-        let block = div()
-            .id(("tree-ws", n))
+        let block = block(div().id(("tree-ws", n)))
             .flex()
             .flex_col()
             .children(rows)
             .child(div().flex().flex_col().when(nested, |d| d.pl_3()).children(body));
         (vec![block.into_any_element()], branch, busy)
+    }
+
+    /// The row that shows a workspace's older sessions, or folds them away again.
+    fn render_show_more(&mut self, path: &Path, label: String, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme(cx);
+        let (toggle, text) = (path.to_path_buf(), t.text);
+        div()
+            .id("older")
+            .px_2()
+            .py_1()
+            .text_xs()
+            .text_color(t.text_placeholder)
+            .cursor_pointer()
+            .hover(move |s| s.text_color(text))
+            .child(label)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.edit_groups(&toggle, |g| g.older_open = !g.older_open);
+                cx.notify();
+            }))
+            .into_any_element()
     }
 
     /// The folder holding listed session `id`, among the lists read.
