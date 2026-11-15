@@ -123,11 +123,20 @@ impl KynexApp {
     /// it, tidying the shown workspace's sessions.
     pub(super) fn sessions_panel_menu_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let by_provider = self.saved.sessions_by_provider;
+        let show_archived = self.saved.sessions_show_archived;
         let mut items = vec![
             menu_item("sessions-by-provider", "Group by provider", by_provider, cx)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.menu = None;
                     this.saved.sessions_by_provider = !by_provider;
+                    this.save();
+                    cx.notify();
+                }))
+                .into_any_element(),
+            menu_item("sessions-show-archived", "Show archived", show_archived, cx)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.menu = None;
+                    this.saved.sessions_show_archived = !show_archived;
                     this.save();
                     cx.notify();
                 }))
@@ -228,7 +237,11 @@ impl KynexApp {
             }
             self.toast(Toast::info(msg));
         } else {
-            self.organize.archive_open.insert(cwd.to_path_buf());
+            // The sessions to delete show while it asks.
+            if !self.saved.sessions_show_archived {
+                self.saved.sessions_show_archived = true;
+                self.save();
+            }
             let shown = self.panel_folder().is_some_and(|(_, c)| kynex_core::workspace::same_folder(&c, cwd));
             if !shown {
                 self.edit_groups(cwd, |g| g.tree_open = true);

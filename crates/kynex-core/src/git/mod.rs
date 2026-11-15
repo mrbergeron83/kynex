@@ -37,7 +37,7 @@ pub use status::{Change, FileStatus, Head, Status, find_file, status};
 pub use tree::{Staged, Target, TreeFile, TreeRow, TreeStatus, files_of, stage_paths, tree_files, tree_rows};
 pub use worktree::{
     Worktree, add_worktree, add_worktree_from, default_worktree_path, fill_worktrees, list_worktrees,
-    list_worktrees_quick, prune_worktrees, remove_worktree, worktree_in,
+    list_worktrees_quick, prune_worktrees, remove_worktree, works_in, worktree_in,
 };
 
 /// `git` for `root`, set up to never prompt on a terminal (there is none) and

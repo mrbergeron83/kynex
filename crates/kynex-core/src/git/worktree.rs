@@ -189,6 +189,124 @@ pub fn worktree_in<'a>(text: &str, worktrees: &'a [Worktree]) -> Option<&'a Work
     })
 }
 
+/// Whether tool call `name` with `input` (its JSON) works somewhere, rather than just
+/// looking: file edits do, and shell commands unless every part of them only reads
+/// (`cd x && git log`, `ls`, `cat`, `grep`…). Reads (Read, Grep, Glob) and everything else
+/// don't. For [`worktree_in`]: a session that peeks into another worktree isn't working there.
+pub fn works_in(name: &str, input: &str) -> bool {
+    match name {
+        "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => true,
+        "Bash" | "PowerShell" => {
+            let command = serde_json::from_str::<serde_json::Value>(input)
+                .ok()
+                .and_then(|v| v.get("command").and_then(|c| c.as_str()).map(str::to_string))
+                .unwrap_or_else(|| input.to_string());
+            !only_reads(&command)
+        }
+        _ => false,
+    }
+}
+
+/// Whether every part of shell `command` (split on `&&`, `||`, `;`, `|` and lines) is a
+/// known read or a `cd`, with nothing redirected into a file.
+fn only_reads(command: &str) -> bool {
+    const READS: &[&str] = &[
+        "cd",
+        "set-location",
+        "pushd",
+        "popd",
+        "ls",
+        "dir",
+        "cat",
+        "type",
+        "head",
+        "tail",
+        "less",
+        "grep",
+        "rg",
+        "find",
+        "wc",
+        "echo",
+        "pwd",
+        "stat",
+        "file",
+        "which",
+        "where",
+        "get-content",
+        "get-childitem",
+        "gci",
+        "select-string",
+        "test-path",
+        "get-item",
+        "get-location",
+        "select-object",
+        "sort",
+        "uniq",
+        "tr",
+        "cut",
+        "jq",
+        "true",
+    ];
+    const GIT_READS: &[&str] = &[
+        "log",
+        "reflog",
+        "status",
+        "diff",
+        "show",
+        "blame",
+        "grep",
+        "ls-files",
+        "ls-tree",
+        "rev-parse",
+        "describe",
+        "shortlog",
+        "cat-file",
+        "rev-list",
+        "merge-base",
+        "for-each-ref",
+    ];
+    // Output thrown away is fine; anything else redirected is a write.
+    let mut command = command.to_string();
+    for quiet in ["2>&1", "2>/dev/null", "2>$null", ">/dev/null", "> /dev/null", ">$null", "> $null"] {
+        command = command.replace(quiet, " ");
+    }
+    if command.contains('>') {
+        return false;
+    }
+    command.split(['\n', ';', '|', '&']).map(str::trim).filter(|p| !p.is_empty()).all(|part| {
+        let mut words = part.split_whitespace().map(|w| w.trim_matches(['"', '\'', '(', ')']).to_lowercase());
+        let Some(first) = words.next() else { return true };
+        match first.as_str() {
+            "git" => {
+                // Past `-C <dir>` and other options, to the subcommand.
+                let mut sub = None;
+                while let Some(w) = words.next() {
+                    // `-C <dir>` (lowercased here) and `-c <key=value>` take a value.
+                    if w == "-c" {
+                        words.next();
+                    } else if !w.starts_with('-') {
+                        sub = Some(w);
+                        break;
+                    }
+                }
+                match sub.as_deref() {
+                    Some("worktree") | Some("remote") | Some("branch") | Some("stash") => {
+                        matches!(
+                            words.next().as_deref(),
+                            Some("list") | Some("-v") | Some("-a") | Some("--list") | None
+                        )
+                    }
+                    Some(s) => GIT_READS.contains(&s),
+                    None => true,
+                }
+            }
+            // `sed -n` prints; other sed may write in place.
+            "sed" => words.any(|w| w == "-n"),
+            w => READS.contains(&w),
+        }
+    })
+}
+
 /// Parses `git worktree list --porcelain`; bare entries are skipped.
 pub(crate) fn parse_worktrees(s: &str) -> Vec<Worktree> {
     let mut list = Vec::new();
@@ -275,6 +393,33 @@ mod tests {
         assert_eq!(found(r#"{"file_path":"C:\\repos\\kynex\\src\\main.rs"}"#), None);
         assert_eq!(found("cd ../kynex-terminally"), None);
         assert_eq!(found("ls"), None);
+    }
+
+    #[test]
+    fn edits_and_commands_that_change_things_work_in_a_folder_reads_dont() {
+        let bash = |c: &str| works_in("Bash", &serde_json::json!({ "command": c }).to_string());
+        // Looking around another worktree is no work there.
+        assert!(!bash("cd /c/wt/main && git reflog -8 --date=iso; cd /c/repos/kynex && git reflog -5"));
+        assert!(!bash("git -C ../wt log --oneline | head -5"));
+        assert!(!bash("ls ../wt 2>/dev/null; cat ../wt/Cargo.toml | grep version"));
+        assert!(!bash("git worktree list --porcelain"));
+        assert!(!bash("sed -n 1,40p ../wt/src/main.rs"));
+        let ps = serde_json::json!({ "command": r"Get-ChildItem ..\wt | Select-Object Name" }).to_string();
+        assert!(!works_in("PowerShell", &ps));
+        // Building, committing, switching or writing a file is.
+        assert!(bash("cd ../wt && cargo check"));
+        assert!(bash("cd ../wt && git commit -m x"));
+        assert!(bash("git -C ../wt switch main"));
+        assert!(bash("git branch new-feature"));
+        assert!(bash("echo hi > ../wt/notes.txt"));
+        assert!(bash("sed -i s/a/b/ ../wt/x.rs"));
+        // Edits always; reads and other tools never.
+        assert!(works_in("Edit", r#"{"file_path":"C:\\wt\\a.rs"}"#));
+        assert!(works_in("Write", "{}"));
+        assert!(!works_in("Read", r#"{"file_path":"C:\\wt\\a.rs"}"#));
+        assert!(!works_in("Grep", r#"{"path":"C:\\wt"}"#));
+        // A command that isn't JSON is read as it is.
+        assert!(!works_in("Bash", "cd ../wt && git status"));
     }
 
     #[test]

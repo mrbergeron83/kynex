@@ -138,8 +138,9 @@ impl KynexApp {
     }
 
     /// The linked worktree the shown session is working in, judging by its most
-    /// recent tool call that points into one (Claude often works in a worktree
-    /// by path while the session itself runs in the main folder).
+    /// recent tool call that works in one, an edit or a command that changes something
+    /// (Claude often works in a worktree by path while the session itself runs in the
+    /// main folder). Reads, and commands that only look, don't count.
     pub(super) fn working_worktree(&mut self, key: Key, cx: &mut Context<Self>) -> Option<Worktree> {
         let cwd = self.session_by_key(key).filter(|s| s.kind == Kind::Code)?.cwd.clone();
         let project = self.workspace_project().unwrap_or_else(|| cwd.clone());
@@ -153,11 +154,12 @@ impl KynexApp {
             .iter()
             .rev()
             .filter_map(|i| match i {
-                Item::ToolUse { input, .. } => Some(input.as_str()),
+                Item::ToolUse { name, input, .. } => Some((name.as_str(), input.as_str())),
                 _ => None,
             })
             .take(300)
-            .find_map(|input| git::worktree_in(input, &list))
+            // The path match first: it's the cheaper test, and most calls fail it.
+            .find_map(|(name, input)| git::worktree_in(input, &list).filter(|_| git::works_in(name, input)))
             .filter(|w| w.path != cwd)
             .cloned()
     }

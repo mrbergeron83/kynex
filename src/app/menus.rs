@@ -32,10 +32,8 @@ pub enum Menu {
     Group(PathBuf, usize),
     /// The right-click menu for several picked sessions.
     Sessions(Vec<String>),
-    /// The sessions panel header's menu: grouping by provider, tidying old sessions.
+    /// The sessions panel header's menu: grouping by provider, showing archived, tidying old sessions.
     SessionsPanel,
-    /// The archive header's menu: purging the archived sessions of the workspace at this folder.
-    PurgeArchived(PathBuf),
     /// A workspace's right-click menu, by its folder.
     Workspace(PathBuf),
     /// A pane's right-click menu.
@@ -443,7 +441,6 @@ impl KynexApp {
             Menu::Group(cwd, i) => items = self.group_menu_items(&cwd.clone(), *i, cx),
             Menu::Sessions(ids) => items = self.sessions_menu_items(ids, cx),
             Menu::SessionsPanel => items = self.sessions_panel_menu_items(cx),
-            Menu::PurgeArchived(cwd) => items = self.purge_menu_items(&cwd.clone(), cx),
             Menu::Pane(pane) => items = self.pane_menu_items(*pane, cx),
             Menu::PaneTab(tab) => items = self.pane_tab_menu_items(*tab, cx),
             Menu::Running(who) => items = self.running_menu_items(*who, cx),
