@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.30] - 2026-11-14
+
 ### Changed
 
 - The sessions tree drops its Pinned / Recent / Older / Archived headers: under each workspace, pinned sessions come first and the rest newest first, with older ones behind a "Show N more" row. Archived sessions are hidden unless "Show archived" is on in the panel's menu; then they're last, dimmed. Workspace rows have a line between them and, folded, how many sessions they hold.
@@ -960,7 +962,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.29...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.30...HEAD
+[0.0.30]: https://github.com/mrbergeron83/kynex/compare/v0.0.29...v0.0.30
 [0.0.29]: https://github.com/mrbergeron83/kynex/compare/v0.0.28...v0.0.29
 [0.0.28]: https://github.com/mrbergeron83/kynex/compare/v0.0.27...v0.0.28
 [0.0.27]: https://github.com/mrbergeron83/kynex/compare/v0.0.26...v0.0.27
