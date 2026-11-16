@@ -148,6 +148,11 @@ impl TerminalPanel {
         self.tabs.get(self.active)?.view.read(cx).history_text()
     }
 
+    /// The shown tab.
+    pub fn active_view(&self) -> Option<Entity<TerminalView>> {
+        self.tabs.get(self.active).map(|t| t.view.clone())
+    }
+
     /// The shown tab's screen text, once its program runs.
     pub fn screen_text(&self, cx: &App) -> Option<String> {
         self.tabs.get(self.active)?.view.read(cx).screen_text()

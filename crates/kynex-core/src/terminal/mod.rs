@@ -5,7 +5,9 @@
 //! The shell inherits Kynex's own rights, so when Kynex runs as administrator
 //! its terminals do too ([`elevated`] says which).
 
+pub mod hooks;
 mod keys;
+pub mod marker;
 mod shell;
 mod snapshot;
 
@@ -26,6 +28,7 @@ use alacritty_terminal::term::Config;
 use alacritty_terminal::tty;
 
 pub use keys::{Key, key_bytes, paste_bytes};
+use marker::Mark;
 pub use shell::{ShellKind, ShellSpec, elevated, resolve as resolve_shell, which};
 pub use snapshot::{Cursor, CursorStyle, Palette, Rgb, Row, Run, Snapshot};
 
@@ -70,6 +73,24 @@ struct Shared {
     exited: AtomicBool,
     /// Text the program asked to copy (OSC 52), for the app to put on the clipboard.
     clipboard: Mutex<Option<String>>,
+    /// Exit codes of marked commands that finished ([`marker`]), by marker.
+    done: Mutex<HashMap<u64, i32>>,
+    /// What a hooked shell said last ([`marker`]).
+    marks: Mutex<ShellMarks>,
+}
+
+/// What a shell with Kynex's hooks said about its commands ([`marker`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShellMarks {
+    /// It has the hooks: it said so at a prompt.
+    pub hooked: bool,
+    /// Prompts shown so far.
+    pub prompts: u64,
+    /// The last command that ran and its exit code, once one has.
+    pub last: Option<(u64, i32)>,
+    /// The command running now, if it says when one starts (PowerShell with PSReadLine,
+    /// bash 4.4 and later).
+    pub running: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -83,7 +104,21 @@ impl EventListener for Listener {
     fn send_event(&self, event: Event) {
         match event {
             Event::Wakeup => {}
-            Event::Title(t) => *self.shared.title.lock().unwrap() = Some(t),
+            Event::Title(t) => match marker::parse(&t) {
+                Some(Mark::Done { n, code }) => {
+                    self.shared.done.lock().unwrap().insert(n, code);
+                }
+                Some(Mark::Prompt { p, n, code }) => {
+                    let mut m = self.shared.marks.lock().unwrap();
+                    m.hooked = true;
+                    m.prompts = p;
+                    m.running = None;
+                    // `n` stays 0 in a shell that doesn't say when commands start.
+                    m.last = Some((n, code));
+                }
+                Some(Mark::Exec { n }) => self.shared.marks.lock().unwrap().running = Some(n),
+                None => *self.shared.title.lock().unwrap() = Some(t),
+            },
             Event::ResetTitle => *self.shared.title.lock().unwrap() = None,
             // Answers to the program's queries (cursor position, colours…).
             Event::PtyWrite(text) => {
@@ -179,6 +214,35 @@ impl Terminal {
         self.write(text.into_bytes());
     }
 
+    /// Types `command` with marker `n` and presses Enter; [`Self::take_done`] says when it
+    /// finished and how. False (and nothing typed) for a shell [`marker`] doesn't know.
+    pub fn run_marked(&self, command: &str, n: u64) -> bool {
+        let Some(text) = marker::wrap(&self.shell.program, command, n) else { return false };
+        self.run(&text);
+        true
+    }
+
+    /// The exit code of the command run with marker `n`, once it has finished.
+    pub fn take_done(&self, n: u64) -> Option<i32> {
+        self.shared.done.lock().unwrap().remove(&n)
+    }
+
+    /// What its shell said last about its commands, when it has Kynex's hooks.
+    pub fn marks(&self) -> ShellMarks {
+        *self.shared.marks.lock().unwrap()
+    }
+
+    /// What a hooked shell's command `n` printed, as far as the scrollback still has it.
+    pub fn output(&self, n: u64) -> Option<String> {
+        snapshot::linked_text(&self.term.lock(), &marker::output_link(n))
+    }
+
+    /// What the command run with marker `n` printed, as far as the scrollback still has it.
+    pub fn wrapped_output(&self, n: u64) -> Option<String> {
+        let linked = snapshot::linked_text(&self.term.lock(), &marker::wrapped_link(n))?;
+        Some(marker::wrapped_output(&linked, n))
+    }
+
     pub fn paste(&self, text: &str) {
         let bracketed = self.term.lock().mode().contains(alacritty_terminal::term::TermMode::BRACKETED_PASTE);
         self.write(paste_bytes(text, bracketed));
@@ -223,6 +287,12 @@ impl Terminal {
     /// The screen's text, as the program last drew it.
     pub fn screen_text(&self) -> String {
         snapshot::screen_text(&self.term.lock())
+    }
+
+    /// The last `n` lines of scrollback and screen (only the screen while a full-screen
+    /// program is up).
+    pub fn last_lines(&self, n: usize) -> String {
+        marker::tail(&self.history_text().unwrap_or_else(|| self.screen_text()), n)
     }
 
     pub fn snapshot(&self, palette: &Palette) -> Snapshot {
@@ -319,5 +389,127 @@ mod tests {
             assert!(Instant::now() < deadline, "no output:\n{text}");
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+
+    /// The two shells the tests run in, where this machine has them: (spec, is PowerShell).
+    fn shells() -> Vec<(ShellSpec, bool)> {
+        let mut all: Vec<ShellSpec> =
+            [ShellKind::PowerShell, ShellKind::Bash].into_iter().filter_map(|k| resolve_shell(k).ok()).collect();
+        // Windows PowerShell 5.1 too, where there's pwsh and it.
+        if cfg!(windows)
+            && let (Some(ps), Some(old)) = (all.first().cloned(), which("powershell"))
+            && ps.program != old
+        {
+            all.push(ShellSpec { program: old, ..ps });
+        }
+        all.into_iter()
+            .map(|s| {
+                let stem = s.program.file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+                let powershell = stem.contains("pwsh") || stem.contains("powershell");
+                (s, powershell)
+            })
+            .collect()
+    }
+
+    /// A command that fails with 3.
+    fn fails_with_3(powershell: bool) -> &'static str {
+        if powershell && cfg!(windows) { "cmd /c exit 3" } else { "sh -c 'exit 3'" }
+    }
+
+    fn spawn(spec: ShellSpec) -> Terminal {
+        Terminal::spawn(spec, &std::env::temp_dir(), Size { columns: 120, lines: 24 }, Arc::new(|| {})).unwrap()
+    }
+
+    /// A shell with the hooks says when each command ends, how, and what it printed; the tab
+    /// title is left alone.
+    #[test]
+    fn a_hooked_shell_tells_how_each_command_ended() {
+        for (spec, powershell) in shells() {
+            let bash = spec.program.file_stem().is_some_and(|s| s.eq_ignore_ascii_case("bash"));
+            if !powershell && !bash {
+                continue;
+            }
+            let term = spawn(spec);
+            let after = |p0: u64| {
+                let deadline = Instant::now() + Duration::from_secs(20);
+                loop {
+                    let m = term.marks();
+                    if m.prompts > p0 {
+                        return m;
+                    }
+                    assert!(Instant::now() < deadline, "no prompt after {p0}:\n{}", term.screen_text());
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            };
+            let first = after(0);
+            assert!(first.hooked && hooks::has_hooks(&term.shell));
+            term.run("echo one; echo two # a comment");
+            let m = after(first.prompts);
+            let (n, code) = m.last.unwrap();
+            assert_eq!(code, 0);
+            assert_eq!(term.output(n).unwrap().trim_end(), "one\ntwo", "{}", term.screen_text());
+            term.run(fails_with_3(powershell));
+            let m = after(m.prompts);
+            assert_eq!(m.last.unwrap().1, 3);
+            if powershell {
+                // A failed cmdlet after the native 3 is 1, not that 3 again; the same native
+                // failure twice is 3 both times.
+                term.run("Get-Item no-such-kynex-file");
+                let m = after(m.prompts);
+                assert_eq!(m.last.unwrap().1, 1);
+                term.run(fails_with_3(powershell));
+                let m = after(m.prompts);
+                assert_eq!(m.last.unwrap().1, 3);
+                term.run(fails_with_3(powershell));
+                let m = after(m.prompts);
+                assert_eq!(m.last.unwrap().1, 3);
+                // The prompt the hooks wrap sees the command's failure.
+                term.run("$global:__kynex.prompt = { \"ok=$? > \" }");
+                let m = after(m.prompts);
+                term.run("Get-Item no-such-kynex-file");
+                after(m.prompts);
+                assert!(term.screen_text().contains("ok=False >"), "{}", term.screen_text());
+            }
+            assert!(!term.title().unwrap_or_default().contains("knx-"));
+        }
+    }
+    /// A marked command tells when it finished and its exit code, and the tab title is left alone.
+    #[test]
+    fn a_marked_command_tells_its_exit_code() {
+        for (mut spec, powershell) in shells() {
+            // As without Kynex's hooks, which would set titles over the marker's.
+            spec.env.clear();
+            spec.args = if powershell { vec!["-NoLogo".into()] } else { vec!["--login".into(), "-i".into()] };
+            assert!(!hooks::has_hooks(&spec));
+            marked_commands_in(spec, powershell);
+        }
+    }
+
+    fn marked_commands_in(spec: ShellSpec, powershell: bool) {
+        let fail = fails_with_3(powershell);
+        let term = spawn(spec);
+        let exit = |n: u64| {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                if let Some(code) = term.take_done(n) {
+                    return code;
+                }
+                assert!(Instant::now() < deadline, "marker {n} never came:\n{}", term.screen_text());
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        };
+        assert!(term.run_marked("echo hi # a comment", 1));
+        assert_eq!(exit(1), 0);
+        assert_eq!(term.wrapped_output(1).unwrap().trim_end(), "hi", "{}", term.screen_text());
+        term.run_marked(fail, 2);
+        assert_eq!(exit(2), 3);
+        if powershell {
+            // A failed cmdlet is a failure too, and the native command's 3 doesn't stand in for it.
+            term.run_marked("Get-Item no-such-kynex-file", 3);
+            assert_eq!(exit(3), 1);
+        }
+        term.run_marked("echo again;", 4);
+        assert_eq!(exit(4), 0);
+        assert!(!term.title().unwrap_or_default().contains("knx-done"));
     }
 }

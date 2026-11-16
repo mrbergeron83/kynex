@@ -44,8 +44,12 @@ pub enum Request {
         #[serde(default)]
         force: bool,
     },
-    /// The panes of the shown workspace.
-    PaneList,
+    /// The panes of the shown workspace's tab; with `all`, of every tab of every workspace
+    /// shown since Kynex started.
+    PaneList {
+        #[serde(default)]
+        all: bool,
+    },
     /// Splits the focused pane (`row`: side by side, `column`: one above the other).
     PaneSplit {
         #[serde(default)]
@@ -59,6 +63,41 @@ pub enum Request {
         #[serde(default)]
         pane: Option<u64>,
     },
+    /// What a terminal or agent pane shows: its screen, or the last `lines` of its scrollback
+    /// and screen.
+    PaneRead {
+        pane: u64,
+        #[serde(default)]
+        lines: Option<usize>,
+    },
+    /// Types a command into a terminal pane's shell (a new terminal pane's, with no `pane`).
+    /// With `wait`, the answer comes when it finished, with its exit code and what it printed.
+    /// `timeout`, in seconds, for every wait: then the answer is an error.
+    PaneRun {
+        #[serde(default)]
+        pane: Option<u64>,
+        command: String,
+        #[serde(default)]
+        wait: bool,
+        #[serde(default)]
+        timeout: Option<u64>,
+    },
+    /// Sends a message to an agent pane (codex, opencode…). With `wait`, the answer comes when
+    /// it's done or blocked.
+    PanePrompt {
+        pane: u64,
+        text: String,
+        #[serde(default)]
+        wait: bool,
+        #[serde(default)]
+        timeout: Option<u64>,
+    },
+    /// Answers when an agent pane isn't working any more.
+    PaneWait {
+        pane: u64,
+        #[serde(default)]
+        timeout: Option<u64>,
+    },
     SessionList,
     /// Sends a message to an open session. With `wait`, the answer comes when the turn ends
     /// (or the session needs you: permissions are still answered in the app).
@@ -67,6 +106,8 @@ pub enum Request {
         text: String,
         #[serde(default)]
         wait: bool,
+        #[serde(default)]
+        timeout: Option<u64>,
     },
     /// The last thing the session said.
     SessionRead {
@@ -75,6 +116,8 @@ pub enum Request {
     /// Answers when the session isn't working any more.
     SessionWait {
         session: u64,
+        #[serde(default)]
+        timeout: Option<u64>,
     },
     Events,
 }
@@ -157,11 +200,11 @@ mod tests {
         let (id, r) =
             parse_request(r#"{"id": 7, "cmd": "session_prompt", "session": 3, "text": "hi", "wait": true}"#).unwrap();
         assert_eq!(id, Some(json!(7)));
-        assert_eq!(r, Request::SessionPrompt { session: 3, text: "hi".into(), wait: true });
+        assert_eq!(r, Request::SessionPrompt { session: 3, text: "hi".into(), wait: true, timeout: None });
         let (id, r) = parse_request(r#"{"cmd":"pane_list"}"#).unwrap();
-        assert_eq!((id, r), (None, Request::PaneList));
+        assert_eq!((id, r), (None, Request::PaneList { all: false }));
         let (_, r) = parse_request(r#"{"cmd":"session_prompt","session":1,"text":"x"}"#).unwrap();
-        assert_eq!(r, Request::SessionPrompt { session: 1, text: "x".into(), wait: false });
+        assert_eq!(r, Request::SessionPrompt { session: 1, text: "x".into(), wait: false, timeout: None });
     }
 
     #[test]
@@ -190,7 +233,13 @@ mod tests {
             Request::WorkspaceRemove { path: "/w".into(), force: true },
             Request::PaneSplit { axis: Some("row".into()) },
             Request::PaneClose { pane: None },
-            Request::SessionWait { session: 2 },
+            Request::PaneRead { pane: 4, lines: Some(50) },
+            Request::PaneRun { pane: Some(4), command: "cargo test".into(), wait: true, timeout: Some(30) },
+            Request::PaneRun { pane: None, command: "ls".into(), wait: false, timeout: None },
+            Request::PaneList { all: true },
+            Request::PanePrompt { pane: 5, text: "fix it".into(), wait: false, timeout: None },
+            Request::PaneWait { pane: 5, timeout: Some(1) },
+            Request::SessionWait { session: 2, timeout: None },
             Request::Events,
         ];
         for r in all {

@@ -132,6 +132,42 @@ pub(super) fn history_text<T: EventListener>(term: &Term<T>) -> Option<String> {
     Some(out)
 }
 
+/// The text of the cells linked to `uri` (OSC 8), in order: what a command printed, when
+/// the shell wrapped its output in that link. Rows end with a newline unless they wrap into
+/// the next; blank space at row ends is dropped. `None` if no cell has the link.
+pub(super) fn linked_text<T: EventListener>(term: &Term<T>, uri: &str) -> Option<String> {
+    use alacritty_terminal::index::{Column, Line};
+    let grid = term.grid();
+    let top = -(grid.history_size() as i32);
+    let mut out = String::new();
+    let mut found = false;
+    for l in top..grid.screen_lines() as i32 {
+        let row = &grid[Line(l)];
+        let mut line = String::new();
+        let mut linked_row = false;
+        for c in 0..grid.columns() {
+            let cell = &row[Column(c)];
+            if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                continue;
+            }
+            if cell.hyperlink().is_some_and(|h| h.uri() == uri) {
+                linked_row = true;
+                line.push(if cell.c == '\0' { ' ' } else { cell.c });
+            }
+        }
+        if !linked_row {
+            continue;
+        }
+        found = true;
+        out.push_str(line.trim_end());
+        let wraps = row[Column(grid.columns() - 1)].flags.contains(Flags::WRAPLINE);
+        if !wraps {
+            out.push('\n');
+        }
+    }
+    found.then_some(out)
+}
+
 pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette) -> Snapshot {
     let content = term.renderable_content();
     let offset = content.display_offset as i32;

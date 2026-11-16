@@ -21,7 +21,8 @@ pub const CONTROL_VAR: &str = "KYNEX_CONTROL";
 pub const NOTE: &str = "You are running inside Kynex, a desktop app for Claude Code. Its `knx` \
 command (on your PATH) can see and arrange the app from your shell: `knx session list`, \
 `knx session read <id>`, `knx session wait <id>`, `knx workspace list`, `knx pane list`, \
-`knx project list`. Your session's id is in the KYNEX_SESSION environment variable, your \
+`knx project list`; for terminal and agent-CLI panes, `knx pane read <id> [--lines N]`, \
+`knx pane run <id> <command> [--wait]` and `knx pane prompt <id> <message> [--wait]`. Your session's id is in the KYNEX_SESSION environment variable, your \
 workspace folder in KYNEX_WORKSPACE_DIR. \
 Use it only when the user's request calls for it.";
 

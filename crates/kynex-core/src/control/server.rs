@@ -238,10 +238,10 @@ mod tests {
         assert_eq!(long.len(), 1, "the client was answered");
 
         let mut lines = Vec::new();
-        super::super::client::call_in(&dir, &Request::PaneList, |l| lines.push(l.to_string())).unwrap();
+        super::super::client::call_in(&dir, &Request::PaneList { all: false }, |l| lines.push(l.to_string())).unwrap();
         let v: Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["ok"], true);
-        assert_eq!(v["result"]["got"], "PaneList");
+        assert_eq!(v["result"]["got"], "PaneList { all: false }");
         assert!(rang.load(Ordering::SeqCst) >= 1);
 
         // Events: the first line says subscribed, then what is broadcast.
@@ -268,7 +268,7 @@ mod tests {
         let started = std::time::Instant::now();
         let e = super::super::client::call_within(
             &dir,
-            &Request::PaneList,
+            &Request::PaneList { all: false },
             Some(std::time::Duration::from_millis(200)),
             |_| {},
         )

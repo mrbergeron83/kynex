@@ -19,6 +19,7 @@
 //! | `custom_themes.rs`  | themes from JSON files in the data dir: loading, watching, applying |
 //! | `control.rs`        | the control socket: `knx project / workspace / pane / session / events` |
 //! | `control_workspaces.rs` | its `workspace` commands: list, show, make, remove |
+//! | `control_panes.rs`  | its terminal / agent pane commands: read, run, prompt, wait |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
 //! | `layout_history.rs` | undo / redo of pane changes, reopening a pane, older layouts |
 //! | `toolbar.rs`        | path, panes' buttons (timeline, Git), open-in buttons |
@@ -107,6 +108,7 @@ mod attention;
 mod background;
 mod composer;
 mod control;
+mod control_panes;
 mod control_workspaces;
 mod custom_commands;
 mod custom_themes;
@@ -406,6 +408,10 @@ pub struct KynexApp {
     control_wait_for: Option<control::Wait>,
     /// What each session was doing at the last look, for the event listeners.
     control_seen: control::Seen,
+    /// The last marker a `knx pane run --wait` command was typed with.
+    control_marker: u64,
+    /// The loop looking at waits on panes is running.
+    pane_wait_watch: bool,
     /// Themes read from the data dir's `themes/` folder, the files that couldn't be used, and the watch on it.
     custom_themes: Vec<kynex_core::themes::Custom>,
     theme_errors: Vec<String>,
@@ -720,6 +726,8 @@ impl KynexApp {
             control_waits: Vec::new(),
             control_wait_for: None,
             control_seen: HashMap::new(),
+            control_marker: 0,
+            pane_wait_watch: false,
             custom_themes: Vec::new(),
             theme_errors: Vec::new(),
             _theme_watch: theme_watch,

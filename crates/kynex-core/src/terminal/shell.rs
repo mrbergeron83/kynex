@@ -66,14 +66,17 @@ pub struct ShellSpec {
     pub history: Option<String>,
 }
 
-/// Finds the program for `kind`.
+/// Finds the program for `kind`, with Kynex's hooks where it has them ([`super::hooks`]).
+/// Blocks on finding it (and writing bash's hooks script).
 pub fn resolve(kind: ShellKind) -> Result<ShellSpec, String> {
-    let (program, args) = match kind {
+    let mut env: Vec<(String, String)> = Vec::new();
+    let (program, mut args) = match kind {
         ShellKind::PowerShell => {
             let program = which("pwsh")
                 .or_else(|| cfg!(windows).then(|| which("powershell")).flatten())
                 .ok_or("PowerShell isn't installed (looked for pwsh on PATH)")?;
-            (program, vec!["-NoLogo".to_string()])
+            let args = if super::hooks::enabled() { super::hooks::powershell_args() } else { vec!["-NoLogo".into()] };
+            (program, args)
         }
         ShellKind::Bash if cfg!(windows) => (
             git_bash().ok_or("Git Bash wasn't found. Install Git for Windows, or set CLAUDE_CODE_GIT_BASH_PATH.")?,
@@ -84,7 +87,17 @@ pub fn resolve(kind: ShellKind) -> Result<ShellSpec, String> {
             (shell.unwrap_or_else(|| PathBuf::from("/bin/bash")), vec!["-l".into()])
         }
     };
-    Ok(ShellSpec { kind, program, args, env: Vec::new(), title: None, history: None })
+    // Bash (Git Bash, or a user whose shell is bash) as a login shell, by the hooks script.
+    let is_bash = program.file_stem().is_some_and(|s| s.eq_ignore_ascii_case("bash"));
+    if kind == ShellKind::Bash
+        && is_bash
+        && super::hooks::enabled()
+        && let Some((hooked, vars)) = super::hooks::bash_args()
+    {
+        args = hooked;
+        env = vars;
+    }
+    Ok(ShellSpec { kind, program, args, env, title: None, history: None })
 }
 
 /// Git for Windows' bash, the one Claude Code itself uses: `CLAUDE_CODE_GIT_BASH_PATH`,

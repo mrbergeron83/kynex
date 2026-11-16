@@ -11,10 +11,9 @@ use std::time::{Duration, Instant};
 use gpui::{Context, Window};
 use kynex_core::control::Request;
 use kynex_core::control::server::Call;
-use kynex_core::layout::Axis;
+use kynex_core::layout::{Axis, PaneId};
 use kynex_core::live::Key;
 use kynex_core::session::{Item, Session};
-use kynex_core::tiling::Content;
 use kynex_core::workspace::same_folder;
 use serde_json::{Value, json};
 
@@ -25,21 +24,45 @@ use super::state::Active;
 pub static OPEN_AT_START: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// How long a prompt that waits gives the session to start working (its history may be loading).
-const START_WITHIN: Duration = Duration::from_secs(60);
+pub(super) const START_WITHIN: Duration = Duration::from_secs(60);
 
-/// A client waiting for a session's turn to end.
+/// A client waiting for a session's turn to end, or for a pane (`control_panes.rs`).
 pub(super) struct Wait {
-    session: Key,
+    pub(super) target: Target,
     reply: Sender<Result<Value, String>>,
-    /// The session has been seen working: only then does "not working" mean the turn ended.
-    started: bool,
-    since: Instant,
+    /// It has been seen working: only then does "not working" mean the turn ended.
+    pub(super) started: bool,
+    pub(super) since: Instant,
+    /// When it gives up (`--timeout`), and after how many seconds.
+    deadline: Option<(Instant, u64)>,
+}
+
+/// What a [`Wait`] waits for.
+pub(super) enum Target {
+    /// A session's turn to end.
+    Session(Key),
+    /// A command run in shell pane `pane` to finish.
+    Run { pane: PaneId, how: Run },
+    /// Agent pane `pane` to stop working; it has `start_within` to start.
+    Agent { pane: PaneId, start_within: Duration },
+}
+
+/// How a command run in a shell pane says it finished.
+pub(super) enum Run {
+    /// A hooked shell: once it's at a prompt after the `after`th, and stays there for a look
+    /// (each line of a command of several lines has its own prompt). `first`: the number the
+    /// shell gives the command (a later one if it numbers them and has a line before it).
+    Hooked { after: u64, first: u64, settled: Option<u64> },
+    /// A hooked shell still starting: `command` is typed at its first prompt.
+    Pending { command: String },
+    /// A shell without hooks: by the title of marker `n`, typed after it.
+    Marked { n: u64 },
 }
 
 /// What each session was doing at the last look, to tell the listeners what changed.
 pub(super) type Seen = HashMap<Key, (bool, bool)>;
 
-type Answer = Result<Value, String>;
+pub(super) type Answer = Result<Value, String>;
 
 impl KynexApp {
     /// Answers every request that came in on the socket.
@@ -102,7 +125,22 @@ impl KynexApp {
                 self.close_project(i);
                 Ok(json!({ "closed": path }))
             }
-            Request::PaneList => Ok(self.pane_list()),
+            Request::PaneList { all } => Ok(self.pane_list(all)),
+            Request::PaneRead { pane, lines } => {
+                self.start_pane(pane, window, cx);
+                self.pane_read(pane, lines, cx).map_err(Some)
+            }
+            Request::PaneRun { pane, command, wait, timeout } => {
+                self.pane_run(pane, &command, wait, timeout, window, cx)
+            }
+            Request::PanePrompt { pane, text, wait, timeout } => {
+                self.start_pane(pane, window, cx);
+                self.pane_prompt(pane, &text, wait, timeout, cx)
+            }
+            Request::PaneWait { pane, timeout } => {
+                self.start_pane(pane, window, cx);
+                self.pane_wait(pane, timeout, cx)
+            }
             Request::PaneSplit { axis } => {
                 let axis = match axis.as_deref() {
                     None | Some("row") => Axis::Row,
@@ -138,23 +176,23 @@ impl KynexApp {
                 let s = self.session_by_key(session).ok_or_else(|| Some(no_session(session)))?;
                 Ok(json!({ "text": last_said(s), "busy": s.busy, "waiting": s.waiting() }))
             }
-            Request::SessionPrompt { session, text, wait } => {
+            Request::SessionPrompt { session, text, wait, timeout } => {
                 let s = self.all_sessions_mut().find(|s| s.uid == session).ok_or_else(|| Some(no_session(session)))?;
                 s.send(text, Vec::new());
                 // Working at once, or the message waits (the log is loading): then the next poll sees it start.
                 let started = s.busy;
                 if wait {
-                    self.hold_for(session, started, cx);
+                    self.hold(Target::Session(session), started, timeout, cx);
                     return Err(None);
                 }
                 Ok(json!({ "sent": true }))
             }
-            Request::SessionWait { session } => {
+            Request::SessionWait { session, timeout } => {
                 let s = self.session_by_key(session).ok_or_else(|| Some(no_session(session)))?;
                 if !s.busy {
                     return Ok(turn_state(s));
                 }
-                self.hold_for(session, true, cx);
+                self.hold(Target::Session(session), true, timeout, cx);
                 Err(None)
             }
             // Handled by the socket itself.
@@ -162,17 +200,29 @@ impl KynexApp {
         }
     }
 
-    /// Makes the answer wait for `session`'s turn to end. `started`: it is working already.
-    fn hold_for(&mut self, session: Key, started: bool, cx: &mut Context<Self>) {
+    /// Makes the answer wait for `target`. `started`: it is working already. `timeout`: the
+    /// seconds after which it gives up.
+    pub(super) fn hold(&mut self, target: Target, started: bool, timeout: Option<u64>, cx: &mut Context<Self>) {
+        let pane = !matches!(target, Target::Session(_));
+        let now = Instant::now();
+        let deadline = timeout.map(|s| (now + Duration::from_secs(s), s));
         // `serve_control` puts the client's reply with it.
         let (reply, _) = std::sync::mpsc::channel();
-        self.control_wait_for = Some(Wait { session, reply, started, since: Instant::now() });
-        // A session that never starts working must not leave the client waiting for good.
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(START_WITHIN + Duration::from_secs(1)).await;
-            this.update(cx, |this, cx| this.finish_control_waits(cx)).ok();
-        })
-        .detach();
+        self.control_wait_for = Some(Wait { target, reply, started, since: now, deadline });
+        if pane {
+            // Nothing else rings for panes: they are looked at every so often.
+            self.watch_pane_waits(cx);
+            return;
+        }
+        // A session that never starts working, or a timeout, must not leave the client
+        // waiting for good: one look when either is due.
+        for after in [Some(START_WITHIN), timeout.map(Duration::from_secs)].into_iter().flatten() {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(after + Duration::from_millis(500)).await;
+                this.update(cx, |this, cx| this.finish_control_waits(cx)).ok();
+            })
+            .detach();
+        }
     }
 
     /// Answers the waits whose turn ended, whose session needs you, whose session went away
@@ -183,8 +233,26 @@ impl KynexApp {
         }
         let waits = std::mem::take(&mut self.control_waits);
         for mut w in waits {
-            let answer: Option<Answer> = match self.session_by_key(w.session) {
-                None => Some(Err(no_session(w.session))),
+            if let Some((at, secs)) = w.deadline
+                && Instant::now() >= at
+            {
+                let _ = w.reply.send(Err(format!("timed out after {secs}s (it may still be running)")));
+                continue;
+            }
+            let session = match w.target {
+                Target::Session(k) => k,
+                _ => {
+                    match self.pane_wait_answer(&mut w, cx) {
+                        Some(a) => {
+                            let _ = w.reply.send(a);
+                        }
+                        None => self.control_waits.push(w),
+                    }
+                    continue;
+                }
+            };
+            let answer: Option<Answer> = match self.session_by_key(session) {
+                None => Some(Err(no_session(session))),
                 Some(s) => {
                     w.started |= s.busy;
                     if s.waiting() || (w.started && !s.busy) {
@@ -259,29 +327,6 @@ impl KynexApp {
         window.activate_window();
         cx.notify();
         Ok(json!({ "opened": path }))
-    }
-
-    fn pane_list(&self) -> Value {
-        let Some((_, cwd, _)) = self.tiling_scope() else { return json!({ "panes": [] }) };
-        let Some(t) = self.tiles.get(&cwd) else { return json!({ "panes": [] }) };
-        let focus = t.focus();
-        let panes: Vec<Value> = t
-            .visible_panes()
-            .into_iter()
-            .map(|p| {
-                let (kind, session) = match t.content(p) {
-                    Some(Content::Session(k)) => ("session", Some(k)),
-                    Some(Content::Terminal) => ("terminal", None),
-                    Some(Content::Git) => ("git", None),
-                    Some(Content::Timeline) => ("timeline", None),
-                    Some(Content::Tree) => ("sessions", None),
-                    Some(Content::Agents) => ("agents", None),
-                    None => ("unknown", None),
-                };
-                json!({ "pane": p, "kind": kind, "session": session, "focused": Some(p) == focus })
-            })
-            .collect();
-        json!({ "workspace": cwd, "panes": panes })
     }
 
     fn focused_pane(&self) -> Option<u64> {
