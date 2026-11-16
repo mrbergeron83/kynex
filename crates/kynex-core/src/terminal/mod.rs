@@ -443,7 +443,8 @@ mod tests {
     fn a_hooked_shell_tells_how_each_command_ended() {
         for (spec, powershell) in shells() {
             let bash = spec.program.file_stem().is_some_and(|s| s.eq_ignore_ascii_case("bash"));
-            if !powershell && !bash {
+            // PowerShell off Windows loses an Enter typed before its line editor reads (#475).
+            if (!powershell && !bash) || (powershell && !cfg!(windows)) {
                 continue;
             }
             let term = spawn(spec);
@@ -499,6 +500,10 @@ mod tests {
     #[test]
     fn a_marked_command_tells_its_exit_code() {
         for (mut spec, powershell) in shells() {
+            // PowerShell off Windows loses an Enter typed before its line editor reads (#475).
+            if powershell && !cfg!(windows) {
+                continue;
+            }
             // As without Kynex's hooks, which would set titles over the marker's.
             spec.env.clear();
             spec.args = if powershell { vec!["-NoLogo".into()] } else { vec!["--login".into(), "-i".into()] };
