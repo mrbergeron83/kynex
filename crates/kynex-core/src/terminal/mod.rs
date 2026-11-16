@@ -416,13 +416,23 @@ mod tests {
         if powershell && cfg!(windows) { "cmd /c exit 3" } else { "sh -c 'exit 3'" }
     }
 
+    #[cfg_attr(not(unix), allow(unused_mut))]
     fn spawn(mut spec: ShellSpec) -> Terminal {
-        // CI's Linux has no runtime folder (`/run/user/<uid>`, where .NET looks when
-        // XDG_RUNTIME_DIR names none); PowerShell's line editor can't start without one (its
-        // history mutex lives there), and the shell falls back to a plain reader that shows
-        // typed lines differently.
-        if cfg!(unix) && std::env::var_os("XDG_RUNTIME_DIR").is_none_or(|d| !std::path::Path::new(&d).is_dir()) {
-            spec.env.push(("XDG_RUNTIME_DIR".into(), std::env::temp_dir().display().to_string()));
+        // On CI's Linux, .NET can't make its shared-memory folder under the runtime folder
+        // (`/run/user/<uid>`), so PowerShell's line editor fails to start (its history mutex
+        // lives there) and the shell falls back to a plain reader that shows typed lines
+        // differently. Each shell gets a runtime and temp folder of its own (tests run at once).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!("kynex-test-runtime-{}-{n}", std::process::id()));
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            let dir = dir.display().to_string();
+            spec.env.push(("XDG_RUNTIME_DIR".into(), dir.clone()));
+            spec.env.push(("TMPDIR".into(), dir));
         }
         Terminal::spawn(spec, &std::env::temp_dir(), Size { columns: 120, lines: 24 }, Arc::new(|| {})).unwrap()
     }
