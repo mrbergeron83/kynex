@@ -90,10 +90,22 @@ line; errors go to stderr with exit code 1.
 knx <folder>                                  # open a folder in the running Kynex (or start on it)
 knx project list | create <folder> | open <folder> | remove <folder>   # projects (tabs)
 knx workspace list | open <folder> | create <branch> | remove <folder> [--force]   # the shown project's checkouts
-knx pane list | split [row|column] | focus <id> | close [id]           # panes of the shown workspace
+knx pane list [--all] | split [row|column] | focus <id> | close [id]   # panes of the shown tab (--all: every workspace)
+knx pane read <id> [--lines N]                # a terminal or agent pane's screen, or its last N lines
+knx pane run <id|new> <command…> [--wait]     # type a command into a shell pane; --wait gives its exit code and output
+knx pane prompt <id> <message…> [--wait] | wait <id>   # agent-CLI panes (codex, opencode…): done or blocked
 knx session list | prompt <id> <message…> [--wait] | read <id> | wait <id>
-knx events                                    # a line per finished turn or session that needs you
+knx events                                    # a line per finished turn, session or agent pane that needs you
 ```
+
+Every wait takes `--timeout <seconds>`. Kynex's terminals start PowerShell and bash with small
+hooks that tell it when a command ends, its exit code and what it printed (nothing is printed or
+changed in your prompt; bash then reads its login files through the hooks script rather than
+`--login`; `KYNEX_NO_SHELL_HOOKS=1` turns them off). A command of several lines answers with
+the last line's exit code. Other shells (zsh, fish) get a
+marker typed after the command instead, which shows in the terminal. An agent rule
+(`<data dir>/agents/*.json`) can set `submit` (the key that sends a message, Enter by default),
+`submit_after_ms` and `start_within_secs`.
 
 A prompt sent this way is a normal message: it runs under the session's permission mode, and
 permission prompts are still answered in Kynex (`--wait` then returns with `"state":"waiting"`).

@@ -33,8 +33,7 @@ impl KynexApp {
             return p.clone();
         }
         // A command's or an agent's pane runs its own program, never the folder's hidden shells.
-        let own =
-            self.tiling_scope().and_then(|(_, ws, _)| self.tiles.get(&ws)?.term_pane(pane).map(|t| !t.is_shell()));
+        let own = self.tiles.get(cwd).and_then(|t| t.term_pane(pane)).map(|t| !t.is_shell());
         if own == Some(true) {
             let panel = Self::new_term_panel(cwd, window, cx);
             self.term_panes.insert(pane, panel.clone());
@@ -79,7 +78,7 @@ impl KynexApp {
 
     /// How much of the tab is above a terminal shown with Ctrl+`: what the old dock's height
     /// leaves.
-    fn terminal_ratio(&self, window: &Window) -> f32 {
+    pub(super) fn terminal_ratio(&self, window: &Window) -> f32 {
         let area = match self.tile_area.get() {
             Some(_) => self.tile_bounds().h,
             None => f32::from(window.viewport_size().height) / self.saved.zoom - 100.,
@@ -217,24 +216,39 @@ impl KynexApp {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let (_, ws, _) = self.tiling_scope()?;
-        let panel = self.term_panel(pane, &ws, window, cx);
-        panel.update(cx, |p, _| p.set_pane(pane));
+        let panel = self.start_terminal_pane(pane, &ws, window, cx);
         let tp = self.tiles.get(&ws).and_then(|t| t.term_pane(pane)).cloned().unwrap_or_default();
+        let body = gpui::div().size_full().child(panel).into_any_element();
+        Some(match &tp.agent {
+            Some(id) => self.render_agent_pane(pane, id, body, cx),
+            None => body,
+        })
+    }
+
+    /// Terminal pane `pane` of workspace `ws` with its program started if it has none yet: a
+    /// shell (with last time's scrollback), its custom command, or its agent. Drawing a pane
+    /// does this, and `knx` for a pane that hasn't been drawn.
+    pub(super) fn start_terminal_pane(
+        &mut self,
+        pane: PaneId,
+        ws: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<TerminalPanel> {
+        let panel = self.term_panel(pane, ws, window, cx);
+        panel.update(cx, |p, _| p.set_pane(pane));
+        let tp = self.tiles.get(ws).and_then(|t| t.term_pane(pane)).cloned().unwrap_or_default();
         if panel.read(cx).is_empty() {
             match (&tp.command, &tp.agent) {
-                (Some(name), _) => self.restart_command_pane(pane, name.clone(), window, cx),
-                (None, Some(_)) => self.restart_agent_pane(pane, window, cx),
+                (Some(name), _) => self.restart_command_pane(pane, name.clone(), ws.to_path_buf(), window, cx),
+                (None, Some(_)) => self.restart_agent_pane(pane, ws.to_path_buf(), window, cx),
                 (None, None) => match tp.history.clone().filter(|_| self.saved.terminal_history) {
                     Some(id) => self.restore_shell(pane, id, window, cx),
                     None => panel.update(cx, |p, cx| p.ensure_open(window, cx)),
                 },
             }
         }
-        let body = gpui::div().size_full().child(panel).into_any_element();
-        Some(match &tp.agent {
-            Some(id) => self.render_agent_pane(pane, id, body, cx),
-            None => body,
-        })
+        panel
     }
 
     /// The old dock was open: the first workspace shown after the update gets its terminal

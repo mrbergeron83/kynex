@@ -43,6 +43,43 @@ pub struct AgentRule {
     /// How to resume, `{id}` standing for the id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_argv: Option<Vec<String>>,
+    /// The key that sends a typed message (`knx pane prompt`), as `enter`, `ctrl-enter`,
+    /// `alt-enter`…; Enter if not said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submit: Option<String>,
+    /// How long after the message is typed the key is pressed, in milliseconds (80 if not said):
+    /// pressed at once, some agents take it as part of the paste.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submit_after_ms: Option<u64>,
+    /// How long it may take to start working on a message before a wait gives up, in seconds
+    /// (120 if not said; agents that start MCP servers first can be slow).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_within_secs: Option<u64>,
+}
+
+impl AgentRule {
+    /// The bytes of its [`submit`](Self::submit) key.
+    pub fn submit_bytes(&self) -> Vec<u8> {
+        let name = self.submit.as_deref().unwrap_or("enter").to_ascii_lowercase();
+        let mut parts: Vec<&str> = name.split('-').collect();
+        let key = parts.pop().unwrap_or("enter");
+        let k = crate::terminal::Key {
+            key,
+            text: None,
+            ctrl: parts.contains(&"ctrl"),
+            alt: parts.contains(&"alt"),
+            shift: parts.contains(&"shift"),
+        };
+        crate::terminal::key_bytes(&k, false).unwrap_or_else(|| b"\r".to_vec())
+    }
+
+    pub fn submit_after(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.submit_after_ms.unwrap_or(80))
+    }
+
+    pub fn start_within(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.start_within_secs.unwrap_or(120))
+    }
 }
 
 /// What the screen says now.
@@ -182,6 +219,20 @@ mod tests {
     }
 
     #[test]
+    fn a_message_is_sent_with_the_rules_key() {
+        let (all, _) = rules(Path::new("/no/such/dir"));
+        let mut rule = all.into_iter().next().unwrap();
+        assert_eq!(rule.submit_bytes(), b"\r");
+        assert_eq!(rule.submit_after(), std::time::Duration::from_millis(80));
+        rule.submit = Some("alt-enter".into());
+        assert_eq!(rule.submit_bytes(), b"\x1b\r");
+        rule.submit = Some("tab".into());
+        assert_eq!(rule.submit_bytes(), b"\t");
+        rule.submit = Some("nonsense".into());
+        assert_eq!(rule.submit_bytes(), b"\r");
+    }
+
+    #[test]
     fn the_built_in_rules_read() {
         let (all, errors) = rules(Path::new("/no/such/dir"));
         assert!(errors.is_empty());
@@ -225,6 +276,9 @@ mod tests {
             done: vec![],
             resume_after: None,
             resume_argv: None,
+            submit: None,
+            submit_after_ms: None,
+            start_within_secs: None,
         };
         assert_eq!(detect(&r, "• Working (3s • esc to interrupt)"), Seen::Working);
         assert_eq!(detect(&r, "allow command?\n  esc to interrupt"), Seen::Blocked, "waiting on you wins");
