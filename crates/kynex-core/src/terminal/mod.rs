@@ -417,10 +417,11 @@ mod tests {
     }
 
     fn spawn(mut spec: ShellSpec) -> Terminal {
-        // CI's Linux names a runtime folder that isn't there; PowerShell's line editor
-        // can't start without one (its history mutex lives there), and the shell falls
-        // back to a plain reader that shows typed lines differently.
-        if std::env::var_os("XDG_RUNTIME_DIR").is_some_and(|d| !std::path::Path::new(&d).is_dir()) {
+        // CI's Linux has no runtime folder (`/run/user/<uid>`, where .NET looks when
+        // XDG_RUNTIME_DIR names none); PowerShell's line editor can't start without one (its
+        // history mutex lives there), and the shell falls back to a plain reader that shows
+        // typed lines differently.
+        if cfg!(unix) && std::env::var_os("XDG_RUNTIME_DIR").is_none_or(|d| !std::path::Path::new(&d).is_dir()) {
             spec.env.push(("XDG_RUNTIME_DIR".into(), std::env::temp_dir().display().to_string()));
         }
         Terminal::spawn(spec, &std::env::temp_dir(), Size { columns: 120, lines: 24 }, Arc::new(|| {})).unwrap()
@@ -474,7 +475,12 @@ mod tests {
                 let m = after(m.prompts);
                 term.run("Get-Item no-such-kynex-file");
                 after(m.prompts);
-                assert!(term.screen_text().contains("ok=False >"), "{}", term.screen_text());
+                // The mark comes as the prompt starts; its text is drawn just after.
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while !term.screen_text().contains("ok=False >") {
+                    assert!(Instant::now() < deadline, "{}", term.screen_text());
+                    std::thread::sleep(Duration::from_millis(50));
+                }
             }
             assert!(!term.title().unwrap_or_default().contains("knx-"));
         }
