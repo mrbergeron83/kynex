@@ -141,6 +141,8 @@ pub struct Saved {
     pub openrouter: kynex_core::openrouter::OpenRouterConfig,
     /// The sessions panel splits ungrouped sessions by provider, under a header each.
     pub sessions_by_provider: bool,
+    /// The sessions tree shows archived sessions (dimmed, last under their workspace).
+    pub sessions_show_archived: bool,
     /// Grok is offered as a provider (Settings → Providers); off until opted in.
     pub grok: bool,
     /// A setup check has passed here before, so the next launch shows the
@@ -196,6 +198,7 @@ impl Default for Saved {
             sleep_after: SleepAfter::default(),
             openrouter: Default::default(),
             sessions_by_provider: false,
+            sessions_show_archived: false,
             grok: false,
             setup_checked: false,
         }

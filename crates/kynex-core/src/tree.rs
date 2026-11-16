@@ -1,15 +1,16 @@
 //! The sidebar's tree: each workspace of a project a row that folds, and under it its
 //! sessions in sections. This module has the rules for what shows where; the app draws it.
 //!
-//! Under a workspace, in order:
+//! Under a workspace, in order, with no headers but the groups' (the workspace row is
+//! what tells sessions apart):
 //!
 //! 1. **Pinned**, in the order they were pinned (or dragged into).
 //! 2. **Recent**, newest first: open sessions, and those used in the last
 //!    [`RECENT_FOR`]; never fewer than the newest [`RECENT_AT_LEAST`]. New sessions
 //!    with no transcript listed yet come first.
 //! 3. The **groups**, in their order, each folded or open.
-//! 4. **Older**, folded until opened by hand: everything else, newest first.
-//! 5. **Archived**, folded.
+//! 4. **Older**: everything else, newest first, behind a "Show N more" row.
+//! 5. **Archived**: left out unless "Show archived" is on; then last, dimmed.
 //!
 //! Which workspaces are open: the selected one, and those opened by hand
 //! ([`SessionGroups::tree_open`], kept with the workspace's sessions). While the title
@@ -80,12 +81,6 @@ impl Sections {
             out.push(Section::Archived);
         }
         out
-    }
-
-    /// Whether to draw section headers: only with more than one section to tell apart.
-    /// Groups, Older and Archived always have theirs, since they fold.
-    pub fn headers(&self) -> bool {
-        self.non_empty().len() > 1
     }
 
     /// A section's rows.
@@ -165,24 +160,26 @@ pub fn sections(
 #[derive(Clone, Copy, Debug)]
 pub struct View<'a> {
     pub groups: &'a SessionGroups,
-    /// Its Archived section is open (not saved: it starts folded).
-    pub archived_open: bool,
+    /// "Show archived" is on: archived sessions are drawn, last.
+    pub show_archived: bool,
     /// The title filter has a query.
     pub filtering: bool,
 }
 
 impl View<'_> {
     /// Whether section `s`, holding `rows` rows, draws them. While filtering, every section
-    /// with a match does.
+    /// with a match does, but archived ones only with "Show archived" on.
     pub fn is_open(&self, s: Section, rows: usize) -> bool {
+        if s == Section::Archived {
+            return self.show_archived && rows > 0;
+        }
         if self.filtering {
             return rows > 0;
         }
         match s {
-            Section::Pinned | Section::Recent => true,
+            Section::Pinned | Section::Recent | Section::Archived => true,
             Section::Group(i) => !self.groups.groups.get(i).is_some_and(|g| g.collapsed),
             Section::Older => self.groups.older_open,
-            Section::Archived => self.archived_open,
         }
     }
 
@@ -328,9 +325,9 @@ mod tests {
         // Saved ids of sessions that aren't listed are left out.
         g.toggle_pin("deleted");
         let s = sections(&g, &[], &[], &[], now());
-        assert!(s.is_empty() && s.non_empty().is_empty() && !s.headers());
+        assert!(s.is_empty() && s.non_empty().is_empty());
         assert_eq!(s.groups, [Vec::<String>::new()]);
-        assert!(View { groups: &g, archived_open: true, filtering: false }.drawn(&s).is_empty());
+        assert!(View { groups: &g, show_archived: true, filtering: false }.drawn(&s).is_empty());
     }
 
     #[test]
@@ -344,12 +341,11 @@ mod tests {
         let mut l = listed(&[("ga", 0), ("gb", 0), ("arch", 0), ("r1", 0), ("r2", 1), ("r3", 1), ("r4", 2), ("r5", 3)]);
         l.extend(listed(&[("old", 60)]));
         let s = sections(&g, &l, &[], &[], now());
-        assert!(s.headers());
-        let view = View { groups: &g, archived_open: false, filtering: false };
+        let view = View { groups: &g, show_archived: false, filtering: false };
         // Group B folded, Older and Archived folded.
         assert_eq!(view.drawn(&s), ids(&["r1", "r2", "r3", "r4", "r5", "ga"]));
         g.older_open = true;
-        let view = View { groups: &g, archived_open: true, filtering: false };
+        let view = View { groups: &g, show_archived: true, filtering: false };
         assert_eq!(view.drawn(&s), ids(&["r1", "r2", "r3", "r4", "r5", "ga", "old", "arch"]));
     }
 
@@ -368,9 +364,12 @@ mod tests {
         s.retain(|id| matches("FIX", id));
         assert_eq!(s.recent, Vec::<String>::new());
         assert_eq!(s.older, ids(&["fix old"]));
-        let view = View { groups: &g, archived_open: false, filtering: true };
+        let view = View { groups: &g, show_archived: false, filtering: true };
         assert!(view.is_open(Section::Group(i), 1) && !view.is_open(Section::Recent, 0));
-        assert_eq!(view.drawn(&s), ids(&["fix grouped", "fix old", "fix archived"]));
+        // Archived ones stay out of a search unless "Show archived" is on.
+        assert_eq!(view.drawn(&s), ids(&["fix grouped", "fix old"]));
+        let shown = View { show_archived: true, ..view };
+        assert_eq!(shown.drawn(&s), ids(&["fix grouped", "fix old", "fix archived"]));
         // The folded state is untouched: closing the filter puts it back.
         let view = View { filtering: false, ..view };
         assert!(view.drawn(&s).is_empty());

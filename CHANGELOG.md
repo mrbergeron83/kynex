@@ -10,6 +10,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `knx` drives terminal and agent-CLI panes: `knx pane read <id> [--lines N]` returns what a pane shows, `knx pane run <id|new> <command> [--wait]` types a command into a shell pane (or a new one) and with `--wait` answers with its exit code and what it printed, and `knx pane prompt <id> <message> [--wait]` / `knx pane wait <id>` send a message to an agent pane (codex, opencode…) and wait until it's done or blocked. Panes in other workspaces and tabs work too (one never shown is started), `knx pane list --all` lists them, every wait takes `--timeout <seconds>`, and `knx events` tells when an agent pane finishes or wants you.
 - Terminals start PowerShell and bash with small hooks that tell Kynex when a command ends, how, and what it printed; nothing shows in the terminal. `KYNEX_NO_SHELL_HOOKS=1` turns them off.
 - An agent rule can say which key sends a message (`submit`), how long after typing it's pressed, and how long the agent may take to start.
+## [0.0.30] - 2026-11-14
+
+### Changed
+
+- The sessions tree drops its Pinned / Recent / Older / Archived headers: under each workspace, pinned sessions come first and the rest newest first, with older ones behind a "Show N more" row. Archived sessions are hidden unless "Show archived" is on in the panel's menu; then they're last, dimmed. Workspace rows have a line between them and, folded, how many sessions they hold.
+
+### Fixed
+
+- The session header's "working in" chip no longer follows a command that only looks into another worktree (`cd` there to read its log, `ls`, `cat`…): only edits and commands that change something move it.
+- One pane layout for every project and workspace: switching keeps the panes, their sizes and the tool panes where they are, and only swaps in that workspace's sessions.
 
 ## [0.0.29] - 2026-11-14
 
@@ -957,7 +967,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.29...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.30...HEAD
+[0.0.30]: https://github.com/mrbergeron83/kynex/compare/v0.0.29...v0.0.30
 [0.0.29]: https://github.com/mrbergeron83/kynex/compare/v0.0.28...v0.0.29
 [0.0.28]: https://github.com/mrbergeron83/kynex/compare/v0.0.27...v0.0.28
 [0.0.27]: https://github.com/mrbergeron83/kynex/compare/v0.0.26...v0.0.27
