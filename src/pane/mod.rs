@@ -7,6 +7,8 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use gpui::{Bounds, Entity, Pixels};
+use kynex_core::composer::input_mode::InputMode;
+use kynex_core::composer::paste::Pastes;
 use kynex_core::live::Key;
 use kynex_core::session::Attachment;
 
@@ -51,6 +53,12 @@ pub struct SessionPane {
     pub(crate) prompt_exit: Leaving<Entity<PromptView>>,
     /// Ctrl+O: every tool call in the transcript shown open.
     pub(crate) expand_tools: bool,
+    /// The composer's mode: a prompt, or `!` shell, `#` memory, `?` shortcuts.
+    pub(crate) input_mode: InputMode,
+    /// The composer's text as of its last change, to tell what a change did.
+    pub(crate) last_text: String,
+    /// Long pastes folded into chips in the composer.
+    pub(crate) pastes: Pastes,
 }
 
 impl SessionPane {
@@ -70,6 +78,9 @@ impl SessionPane {
             prompt: None,
             prompt_exit: Leaving::new(QUICK),
             expand_tools: false,
+            input_mode: InputMode::Prompt,
+            last_text: String::new(),
+            pastes: Pastes::default(),
         }
     }
 

@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The composer takes the CLI's input modes: `!` runs a shell command in the session's folder (shown in the transcript, sent to Claude with your next message, and back on resume), `#` adds a line to CLAUDE.md, CLAUDE.local.md or ~/.claude/CLAUDE.md, and `?` in an empty composer shows its shortcuts. Backspace or Esc in the empty field leaves a mode.
+- Long pastes (10 lines or 1,000 characters) fold into a `[Pasted text #1 +120 lines]` chip that sends in full; click it to put the text back.
+- A Thinking switch beside effort (Alt+T), per project and live on running sessions. `ultrathink` is coloured while the CLI says it raises the turn's effort.
+- Bypass permissions, when turned on in Settings → General, joins the mode list and Shift+Tab, with the composer in the error colour while it's on.
+
 ## [0.0.30] - 2026-11-14
 
 ### Changed

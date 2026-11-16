@@ -145,6 +145,8 @@ pub struct Saved {
     pub sessions_show_archived: bool,
     /// Grok is offered as a provider (Settings → Providers); off until opted in.
     pub grok: bool,
+    /// Bypass permissions joins the composer's mode cycle (`--allow-dangerously-skip-permissions`).
+    pub allow_bypass: bool,
     /// A setup check has passed here before, so the next launch shows the
     /// workspace while it checks again, rather than "Checking Claude Code…".
     pub setup_checked: bool,
@@ -186,6 +188,7 @@ impl Default for Saved {
             delegate: true,
             notify: false,
             sounds: false,
+            allow_bypass: false,
             shortcuts_stamped: false,
             icons_shown_for: None,
             column: ColumnWidth::default(),

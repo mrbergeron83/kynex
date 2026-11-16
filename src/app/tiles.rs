@@ -39,7 +39,7 @@ const UNMEASURED: Rect = Rect { x: 0.0, y: 0.0, w: 4000.0, h: 4000.0 };
 impl KynexApp {
     /// A message box for pane `id`: sending, pasting and focusing it act on that pane.
     pub(super) fn new_composer(id: PaneId, window: &mut Window, cx: &mut Context<Self>) -> Entity<TextInput> {
-        let composer = cx.new(|cx| TextInput::new(cx).multiline());
+        let composer = cx.new(|cx| TextInput::new(cx).multiline().fold_pastes());
         cx.subscribe_in(&composer, window, move |this, _, ev, window, cx| match ev {
             InputEvent::Submit => {
                 this.focus_pane(id, window, cx);
@@ -54,6 +54,16 @@ impl KynexApp {
             InputEvent::Changed => {
                 if this.pane_id == id {
                     this.warm_shown();
+                    this.composer_changed(cx);
+                }
+            }
+            InputEvent::PasteFolded(text) => {
+                this.focus_pane(id, window, cx);
+                this.fold_paste(text.clone(), cx);
+            }
+            InputEvent::MarkClicked(range) => {
+                if this.pane_id == id {
+                    this.expand_chip(range.clone(), cx);
                 }
             }
         })

@@ -148,10 +148,44 @@ pub enum Mode {
     Auto,
     /// Read-only research, then propose a plan for approval.
     Plan,
+    /// Skip every permission check (`bypassPermissions`). Only in the cycle when
+    /// turned on in Settings, as the CLI needs `--allow-dangerously-skip-permissions`.
+    #[serde(rename = "bypassPermissions")]
+    Bypass,
+}
+
+/// Whether bypass mode may be used: the app's setting, read when a process starts.
+static BYPASS_ALLOWED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Turns bypass mode on or off for the processes started from now on (the app's setting).
+pub fn set_bypass_allowed(on: bool) {
+    BYPASS_ALLOWED.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether bypass mode is turned on in Settings.
+pub fn bypass_allowed() -> bool {
+    BYPASS_ALLOWED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Mode {
+    /// The modes a project starts in and Shift+Tab goes through; [`Mode::Bypass`] joins
+    /// the cycle only when it's allowed ([`Mode::cycle`]).
     pub const ALL: [Mode; 4] = [Mode::Manual, Mode::AcceptEdits, Mode::Auto, Mode::Plan];
+
+    /// The modes to pick from: [`Self::ALL`], and bypass when `bypass` is allowed.
+    pub fn choices(bypass: bool) -> Vec<Mode> {
+        let mut all = Self::ALL.to_vec();
+        if bypass {
+            all.push(Mode::Bypass);
+        }
+        all
+    }
+
+    /// The mode after this one in the Shift+Tab cycle; bypass is in it when `bypass`.
+    pub fn cycle(self, bypass: bool) -> Mode {
+        let all = Self::choices(bypass);
+        all.iter().position(|m| *m == self).map_or(all[0], |i| all[(i + 1) % all.len()])
+    }
 
     pub fn cli(self) -> &'static str {
         match self {
@@ -159,11 +193,12 @@ impl Mode {
             Mode::AcceptEdits => "acceptEdits",
             Mode::Auto => "auto",
             Mode::Plan => "plan",
+            Mode::Bypass => "bypassPermissions",
         }
     }
 
     pub fn from_cli(s: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|m| m.cli() == s).or((s == "default").then_some(Mode::Manual))
+        Self::choices(true).into_iter().find(|m| m.cli() == s).or((s == "default").then_some(Mode::Manual))
     }
 
     pub fn label(self) -> &'static str {
@@ -172,6 +207,7 @@ impl Mode {
             Mode::AcceptEdits => "Accept edits",
             Mode::Auto => "Auto",
             Mode::Plan => "Plan",
+            Mode::Bypass => "Bypass",
         }
     }
 
@@ -181,6 +217,7 @@ impl Mode {
             Mode::AcceptEdits => "Edit files without asking; ask for other tools",
             Mode::Auto => "Approve safe actions automatically; ask about risky ones",
             Mode::Plan => "Research read-only, then propose a plan for you to approve",
+            Mode::Bypass => "Skip every permission check: Claude runs anything without asking",
         }
     }
 }
@@ -228,6 +265,9 @@ pub struct ClaudeSettings {
     /// The model its new Grok sessions start on; empty is Grok's default.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub grok_model: String,
+    /// Thinking turned off for this project's sessions (the composer's switch).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub thinking_off: bool,
 }
 
 impl ClaudeSettings {
@@ -464,12 +504,23 @@ mod tests {
 
     #[test]
     fn modes_round_trip_cli_names() {
-        for m in Mode::ALL {
+        for m in Mode::choices(true) {
             assert_eq!(Mode::from_cli(m.cli()), Some(m));
             assert_eq!(serde_json::to_value(m).unwrap(), m.cli());
         }
         assert_eq!(Mode::from_cli("default"), Some(Mode::Manual));
         assert_eq!(ClaudeSettings::default().mode, Mode::Auto);
+    }
+
+    #[test]
+    fn bypass_joins_the_cycle_only_when_allowed() {
+        assert_eq!(Mode::Plan.cycle(false), Mode::Manual);
+        assert_eq!(Mode::Plan.cycle(true), Mode::Bypass);
+        assert_eq!(Mode::Bypass.cycle(true), Mode::Manual);
+        // Bypass turned off while on it: back to the start.
+        assert_eq!(Mode::Bypass.cycle(false), Mode::Manual);
+        assert_eq!(Mode::Manual.cycle(true), Mode::AcceptEdits);
+        assert!(!Mode::choices(false).contains(&Mode::Bypass));
     }
 
     #[test]

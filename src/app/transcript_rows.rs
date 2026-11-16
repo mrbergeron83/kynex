@@ -287,6 +287,7 @@ impl KynexApp {
                     .into_any_element()
             }
             Item::Task(n) => self.render_task_notice(ix, n, cx),
+            Item::Shell(run) => self.render_shell_run(key, ix, run, cx),
             Item::Error(e) => div()
                 .px_1()
                 .text_sm()

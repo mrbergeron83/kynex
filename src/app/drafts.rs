@@ -38,6 +38,8 @@ impl KynexApp {
                 self.stash_draft(cx);
                 let draft = self.drafts.remove(&key).unwrap_or_default();
                 let text = self.saved.drafts.remove(&key).unwrap_or(draft.text);
+                // A `!` or `#` draft comes back in its mode.
+                self.reset_input_mode();
                 self.pane.composer.update(cx, |c, cx| c.set_text(text, cx));
                 self.pane.attachments = draft.attachments;
                 self.pane.draft_for = Some((uid, key));
@@ -48,7 +50,9 @@ impl KynexApp {
     /// Puts the shown session's draft aside, and saves its text.
     pub(super) fn stash_draft(&mut self, cx: &mut Context<Self>) {
         let Some((_, key)) = self.pane.draft_for.take() else { return };
-        let text = self.pane.composer.read(cx).text().to_string();
+        // Chips go in full and the mode as its character, so nothing is lost.
+        let raw = self.pane.composer.read(cx).text().to_string();
+        let text = self.pane.input_mode.prefixed(&self.pane.pastes.expand(&raw));
         let attachments = std::mem::take(&mut self.pane.attachments);
         if !key.starts_with('#') {
             if text.trim().is_empty() {

@@ -10,6 +10,7 @@ use gpui::{
     PathPromptOptions, SharedString, Window, canvas, deferred, div, img, prelude::*,
 };
 use kynex_core::attach::{is_image, prepare_image};
+use kynex_core::composer::input_mode::{InputMode, Submit};
 use kynex_core::live::Key;
 use kynex_core::project::{self, Mode};
 use kynex_core::session::{Attachment, Kind, Session};
@@ -35,14 +36,26 @@ impl KynexApp {
     /// Sends the composer's message on the session `key` (queued while it works).
     fn send_to(&mut self, key: Option<Key>, _window: &mut Window, cx: &mut Context<Self>) {
         let busy = key.and_then(|k| self.session_for(k)).is_some_and(|s| s.busy);
-        let text = self.pane.composer.read(cx).text().trim().to_string();
+        let raw = self.pane.composer.read(cx).text().to_string();
         self.pane.slash.dismissed = None;
         self.pane.mentions.dismissed = None;
         self.pane.last_esc = None;
+        // `!` runs a command, `#` asks where the note goes; pastes go in full.
+        let text = match self.take_submit(&raw) {
+            (_, Submit::Send(text)) => text,
+            (mode, Submit::Shell(command)) => {
+                self.remember_sent(&mode.prefixed(&command), cx);
+                return self.run_shell(key, command, cx);
+            }
+            (_, Submit::Memory(_)) => return self.ask_memory(cx),
+            (_, Submit::Nothing) => return,
+        };
+        let pasted = self.pane.composer.read(cx).pasted() || !self.pane.pastes.is_empty();
         self.remember_sent(&text, cx);
         // Built-ins Kynex runs itself (`/clear`, `/model`…) work even mid-reply.
         if self.pane.attachments.is_empty() && self.run_command(&text, cx) {
             self.pane.composer.update(cx, |c, cx| c.set_text("", cx));
+            self.reset_input_mode();
             return;
         }
         if text.is_empty() && self.pane.attachments.is_empty() {
@@ -57,9 +70,12 @@ impl KynexApp {
         let key = key.or_else(|| self.session_mut().map(|s| s.uid));
         if let Some(s) = key.and_then(|k| self.session_for(k)) {
             s.use_model(model);
-            s.send(text, atts);
+            // Typed, not pasted: the CLI may run the turn at extra-high effort.
+            let ultrathink = s.ultrathink.typed(&text, pasted);
+            s.send_with(text, atts, ultrathink);
         }
         self.pane.composer.update(cx, |c, cx| c.set_text("", cx));
+        self.reset_input_mode();
         self.follow_tail(cx);
         cx.notify();
     }
@@ -173,6 +189,7 @@ impl KynexApp {
         self.pane.slash.shown = None;
         let popup = match () {
             _ if self.pane.prompt.is_some() => None,
+            _ if self.pane.input_mode == InputMode::Shortcuts => Some(self.render_shortcuts_card(cx)),
             _ if self.rewinding() => self.render_rewind(cx),
             _ if self.history_searching() => self.render_history_search(cx),
             _ => self.render_slash(cx).or_else(|| self.render_mentions(cx)),
@@ -194,8 +211,12 @@ impl KynexApp {
             let layer = div().absolute().inset_0().p_3().rounded_lg().overflow_hidden().bg(t.panel).child(view);
             fade("prompt-out", layer, motion::QUICK, Some(gone))
         });
+        self.mark_composer(key, cx);
         let this = cx.entity().downgrade();
-        let colour = self.active_colour(&t);
+        // Bypass permissions, then the composer's mode, outrank the project's colour.
+        let bypass = key.and_then(|k| self.session_by_key(k)).is_some_and(|s| s.mode == Mode::Bypass);
+        let mode_colour = super::input_modes::mode_colour(self.pane.input_mode, &t);
+        let colour = if bypass { Some(t.error) } else { mode_colour.or(self.active_colour(&t)) };
         let shell = |child: AnyElement, focused: bool, needs_you: bool| {
             div().w_full().flex().justify_center().px_6().pb_4().pt_1().child(
                 div()
@@ -301,7 +322,10 @@ impl KynexApp {
             "Model for chats; applies from the next session start"
         };
         let in_project = matches!(self.saved.active, Active::Project(_));
-        let placeholder = if self.rewinding() {
+        let input_mode = self.pane.input_mode;
+        let placeholder = if input_mode != InputMode::Prompt {
+            input_mode.placeholder()
+        } else if self.rewinding() {
             "Pick a message to go back to · Esc to cancel"
         } else if self.history_searching() {
             "Search what you've sent…"
@@ -313,6 +337,8 @@ impl KynexApp {
             "Message Claude…"
         };
         self.pane.composer.update(cx, |c, _| c.set_placeholder(placeholder));
+        let mode_badge = self.render_mode_badge(cx);
+        let thinking = effort_label.as_ref().and_then(|_| self.render_thinking_chip(cx));
         let focused = self.pane.composer.read(cx).is_focused(window);
         let has_message = !self.pane.composer.read(cx).text().trim().is_empty() || !self.pane.attachments.is_empty();
         let can_send = !busy && has_message;
@@ -461,11 +487,18 @@ impl KynexApp {
                     cx.stop_propagation();
                 }
             }))
+            // Backspace in the empty field leaves `!`, `#` or `?`.
+            .capture_action(cx.listener(|this, _: &input::Backspace, _, cx| {
+                if this.leave_input_mode(cx) {
+                    cx.stop_propagation();
+                }
+            }))
             .capture_action(cx.listener(|this, _: &Interrupt, _, cx| {
                 if this.rewind_back(cx)
                     || this.cancel_history_search(cx)
                     || this.slash_dismiss(cx)
                     || this.mention_dismiss(cx)
+                    || this.leave_input_mode(cx)
                     || this.double_esc(cx)
                 {
                     cx.stop_propagation();
@@ -494,6 +527,7 @@ impl KynexApp {
                 }
             }))
             .when(!self.pane.attachments.is_empty(), |d| d.child(attachments))
+            .children(mode_badge)
             .child(
                 div()
                     .id("composer-scroll")
@@ -594,10 +628,15 @@ impl KynexApp {
                                 this.open_menu(Menu::Effort, ev.position(), Anchor::BottomLeft, cx)
                             }))
                     }))
+                    .children(thinking)
                     .when_some(mode, |d, mode| {
                         d.child(
                             ghost_button("mode", cx)
-                                .text_color(if mode == Mode::Plan { t.info } else { t.text_muted })
+                                .text_color(match mode {
+                                    Mode::Plan => t.info,
+                                    Mode::Bypass => t.error,
+                                    _ => t.text_muted,
+                                })
                                 .child(mode.label())
                                 .child(icon(Icon::ChevronDown, t.text_placeholder).size_3())
                                 .tooltip(Tooltip::for_action(mode.help(), CycleMode, "next mode"))

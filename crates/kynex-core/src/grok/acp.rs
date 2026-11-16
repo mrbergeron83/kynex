@@ -493,7 +493,7 @@ impl Acp {
         let options = p["options"].as_array().cloned().unwrap_or_default();
         let call = &p["toolCall"];
         let kind = call["kind"].as_str().or(call["_meta"]["x.ai/tool"]["kind"].as_str()).unwrap_or("");
-        if kind == "edit" && matches!(self.mode, Mode::AcceptEdits | Mode::Auto) {
+        if self.mode == Mode::Bypass || (kind == "edit" && matches!(self.mode, Mode::AcceptEdits | Mode::Auto)) {
             return vec![Out::Write(choose(v["id"].clone(), &options, &["allow_once", "allow_always"]))];
         }
         let request_id = format!("acp-{}", v["id"]);

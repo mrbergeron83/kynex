@@ -51,6 +51,9 @@
 //! | `git_file_modal.rs` | the Git pane's modals: a file's whole diff, a commit |
 //! | `scratch_modal.rs`  | the file explorer in a modal: session or project     |
 //! | `composer.rs`       | message box, attachments, pickers, send / stop       |
+//! | `input_modes.rs`    | its `!` / `#` / `?` modes, paste chips, `ultrathink`, the `?` card |
+//! | `shell_runs.rs`     | `!` commands run and shown, `#` notes to a memory file |
+//! | `thinking.rs`       | the thinking switch, bypass permissions' setting     |
 //! | `drafts.rs`         | each session's unsent message, kept across switches  |
 //! | `queue.rs`          | messages queued while Claude works, Send now         |
 //! | `handoff.rs`        | "waiting for you in the browser" banner, Continue    |
@@ -123,6 +126,7 @@ mod goto;
 mod grok_setup;
 mod handoff;
 pub(crate) mod history;
+mod input_modes;
 mod keys;
 mod layout;
 mod layout_history;
@@ -158,6 +162,7 @@ mod session_tree;
 mod sessions_panel;
 mod settings;
 mod setup;
+mod shell_runs;
 pub(crate) mod slash;
 mod state;
 mod status;
@@ -165,6 +170,7 @@ mod storage;
 mod storage_list;
 mod tasks;
 mod terminal_panes;
+mod thinking;
 mod tiles;
 pub(crate) mod timeline;
 mod title_bar;

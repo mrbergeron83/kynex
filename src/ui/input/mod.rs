@@ -6,15 +6,15 @@
 use std::ops::Range;
 
 use gpui::{
-    App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, Image, KeyBinding, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ScrollHandle, SharedString,
-    Style, TextRun, UTF16Selection, UnderlineStyle, Window, WrappedLine, actions, div, fill, point, prelude::*, px,
-    relative, size,
+    App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, EntityInputHandler, EventEmitter, FocusHandle,
+    Focusable, Hsla, Image, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    ScrollHandle, SharedString, UTF16Selection, Window, actions, div, point, prelude::*, px,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::theme::theme;
+mod element;
+
+use element::{Layout, TextElement};
 
 actions!(
     input,
@@ -97,6 +97,22 @@ pub enum InputEvent {
     Submit,
     /// Paste with an image on the clipboard: the owner decides what to do with it.
     PasteImages(Vec<Image>),
+    /// A paste long enough to fold ([`TextInput::fold_pastes`]): the owner puts
+    /// something in its place with [`TextInput::insert`].
+    PasteFolded(String),
+    /// A click on an atomic [`Mark`] (these bytes of the text).
+    MarkClicked(Range<usize>),
+}
+
+/// Text the owner colours: a keyword, or a chip that stands for more.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mark {
+    pub range: Range<usize>,
+    pub color: Hsla,
+    pub background: Option<Hsla>,
+    /// Deleted as a whole by Backspace / Delete, and clicking it says so
+    /// ([`InputEvent::MarkClicked`]) instead of placing the cursor.
+    pub atomic: bool,
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
@@ -122,47 +138,12 @@ pub struct TextInput {
     /// The cursor and text length last scrolled into view; the view follows
     /// the cursor only when one of them changes, so the wheel stays free.
     revealed: Option<(usize, usize)>,
-}
-
-/// The shaped text: one wrapped line per `\n`-separated line, with the byte
-/// offset each starts at.
-struct Layout {
-    lines: Vec<WrappedLine>,
-    starts: Vec<usize>,
-    line_height: Pixels,
-}
-
-impl Layout {
-    fn line_for_offset(&self, offset: usize) -> usize {
-        self.starts.partition_point(|&s| s <= offset).saturating_sub(1)
-    }
-
-    fn line_top(&self, ix: usize) -> Pixels {
-        self.lines[..ix].iter().map(|l| l.size(self.line_height).height).sum()
-    }
-
-    fn position_for_offset(&self, offset: usize) -> Point<Pixels> {
-        let ix = self.line_for_offset(offset);
-        let local = offset - self.starts[ix];
-        let p = self.lines[ix].position_for_index(local, self.line_height).unwrap_or_default();
-        point(p.x, p.y + self.line_top(ix))
-    }
-
-    fn offset_for_position(&self, position: Point<Pixels>) -> usize {
-        let mut top = px(0.);
-        for (ix, line) in self.lines.iter().enumerate() {
-            let height = line.size(self.line_height).height;
-            if position.y < top + height || ix == self.lines.len() - 1 {
-                let local = point(position.x, (position.y - top).max(px(0.)).min(height - px(0.5)));
-                let i = match line.closest_index_for_position(local, self.line_height) {
-                    Ok(i) | Err(i) => i,
-                };
-                return self.starts[ix] + i;
-            }
-            top += height;
-        }
-        0
-    }
+    /// What the owner colours; ranges that no longer fit the text are left out.
+    marks: Vec<Mark>,
+    /// Long pastes go to the owner ([`InputEvent::PasteFolded`]) instead of in.
+    fold_pastes: bool,
+    /// Text was pasted since the field was last set.
+    pasted: bool,
 }
 
 impl TextInput {
@@ -183,7 +164,40 @@ impl TextInput {
             is_selecting: false,
             scroll: ScrollHandle::new(),
             revealed: None,
+            marks: Vec::new(),
+            fold_pastes: false,
+            pasted: false,
         }
+    }
+
+    /// Long pastes ([`kynex_core::composer::paste::folds`]) go to the owner to fold.
+    pub fn fold_pastes(mut self) -> Self {
+        self.fold_pastes = true;
+        self
+    }
+
+    /// Colours parts of the text; see [`Mark`]. Set again whenever the text changes.
+    pub fn set_marks(&mut self, marks: Vec<Mark>) {
+        self.marks = marks;
+    }
+
+    /// Whether text was pasted since the field was last set.
+    pub fn pasted(&self) -> bool {
+        self.pasted
+    }
+
+    /// Puts `text` where the cursor is, over any selection.
+    pub fn insert(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.replace(self.selected_range.clone(), text, cx);
+    }
+
+    /// The atomic mark `offset` falls in: strictly inside, or (`edge`) at its end too.
+    fn atomic_at(&self, offset: usize, edge: bool) -> Option<Range<usize>> {
+        self.marks
+            .iter()
+            .filter(|m| m.atomic && m.range.end <= self.content.len())
+            .map(|m| m.range.clone())
+            .find(|r| r.start < offset && (offset < r.end || (edge && offset == r.end)))
     }
 
     /// For the scroll area around a multi-line field (`track_scroll`), which
@@ -229,6 +243,7 @@ impl TextInput {
 
     pub fn set_text(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
         self.content = text.into();
+        self.pasted = false;
         let end = self.content.len();
         self.selected_range = end..end;
         self.selection_reversed = false;
@@ -380,7 +395,10 @@ impl TextInput {
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            self.select_to(self.previous_boundary(self.cursor_offset()), window, cx)
+            match self.atomic_at(self.cursor_offset(), true) {
+                Some(chip) => self.selected_range = chip,
+                None => self.select_to(self.previous_boundary(self.cursor_offset()), window, cx),
+            }
         }
         self.replace_text_in_range(None, "", window, cx)
     }
@@ -394,7 +412,10 @@ impl TextInput {
 
     fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            self.select_to(self.next_boundary(self.cursor_offset()), window, cx)
+            match self.atomic_at(self.cursor_offset() + 1, false) {
+                Some(chip) => self.selected_range = chip,
+                None => self.select_to(self.next_boundary(self.cursor_offset()), window, cx),
+            }
         }
         self.replace_text_in_range(None, "", window, cx)
     }
@@ -419,6 +440,13 @@ impl TextInput {
     fn on_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.is_selecting = true;
         let offset = self.index_for_mouse_position(event.position);
+        if !event.modifiers.shift
+            && let Some(chip) = self.atomic_at(offset, false)
+        {
+            self.is_selecting = false;
+            cx.emit(InputEvent::MarkClicked(chip));
+            return;
+        }
         if event.click_count >= 2 {
             let (start, end) = self.word_at(offset);
             self.move_to(start, window, cx);
@@ -456,6 +484,11 @@ impl TextInput {
         }
         if let Some(text) = item.text() {
             let text = text.replace("\r\n", "\n");
+            self.pasted = true;
+            if self.fold_pastes && self.multiline && kynex_core::composer::paste::folds(&text) {
+                cx.emit(InputEvent::PasteFolded(text));
+                return;
+            }
             let text = if self.multiline { text } else { text.replace('\n', " ") };
             self.replace_text_in_range(None, &text, window, cx);
         }
@@ -717,244 +750,6 @@ impl EntityInputHandler for TextInput {
         let local = self.last_bounds?.localize(&point)?;
         let layout = self.last_layout.as_ref()?;
         Some(self.offset_to_utf16(layout.offset_for_position(local)))
-    }
-}
-
-struct TextElement {
-    input: Entity<TextInput>,
-}
-
-struct PrepaintState {
-    layout: Option<Layout>,
-    cursor: Option<PaintQuad>,
-    selections: Vec<PaintQuad>,
-}
-
-impl IntoElement for TextElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
-/// What to show and how: the text (or placeholder when empty) and its runs.
-fn display_runs(input: &TextInput, window: &Window, cx: &App) -> (SharedString, Vec<TextRun>) {
-    let style = window.text_style();
-    let (text, color): (SharedString, _) = if input.content.is_empty() {
-        (input.placeholder.clone(), theme(cx).text_placeholder)
-    } else {
-        (input.shown().into(), style.color)
-    };
-    let run = TextRun {
-        len: text.len(),
-        font: style.font(),
-        color,
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    let runs = match input.marked_range.as_ref().filter(|_| !input.content.is_empty()) {
-        Some(marked) => [
-            TextRun { len: marked.start, ..run.clone() },
-            TextRun {
-                len: marked.end - marked.start,
-                underline: Some(UnderlineStyle { color: Some(run.color), thickness: px(1.0), wavy: false }),
-                ..run.clone()
-            },
-            TextRun { len: text.len() - marked.end, ..run },
-        ]
-        .into_iter()
-        .filter(|run| run.len > 0)
-        .collect(),
-        None => vec![run],
-    };
-    (text, runs)
-}
-
-/// The font size and line height in effect, read where the field's text
-/// style applies (not inside a layout measure, which runs outside it).
-fn metrics(window: &Window) -> (Pixels, Pixels) {
-    (window.text_style().font_size.to_pixels(window.rem_size()), window.line_height())
-}
-
-fn shape(
-    text: SharedString,
-    runs: &[TextRun],
-    width: Option<Pixels>,
-    metrics: (Pixels, Pixels),
-    window: &Window,
-) -> Layout {
-    let (font_size, line_height) = metrics;
-    let lines: Vec<WrappedLine> = window
-        .text_system()
-        .shape_text(text.clone(), font_size, runs, width, None)
-        .map(|l| l.into_vec())
-        .unwrap_or_default();
-    let mut starts = Vec::with_capacity(lines.len());
-    let mut at = 0;
-    for line in &lines {
-        starts.push(at);
-        at += line.len() + 1;
-    }
-    if lines.is_empty() {
-        starts.push(0);
-    }
-    Layout { lines, starts, line_height }
-}
-
-impl Element for TextElement {
-    type RequestLayoutState = ();
-    type PrepaintState = PrepaintState;
-
-    fn id(&self) -> Option<ElementId> {
-        None
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
-    }
-
-    fn request_layout(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> (LayoutId, Self::RequestLayoutState) {
-        let input = self.input.read(cx);
-        let mut style = Style::default();
-        style.size.width = relative(1.).into();
-        if !input.multiline {
-            style.size.height = window.line_height().into();
-            return (window.request_layout(style, [], cx), ());
-        }
-        let (text, runs) = display_runs(input, window, cx);
-        let metrics = metrics(window);
-        let layout_id = window.request_measured_layout(style, move |known, available, window, _cx| {
-            let width = known.width.or(match available.width {
-                gpui::AvailableSpace::Definite(w) => Some(w),
-                _ => None,
-            });
-            let layout = shape(text.clone(), &runs, width, metrics, window);
-            let height = layout.line_top(layout.lines.len()).max(layout.line_height);
-            size(width.unwrap_or_default(), height)
-        });
-        (layout_id, ())
-    }
-
-    fn prepaint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Self::PrepaintState {
-        let input = self.input.read(cx);
-        let (text, runs) = display_runs(input, window, cx);
-        let wrap = input.multiline.then_some(bounds.size.width);
-        let layout = shape(text, &runs, wrap, metrics(window), window);
-        let lh = layout.line_height;
-        let selection_color = theme(cx).selection;
-        let range = input.selected_range.clone();
-
-        let mut selections = Vec::new();
-        let mut cursor = None;
-        if input.content.is_empty() || range.is_empty() {
-            let offset = if input.content.is_empty() { 0 } else { input.cursor_offset() };
-            let p = layout.position_for_offset(offset);
-            let width = crate::ui::device_px(1.5, window);
-            cursor = Some(fill(Bounds::new(bounds.origin + p, size(width, lh)), theme(cx).accent));
-        } else {
-            // One rectangle per visual line the selection touches.
-            let start = layout.position_for_offset(range.start);
-            let end = layout.position_for_offset(range.end);
-            let mut y = start.y;
-            while y <= end.y {
-                let x0 = if y == start.y { start.x } else { px(0.) };
-                let x1 = if y == end.y { end.x } else { bounds.size.width };
-                if x1 > x0 || y != end.y {
-                    let x1 = if x1 <= x0 { x0 + px(4.) } else { x1 };
-                    selections.push(fill(
-                        Bounds::from_corners(bounds.origin + point(x0, y), bounds.origin + point(x1, y + lh)),
-                        selection_color,
-                    ));
-                }
-                y += lh;
-            }
-        }
-        PrepaintState { layout: Some(layout), cursor, selections }
-    }
-
-    fn paint(
-        &mut self,
-        _id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
-        bounds: Bounds<Pixels>,
-        _request_layout: &mut Self::RequestLayoutState,
-        prepaint: &mut Self::PrepaintState,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let focus_handle = self.input.read(cx).focus_handle.clone();
-        window.handle_input(&focus_handle, ElementInputHandler::new(bounds, self.input.clone()), cx);
-        for selection in prepaint.selections.drain(..) {
-            window.paint_quad(selection)
-        }
-        let layout = prepaint.layout.take().unwrap();
-        let mut y = px(0.);
-        for line in &layout.lines {
-            let _ = line.paint(
-                bounds.origin + point(px(0.), y),
-                layout.line_height,
-                gpui::TextAlign::Left,
-                None,
-                window,
-                cx,
-            );
-            y += line.size(layout.line_height).height;
-        }
-        if focus_handle.is_focused(window)
-            && let Some(cursor) = prepaint.cursor.take()
-        {
-            window.paint_quad(cursor);
-        }
-        self.input.update(cx, |input, _cx| {
-            input.reveal_cursor(&layout, bounds, window);
-            input.last_layout = Some(layout);
-            input.last_bounds = Some(bounds);
-        });
-    }
-}
-
-impl TextInput {
-    /// Scrolls the area around the field just enough to show the cursor,
-    /// when it or the text changed since the last frame.
-    fn reveal_cursor(&mut self, layout: &Layout, bounds: Bounds<Pixels>, window: &mut Window) {
-        let key = (self.cursor_offset(), self.content.len());
-        if self.revealed == Some(key) {
-            return;
-        }
-        self.revealed = Some(key);
-        let view = self.scroll.bounds();
-        if view.size.height <= px(0.) {
-            return;
-        }
-        let top = bounds.origin.y + layout.position_for_offset(key.0).y;
-        let bottom = top + layout.line_height;
-        let mut offset = self.scroll.offset();
-        let y = if bottom > view.bottom() {
-            offset.y - (bottom - view.bottom())
-        } else if top < view.top() {
-            offset.y + (view.top() - top)
-        } else {
-            return;
-        };
-        offset.y = y.clamp(-self.scroll.max_offset().y, px(0.));
-        self.scroll.set_offset(offset);
-        window.refresh();
     }
 }
 
