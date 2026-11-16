@@ -54,6 +54,8 @@ impl KynexApp {
     }
 
     pub(super) fn set_composer(&mut self, text: String, cx: &mut Context<Self>) {
+        // A recalled `!ls` or `#note` comes back in its mode.
+        self.reset_input_mode();
         self.pane.composer.update(cx, |c, cx| c.set_text(text, cx));
         cx.notify();
     }

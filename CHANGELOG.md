@@ -7,6 +7,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The composer takes the CLI's input modes: `!` runs a shell command in the session's folder (shown in the transcript, sent to Claude with your next message, and back on resume), `#` adds a line to CLAUDE.md, CLAUDE.local.md or ~/.claude/CLAUDE.md, and `?` in an empty composer shows its shortcuts. Backspace or Esc in the empty field leaves a mode.
+- Long pastes (10 lines or 1,000 characters) fold into a `[Pasted text #1 +120 lines]` chip that sends in full; click it to put the text back.
+- A Thinking switch beside effort (Alt+T), per project and live on running sessions. `ultrathink` is coloured while the CLI says it raises the turn's effort.
+- Bypass permissions, when turned on in Settings → General, joins the mode list and Shift+Tab, with the composer in the error colour while it's on.
+
 - `knx` drives terminal and agent-CLI panes: `knx pane read <id> [--lines N]` returns what a pane shows, `knx pane run <id|new> <command> [--wait]` types a command into a shell pane (or a new one) and with `--wait` answers with its exit code and what it printed, and `knx pane prompt <id> <message> [--wait]` / `knx pane wait <id>` send a message to an agent pane (codex, opencode…) and wait until it's done or blocked. Panes in other workspaces and tabs work too (one never shown is started), `knx pane list --all` lists them, every wait takes `--timeout <seconds>`, and `knx events` tells when an agent pane finishes or wants you.
 - Terminals start PowerShell and bash with small hooks that tell Kynex when a command ends, how, and what it printed; nothing shows in the terminal. `KYNEX_NO_SHELL_HOOKS=1` turns them off.
 - An agent rule can say which key sends a message (`submit`), how long after typing it's pressed, and how long the agent may take to start.

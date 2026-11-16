@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use gpui::{App, Context, KeyBinding, KeyDownEvent, Window, actions};
 use kynex_core::layout::Direction;
 use kynex_core::paths::data_dir;
-use kynex_core::project::Mode;
 use kynex_core::session::Kind;
 use kynex_core::toasts::Toast;
 
@@ -32,6 +31,7 @@ actions!(
         MoveTabRight,
         ToggleSessions,
         CycleMode,
+        ToggleThinking,
         Interrupt,
         CopySelection,
         ToggleTerminal,
@@ -124,7 +124,7 @@ const LIST_KEYS: [(&str, &str); 6] = [
 /// Workspace shortcuts and their defaults, Claude Code's where it has one.
 /// `<data dir>/keymap.json` overrides them by name, e.g. `{ "interrupt": "ctrl-c" }`;
 /// an empty string unbinds one.
-const SHORTCUTS: [(&str, &str); 40] = [
+const SHORTCUTS: [(&str, &str); 41] = [
     ("command_palette", "secondary-k"),
     ("find", "secondary-f"),
     ("open_project", "secondary-o"),
@@ -149,6 +149,8 @@ const SHORTCUTS: [(&str, &str); 40] = [
     ("toggle_sessions", "prefix b"),
     ("toggle_terminal", "ctrl-`"),
     ("cycle_mode", "shift-tab"),
+    // Claude Code's Alt+T: extended thinking on or off.
+    ("toggle_thinking", "alt-t"),
     ("interrupt", "escape"),
     ("search_history", "ctrl-r"),
     ("stash_draft", "ctrl-s"),
@@ -458,6 +460,7 @@ pub fn bind_keys(cx: &mut App) {
             "toggle_sessions" => KeyBinding::new(keys, ToggleSessions, c),
             "toggle_terminal" => KeyBinding::new(keys, ToggleTerminal, c),
             "cycle_mode" => KeyBinding::new(keys, CycleMode, c),
+            "toggle_thinking" => KeyBinding::new(keys, ToggleThinking, c),
             "search_history" => KeyBinding::new(keys, SearchHistory, c),
             "stash_draft" => KeyBinding::new(keys, StashDraft, c),
             "pick_model" => KeyBinding::new(keys, PickModel, c),
@@ -684,8 +687,9 @@ impl KynexApp {
         let Some(s) = key.and_then(|k| self.session_for(k)).filter(|s| s.kind == Kind::Code) else {
             return;
         };
-        let next = Mode::ALL.iter().position(|m| *m == s.mode).map_or(0, |i| (i + 1) % Mode::ALL.len());
-        s.set_mode(Mode::ALL[next]);
+        // Bypass permissions is in the cycle only when Settings allows it.
+        let next = s.mode.cycle(s.can_bypass());
+        s.set_mode(next);
         cx.notify();
     }
 

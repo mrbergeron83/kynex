@@ -29,6 +29,8 @@ pub(super) struct Spec {
     pub model: String,
     pub provider: Launch,
     pub mode: project::Mode,
+    /// Allowed to switch to bypass mode (`--allow-dangerously-skip-permissions`).
+    pub bypass: bool,
     pub resume: Option<String>,
     pub resume_at: Option<String>,
     pub wake: Wake,
@@ -186,6 +188,9 @@ fn command(spec: &mut Spec, started: &mut Started) -> Result<(Command, &'static 
                 settings.extend(rules);
             }
             cmd.args(["--permission-mode", spec.mode.cli()]);
+            if spec.bypass {
+                cmd.arg("--allow-dangerously-skip-permissions");
+            }
             // Routine work to Kynex's subagents, unless the project or app turned it off.
             if spec.provider.provider() == Provider::Anthropic
                 && crate::delegate::enabled(claude.delegate, crate::delegate::default_on())

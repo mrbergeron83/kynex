@@ -86,6 +86,7 @@ fn main() {
         kynex_core::delegate::set_default(saved.delegate);
         kynex_core::browser::set(saved.browser);
         kynex_core::terminal::ShellKind::set_default(saved.shell);
+        kynex_core::project::set_bypass_allowed(saved.allow_bypass);
         ui::input::bind_keys(cx);
         prompt::bind_keys(cx);
         terminal::bind_keys(cx);

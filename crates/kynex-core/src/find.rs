@@ -67,6 +67,11 @@ pub fn blocks(item: &Item) -> Vec<String> {
         Item::Thinking(t) => vec![t.text.clone()],
         Item::ToolResult { content, .. } => vec![content.clone()],
         Item::Error(e) => vec![e.clone()],
+        // The command, then its output and errors (blocks 1 and 2, empty or not).
+        Item::Shell(run) => {
+            let out = run.output.iter().flat_map(|o| [o.stdout.clone(), o.stderr.clone()]);
+            std::iter::once(run.command.clone()).chain(out).collect()
+        }
         _ => Vec::new(),
     }
 }

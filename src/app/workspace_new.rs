@@ -53,7 +53,7 @@ impl KynexApp {
         cx.subscribe_in(&input, window, |this, _, ev: &InputEvent, window, cx| match ev {
             InputEvent::Submit => this.submit_new_workspace(window, cx),
             InputEvent::Changed => cx.notify(),
-            InputEvent::PasteImages(_) => {}
+            _ => {}
         })
         .detach();
         input.read(cx).focus_handle(cx).focus(window, cx);

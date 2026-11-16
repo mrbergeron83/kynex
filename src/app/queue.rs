@@ -12,6 +12,7 @@ use kynex_core::live::Key;
 use super::KynexApp;
 use crate::theme::theme;
 use crate::ui::{Icon, Tooltip, ghost_button, icon_button};
+use kynex_core::composer::input_mode::Submit;
 
 impl KynexApp {
     /// Queues the composer's message on the session `key`.
@@ -21,13 +22,24 @@ impl KynexApp {
             s.queue.push(text, atts);
         }
         self.pane.composer.update(cx, |c, cx| c.set_text("", cx));
+        self.reset_input_mode();
         cx.notify();
     }
 
     /// Ctrl+Enter: the queue and the draft behind it go now, stopping Claude
     /// if it's working. With nothing queued and Claude idle, it just sends.
     pub(super) fn send_queue_now(&mut self, key: Option<Key>, cx: &mut Context<Self>) {
-        let text = self.pane.composer.read(cx).text().trim().to_string();
+        let raw = self.pane.composer.read(cx).text().to_string();
+        // A `!` command or `#` note does what Enter does with it; it isn't queued.
+        let text = match self.take_submit(&raw) {
+            (_, Submit::Send(text)) => text,
+            (mode, Submit::Shell(command)) => {
+                self.remember_sent(&mode.prefixed(&command), cx);
+                return self.run_shell(key, command, cx);
+            }
+            (_, Submit::Memory(_)) => return self.ask_memory(cx),
+            (_, Submit::Nothing) => String::new(),
+        };
         self.remember_sent(&text, cx);
         if !text.is_empty() || !self.pane.attachments.is_empty() {
             self.queue_message(key, text, cx);
@@ -58,7 +70,10 @@ impl KynexApp {
     }
 
     fn take_back(&mut self, m: kynex_core::queue::Queued, cx: &mut Context<Self>) {
-        let current = self.pane.composer.read(cx).text().to_string();
+        // Queued messages are prompts: a `!` or `#` draft behind them keeps its character.
+        let raw = self.pane.composer.read(cx).text().to_string();
+        let current = self.pane.input_mode.prefixed(&self.pane.pastes.expand(&raw));
+        self.reset_input_mode();
         let text = if current.trim().is_empty() { m.text } else { format!("{}\n\n{current}", m.text) };
         self.pane.composer.update(cx, |c, cx| c.set_text(text, cx));
         self.pane.attachments.splice(0..0, m.attachments);

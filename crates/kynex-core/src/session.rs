@@ -23,6 +23,7 @@ use crate::tasks::{self, Tasks};
 
 pub use crate::removed::continue_in;
 
+mod composer;
 mod launch;
 
 /// How long after a failed start warming up leaves it alone; a message still tries.
@@ -219,6 +220,8 @@ pub enum Item {
     },
     /// A background task ended (or a Monitor saw something); Claude's turn about it follows.
     Task(tasks::Notice),
+    /// A `!` command the user ran, and its output; Claude sees it with the next message.
+    Shell(crate::composer::shell::Run),
     Error(String),
 }
 
@@ -337,6 +340,14 @@ pub struct Session {
     /// Its process runs on project settings it couldn't take live; it starts
     /// again once idle ([`Self::apply_settings`]).
     pub stale: bool,
+    /// Thinking is switched off for it ([`Self::set_thinking`]).
+    pub thinking_off: bool,
+    /// What its process said about the `ultrathink` keyword.
+    pub ultrathink: crate::composer::thinking::Ultrathink,
+    /// Its process was started allowed to bypass permissions.
+    bypass: bool,
+    /// `set_permission_mode` requests awaiting an answer, with the mode to go back to.
+    mode_requests: Vec<(String, project::Mode)>,
     /// Set by the UI so it hears about new events; a no-op until then.
     pub wake: Wake,
     child: Option<Child>,
@@ -493,10 +504,11 @@ const INIT_ID: &str = "kynex-init";
 
 impl Session {
     pub fn new(kind: Kind, cwd: PathBuf) -> Self {
-        let mode = match kind {
-            Kind::Code => project::ClaudeSettings::load(&cwd).mode,
-            Kind::Chat => project::Mode::default(),
+        let settings = match kind {
+            Kind::Code => project::ClaudeSettings::load(&cwd),
+            Kind::Chat => project::ClaudeSettings::default(),
         };
+        let mode = settings.mode;
         static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Self {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
@@ -524,6 +536,10 @@ impl Session {
             mcp_tools: Default::default(),
             browser: false,
             stale: false,
+            thinking_off: settings.thinking_off,
+            ultrathink: Default::default(),
+            bypass: false,
+            mode_requests: Vec::new(),
             wake: Arc::new(|| {}),
             child: None,
             stdin: None,
@@ -725,10 +741,17 @@ impl Session {
     }
 
     fn replay_user(&mut self, content: &Value) {
+        // `!` commands and their output, the CLI's or sent with a message, show as such.
         let (text, sent) = match content {
+            Value::String(t) if self.replay_shell(t) => return,
             Value::String(t) => (t.clone(), 0),
             Value::Array(blocks) => (
-                blocks.iter().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n"),
+                blocks
+                    .iter()
+                    .filter_map(|b| b["text"].as_str())
+                    .filter(|t| !self.replay_shell(t))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
                 blocks.iter().filter(|b| b["type"] == "image").count(),
             ),
             _ => return,
@@ -792,6 +815,7 @@ impl Session {
     /// it waits; [`Self::poll`] takes it in, or reports why it didn't start.
     fn spawn(&mut self) {
         let grok = self.provider.provider() == crate::provider::Provider::Grok;
+        self.bypass_on_start();
         let (tx, rx) = channel();
         let spec = launch::Spec {
             uid: self.uid,
@@ -801,6 +825,7 @@ impl Session {
             model: self.model.clone(),
             provider: self.provider.clone(),
             mode: self.mode,
+            bypass: self.bypass,
             resume: self.resume_id().map(str::to_string),
             resume_at: if grok { None } else { self.resume_at.take() },
             wake: self.wake.clone(),
@@ -833,6 +858,10 @@ impl Session {
             self.write(
                 json!({ "type": "control_request", "request_id": INIT_ID, "request": { "subtype": "initialize" } }),
             );
+            self.ultrathink = Default::default();
+            if self.thinking_off && self.provider.provider() != crate::provider::Provider::OpenRouterChat {
+                self.control(crate::composer::thinking::request(false));
+            }
         }
     }
 
@@ -958,6 +987,12 @@ impl Session {
     /// Sends a message, starting the process if it isn't running. While the
     /// log is still loading it waits in the queue, to go after the history.
     pub fn send(&mut self, text: String, attachments: Vec<Attachment>) {
+        self.send_with(text, attachments, false);
+    }
+
+    /// [`Self::send`], saying whether the user typed `ultrathink` in it themselves
+    /// (see [`crate::composer::thinking::Ultrathink::typed`]).
+    pub fn send_with(&mut self, text: String, attachments: Vec<Attachment>, ultrathink_typed: bool) {
         // Grok takes no message mid-turn (`claude` does): it waits for the turn to end.
         let grok_busy = self.busy && self.provider.provider() == crate::provider::Provider::Grok;
         if self.loading() || grok_busy {
@@ -976,6 +1011,10 @@ impl Session {
             }));
             images.push(a.preview);
         }
+        // `!` commands run since the last message go with it, as the CLI logs them.
+        for block in self.unsent_shell_blocks() {
+            content.push(json!({ "type": "text", "text": block }));
+        }
         if !text.is_empty() {
             content.push(json!({ "type": "text", "text": text }));
         }
@@ -986,7 +1025,11 @@ impl Session {
         self.answered = false;
         self.quiet_since = Instant::now();
         self.active_at = Instant::now();
-        self.write(json!({ "type": "user", "message": { "role": "user", "content": content } }));
+        let mut msg = json!({ "type": "user", "message": { "role": "user", "content": content } });
+        if ultrathink_typed && self.ultrathink.typed_raises {
+            msg["ultrathink_typed"] = json!(true);
+        }
+        self.write(msg);
     }
 
     /// Starts the process ahead of the first message, so sending doesn't wait
@@ -1086,9 +1129,13 @@ impl Session {
     /// Switches the permission mode, live if the process is running (like
     /// Shift+Tab in the CLI), otherwise from the next start.
     pub fn set_mode(&mut self, mode: project::Mode) {
-        self.mode = mode;
+        let before = std::mem::replace(&mut self.mode, mode);
         if self.is_running() {
-            self.control(json!({ "subtype": "set_permission_mode", "mode": mode.cli() }));
+            let id = self.control(json!({ "subtype": "set_permission_mode", "mode": mode.cli() }));
+            // A refusal (bypass on a process not allowed it) puts the mode back.
+            if self.acp.is_none() {
+                self.mode_requests.push((id, before));
+            }
         }
     }
 
@@ -1104,6 +1151,9 @@ impl Session {
                 self.write_line(&line);
             }
             return;
+        }
+        if claude.thinking_off != self.thinking_off {
+            self.set_thinking(!claude.thinking_off);
         }
         let Some(launched) = &mut self.launched else { return };
         match launched.update(perms, claude) {
@@ -1383,6 +1433,13 @@ impl Session {
         }
         match v["type"].as_str().unwrap_or("") {
             "stream_event" => self.handle_stream(&v["event"]),
+            "control_response"
+                if v["response"]["request_id"]
+                    .as_str()
+                    .is_some_and(|r| self.mode_requests.iter().any(|m| m.0 == r)) =>
+            {
+                self.mode_answered(&v["response"]);
+            }
             "control_response" if v["response"]["request_id"] == INIT_ID => {
                 let r = &v["response"]["response"];
                 self.init = Some(Init { commands: crate::commands::from_init(r), models: models_from_init(r) });
@@ -1438,7 +1495,9 @@ impl Session {
             "system" if v["subtype"] == "init" => {
                 self.mcp = crate::mcp::servers(&v);
                 self.mcp_tools = crate::mcp::tools(&v);
+                self.ultrathink.follow(&v);
             }
+            "system" if v["subtype"] == "per_turn_effort_changed" => self.ultrathink.follow(&v),
             // A task that ended shows in the transcript, and the session wants
             // you even if Claude's turn about it says nothing.
             "system" => {

@@ -188,6 +188,7 @@ impl KynexApp {
             .on_action(cx.listener(Self::move_tab_right))
             .on_action(cx.listener(Self::toggle_sessions))
             .on_action(cx.listener(Self::cycle_mode))
+            .on_action(cx.listener(Self::toggle_thinking))
             .on_action(cx.listener(Self::interrupt_action))
             .on_action(cx.listener(Self::toggle_terminal))
             .on_action(cx.listener(Self::search_history))

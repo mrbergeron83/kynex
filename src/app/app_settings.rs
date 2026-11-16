@@ -481,6 +481,7 @@ impl KynexApp {
             .child(history)
             .child(browser)
             .child(naming)
+            .child(self.render_bypass_setting(t, cx))
             .child(notifications)
             .children(closing)
             .child(awake)
@@ -772,6 +773,7 @@ impl KynexApp {
             }))
             .child(div().flex().flex_col().children(rows))
             .when(empty, |d| d.child(div().px_2().text_sm().text_color(t.text_muted).child("No shortcut matches.")))
+            .child(super::input_modes::render_composer_keys(t))
     }
 }
 

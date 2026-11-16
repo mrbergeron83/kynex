@@ -48,6 +48,8 @@ pub enum Menu {
     Layouts,
     /// The project picker (`prefix shift-p`): the open projects, and Open project….
     Projects,
+    /// Where the composer's `#` note goes: a CLAUDE.md file.
+    Memory,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -381,8 +383,10 @@ impl KynexApp {
             }
             Menu::Mode => {
                 let key = self.focused_key();
-                let current = key.and_then(|k| self.session_by_key(k)).map(|s| s.mode);
-                for (n, m) in Mode::ALL.into_iter().enumerate() {
+                let session = key.and_then(|k| self.session_by_key(k));
+                let current = session.map(|s| s.mode);
+                let bypass = session.is_some_and(|s| s.can_bypass());
+                for (n, m) in Mode::choices(bypass).into_iter().enumerate() {
                     items.push(
                         menu_item(("mode", n), m.label(), current == Some(m), cx)
                             .h_auto()
@@ -401,6 +405,7 @@ impl KynexApp {
                 }
             }
             Menu::Effort => items = self.effort_items(cx),
+            Menu::Memory => items = self.memory_items(cx),
             Menu::Tab(i) => {
                 let i = *i;
                 let path = self.saved.projects.get(i).map(|p| p.path.clone()).unwrap_or_default();

@@ -335,7 +335,7 @@ impl KynexApp {
     }
 
     /// Opens a composer menu without a click to anchor it: above the composer's left edge.
-    fn open_menu_at_composer(&mut self, which: Menu, cx: &mut Context<Self>) {
+    pub(super) fn open_menu_at_composer(&mut self, which: Menu, cx: &mut Context<Self>) {
         let at =
             self.pane.slash.composer.map_or(point(gpui::px(200.), gpui::px(400.)), |b| {
                 point(b.left() + gpui::px(12.), b.top() - gpui::px(4.))
