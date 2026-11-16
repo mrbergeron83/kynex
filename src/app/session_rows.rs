@@ -405,10 +405,23 @@ impl KynexApp {
                             }
                             this.confirm_delete = None;
                             this.forget_past_session(kind, &cwd3, &del_id);
-                            if let Err(e) = session::delete_session(&cwd3, &del_id) {
-                                this.toast(Toast::error(e));
-                            }
                             this.relist_sessions(std::slice::from_ref(&del_id));
+                            // The files go off the UI thread: a long transcript, or the folder
+                            // beside it, can take a while.
+                            let (cwd, id) = (cwd3.clone(), del_id.clone());
+                            cx.spawn(async move |this, cx| {
+                                let deleted =
+                                    cx.background_spawn(async move { session::delete_session(&cwd, &id) }).await;
+                                this.update(cx, |this, cx| {
+                                    if let Err(e) = deleted {
+                                        this.toast(Toast::error(e));
+                                    }
+                                    this.reread_sessions();
+                                    cx.notify();
+                                })
+                                .ok();
+                            })
+                            .detach();
                             cx.notify();
                         })),
                 )
