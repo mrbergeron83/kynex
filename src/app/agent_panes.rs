@@ -101,8 +101,13 @@ impl KynexApp {
 
     /// Agent pane `pane` from last time, drawn with nothing running: its agent again,
     /// resumed if it said how.
-    pub(super) fn restart_agent_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((_, ws, _)) = self.tiling_scope() else { return };
+    pub(super) fn restart_agent_pane(
+        &mut self,
+        pane: PaneId,
+        ws: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(tp) = self.tiles.get(&ws).and_then(|t| t.term_pane(pane)).cloned() else { return };
         let Some(id) = tp.agent else { return };
         // The rules aren't read yet: next time it's drawn.
@@ -194,6 +199,7 @@ impl KynexApp {
             let now = tracker.update(agent_panes::detect(&rule, &screen), looking);
             if now != was {
                 changed = true;
+                self.agent_event(pane, &id, was, now);
                 // Like a session's: no toast for what's in front of you.
                 let on_screen = self.window_active && in_sight.contains(&pane);
                 if !on_screen {

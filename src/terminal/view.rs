@@ -204,6 +204,63 @@ impl TerminalView {
         }
     }
 
+    /// [`Self::run`] with marker `n`, which [`Self::take_done`] answers once it has finished.
+    /// False (and nothing typed) for a shell the marker doesn't know.
+    pub fn run_marked(&mut self, command: &str, n: u64, cx: &mut Context<Self>) -> bool {
+        let Some(command) = kynex_core::terminal::marker::wrap(&self.shell.program, command, n) else {
+            return false;
+        };
+        self.run(&command, cx);
+        true
+    }
+
+    /// The exit code of the command run with marker `n`, once it has finished.
+    pub fn take_done(&self, n: u64) -> Option<i32> {
+        self.terminal.as_ref()?.take_done(n)
+    }
+
+    /// The last `n` lines of its scrollback and screen, once it's running.
+    pub fn last_lines(&self, n: usize) -> Option<String> {
+        self.terminal.as_ref().map(|t| t.last_lines(n))
+    }
+
+    /// Pastes `text` as if from the clipboard; `false` while its program isn't running.
+    pub fn paste(&self, text: &str) -> bool {
+        self.terminal.as_ref().filter(|t| !t.exited()).map(|t| t.paste(text)).is_some()
+    }
+
+    /// Sends bytes as if typed (Enter is `\r`).
+    pub fn write(&self, bytes: Vec<u8>) {
+        if let Some(t) = &self.terminal {
+            t.write(bytes);
+        }
+    }
+
+    /// What its shell said last about its commands (Kynex's hooks), once it's running.
+    /// None while it starts again: the old shell's are over.
+    pub fn marks(&self) -> kynex_core::terminal::ShellMarks {
+        if self.starting || self.exited() {
+            return Default::default();
+        }
+        self.terminal.as_ref().map(Terminal::marks).unwrap_or_default()
+    }
+
+    /// Its shell was started with Kynex's hooks: it will say when commands end once its first
+    /// prompt is up.
+    pub fn has_hooks(&self) -> bool {
+        kynex_core::terminal::hooks::has_hooks(&self.shell)
+    }
+
+    /// What the hooked shell's command `n` printed.
+    pub fn output(&self, n: u64) -> Option<String> {
+        self.terminal.as_ref()?.output(n)
+    }
+
+    /// What the command run with marker `n` printed.
+    pub fn wrapped_output(&self, n: u64) -> Option<String> {
+        self.terminal.as_ref()?.wrapped_output(n)
+    }
+
     pub(super) fn resize(&mut self, size: Size) {
         if let Some(t) = &mut self.terminal {
             t.resize(size);

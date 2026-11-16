@@ -59,7 +59,12 @@ pub fn call(request: &Request, on_line: impl FnMut(&str)) -> Result<(), String> 
 /// seconds for most, longer for git, none for what waits on a turn or listens.
 fn patience(request: &Request) -> Option<Duration> {
     match request {
-        Request::Events | Request::SessionWait { .. } | Request::SessionPrompt { wait: true, .. } => None,
+        Request::Events
+        | Request::SessionWait { .. }
+        | Request::SessionPrompt { wait: true, .. }
+        | Request::PaneWait { .. }
+        | Request::PaneRun { wait: true, .. }
+        | Request::PanePrompt { wait: true, .. } => None,
         Request::WorkspaceCreate { .. } | Request::WorkspaceRemove { .. } => Some(Duration::from_secs(300)),
         _ => Some(Duration::from_secs(15)),
     }

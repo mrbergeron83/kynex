@@ -189,10 +189,10 @@ impl KynexApp {
         &mut self,
         id: PaneId,
         name: String,
+        ws: std::path::PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((_, ws, _)) = self.tiling_scope() else { return };
         if !self.command_starting.insert(id) {
             return;
         }
