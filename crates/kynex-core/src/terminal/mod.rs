@@ -416,7 +416,13 @@ mod tests {
         if powershell && cfg!(windows) { "cmd /c exit 3" } else { "sh -c 'exit 3'" }
     }
 
-    fn spawn(spec: ShellSpec) -> Terminal {
+    fn spawn(mut spec: ShellSpec) -> Terminal {
+        // CI's Linux names a runtime folder that isn't there; PowerShell's line editor
+        // can't start without one (its history mutex lives there), and the shell falls
+        // back to a plain reader that shows typed lines differently.
+        if std::env::var_os("XDG_RUNTIME_DIR").is_some_and(|d| !std::path::Path::new(&d).is_dir()) {
+            spec.env.push(("XDG_RUNTIME_DIR".into(), std::env::temp_dir().display().to_string()));
+        }
         Terminal::spawn(spec, &std::env::temp_dir(), Size { columns: 120, lines: 24 }, Arc::new(|| {})).unwrap()
     }
 

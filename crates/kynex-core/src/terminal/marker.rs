@@ -89,8 +89,11 @@ enum Syntax {
 }
 
 fn shell_of(program: &Path) -> Option<Syntax> {
-    let stem = program.file_stem().map(|s| s.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    match stem.as_str() {
+    // By name, either slash: a Windows path is one file name to `Path` elsewhere.
+    let path = program.to_string_lossy().to_ascii_lowercase();
+    let name = path.rsplit(['/', '\\']).next().unwrap_or_default();
+    let stem = name.strip_suffix(".exe").unwrap_or(name);
+    match stem {
         "pwsh" | "powershell" => Some(Syntax::PowerShell),
         "fish" => Some(Syntax::Fish),
         "bash" | "zsh" | "sh" | "dash" | "ksh" | "mksh" | "ash" => Some(Syntax::Posix),
