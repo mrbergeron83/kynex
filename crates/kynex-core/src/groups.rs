@@ -37,12 +37,32 @@ pub struct SessionGroups {
     pub older_open: bool,
 }
 
+/// A group's stable identity within its folder.
+pub type GroupId = u64;
+
+fn is_unset(id: &GroupId) -> bool {
+    *id == 0
+}
+
+/// An id not in `taken`: one past the largest, or the first free one from 1 when the
+/// largest is already `u64::MAX` (a hand-edited file).
+fn fresh_id(taken: &std::collections::HashSet<GroupId>) -> GroupId {
+    match taken.iter().max().copied().unwrap_or(0).checked_add(1) {
+        Some(id) => id,
+        None => (1..).find(|id| !taken.contains(id)).unwrap_or(1),
+    }
+}
+
 /// The longest name a session can be given, in characters.
 const MAX_NAME: usize = 80;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Group {
+    /// Stable across renames, reorders and deletes of other groups; menus, drags and
+    /// the like refer to a group by it. 0 is "not given yet" (see [`SessionGroups::ensure_ids`]).
+    #[serde(skip_serializing_if = "is_unset")]
+    pub id: GroupId,
     pub name: String,
     /// Session ids; the panel shows them newest first whatever their order here.
     pub sessions: Vec<String>,
@@ -147,7 +167,32 @@ impl SessionGroups {
     const FILE: &str = "sessions.json";
 
     pub fn load(project: &Path) -> Self {
-        crate::project::load(project, Self::FILE)
+        let mut loaded: Self = crate::project::load(project, Self::FILE);
+        loaded.ensure_ids();
+        loaded
+    }
+
+    /// Gives every group without an id (or sharing one) a fresh one, above all the others.
+    pub fn ensure_ids(&mut self) {
+        let mut taken: std::collections::HashSet<GroupId> = self.groups.iter().map(|g| g.id).collect();
+        let mut seen = std::collections::HashSet::new();
+        for g in &mut self.groups {
+            if g.id == 0 || !seen.insert(g.id) {
+                g.id = fresh_id(&taken);
+                taken.insert(g.id);
+                seen.insert(g.id);
+            }
+        }
+    }
+
+    /// Where group `id` is in [`Self::groups`]; `None` if it's gone.
+    pub fn index_of(&self, id: GroupId) -> Option<usize> {
+        self.groups.iter().position(|g| g.id == id)
+    }
+
+    /// Group `id`, if it's still there.
+    pub fn group(&self, id: GroupId) -> Option<&Group> {
+        self.groups.iter().find(|g| g.id == id)
     }
 
     pub fn save(&self, project: &Path) -> Result<(), String> {
@@ -155,8 +200,8 @@ impl SessionGroups {
     }
 
     /// The group a session is in.
-    pub fn group_of(&self, id: &str) -> Option<usize> {
-        self.groups.iter().position(|g| g.sessions.iter().any(|s| s == id))
+    pub fn group_of(&self, id: &str) -> Option<GroupId> {
+        self.groups.iter().find(|g| g.sessions.iter().any(|s| s == id)).map(|g| g.id)
     }
 
     pub fn is_archived(&self, id: &str) -> bool {
@@ -270,19 +315,27 @@ impl SessionGroups {
     /// Puts a session in group `to`, or at the top level with `None`. A session moved
     /// anywhere is no longer archived; a pin stays, since pinned sessions sit above the
     /// rest whatever group they're in.
-    pub fn move_to(&mut self, id: &str, to: Option<usize>) {
+    /// A group that's gone does nothing (returns false).
+    pub fn move_to(&mut self, id: &str, to: Option<GroupId>) -> bool {
+        if to.is_some_and(|t| self.index_of(t).is_none()) {
+            return false;
+        }
         self.unarchive(id);
         self.leave_group(id);
-        if let Some(g) = to.and_then(|i| self.groups.get_mut(i)) {
+        if let Some(g) = to.and_then(|t| self.groups.iter_mut().find(|g| g.id == t)) {
             g.sessions.push(id.to_string());
         }
+        true
     }
 
     /// A session dragged onto group `to` (or loose, with `None`): it goes there and shows
     /// there, so it leaves the pinned ones too.
-    pub fn drop_into(&mut self, id: &str, to: Option<usize>) {
+    pub fn drop_into(&mut self, id: &str, to: Option<GroupId>) -> bool {
+        if to.is_some_and(|t| self.index_of(t).is_none()) {
+            return false;
+        }
         self.pinned.retain(|s| s != id);
-        self.move_to(id, to);
+        self.move_to(id, to)
     }
 
     fn leave_group(&mut self, id: &str) {
@@ -292,8 +345,8 @@ impl SessionGroups {
     }
 
     /// Adds an empty group at the end, named `name` or "New group" when blank,
-    /// numbered if that's taken. Returns its index.
-    pub fn add_group(&mut self, name: &str) -> usize {
+    /// numbered if that's taken. Returns its id.
+    pub fn add_group(&mut self, name: &str) -> GroupId {
         let base = if name.trim().is_empty() { "New group" } else { name.trim() };
         let mut name = base.to_string();
         let mut n = 2;
@@ -301,36 +354,40 @@ impl SessionGroups {
             name = format!("{base} {n}");
             n += 1;
         }
-        self.groups.push(Group { name, ..Group::default() });
-        self.groups.len() - 1
+        self.ensure_ids();
+        let id = fresh_id(&self.groups.iter().map(|g| g.id).collect());
+        self.groups.push(Group { id, name, ..Group::default() });
+        id
     }
 
     /// Renames a group; a blank name keeps the old one.
-    pub fn rename_group(&mut self, i: usize, name: &str) {
-        if let Some(g) = self.groups.get_mut(i).filter(|_| !name.trim().is_empty()) {
+    pub fn rename_group(&mut self, id: GroupId, name: &str) {
+        if let Some(g) = self.groups.iter_mut().find(|g| g.id == id).filter(|_| !name.trim().is_empty()) {
             g.name = name.trim().to_string();
         }
     }
 
     /// Deletes a group; its sessions go back to the top level.
-    pub fn delete_group(&mut self, i: usize) {
-        if i < self.groups.len() {
+    pub fn delete_group(&mut self, id: GroupId) {
+        if let Some(i) = self.index_of(id) {
             self.groups.remove(i);
         }
     }
 
     /// Deletes a group and archives its sessions.
-    pub fn delete_group_archiving(&mut self, i: usize) {
-        let Some(g) = self.groups.get(i) else { return };
+    pub fn delete_group_archiving(&mut self, group: GroupId) {
+        let Some(g) = self.group(group) else { return };
         for id in g.sessions.clone() {
             self.archive(&id);
         }
-        self.delete_group(i);
+        self.delete_group(group);
     }
 
-    /// Moves group `from` to place `to` among the groups.
-    pub fn move_group(&mut self, from: usize, to: usize) {
-        crate::tab_order::move_item(&mut self.groups, from, to);
+    /// Moves group `from` to where group `to` is now among the groups; nothing if either is gone.
+    pub fn move_group(&mut self, from: GroupId, to: GroupId) {
+        if let (Some(f), Some(t)) = (self.index_of(from), self.index_of(to)) {
+            crate::tab_order::move_item(&mut self.groups, f, t);
+        }
     }
 
     /// Moves pinned session `id` to just before pinned session `before`, or to
@@ -386,8 +443,8 @@ impl SessionGroups {
         (ids, skipped)
     }
 
-    pub fn toggle_group(&mut self, i: usize) {
-        if let Some(g) = self.groups.get_mut(i) {
+    pub fn toggle_group(&mut self, id: GroupId) {
+        if let Some(g) = self.groups.iter_mut().find(|g| g.id == id) {
             g.collapsed = !g.collapsed;
         }
     }
@@ -568,11 +625,11 @@ mod tests {
         let (a, b) = (g.add_group("A"), g.add_group("B"));
         g.move_to("s1", Some(a));
         g.move_to("s2", Some(b));
-        g.move_group(1, 0);
+        g.move_group(b, a);
         assert_eq!(g.groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["B", "A"]);
-        g.delete_group_archiving(0);
+        g.delete_group_archiving(b);
         assert!(g.is_archived("s2") && g.groups.len() == 1);
-        g.delete_group(0);
+        g.delete_group(a);
         assert!(!g.is_archived("s1") && g.group_of("s1").is_none());
     }
 
@@ -640,7 +697,7 @@ mod tests {
             } else if g.is_pinned(id) {
                 Some(Place::Pinned(g.pinned.iter().position(|p| p == id).unwrap()))
             } else {
-                g.group_of(id).map(Place::Group)
+                g.group_of(id).and_then(|gid| g.index_of(gid)).map(Place::Group)
             };
             assert_eq!(places.of(id), want, "{id}");
         }
@@ -655,7 +712,7 @@ mod tests {
         g.move_to("s", Some(x));
         g.move_to("s", Some(y));
         assert_eq!(g.group_of("s"), Some(y));
-        assert!(g.groups[x].sessions.is_empty());
+        assert!(g.group(x).unwrap().sessions.is_empty());
         // Archiving takes it out of its group; moving it brings it back.
         g.archive("s");
         assert_eq!(g.group_of("s"), None);
@@ -682,14 +739,14 @@ mod tests {
         let mut g = SessionGroups::default();
         g.add_group("");
         g.add_group(" ");
-        g.add_group("  Bugs ");
+        let bugs = g.add_group("  Bugs ");
         let names: Vec<_> = g.groups.iter().map(|g| g.name.as_str()).collect();
         assert_eq!(names, ["New group", "New group 2", "Bugs"]);
-        g.rename_group(2, "  ");
+        g.rename_group(bugs, "  ");
         assert_eq!(g.groups[2].name, "Bugs");
-        g.rename_group(2, "Fixes");
+        g.rename_group(bugs, "Fixes");
         assert_eq!(g.groups[2].name, "Fixes");
-        g.toggle_group(2);
+        g.toggle_group(bugs);
         assert!(g.groups[2].collapsed);
     }
 
@@ -707,7 +764,7 @@ mod tests {
         assert_eq!(
             g,
             SessionGroups {
-                groups: vec![Group { name: "G".into(), ..Group::default() }],
+                groups: vec![Group { id: i, name: "G".into(), ..Group::default() }],
                 archived: vec![],
                 ..SessionGroups::default()
             }
@@ -823,6 +880,80 @@ mod tests {
         // Older or partial files still load.
         let partial: SessionGroups = serde_json::from_str(r#"{"groups":[{"name":"G"}]}"#).unwrap();
         assert_eq!(partial.groups[0].name, "G");
+    }
+
+    #[test]
+    fn ids_are_given_on_load_and_survive_a_round_trip() {
+        let dir = std::env::temp_dir().join(format!("kynex-groups-ids-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let g: SessionGroups = serde_json::from_str(r#"{"groups":[{"name":"A"},{"name":"B"},{"name":"C"}]}"#).unwrap();
+        assert!(g.groups.iter().all(|g| g.id == 0));
+        g.save(&dir).unwrap();
+        let loaded = SessionGroups::load(&dir);
+        let mut got: Vec<_> = loaded.groups.iter().map(|g| g.id).collect();
+        assert!(got.iter().all(|i| *i != 0));
+        got.sort();
+        got.dedup();
+        assert_eq!(got.len(), 3);
+        loaded.save(&dir).unwrap();
+        assert_eq!(SessionGroups::load(&dir), loaded);
+        let _ = std::fs::remove_dir_all(&dir);
+        // A shared id is made unique too, keeping the first.
+        let mut dup = SessionGroups {
+            groups: vec![Group { id: 5, ..Group::default() }, Group { id: 5, ..Group::default() }],
+            ..SessionGroups::default()
+        };
+        dup.ensure_ids();
+        assert_eq!(dup.groups[0].id, 5);
+        assert!(dup.groups[1].id != 5 && dup.groups[1].id != 0);
+    }
+
+    #[test]
+    fn a_new_group_never_reuses_an_id_and_gone_ids_do_nothing() {
+        let mut g = SessionGroups::default();
+        let (a, b) = (g.add_group("A"), g.add_group("B"));
+        g.delete_group(b);
+        let c = g.add_group("C");
+        assert!(c != a && c != 0);
+        g.delete_group(a);
+        let d = g.add_group("D");
+        assert!(d != a && d != c);
+        // Actions on a deleted group change nothing.
+        let before = g.clone();
+        g.rename_group(a, "X");
+        g.toggle_group(a);
+        g.delete_group(a);
+        g.delete_group_archiving(a);
+        g.move_group(a, d);
+        g.move_group(d, a);
+        assert!(!g.move_to("s", Some(a)) && !g.drop_into("s", Some(a)));
+        assert_eq!(g, before);
+        assert!(g.index_of(a).is_none() && g.group(a).is_none());
+    }
+
+    #[test]
+    fn the_largest_id_in_a_hand_edited_file_does_not_overflow() {
+        let max = u64::MAX;
+        let mut g: SessionGroups =
+            serde_json::from_str(&format!(r#"{{"groups":[{{"id":{max},"name":"A"}},{{"name":"B"}}]}}"#)).unwrap();
+        g.ensure_ids();
+        assert_eq!(g.groups[1].id, 1);
+        let c = g.add_group("C");
+        assert!(c != 0 && c != 1 && c != max);
+    }
+
+    #[test]
+    fn moving_a_group_by_id_after_a_reorder_hits_the_right_one() {
+        let mut g = SessionGroups::default();
+        let (a, b, c) = (g.add_group("A"), g.add_group("B"), g.add_group("C"));
+        g.move_group(c, a);
+        assert_eq!(g.groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["C", "A", "B"]);
+        // `a` was at index 0 before; by id it still means A.
+        g.move_group(a, b);
+        assert_eq!(g.groups.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["C", "B", "A"]);
+        g.move_to("s", Some(a));
+        assert_eq!(g.group_of("s"), Some(a));
+        assert_eq!(g.group(a).unwrap().sessions, ["s"]);
     }
 
     #[test]
