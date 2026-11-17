@@ -32,7 +32,7 @@ impl Why {
     pub fn of(s: &Session) -> Option<Self> {
         if s.waiting() {
             Some(Self::Answer)
-        } else if !s.busy && crate::mcp::handoff(&s.items).is_some() {
+        } else if !s.busy && s.wants_browser() {
             Some(Self::Browser)
         } else if s.finished {
             Some(Self::Finished)

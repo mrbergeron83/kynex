@@ -1,6 +1,7 @@
 //! Messages queued while Claude works, with Claude Code's keys: Enter queues,
 //! they all go out together when the turn ends (Esc included), Ctrl+Enter sends
-//! them now, and ↑ from the composer's first line takes them back to edit. A
+//! them now (stopping the turn), Alt+Enter steers them into the turn without
+//! stopping it, and ↑ from the composer's first line takes them back to edit. A
 //! small stack above the composer shows them. The rules live in
 //! `kynex_core::queue`; this file only asks and draws.
 
@@ -53,6 +54,34 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// Alt+Enter: the queue and the draft behind it go into the turn in progress,
+    /// which reads them at its next step without stopping. Idle, it just sends.
+    pub(super) fn steer_now(&mut self, key: Option<Key>, cx: &mut Context<Self>) {
+        let raw = self.pane.composer.read(cx).text().to_string();
+        let text = match self.take_submit(&raw) {
+            (_, Submit::Send(text)) => text,
+            (mode, Submit::Shell(command)) => {
+                self.remember_sent(&mode.prefixed(&command), cx);
+                return self.run_shell(key, command, cx);
+            }
+            (_, Submit::Memory(_)) => return self.ask_memory(cx),
+            (_, Submit::Nothing) => String::new(),
+        };
+        self.remember_sent(&text, cx);
+        if !text.is_empty() || !self.pane.attachments.is_empty() {
+            self.queue_message(key, text, cx);
+        }
+        let model = self.active_model();
+        if let Some(s) = key.and_then(|k| self.session_for(k)) {
+            if !s.busy {
+                s.use_model(model);
+            }
+            s.steer_queue();
+        }
+        self.follow_tail(cx);
+        cx.notify();
+    }
+
     /// Takes a queued message back into the composer, ahead of what's there.
     fn edit_queued(&mut self, key: Key, i: usize, cx: &mut Context<Self>) {
         let Some(m) = self.session_for(key).and_then(|s| s.queue.remove(i)) else { return };
@@ -82,7 +111,7 @@ impl KynexApp {
 
     pub(super) fn render_queue(&mut self, key: Key, cx: &mut Context<Self>) -> Option<AnyElement> {
         let session = self.session_by_key(key)?;
-        let (items, busy) = (session.queue.items(), session.busy);
+        let (items, busy, can_steer) = (session.queue.items(), session.busy, session.can_steer());
         if items.is_empty() {
             return None;
         }
@@ -130,12 +159,26 @@ impl KynexApp {
         let n = items.len();
         let what = if n == 1 { "1 message queued".to_string() } else { format!("{n} messages queued") };
         let when = if busy { "sent when Claude finishes or is stopped" } else { "not sent yet" };
+        let keys = |mods| kynex_core::fmt::keystroke(mods, "enter", cfg!(target_os = "macos"));
+        let steer = can_steer.then(|| {
+            ghost_button("queue-steer", cx)
+                .h(px(20.))
+                .text_xs()
+                .text_color(t.text_muted)
+                .child("Steer")
+                .tooltip(Tooltip::with_meta(
+                    "Send these into the turn now: Claude reads them at its next step, without stopping",
+                    keys(kynex_core::fmt::Mods { alt: true, ..Default::default() }),
+                ))
+                .on_click(cx.listener(move |this, _, _, cx| this.steer_now(Some(key), cx)))
+        });
         let header = div()
             .flex()
             .items_center()
             .gap_2()
             .px_1()
             .child(div().flex_1().text_xs().text_color(t.text_placeholder).child(format!("{what} · {when}")))
+            .children(steer)
             .child(
                 ghost_button("queue-send-now", cx)
                     .h(px(20.))
@@ -144,11 +187,7 @@ impl KynexApp {
                     .child("Send now")
                     .tooltip(Tooltip::with_meta(
                         if busy { "Stop Claude and send these right away" } else { "Send these now" },
-                        kynex_core::fmt::keystroke(
-                            kynex_core::fmt::Mods { control: true, ..Default::default() },
-                            "enter",
-                            cfg!(target_os = "macos"),
-                        ),
+                        keys(kynex_core::fmt::Mods { control: true, ..Default::default() }),
                     ))
                     .on_click(cx.listener(move |this, _, _, cx| this.send_queue_now(Some(key), cx))),
             );

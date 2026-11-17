@@ -169,10 +169,11 @@ impl KynexApp {
     /// new one its provider.
     pub(super) fn start_model(&mut self, s: &mut Session) {
         let cwd = s.cwd.clone();
-        if let Some(id) = &s.session_id
+        // A fork starts on what its original was pinned to.
+        if let Some(id) = s.session_id.clone().or_else(|| s.forked_from().map(str::to_string))
             && s.own_model.is_none()
         {
-            s.own_model = self.groups_for(&cwd).model_of(id).map(str::to_string);
+            s.own_model = self.groups_for(&cwd).model_of(&id).map(str::to_string);
         }
         self.start_session(s);
     }

@@ -38,8 +38,7 @@ impl KynexApp {
             }
             _ => None,
         });
-        let turns = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
-        let handed = kynex_core::subagents::count(&s.items);
+        let (turns, handed) = s.counts();
         let (cost, kind, cwd, context, busy) = (s.total_cost, s.kind, s.cwd.clone(), s.context, s.busy);
         let knows_cost = s.provider().provider().knows_cost();
         let id = s.session_id.clone();

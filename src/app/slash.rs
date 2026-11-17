@@ -241,7 +241,7 @@ impl KynexApp {
 
     /// Runs a built-in Kynex handles itself. Returns false for a message that
     /// isn't one, which is sent to Claude as usual.
-    pub(super) fn run_command(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+    pub(super) fn run_command(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some((name, args)) = commands::parse(text) else { return false };
         let focused = self.focused_key();
         let key = match commands::action(name, args) {
@@ -288,6 +288,11 @@ impl KynexApp {
                 }
             }
             Action::Rewind => self.open_rewind_at(key, None, cx),
+            Action::Fork => {
+                if let Some(key) = key {
+                    self.fork_session(key, window, cx);
+                }
+            }
             Action::Extensions(section) => {
                 let i = match section {
                     Section::Mcp => 0,

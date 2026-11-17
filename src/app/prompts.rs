@@ -70,7 +70,8 @@ impl KynexApp {
 
     /// Keeps the prompt view in step with the oldest pending request of the active session.
     pub(super) fn sync_prompt(&mut self, shown: Option<Key>, window: &mut Window, cx: &mut Context<Self>) {
-        let pending = shown.and_then(|k| self.session_by_key(k)).and_then(|s| {
+        // `waiting()` is cached, so the usual answer, nothing pending, costs no scan.
+        let pending = shown.and_then(|k| self.session_by_key(k)).filter(|s| s.waiting()).and_then(|s| {
             let mut it = s.items.iter().filter_map(|i| request_for(s, i));
             let first = it.next()?;
             Some((s.uid, first, it.count()))

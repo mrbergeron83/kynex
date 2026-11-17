@@ -31,13 +31,15 @@ pub const FLAG: &str = "--openrouter-chat";
 const KEY_ENV: &str = "KYNEX_OPENROUTER_KEY";
 
 /// The harness for a session in `cwd` on `settings` with `key`, continuing
-/// session `resume` (from its entry `at`) if given: Kynex's own executable.
+/// session `resume` (from its entry `at`) if given, as a new session of its own
+/// with `fork`: Kynex's own executable.
 pub(crate) fn command(
     cwd: &Path,
     key: &str,
     settings: &OpenRouterSettings,
     resume: Option<&str>,
     at: Option<&str>,
+    fork: bool,
 ) -> Result<Command, String> {
     let exe = std::env::current_exe().map_err(|e| format!("couldn't find Kynex to start the chat: {e}"))?;
     let mut cmd = Command::new(exe);
@@ -51,6 +53,9 @@ pub(crate) fn command(
     }
     if let Some(at) = at {
         cmd.args(["--resume-session-at", at]);
+    }
+    if fork {
+        cmd.arg("--fork-session");
     }
     #[cfg(windows)]
     {
@@ -72,6 +77,7 @@ struct Args {
     max_tokens: u32,
     resume: Option<String>,
     at: Option<String>,
+    fork: bool,
 }
 
 impl Args {
@@ -86,6 +92,7 @@ impl Args {
                 "--max-tokens" => out.max_tokens = value().parse().unwrap_or(DEFAULT_MAX_OUTPUT_TOKENS),
                 "--resume" => out.resume = Some(value()),
                 "--resume-session-at" => out.at = Some(value()),
+                "--fork-session" => out.fork = true,
                 _ => {}
             }
         }
@@ -146,7 +153,7 @@ fn run(args: Args) -> i32 {
         return 2;
     };
     let cwd = std::env::current_dir().unwrap_or_default();
-    let (mut log, mut history) = log::Log::open(&cwd, args.resume.as_deref(), args.at.as_deref());
+    let (mut log, mut history) = log::Log::open(&cwd, args.resume.as_deref(), args.at.as_deref(), args.fork);
     let out = Out(Arc::new(Mutex::new(Box::new(std::io::stdout()))));
     let stop = Arc::new(Stop::default());
     let (tx, rx) = channel();
@@ -468,7 +475,11 @@ mod tests {
         let a = Args::parse(
             ["--model", "m/x", "--max-tokens", "100", "--resume", "s", "--resume-session-at", "u"].map(String::from),
         );
-        assert_eq!(a, Args { model: "m/x".into(), max_tokens: 100, resume: Some("s".into()), at: Some("u".into()) });
+        let want =
+            Args { model: "m/x".into(), max_tokens: 100, resume: Some("s".into()), at: Some("u".into()), fork: false };
+        assert_eq!(a, want);
+        let forked = Args::parse(["--resume", "s", "--fork-session"].map(String::from));
+        assert!(forked.fork && forked.resume.as_deref() == Some("s"));
         let d = Args::parse(Vec::new());
         assert_eq!(
             (d.model.as_str(), d.max_tokens, d.resume),
@@ -479,7 +490,7 @@ mod tests {
     #[test]
     fn the_command_carries_the_key_in_its_environment_only() {
         let settings = OpenRouterSettings { model: "m/x".into(), max_output_tokens: 0 };
-        let cmd = command(Path::new("."), " sk-or ", &settings, Some("s"), None).unwrap();
+        let cmd = command(Path::new("."), " sk-or ", &settings, Some("s"), None, false).unwrap();
         let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert_eq!(
             args,

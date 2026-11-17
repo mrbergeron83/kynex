@@ -29,6 +29,49 @@ enum There {
 }
 
 impl KynexApp {
+    /// `/fork`: a copy of session `key` to take another way, in a pane beside its
+    /// own (in its place outside the panes, the original staying in the list). The
+    /// copy continues the conversation as a new session once you send to it.
+    pub(super) fn fork_session(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(s) = self.session_by_key(key) else { return };
+        let Some(id) = s.session_id.clone().filter(|_| !s.items.is_empty() && s.forked_from().is_none()) else {
+            self.toast(Toast::warning("Nothing to fork yet: send a message first."));
+            return;
+        };
+        if s.provider().provider() == kynex_core::provider::Provider::Grok {
+            self.toast(Toast::warning("Grok sessions can't be forked."));
+            return;
+        }
+        let (kind, cwd) = (s.kind, s.cwd.clone());
+        let fork = Session::fork(kind, cwd, id, self.wake.clone());
+        let beside = self
+            .tiling_scope()
+            .and_then(|(project, ws, _)| Some((project, ws.clone(), self.tiles.get(&ws)?.pane_of(key)?)));
+        let Some((project, ws, target)) = beside else {
+            self.open_session(fork);
+            cx.notify();
+            return;
+        };
+        let mut fork = fork;
+        self.adopt_project_settings(&mut fork);
+        self.start_model(&mut fork);
+        fork.wake = self.wake.clone();
+        let (new, pane, bounds) = (fork.uid, self.next_pane, self.tile_bounds());
+        if !self.tiles.get_mut(&ws).is_some_and(|t| t.split_at(target, Direction::Right, pane, new, bounds)) {
+            self.toast(Toast::error("No room to split here: the panes would get too small.".to_string()));
+            cx.notify();
+            return;
+        }
+        self.next_pane += 1;
+        if let Some(live) = self.code.get_mut(&project) {
+            live.sessions.push(fork);
+            live.focus(new);
+        }
+        self.swap_to(pane, window, cx);
+        self.focus_input(window, cx);
+        cx.notify();
+    }
+
     /// Shows the past session `id` of the workspace you're in at `side` of pane `target`
     /// (the focused one if `None`), or in that pane's place with no side. One that is on
     /// show already gets the focus instead.

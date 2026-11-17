@@ -3,6 +3,8 @@
 //! agent it went to, and whether it's still working. Background agents aren't
 //! here; they're running tasks ([`crate::tasks`]) and outlive the turn.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -37,19 +39,53 @@ pub fn count(items: &[Item]) -> usize {
 
 /// The subagents called since the last message you sent, in order.
 pub fn of_turn(items: &[Item]) -> Vec<Subagent> {
+    of_turn_with(items, |_, input| parse(input))
+}
+
+/// Which agent a call went to; `None` for one run in the background.
+fn parse(input: &str) -> Option<String> {
+    let input: Value = serde_json::from_str(input).unwrap_or(Value::Null);
+    if input["run_in_background"] == true {
+        return None;
+    }
+    Some(input["subagent_type"].as_str().unwrap_or("general-purpose").to_string())
+}
+
+/// [`of_turn`] for a strip drawn every frame: each call's input is parsed once
+/// (again only if it grows, as a streamed one does), not on every frame.
+#[derive(Debug, Default)]
+pub struct Agents(RefCell<HashMap<String, (usize, Option<String>)>>);
+
+impl Agents {
+    pub fn of_turn(&self, items: &[Item]) -> Vec<Subagent> {
+        let mut seen = self.0.borrow_mut();
+        let out = of_turn_with(items, |id, input| match seen.get(id) {
+            Some((len, agent)) if *len == input.len() => agent.clone(),
+            _ => {
+                let agent = parse(input);
+                seen.insert(id.to_string(), (input.len(), agent.clone()));
+                agent
+            }
+        });
+        // A new turn's calls replace the last one's.
+        if seen.len() > out.len() + 64 {
+            seen.retain(|id, _| out.iter().any(|s| s.id == *id));
+        }
+        out
+    }
+}
+
+fn of_turn_with(items: &[Item], mut agent_of: impl FnMut(&str, &str) -> Option<String>) -> Vec<Subagent> {
     let start = items.iter().rposition(|i| matches!(i, Item::User { .. })).map_or(0, |i| i + 1);
     let turn = &items[start..];
     let mut out: Vec<Subagent> = Vec::new();
     for item in turn {
         match item {
             Item::ToolUse { id, name, summary, input, timing } if name == "Agent" || name == "Task" => {
-                let input: Value = serde_json::from_str(input).unwrap_or(Value::Null);
-                if input["run_in_background"] == true {
-                    continue;
-                }
+                let Some(agent) = agent_of(id, input) else { continue };
                 out.push(Subagent {
                     id: id.clone(),
-                    agent: input["subagent_type"].as_str().unwrap_or("general-purpose").to_string(),
+                    agent,
                     description: summary.clone(),
                     state: State::Working,
                     elapsed: timing.elapsed(),
@@ -117,6 +153,18 @@ mod tests {
         );
         assert_eq!(subs[0].description, "task a");
         assert_eq!(count(&items), 5);
+    }
+
+    #[test]
+    fn the_cached_list_matches_and_follows_a_streamed_input() {
+        let agents = Agents::default();
+        let mut items = vec![user(), call("a", "Agent", "{}"), call("bg", "Agent", r#"{"run_in_background":true}"#)];
+        assert_eq!(agents.of_turn(&items), of_turn(&items));
+        assert_eq!(agents.of_turn(&items)[0].agent, "general-purpose");
+        // The call's input came in full: parsed again.
+        items[1] = call("a", "Agent", r#"{"subagent_type":"Explore"}"#);
+        assert_eq!(agents.of_turn(&items)[0].agent, "Explore");
+        assert_eq!(agents.of_turn(&items), of_turn(&items));
     }
 
     #[test]

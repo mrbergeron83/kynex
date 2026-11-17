@@ -34,7 +34,7 @@ impl KynexApp {
     }
 
     /// Sends the composer's message on the session `key` (queued while it works).
-    fn send_to(&mut self, key: Option<Key>, _window: &mut Window, cx: &mut Context<Self>) {
+    fn send_to(&mut self, key: Option<Key>, window: &mut Window, cx: &mut Context<Self>) {
         let busy = key.and_then(|k| self.session_for(k)).is_some_and(|s| s.busy);
         let raw = self.pane.composer.read(cx).text().to_string();
         self.pane.slash.dismissed = None;
@@ -53,7 +53,7 @@ impl KynexApp {
         let pasted = self.pane.composer.read(cx).pasted() || !self.pane.pastes.is_empty();
         self.remember_sent(&text, cx);
         // Built-ins Kynex runs itself (`/clear`, `/model`…) work even mid-reply.
-        if self.pane.attachments.is_empty() && self.run_command(&text, cx) {
+        if self.pane.attachments.is_empty() && self.run_command(&text, window, cx) {
             self.pane.composer.update(cx, |c, cx| c.set_text("", cx));
             self.reset_input_mode();
             return;
@@ -183,6 +183,7 @@ impl KynexApp {
         let queued = key.and_then(|k| self.render_queue(k, cx));
         let running = key.and_then(|k| self.render_running_tasks(k, cx));
         let agents = key.and_then(|k| self.render_turn_agents(k, cx));
+        let todos = key.and_then(|k| self.render_todos(k, cx));
         let handoff = key.and_then(|k| self.render_handoff(k, cx));
         let files_badge = key.and_then(|k| self.scratch_badge(k, cx));
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
@@ -227,6 +228,7 @@ impl KynexApp {
                     .gap_1p5()
                     .children(update)
                     .children(trust)
+                    .children(todos)
                     .children(agents)
                     .children(running)
                     .children(handoff)
@@ -523,6 +525,11 @@ impl KynexApp {
                 let m = &k.modifiers;
                 if k.key == "enter" && m.control && !m.shift && !m.alt && !m.platform {
                     this.send_queue_now(key, cx);
+                    cx.stop_propagation();
+                }
+                // Alt+Enter steers: the queue and the draft go into the running turn.
+                if k.key == "enter" && m.alt && !m.control && !m.shift && !m.platform {
+                    this.steer_now(key, cx);
                     cx.stop_propagation();
                 }
             }))

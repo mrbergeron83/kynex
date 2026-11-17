@@ -173,6 +173,9 @@ pub fn timeout_ms(input: &str) -> Option<u64> {
 /// Called from the reader threads whenever the process has news, so the UI drains it.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
+/// Claude's todo list as [`Session::todos`] hands it out, shared rather than copied.
+pub type TodoList = Arc<Vec<crate::todos::Todo>>;
+
 pub enum Item {
     User {
         text: String,
@@ -330,6 +333,8 @@ pub struct Session {
     conversation: bool,
     /// Background tasks running in this session's process.
     pub tasks: Tasks,
+    /// The subagents of the turn in progress, each call's input parsed once.
+    pub agents: crate::subagents::Agents,
     /// The MCP servers its process reported when it started, and how they're doing.
     pub mcp: Vec<crate::mcp::Server>,
     /// The tools each of those servers offers, by server name.
@@ -383,6 +388,12 @@ pub struct Session {
     perm_gen: u64,
     /// `waiting()` as last scanned: (item count, `perm_gen`, answer). It is asked every frame.
     waiting_cache: std::cell::Cell<Option<(usize, u64, bool)>>,
+    /// `counts()` as last scanned: (item count, revision, turns, subagents). Asked every frame.
+    counts_cache: std::cell::Cell<Option<(usize, u64, usize, usize)>>,
+    /// `wants_browser()` as last worked out: (item count, revision, answer). Asked every frame.
+    browser_cache: std::cell::Cell<Option<(usize, u64, bool)>>,
+    /// `todos()` as last read: (item count, revision, the list). Asked every frame.
+    todos_cache: std::cell::RefCell<Option<(usize, u64, TodoList)>>,
     next_request: u64,
     /// `mcp_reconnect` and `mcp_status` requests awaiting an answer.
     mcp_requests: Vec<String>,
@@ -403,6 +414,14 @@ pub struct Session {
     limits: Option<crate::usage::Limits>,
     /// The log entry a rewind went back to, which the next process continues from.
     resume_at: Option<String>,
+    /// A fork's original ([`Self::fork`]): its process continues that one as a new
+    /// session, until the first message is sent and the new one has its own log.
+    fork_from: Option<String>,
+    /// A message was written into the turn in progress ([`Self::steer`]).
+    steered: bool,
+    /// The last turn ended with a steer written into it, which the CLI may not have
+    /// read in time: if it starts a turn of its own for it, that turn is busy too.
+    late_steer: bool,
     /// A Grok process's protocol state ([`crate::grok::acp`]): what it writes and reads goes through it.
     acp: Option<crate::grok::acp::Acp>,
     /// Counts processes started, so [`Self::poll`] drops what an old one sent
@@ -532,6 +551,7 @@ impl Session {
             reopened: false,
             conversation: false,
             tasks: Tasks::default(),
+            agents: Default::default(),
             mcp: Vec::new(),
             mcp_tools: Default::default(),
             browser: false,
@@ -559,6 +579,9 @@ impl Session {
             revision: 0,
             perm_gen: 0,
             waiting_cache: std::cell::Cell::new(None),
+            counts_cache: std::cell::Cell::new(None),
+            browser_cache: std::cell::Cell::new(None),
+            todos_cache: Default::default(),
             next_request: 0,
             stopping: HashMap::new(),
             mcp_requests: Vec::new(),
@@ -569,6 +592,9 @@ impl Session {
             init: None,
             limits: None,
             resume_at: None,
+            fork_from: None,
+            steered: false,
+            late_steer: false,
             acp: None,
             runs: 0,
             loader: None,
@@ -637,11 +663,31 @@ impl Session {
         s
     }
 
+    /// A copy of session `from` to take somewhere else (`/fork`): it shows its
+    /// conversation, and its process continues it as a new session with
+    /// `--fork-session`; `from` stays as it is. It has no id of its own until its
+    /// process reports one.
+    pub fn fork(kind: Kind, cwd: PathBuf, from: String, wake: Wake) -> Self {
+        let mut s = Self::new(kind, cwd);
+        s.fork_from = Some(from);
+        s.reopened = true;
+        s.wake = wake;
+        s.load(None);
+        s
+    }
+
+    /// The session a fork continues, until its first message is sent.
+    pub fn forked_from(&self) -> Option<&str> {
+        self.fork_from.as_deref()
+    }
+
     /// Starts filling the transcript from the session log's current branch, up
     /// to and including entry `until` if given.
     fn load(&mut self, until: Option<String>) {
         let (tx, rx) = channel();
-        let (cwd, id, wake) = (self.cwd.clone(), self.session_id.clone().unwrap_or_default(), self.wake.clone());
+        // An unsent fork's conversation is its original's, whatever id its process reported.
+        let id = self.fork_from.clone().or_else(|| self.session_id.clone()).unwrap_or_default();
+        let (cwd, wake) = (self.cwd.clone(), self.wake.clone());
         thread::spawn(move || {
             read_history(&cwd, &id, until.as_deref(), &tx, &wake);
             // The last ring comes after the channel closes, so the app sees it closed.
@@ -709,6 +755,7 @@ impl Session {
     pub fn rewind_to(&mut self, point: &crate::rewind::Point) {
         self.kill();
         self.items.clear();
+        self.revision += 1;
         self.perm_gen += 1;
         self.context = ContextUse::default();
         self.queue = Queue::default();
@@ -723,6 +770,8 @@ impl Session {
                 self.session_id = None;
                 self.conversation = false;
                 self.resume_at = None;
+                // Back to the start: a fork that sent nothing has nothing to continue.
+                self.fork_from = None;
             }
         }
     }
@@ -795,6 +844,49 @@ impl Session {
         answer
     }
 
+    /// How many turns it has finished and how many subagents it has called, for
+    /// the header; scanned again only when its items change.
+    pub fn counts(&self) -> (usize, usize) {
+        let key = (self.items.len(), self.revision);
+        if let Some((n, r, turns, agents)) = self.counts_cache.get()
+            && (n, r) == key
+        {
+            return (turns, agents);
+        }
+        let turns = self.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
+        let agents = crate::subagents::count(&self.items);
+        self.counts_cache.set(Some((key.0, key.1, turns, agents)));
+        (turns, agents)
+    }
+
+    /// Whether its last turn ended asking you to do something in the browser
+    /// ([`crate::mcp::handoff`]); worked out again only when its items change.
+    pub fn wants_browser(&self) -> bool {
+        let key = (self.items.len(), self.revision);
+        if let Some((n, r, answer)) = self.browser_cache.get()
+            && (n, r) == key
+        {
+            return answer;
+        }
+        let answer = crate::mcp::handoff(&self.items).is_some();
+        self.browser_cache.set(Some((key.0, key.1, answer)));
+        answer
+    }
+
+    /// Claude's todo list as it stands ([`crate::todos`]); read again only when its
+    /// items change.
+    pub fn todos(&self) -> TodoList {
+        let key = (self.items.len(), self.revision);
+        if let Some((n, r, list)) = &*self.todos_cache.borrow()
+            && (*n, *r) == key
+        {
+            return list.clone();
+        }
+        let list = std::sync::Arc::new(crate::todos::of(&self.items));
+        *self.todos_cache.borrow_mut() = Some((key.0, key.1, list.clone()));
+        list
+    }
+
     /// Whether this session wants the user: a turn ended unseen, or a prompt waits.
     pub fn wants_you(&self) -> bool {
         self.finished || self.waiting()
@@ -807,7 +899,7 @@ impl Session {
 
     /// The conversation a new process continues, if there is one to continue.
     fn resume_id(&self) -> Option<&str> {
-        self.session_id.as_deref().filter(|_| self.conversation)
+        self.fork_from.as_deref().or(self.session_id.as_deref().filter(|_| self.conversation))
     }
 
     /// Starts its process on a thread ([`launch::begin`]) and returns at once.
@@ -828,6 +920,7 @@ impl Session {
             bypass: self.bypass,
             resume: self.resume_id().map(str::to_string),
             resume_at: if grok { None } else { self.resume_at.take() },
+            fork: self.fork_from.is_some(),
             wake: self.wake.clone(),
         };
         self.starting = Some(launch::begin(spec, tx));
@@ -1019,6 +1112,8 @@ impl Session {
             content.push(json!({ "type": "text", "text": text }));
         }
         self.items.push(Item::User { text, images });
+        // A new turn: one a late steer may start is this one.
+        self.late_steer = false;
         self.busy = true;
         self.talked = true;
         self.conversation = true;
@@ -1030,6 +1125,9 @@ impl Session {
             msg["ultrathink_typed"] = json!(true);
         }
         self.write(msg);
+        // A fork's process has the message: it writes the new session's log, which
+        // a later process resumes by the id it reports.
+        self.fork_from = None;
     }
 
     /// Starts the process ahead of the first message, so sending doesn't wait
@@ -1114,6 +1212,28 @@ impl Session {
     /// Stops the turn. Anything queued goes out as soon as it has ended.
     pub fn interrupt(&mut self) {
         self.control(json!({ "subtype": "interrupt" }));
+    }
+
+    /// Whether a message can go into the turn in progress without stopping it:
+    /// `claude` reads one written mid-turn at its next step (Grok can't).
+    pub fn can_steer(&self) -> bool {
+        self.busy && self.is_running() && !self.loading() && self.provider.provider() != crate::provider::Provider::Grok
+    }
+
+    /// Sends a message into the turn in progress, which takes it in at its next
+    /// step instead of after the turn; when it can't ([`Self::can_steer`]), it's
+    /// sent as usual (queued while a turn runs).
+    pub fn steer(&mut self, text: String, attachments: Vec<Attachment>) {
+        let steering = self.can_steer();
+        self.send(text, attachments);
+        self.steered |= steering;
+    }
+
+    /// The queue, into the turn in progress ([`Self::steer`]); sent as usual when idle.
+    pub fn steer_queue(&mut self) {
+        if let Some(m) = self.queue.take_all() {
+            self.steer(m.text, m.attachments);
+        }
     }
 
     /// Sends the queue now: right away when idle, otherwise it stops the turn
@@ -1347,6 +1467,8 @@ impl Session {
         self.settle_thoughts();
         self.tasks.clear();
         self.stopping.clear();
+        self.steered = false;
+        self.late_steer = false;
         // Nobody is left to answer them.
         self.cancel_permissions(|_| true);
     }
@@ -1420,6 +1542,16 @@ impl Session {
     }
 
     pub(crate) fn handle(&mut self, v: Value) {
+        // The CLI started a turn of its own for a steer that came too late for the last one.
+        if self.late_steer
+            && !self.busy
+            && matches!(v["type"].as_str(), Some("assistant" | "stream_event"))
+            && v["parent_tool_use_id"].is_null()
+        {
+            self.late_steer = false;
+            self.busy = true;
+            self.finished = false;
+        }
         if let Some(id) = v["session_id"].as_str() {
             self.session_id = Some(id.to_string());
         }
@@ -1661,6 +1793,7 @@ impl Session {
                 });
                 self.busy = false;
                 self.finished = true;
+                self.late_steer = std::mem::take(&mut self.steered);
                 if let Some(next) = self.queue.take_all() {
                     self.send(next.text, next.attachments);
                 }
@@ -2297,6 +2430,8 @@ fn tool_summary(name: &str, input: &Value) -> String {
         "WebFetch" => "url",
         "WebSearch" => "query",
         "Task" | "Agent" | "spawn_subagent" => "description",
+        "TodoWrite" => return crate::todos::summary(input),
+        "TaskCreate" | "TaskUpdate" => "subject",
         // MCP calls read as what they do: "Click “Sign in”".
         _ => return crate::mcp::describe(name, input).map(|(_, target)| target).unwrap_or_default(),
     };
@@ -2347,6 +2482,28 @@ mod tests {
 
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_steer_the_cli_answers_in_a_turn_of_its_own_keeps_the_session_busy() {
+        let mut s = Session::new(Kind::Code, std::env::temp_dir());
+        // Not running: a steer is an ordinary message.
+        assert!(!s.can_steer());
+        // Taken in during the turn: one result, and the session is idle after it.
+        s.busy = true;
+        s.steered = true;
+        s.handle(json!({ "type": "result", "duration_ms": 1, "total_cost_usd": 0.0 }));
+        assert!(!s.busy && s.late_steer);
+        // Too late for that turn: the CLI starts another for it, which is busy too.
+        s.handle(json!({ "type": "stream_event", "parent_tool_use_id": null,
+            "event": { "type": "message_start" } }));
+        assert!(s.busy && !s.late_steer && !s.finished);
+        s.handle(json!({ "type": "result", "duration_ms": 1, "total_cost_usd": 0.0 }));
+        assert!(!s.busy && !s.late_steer);
+        // Without a steer, output after a result (a background task's turn) doesn't.
+        s.handle(json!({ "type": "stream_event", "parent_tool_use_id": null,
+            "event": { "type": "message_start" } }));
+        assert!(!s.busy);
+    }
 
     #[test]
     fn result_recaps_the_turn() {
@@ -3088,6 +3245,23 @@ mod tests {
     }
 
     #[test]
+    fn a_fork_continues_its_original_until_it_has_its_own_id() {
+        let mut s = Session::fork(Kind::Code, std::env::temp_dir(), "orig".into(), Arc::new(|| {}));
+        // No id of its own, so it never stands in for the original.
+        assert_eq!((s.session_id.as_deref(), s.forked_from()), (None, Some("orig")));
+        assert_eq!(s.resume_id(), Some("orig"));
+        // A warmed-up process reports the new id; until a message goes out the
+        // next process still forks the original.
+        s.handle(json!({ "type": "system", "subtype": "init", "session_id": "new" }));
+        assert_eq!(s.resume_id(), Some("orig"));
+        assert!(!s.is_new());
+        // Once the message went out, the new session is the one resumed.
+        s.fork_from = None;
+        s.conversation = true;
+        assert_eq!(s.resume_id(), Some("new"));
+    }
+
+    #[test]
     fn only_a_new_session_switches_provider() {
         use crate::provider::{Launch, OpenRouterSettings, Provider};
         let openrouter = || Launch::OpenRouter { key: "k".into(), settings: OpenRouterSettings::default() };
@@ -3287,6 +3461,88 @@ mod tests {
         let reply = turn(&mut s, "List every word I asked you to remember, nothing else.");
         assert!(reply.contains("APPLE") && !reply.contains("BANANA"), "got: {reply:?}");
         assert_eq!(s.session_id.as_deref(), Some(id.as_str()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn live_session(name: &str) -> (PathBuf, Session) {
+        let root = std::env::temp_dir().join(format!("kynex-{name}-{}", std::process::id()));
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        unsafe { std::env::set_var("KYNEX_DATA_DIR", root.join("data")) };
+        let mut s = Session::new(Kind::Code, project);
+        s.model = "haiku".into();
+        s.mode = project::Mode::Bypass;
+        s.bypass = true;
+        (root, s)
+    }
+
+    fn wait_idle(s: &mut Session) {
+        let start = Instant::now();
+        while (s.busy || s.loading()) && start.elapsed() < Duration::from_secs(120) {
+            // As the app does: the log read in the background comes in here.
+            s.take_history();
+            s.poll();
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn last_reply(s: &Session) -> String {
+        s.items
+            .iter()
+            .rev()
+            .find_map(|i| if let Item::Assistant(t) = i { Some(t.clone()) } else { None })
+            .unwrap_or_default()
+    }
+
+    /// A message written mid-turn is read in that turn: one result, and the reply
+    /// follows it. Run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn steer_live() {
+        let (root, mut s) = live_session("steer");
+        s.send("Use the Bash tool to run: sleep 6 && echo first. Then run: sleep 6 && echo second. Then reply in one line.".into(), Vec::new());
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(4) {
+            s.poll();
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(s.can_steer(), "the turn ended before the steer");
+        s.steer("Change of plan: end your final reply with the word BANANA.".into(), Vec::new());
+        wait_idle(&mut s);
+        let results = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
+        let reply = last_reply(&s);
+        assert!(reply.contains("BANANA"), "got: {reply:?}");
+        assert!(results <= 2 && !s.busy, "{results} results");
+        s.kill();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `/fork` continues a session as a new one, and the original's log is left as it was.
+    #[test]
+    #[ignore]
+    fn fork_live() {
+        let (root, mut s) = live_session("fork");
+        s.send("Remember the word APPLE. Reply only OK.".into(), Vec::new());
+        wait_idle(&mut s);
+        let orig = s.session_id.clone().unwrap();
+        let cwd = s.cwd.clone();
+        s.kill();
+        let mut f = Session::fork(Kind::Code, cwd.clone(), orig.clone(), Arc::new(|| {}));
+        f.model = "haiku".into();
+        wait_idle(&mut f);
+        f.send("Which word did I ask you to remember? Reply with just it.".into(), Vec::new());
+        wait_idle(&mut f);
+        assert!(last_reply(&f).contains("APPLE"), "got: {:?}", last_reply(&f));
+        let new = f.session_id.clone().unwrap();
+        assert_ne!(new, orig);
+        assert_eq!(f.resume_id(), Some(new.as_str()));
+        f.kill();
+        let users = |id: &str| {
+            let log = std::fs::read_to_string(transcript_path(&cwd, id).unwrap()).unwrap_or_default();
+            log.lines().filter(|l| l.contains(r#""type":"user""#) && !l.contains("tool_result")).count()
+        };
+        assert_eq!(users(&orig), 1, "the original grew");
+        assert!(users(&new) >= 2);
         let _ = std::fs::remove_dir_all(&root);
     }
 

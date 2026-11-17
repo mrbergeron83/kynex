@@ -35,6 +35,14 @@ pub struct Worktrees {
     watch: Option<kynex_core::watch::GitWatch>,
 }
 
+/// [`KynexApp::working_worktree`] as last worked out for a session: what it was
+/// worked out from (item count and revision, the worktree list) and the answer.
+pub(super) struct Working {
+    stamp: (usize, u64),
+    list: Vec<Worktree>,
+    found: Option<Worktree>,
+}
+
 impl Worktrees {
     fn new(root: PathBuf, cx: &mut Context<Self>) -> Self {
         let changed = Arc::new(AtomicBool::new(false));
@@ -152,16 +160,24 @@ impl KynexApp {
     /// recent tool call that works in one, an edit or a command that changes something
     /// (Claude often works in a worktree by path while the session itself runs in the
     /// main folder). Reads, and commands that only look, don't count.
+    /// Asked every frame, so the answer is kept until the session's items or the
+    /// worktree list change.
     pub(super) fn working_worktree(&mut self, key: Key, cx: &mut Context<Self>) -> Option<Worktree> {
         let cwd = self.session_by_key(key).filter(|s| s.kind == Kind::Code)?.cwd.clone();
         let project = self.workspace_project().unwrap_or_else(|| cwd.clone());
-        let list = self.worktrees(&project, cx).read(cx).list.clone();
-        // Without a linked worktree there's nothing to find: skip the scan (this runs every frame).
+        let entity = self.worktrees(&project, cx);
+        let list = &entity.read(cx).list;
+        // Without a linked worktree there's nothing to find.
         if list.len() < 2 {
             return None;
         }
         let s = self.session_by_key(key)?;
-        s.items
+        let stamp = (s.items.len(), s.revision());
+        if let Some(c) = self.working.get(&key).filter(|c| c.stamp == stamp && c.list == *list) {
+            return c.found.clone();
+        }
+        let found = s
+            .items
             .iter()
             .rev()
             .filter_map(|i| match i {
@@ -170,9 +186,16 @@ impl KynexApp {
             })
             .take(300)
             // The path match first: it's the cheaper test, and most calls fail it.
-            .find_map(|(name, input)| git::worktree_in(input, &list).filter(|_| git::works_in(name, input)))
+            .find_map(|(name, input)| git::worktree_in(input, list).filter(|_| git::works_in(name, input)))
             .filter(|w| w.path != cwd)
-            .cloned()
+            .cloned();
+        let list = list.clone();
+        // Closed sessions' answers aren't worth tracking one by one: a few panes' worth stay.
+        if self.working.len() > 32 {
+            self.working.clear();
+        }
+        self.working.insert(key, Working { stamp, list, found: found.clone() });
+        found
     }
 
     /// Re-reads the worktrees of these folders, where they're being watched.

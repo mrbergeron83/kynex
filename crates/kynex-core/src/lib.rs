@@ -82,6 +82,7 @@ pub mod tiling;
 pub mod timeline;
 pub mod titles;
 pub mod toasts;
+pub mod todos;
 pub mod trace;
 pub mod transcript;
 pub mod tray;
