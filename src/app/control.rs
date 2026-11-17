@@ -186,6 +186,10 @@ impl KynexApp {
                 self.focus_pane(pane, window, cx);
                 Ok(json!({ "pane": pane }))
             }
+            Request::PaneMove { pane, to } => self.control_pane_move(pane, to, window, cx),
+            Request::PaneSwap { pane, other } => self.control_pane_swap(pane, other, window, cx),
+            Request::PaneResize { pane, dir, by } => self.control_pane_resize(pane, dir, by, window, cx),
+            Request::PaneZoom { pane, off } => self.control_pane_zoom(pane, off, window, cx),
             Request::PaneClose { pane } => {
                 let Some(pane) = pane.or_else(|| self.focused_pane()) else {
                     return Err(said("no pane to close"));
@@ -396,7 +400,7 @@ impl KynexApp {
         self.tiles.get(&cwd)?.focus()
     }
 
-    fn tiles_have(&self, pane: u64) -> bool {
+    pub(super) fn tiles_have(&self, pane: u64) -> bool {
         self.tiling_scope().and_then(|(_, cwd, _)| self.tiles.get(&cwd)).is_some_and(|t| t.has(pane))
     }
 

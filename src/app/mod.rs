@@ -20,7 +20,8 @@
 //! | `control.rs`        | the control socket: `knx project / workspace / pane / session / events` |
 //! | `control_workspaces.rs` | its `workspace` commands: list, show, make, remove |
 //! | `control_panes.rs`  | its terminal / agent pane commands: read, run, prompt, wait |
-//! | `control_cards.rs`  | the card you answer before a `knx` request changes something |
+//! | `control_pane_layout.rs` | its pane layout commands: move, swap, resize, zoom |
+//! | `control_cards.rs` | the card you answer before a `knx` request changes something |
 //! | `control_sessions.rs` | its session commands: new, fork, open, close, rename, archive, pin |
 //! | `lineage.rs`        | which session started which: links, caps, answers sent back |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
@@ -113,6 +114,7 @@ mod background;
 mod composer;
 mod control;
 mod control_cards;
+mod control_pane_layout;
 mod control_panes;
 mod control_sessions;
 mod control_workspaces;

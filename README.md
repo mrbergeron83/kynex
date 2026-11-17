@@ -92,6 +92,8 @@ knx project list | create <folder> | open <folder> | remove <folder>   # project
 knx workspace list | open <folder> | remove <folder> [--force]   # the shown project's checkouts
 knx workspace create <branch> [--session] [--why <reason>] [--prompt <message…>]   # a new checkout, with a session in it
 knx pane list [--all] | split [row|column] | focus <id> | close [id]   # panes of the shown tab (--all: every workspace)
+knx pane move <id> left|right|up|down|new-tab|tab <n> | swap <id> <other>   # rearrange panes
+knx pane resize <id> left|right|up|down [--by <px>] | zoom <id> [--off]
 knx pane read <id> [--lines N]                # a terminal or agent pane's screen, or its last N lines
 knx pane run <id|new> <command…> [--wait]     # type a command into a shell pane; --wait gives its exit code and output
 knx pane prompt <id> <message…> [--wait] | wait <id>   # agent-CLI panes (codex, opencode…): done or blocked

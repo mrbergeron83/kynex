@@ -81,7 +81,7 @@ impl KynexApp {
         self.after_move(moved, window, cx);
     }
 
-    fn after_move(&mut self, moved: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn after_move(&mut self, moved: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !moved {
             self.toast(kynex_core::toasts::Toast::error(
                 "No room to move it there: the panes would get too small.".to_string(),
