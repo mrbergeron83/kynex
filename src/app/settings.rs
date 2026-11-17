@@ -10,7 +10,7 @@ use gpui::{
     prelude::*,
 };
 use kynex_core::paths::project_name;
-use kynex_core::project::{self, ClaudeSettings, Mode, Permissions};
+use kynex_core::project::{self, ClaudeSettings, Mode, Permissions, WorktreeSettings};
 
 use kynex_core::toasts::Toast;
 
@@ -25,6 +25,8 @@ pub struct SettingsView {
     pub path: PathBuf,
     pub perms: Permissions,
     pub claude: ClaudeSettings,
+    /// Where this project's new worktrees go.
+    pub worktrees: WorktreeSettings,
     /// The rules in the user's, the repo's and its local settings files, read
     /// when the modal opened, and what couldn't be read.
     pub files: Vec<kynex_core::rules::Rule>,
@@ -62,6 +64,7 @@ impl KynexApp {
         self.settings = Some(SettingsView {
             perms: Permissions::load(&path),
             claude,
+            worktrees: WorktreeSettings::load(&path),
             files,
             file_errors,
             starters: kynex_core::starters::detect(&path),
@@ -83,10 +86,16 @@ impl KynexApp {
     /// the project's running sessions ([`Self::apply_project_settings`]).
     pub(super) fn edit_settings(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut SettingsView)) {
         let Some(view) = &mut self.settings else { return };
-        let (perms_before, claude_before) = (view.perms.clone(), view.claude.clone());
+        let (perms_before, claude_before, worktrees_before) =
+            (view.perms.clone(), view.claude.clone(), view.worktrees.clone());
         f(view);
         let path = view.path.clone();
         let mut errors = Vec::new();
+        if view.worktrees != worktrees_before
+            && let Err(e) = view.worktrees.save(&path)
+        {
+            errors.push(e);
+        }
         if view.perms != perms_before
             && let Err(e) = view.perms.save(&path)
         {
@@ -351,6 +360,24 @@ impl KynexApp {
                     }
                 })
                 .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Picks the folder this project's new worktrees go in.
+    pub(super) fn pick_worktree_dir(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Put worktrees here".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(mut paths))) = paths.await
+                && let Some(dir) = paths.pop()
+            {
+                this.update(cx, |this, cx| this.edit_settings(cx, |v| v.worktrees.root = Some(dir))).ok();
             }
         })
         .detach();

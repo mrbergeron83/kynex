@@ -86,6 +86,8 @@ pub struct Saved {
     pub window: Option<WindowState>,
     /// The `claude` to run instead of the one found on PATH (App settings).
     pub cli_path: Option<PathBuf>,
+    /// Where new worktrees go unless a project says otherwise; `None` is under the data dir.
+    pub worktree_root: Option<PathBuf>,
     /// The shell new terminals open; `None` is the OS's.
     pub shell: Option<ShellKind>,
     /// The browser Claude sessions get (`kynex_core::browser`), or none.
@@ -175,6 +177,7 @@ impl Default for Saved {
             sessions_width: 260.,
             window: None,
             cli_path: None,
+            worktree_root: None,
             shell: None,
             browser: Default::default(),
             skipped_cli_version: None,

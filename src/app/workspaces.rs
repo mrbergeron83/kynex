@@ -104,11 +104,17 @@ impl KynexApp {
 
     /// A closed project's terminals and Git views, in each of its workspaces' folders.
     /// `cwds` are the folders its sessions ran in.
-    pub(super) fn drop_workspace_views(&mut self, project: &Path, cwds: &[PathBuf]) {
-        let made_here = workspace::worktrees_dir(project);
+    /// `known` are the worktrees git listed for it (they may live outside the worktrees folder).
+    pub(super) fn drop_workspace_views(&mut self, project: &Path, cwds: &[PathBuf], known: &[PathBuf]) {
+        // The folder Kynex makes this project's worktrees in counts whole only when it is
+        // this project's alone (a subfolder per project); a project's own root may be shared
+        // or broad (`~`, `..`), so there only the listed worktrees and session folders count.
+        let own_root = kynex_core::project::WorktreeSettings::load(project).root.is_some();
+        let made_here = (!own_root).then(|| workspace::worktrees_dir(project));
         let ours = |f: &Path| {
             workspace::same_folder(f, project)
-                || f.starts_with(&made_here)
+                || made_here.as_ref().is_some_and(|m| f.starts_with(m))
+                || known.iter().any(|k| workspace::same_folder(k, f))
                 || cwds.iter().any(|c| workspace::same_folder(c, f))
         };
         self.git.retain(|f, _| !ours(f));

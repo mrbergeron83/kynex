@@ -147,7 +147,7 @@ impl KynexApp {
             Request::ProjectRemove { path } => {
                 let i = self.saved.projects.iter().position(|p| same_folder(&p.path, std::path::Path::new(&path)));
                 let i = i.ok_or_else(|| Some(format!("{path} isn't open")))?;
-                self.close_project(i);
+                self.close_project(i, cx);
                 Ok(json!({ "closed": path }))
             }
             Request::PaneList { all } => Ok(self.pane_list(all)),
