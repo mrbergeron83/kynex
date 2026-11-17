@@ -101,6 +101,7 @@ knx session fork <s> [--at <message number>] [--pane …] | open <session id> [-
 knx session close <s> | rename <s> <title…> | archive <s> | pin <s> [--off]
 knx request status <id> | wait <id>           # a request still waiting for your OK
 knx events                                    # a line per finished turn, session or agent pane that needs you, session.created / session.closed
+knx api schema                                # the requests, answers and events as JSON (works without Kynex running)
 ```
 
 Whatever changes something (everything but listing, reading, waiting and moving around) waits

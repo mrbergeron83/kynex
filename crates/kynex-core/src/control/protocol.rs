@@ -6,6 +6,7 @@
 //! `{"id": 1, "ok": false, "error": "…"}`. After `{"cmd": "events"}` the connection streams
 //! `{"event": "turn_end", …}` lines until it closes.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -14,7 +15,7 @@ pub const MAX_LINE: usize = 1 << 20;
 
 /// What a client can ask. A project is a tab of the window; its workspaces are its checkouts
 /// (worktrees and folders added by hand).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
     ProjectList,
@@ -189,7 +190,7 @@ pub enum Request {
 }
 
 /// A session, by its uid in this run (a number) or its CLI session id, which survives a restart.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum SessionRef {
     Uid(u64),
@@ -226,7 +227,7 @@ impl std::fmt::Display for SessionRef {
 
 /// Where a session a request makes is shown: in a pane at the right of or below the asking
 /// (else the focused) pane, in a new pane tab, or nowhere (`none`: only in the sessions list).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Place {
     #[default]
@@ -250,7 +251,7 @@ impl Place {
 }
 
 /// A line from a client.
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize, JsonSchema)]
 pub struct Incoming {
     /// Echoed back with the answer.
     #[serde(default)]
@@ -289,29 +290,77 @@ pub fn request_line_from(id: u64, request: &Request, caller: Option<u64>) -> Str
     v.to_string()
 }
 
+/// The line that answers a request: `ok` with a `result`, or not `ok` with an `error`.
+#[derive(Serialize, JsonSchema)]
+pub struct Answer {
+    /// The request's `id`, echoed back; left out when the request had none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<Value>,
+    /// Whether the request succeeded.
+    pub ok: bool,
+    /// What the request produced (any JSON; its shape depends on the command). Only when `ok`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    /// Why it failed. Only when not `ok`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// The answer line for a request.
 pub fn answer(id: &Option<Value>, result: Result<Value, String>) -> String {
-    let mut m = serde_json::Map::new();
-    if let Some(id) = id {
-        m.insert("id".into(), id.clone());
-    }
-    match result {
-        Ok(v) => {
-            m.insert("ok".into(), Value::Bool(true));
-            m.insert("result".into(), v);
+    let (ok, result, error) = match result {
+        Ok(v) => (true, Some(v), None),
+        Err(e) => (false, None, Some(e)),
+    };
+    serde_json::to_string(&Answer { id: id.clone(), ok, result, error }).unwrap_or_default()
+}
+
+/// The events `{"cmd": "events"}` streams, each a line `{"event": <name>, …fields}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Event {
+    SessionCreated,
+    SessionClosed,
+    TurnEnd,
+    NeedsYou,
+}
+
+impl Event {
+    /// Every event, for the schema.
+    pub const ALL: [Event; 4] = [Self::SessionCreated, Self::SessionClosed, Self::TurnEnd, Self::NeedsYou];
+
+    /// The `event` field of its line.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::SessionCreated => "session.created",
+            Self::SessionClosed => "session.closed",
+            Self::TurnEnd => "turn_end",
+            Self::NeedsYou => "needs_you",
         }
-        Err(e) => {
-            m.insert("ok".into(), Value::Bool(false));
-            m.insert("error".into(), Value::String(e));
+    }
+
+    /// When it is sent and what else its line has.
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::SessionCreated => {
+                "A session was opened. Fields: `session` (uid), `id` (CLI session id, if known), `parent` (what started it, if anything)."
+            }
+            Self::SessionClosed => {
+                "A session was closed. Fields: `session` (uid), `parent` (what started it, if anything)."
+            }
+            Self::TurnEnd => {
+                "A session's turn ended, or an agent pane finished. Fields: `session` (uid) with `state`, or `pane` with `agent` and `state`."
+            }
+            Self::NeedsYou => {
+                "A session or agent pane started needing you (permission, question). Fields: `session` (uid), or `pane` with `agent`."
+            }
         }
     }
-    Value::Object(m).to_string()
 }
 
 /// A line of the event stream.
-pub fn event_line(name: &str, data: Value) -> String {
+pub fn event_line(event: Event, data: Value) -> String {
     let mut m = serde_json::Map::new();
-    m.insert("event".into(), Value::String(name.to_string()));
+    m.insert("event".into(), Value::String(event.name().to_string()));
     if let Value::Object(d) = data {
         m.extend(d);
     }
@@ -319,7 +368,7 @@ pub fn event_line(name: &str, data: Value) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -385,8 +434,24 @@ mod tests {
 
     #[test]
     fn every_request_survives_a_round_trip() {
-        let all = [
+        for r in sample_requests() {
+            let (id, back) = parse_request(&request_line(9, &r)).unwrap();
+            assert_eq!((id, back), (Some(json!(9)), r));
+        }
+    }
+
+    /// One of each request, with the fields set.
+    pub(crate) fn sample_requests() -> Vec<Request> {
+        vec![
             Request::ProjectList,
+            Request::ProjectCreate { path: "/a".into() },
+            Request::ProjectRemove { path: "/a".into() },
+            Request::WorkspaceList,
+            Request::WorkspaceOpen { path: "/w".into() },
+            Request::PaneFocus { pane: 1 },
+            Request::SessionList,
+            Request::SessionPrompt { session: SessionRef::Uid(1), text: "hi".into(), wait: true, timeout: None },
+            Request::SessionRead { session: SessionRef::Uid(1) },
             Request::ProjectOpen { path: "/a".into() },
             Request::WorkspaceCreate {
                 branch: "x".into(),
@@ -420,11 +485,7 @@ mod tests {
             Request::PaneWait { pane: 5, timeout: Some(1) },
             Request::SessionWait { session: SessionRef::Uid(2), timeout: None },
             Request::Events,
-        ];
-        for r in all {
-            let (id, back) = parse_request(&request_line(9, &r)).unwrap();
-            assert_eq!((id, back), (Some(json!(9)), r));
-        }
+        ]
     }
 
     #[test]
@@ -433,7 +494,7 @@ mod tests {
         assert_eq!(serde_json::from_str::<Value>(&ok).unwrap(), json!({"id": 1, "ok": true, "result": {"n": 1}}));
         let bad = answer(&None, Err("no such session".into()));
         assert_eq!(serde_json::from_str::<Value>(&bad).unwrap(), json!({"ok": false, "error": "no such session"}));
-        let ev = event_line("turn_end", json!({"session": 3}));
+        let ev = event_line(Event::TurnEnd, json!({"session": 3}));
         assert_eq!(serde_json::from_str::<Value>(&ev).unwrap(), json!({"event": "turn_end", "session": 3}));
         assert!(!ok.contains('\n') && !ev.contains('\n'));
     }

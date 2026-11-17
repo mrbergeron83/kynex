@@ -23,6 +23,8 @@ jiff = "0.2.42"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 kynex-core = { path = "crates/kynex-core" }
 pulldown-cmark = { version = "0.13", default-features = false }
+# The control protocol's JSON schema (`knx api schema`); already in the tree through gpui.
+schemars = "1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 sha2 = "0.11"
