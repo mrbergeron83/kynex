@@ -14,6 +14,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The sessions panel always shows a project's workspaces as rows, even when there's only one, and its sessions sit under them. New sessions are made with the `+` on a workspace's row (Ctrl+N still makes one in the shown workspace); the header's single "Add workspace" button makes a worktree on a branch or adds a folder.
 - Every `knx` request that changes something (making or removing projects, workspaces and sessions, splitting or closing panes, running a command, sending a message) now waits for your OK on a card in Kynex, whoever asks, since a session's shell can run `knx` without a permission prompt. Not answered within 30 seconds, it says `pending` with a request id for `knx request wait`.
 - Less work on every redraw: the sessions tree, the session header and the strips over the composer no longer rescan a session's history or the saved sessions each frame. With animations set to Reduced, the transcript jumps to a new reply instead of gliding and the scrollbar hides without fading.
 

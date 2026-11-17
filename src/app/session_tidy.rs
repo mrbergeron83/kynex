@@ -142,10 +142,8 @@ impl KynexApp {
                 }))
                 .into_any_element(),
         ];
-        let rows = match self.workspace_project() {
-            Some(p) => self.workspaces_of(&p, cx).len() > 1,
-            None => false,
-        };
+        // A project's workspaces have rows, whose menus tidy; chat has none.
+        let rows = self.workspace_project().is_some();
         if let Some((_, cwd)) = self.panel_folder().filter(|_| !rows) {
             items.push(div().my_1().child(divider(cx)).into_any_element());
             items.extend(self.tidy_menu_items(&cwd, cx));
