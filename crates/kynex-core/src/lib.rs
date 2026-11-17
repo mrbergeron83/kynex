@@ -32,6 +32,7 @@ pub mod groups;
 pub mod highlight;
 pub mod history;
 pub mod layout;
+pub mod lineage;
 pub mod links;
 pub mod live;
 pub mod lru;

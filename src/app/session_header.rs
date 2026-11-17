@@ -69,6 +69,8 @@ impl KynexApp {
                 .on_click(cx.listener(move |this, _, window, cx| this.open_session_scratch(key, window, cx)))
         });
         let servers = mcp_status(&s.mcp, &t, cx);
+        // Who started it, and what it started.
+        let family = self.family_badges(key, id.as_deref(), cx);
         // Double-clicking the name renames the session in place.
         let field = id.as_deref().and_then(|id| self.session_name_field(id, true, cx));
 
@@ -245,6 +247,7 @@ impl KynexApp {
                         }
                     }
                 })
+                .children(family)
                 .children(place)
                 .children(working)
                 .children(servers)

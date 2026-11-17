@@ -42,6 +42,9 @@ pub enum Request {
         session: bool,
         #[serde(default)]
         prompt: Option<String>,
+        /// Why the asking session wants it, for the card and the new session's first message.
+        #[serde(default)]
+        why: Option<String>,
     },
     /// Removes a workspace; git refuses while it has changes, unless `force`.
     WorkspaceRemove {
@@ -135,6 +138,9 @@ pub enum Request {
         title: Option<String>,
         #[serde(default)]
         pane: Option<Place>,
+        /// Why the asking session wants it, for the card and the new session's first message.
+        #[serde(default)]
+        why: Option<String>,
     },
     /// A copy of a session's conversation as a new session; with `at`, only what came before
     /// its `at`th message (from 1), as a rewind there would leave it.
@@ -350,11 +356,11 @@ mod tests {
     #[test]
     fn new_session_requests_parse_with_their_defaults() {
         let (_, r) = parse_request(r#"{"cmd":"session_new"}"#).unwrap();
-        assert_eq!(r, Request::SessionNew { workspace: None, prompt: None, title: None, pane: None });
+        assert_eq!(r, Request::SessionNew { workspace: None, prompt: None, title: None, pane: None, why: None });
         let (_, r) = parse_request(r#"{"cmd":"session_new","pane":"none","prompt":"go"}"#).unwrap();
         assert!(matches!(r, Request::SessionNew { pane: Some(Place::Hidden), prompt: Some(_), .. }));
         let (_, r) = parse_request(r#"{"cmd":"workspace_create","branch":"x"}"#).unwrap();
-        assert_eq!(r, Request::WorkspaceCreate { branch: "x".into(), session: false, prompt: None });
+        assert_eq!(r, Request::WorkspaceCreate { branch: "x".into(), session: false, prompt: None, why: None });
         assert!(parse_request(r#"{"cmd":"session_new","pane":"left"}"#).is_err());
         assert_eq!(Place::parse("tab"), Ok(Place::Tab));
         assert!(Place::parse("left").is_err());
@@ -382,12 +388,18 @@ mod tests {
         let all = [
             Request::ProjectList,
             Request::ProjectOpen { path: "/a".into() },
-            Request::WorkspaceCreate { branch: "x".into(), session: true, prompt: Some("go".into()) },
+            Request::WorkspaceCreate {
+                branch: "x".into(),
+                session: true,
+                prompt: Some("go".into()),
+                why: Some("w".into()),
+            },
             Request::SessionNew {
                 workspace: Some("/w".into()),
                 prompt: Some("fix it".into()),
                 title: Some("Fix".into()),
                 pane: Some(Place::Tab),
+                why: None,
             },
             Request::SessionFork { session: SessionRef::Id("abc".into()), at: Some(2), pane: Some(Place::Hidden) },
             Request::SessionOpen { session: "abc".into(), pane: None },

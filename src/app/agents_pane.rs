@@ -46,7 +46,7 @@ impl KynexApp {
     }
 
     /// An open session's name: the one given or listed, else its first message.
-    fn running_name(&self, s: &kynex_core::session::Session) -> String {
+    pub(super) fn running_name(&self, s: &kynex_core::session::Session) -> String {
         let listed = s.session_id.as_deref().and_then(|id| {
             self.sessions.get(&s.cwd).and_then(|l| l.items.iter().find(|i| i.id == id)).map(|i| i.title.clone())
         });
@@ -65,8 +65,7 @@ impl KynexApp {
                     name: self.running_name(s),
                     place,
                     doing: running::doing(s),
-                    // Until sessions know who started them (#399).
-                    parent: None,
+                    parent: self.parent_key(s.uid).map(Who::Session),
                 });
             }
         };

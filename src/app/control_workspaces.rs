@@ -54,7 +54,7 @@ impl KynexApp {
     pub(super) fn create_workspace_for(
         &mut self,
         branch: String,
-        session: Option<Option<String>>,
+        session: Option<(Option<String>, Option<String>)>,
         caller: Option<Key>,
         reply: Sender<Answer>,
         cx: &mut Context<Self>,
@@ -87,8 +87,8 @@ impl KynexApp {
                         }
                         let answer = match session {
                             None => Ok(json!({ "created": path })),
-                            Some(prompt) => this
-                                .session_in_new_workspace(&project, path.clone(), prompt, None, shown, caller)
+                            Some((prompt, why)) => this
+                                .session_in_new_workspace(&project, path.clone(), prompt, None, why, shown, caller)
                                 .map(|s| json!({ "created": path, "session": s["session"] }))
                                 .map_err(|e| format!("made {}, but no session in it: {e}", path.display())),
                         };

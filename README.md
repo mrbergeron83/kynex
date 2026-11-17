@@ -90,17 +90,17 @@ line; errors go to stderr with exit code 1.
 knx <folder>                                  # open a folder in the running Kynex (or start on it)
 knx project list | create <folder> | open <folder> | remove <folder>   # projects (tabs)
 knx workspace list | open <folder> | remove <folder> [--force]   # the shown project's checkouts
-knx workspace create <branch> [--session] [--prompt <message…>]   # a new checkout, with a session in it
+knx workspace create <branch> [--session] [--why <reason>] [--prompt <message…>]   # a new checkout, with a session in it
 knx pane list [--all] | split [row|column] | focus <id> | close [id]   # panes of the shown tab (--all: every workspace)
 knx pane read <id> [--lines N]                # a terminal or agent pane's screen, or its last N lines
 knx pane run <id|new> <command…> [--wait]     # type a command into a shell pane; --wait gives its exit code and output
 knx pane prompt <id> <message…> [--wait] | wait <id>   # agent-CLI panes (codex, opencode…): done or blocked
 knx session list | prompt <s> <message…> [--wait] | read <s> | wait <s>   # <s>: a session's number or its session id
-knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] [--prompt <message…>]
+knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] [--why <reason>] [--prompt <message…>]
 knx session fork <s> [--at <message number>] [--pane …] | open <session id> [--pane …]
 knx session close <s> | rename <s> <title…> | archive <s> | pin <s> [--off]
 knx request status <id> | wait <id>           # a request still waiting for your OK
-knx events                                    # a line per finished turn, session or agent pane that needs you
+knx events                                    # a line per finished turn, session or agent pane that needs you, session.created / session.closed
 ```
 
 Whatever changes something (everything but listing, reading, waiting and moving around) waits
@@ -110,6 +110,13 @@ answered within 30 seconds prints `{"state": "pending", "request": N}`; `knx req
 gets its outcome. Asked from inside a session, the card says which one, and notes when the
 request is about something that session didn't start; `workspace remove --force` isn't offered
 to a session at all.
+
+A session started or forked at a session's request (or forked by hand with `/fork`) is that
+session's child: the sessions tree nests it under its parent, and its first message says who
+started it and why (`--why`). When a child a session asked for ends a turn, its answer goes to
+its parent as a message (a fork made by hand only nests), at once if the parent is idle or with the next queued messages if it's working; a
+closed parent gets nothing. The outcome of a request that answered `pending` reaches the asking
+session the same way. Sessions nest at most 4 deep, with at most 5 children open at once.
 
 Every wait takes `--timeout <seconds>`. Kynex's terminals start PowerShell and bash with small
 hooks that tell it when a command ends, its exit code and what it printed (nothing is printed or
