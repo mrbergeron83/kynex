@@ -284,7 +284,7 @@ impl KynexApp {
             thread.glide.stop();
             thread.follow_after = true;
         }
-        if (busy || thread.follow_after) && !cx.reduce_motion() {
+        if (busy || thread.follow_after) && !cx.reduce_motion() && !crate::ui::motion::reduced() {
             thread.trail(busy);
         } else if thread.follow_after && !thread.glide.is_moving() {
             // The reply ended while trailing it, or motion is reduced: back
@@ -397,7 +397,7 @@ impl KynexApp {
     /// Glides there when animating; jumps when motion is reduced or the
     /// distance isn't known yet.
     pub(super) fn follow_tail(&mut self, cx: &mut Context<Self>) {
-        let reduce = cx.reduce_motion();
+        let reduce = cx.reduce_motion() || crate::ui::motion::reduced();
         let Some(t) = self.focused_key().and_then(|k| self.threads.get_mut(&k)) else { return };
         let (offset, max) = (t.offset(), f32::from(t.list.max_offset_for_scrollbar().y));
         if reduce || max <= offset {

@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use crate::ui::px;
 use gpui::{Anchor, AnyElement, Context, Focusable, MouseButton, Window, div, prelude::*};
@@ -24,7 +25,8 @@ use crate::ui::{Icon, Tooltip, icon_button, scrollbar, section_label};
 pub struct SessionList {
     /// What it was read for.
     pub(super) read: ListRead,
-    pub items: Vec<SessionInfo>,
+    /// Shared, so the tree can hold it while it draws without a copy.
+    pub items: Rc<Vec<SessionInfo>>,
     /// The repository's default branch: sessions on another one say theirs.
     pub(super) default_branch: Option<String>,
     /// Something it shows changed (a rename, a setting): read it again.
@@ -54,7 +56,7 @@ impl KynexApp {
     /// would bring them back for a moment.
     pub(super) fn relist_sessions(&mut self, gone: &[String]) {
         for l in self.sessions.values_mut() {
-            l.items.retain(|i| !gone.contains(&i.id));
+            Rc::make_mut(&mut l.items).retain(|i| !gone.contains(&i.id));
         }
     }
 
@@ -101,7 +103,7 @@ impl KynexApp {
                     }
                 }
                 let cwd = read.cwd.clone();
-                this.sessions.insert(cwd, SessionList { read, items, default_branch, stale: false });
+                this.sessions.insert(cwd, SessionList { read, items: Rc::new(items), default_branch, stale: false });
                 cx.notify();
             })
             .ok();
@@ -137,7 +139,12 @@ impl KynexApp {
                 .await;
             this.update(cx, |this, cx| {
                 let read = ListRead { cwd: dir.clone(), current: None, live: Vec::new() };
-                this.sessions.entry(dir).or_insert(SessionList { read, items, default_branch, stale: true });
+                this.sessions.entry(dir).or_insert(SessionList {
+                    read,
+                    items: Rc::new(items),
+                    default_branch,
+                    stale: true,
+                });
                 f(this, cx);
             })
             .ok();

@@ -3,7 +3,7 @@
 //! sessions pinned above the rest, and names given by hand.
 //! Kept per project as `sessions.json` in its settings folder (see [`crate::project`]).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -425,26 +425,73 @@ impl SessionGroups {
         gone
     }
 
+    /// Where each saved session goes, looked up in one step: for sorting a whole
+    /// list, where asking [`Self::is_archived`] and the rest per id would scan
+    /// every saved list for each one. Built from what's saved now; build it again
+    /// after a change.
+    pub fn places(&self) -> Places<'_> {
+        let mut map = HashMap::new();
+        // Lowest precedence first, so the archive wins over a pin, and a pin over a group.
+        for (i, g) in self.groups.iter().enumerate() {
+            for s in &g.sessions {
+                map.entry(s.as_str()).or_insert(Place::Group(i));
+            }
+        }
+        // Backwards, so an id pinned twice keeps its first place.
+        for (i, s) in self.pinned.iter().enumerate().rev() {
+            map.insert(s.as_str(), Place::Pinned(i));
+        }
+        for s in &self.archived {
+            map.insert(s.as_str(), Place::Archived);
+        }
+        Places(map)
+    }
+
     /// Sorts session ids (newest first) into the pinned ones, the top level,
     /// groups and archive. Ids saved here that aren't in `ids` are left out.
     /// Busy sessions stay in their places like the rest.
     pub fn arrange<'a>(&self, ids: impl IntoIterator<Item = &'a str>) -> Arranged {
+        let places = self.places();
         let mut out = Arranged { groups: vec![Vec::new(); self.groups.len()], ..Arranged::default() };
         for id in ids {
-            let list = if self.is_archived(id) {
-                &mut out.archived
-            } else if self.is_pinned(id) {
-                &mut out.pinned
-            } else if let Some(g) = self.group_of(id) {
-                &mut out.groups[g]
-            } else {
-                &mut out.top
+            let list = match places.of(id) {
+                Some(Place::Archived) => &mut out.archived,
+                Some(Place::Pinned(_)) => &mut out.pinned,
+                Some(Place::Group(g)) => &mut out.groups[g],
+                None => &mut out.top,
             };
             list.push(id.to_string());
         }
         // Pinned ones keep the order they were pinned (or dragged) in.
-        out.pinned.sort_by_key(|id| self.pinned.iter().position(|p| p == id));
+        out.pinned.sort_by_key(|id| places.pin_order(id));
         out
+    }
+}
+
+/// Where a saved session goes; see [`SessionGroups::places`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    Archived,
+    /// Its place among the pinned ones.
+    Pinned(usize),
+    Group(usize),
+}
+
+/// Every saved session's [`Place`], by id.
+pub struct Places<'a>(HashMap<&'a str, Place>);
+
+impl Places<'_> {
+    /// Where `id` goes; `None` is the top level.
+    pub fn of(&self, id: &str) -> Option<Place> {
+        self.0.get(id).copied()
+    }
+
+    /// Its place among the pinned ones, for sorting them (unpinned ones last).
+    pub fn pin_order(&self, id: &str) -> usize {
+        match self.of(id) {
+            Some(Place::Pinned(i)) => i,
+            _ => usize::MAX,
+        }
     }
 }
 
@@ -572,6 +619,33 @@ mod tests {
         assert_eq!(a.archived, ["c"]);
         // Ids that no longer exist are left out.
         assert_eq!(g.arrange(["a"]).groups, [Vec::<String>::new()]);
+    }
+
+    #[test]
+    fn places_agree_with_the_per_id_lookups() {
+        let mut g = SessionGroups::default();
+        let (x, y) = (g.add_group("X"), g.add_group("Y"));
+        g.move_to("a", Some(x));
+        g.move_to("b", Some(y));
+        g.toggle_pin("b");
+        g.toggle_pin("c");
+        g.archive("d");
+        // Hand-edited files can list an id twice or in two places.
+        g.archived.push("a".into());
+        g.pinned.push("c".into());
+        let places = g.places();
+        for id in ["a", "b", "c", "d", "e"] {
+            let want = if g.is_archived(id) {
+                Some(Place::Archived)
+            } else if g.is_pinned(id) {
+                Some(Place::Pinned(g.pinned.iter().position(|p| p == id).unwrap()))
+            } else {
+                g.group_of(id).map(Place::Group)
+            };
+            assert_eq!(places.of(id), want, "{id}");
+        }
+        assert_eq!(places.pin_order("c"), 1);
+        assert_eq!(places.pin_order("e"), usize::MAX);
     }
 
     #[test]

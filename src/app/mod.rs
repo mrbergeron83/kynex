@@ -241,6 +241,8 @@ pub struct KynexApp {
     want_git_pane: Option<(PathBuf, std::time::Instant)>,
     /// Each open project's git worktrees, kept fresh in the background.
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
+    /// Which worktree each session is working in, as last worked out (`worktrees.rs`).
+    working: HashMap<Key, worktrees::Working>,
     /// Each project's saved workspaces (selection, sessions, order), read on first use.
     workspaces: HashMap<PathBuf, kynex_core::workspace::Workspaces>,
     workspace_ui: workspace_new::WorkspaceUi,
@@ -637,6 +639,7 @@ impl KynexApp {
             git_panes: HashMap::new(),
             want_git_pane: None,
             worktrees: HashMap::new(),
+            working: HashMap::new(),
             workspaces: HashMap::new(),
             workspace_ui: Default::default(),
             removed_ui: Default::default(),

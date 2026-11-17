@@ -10,7 +10,7 @@ use gpui::{AnyElement, Context, ElementId, FontWeight, Window, div, prelude::*};
 use kynex_core::fmt;
 use kynex_core::live::Key;
 use kynex_core::session::Item;
-use kynex_core::subagents::{self, State};
+use kynex_core::subagents::State;
 use kynex_core::tasks::{self, Notice, Status};
 use kynex_core::toasts::{Action, Toast};
 
@@ -166,7 +166,7 @@ impl KynexApp {
         if !session.busy {
             return None;
         }
-        let mut subs = subagents::of_turn(&session.items);
+        let mut subs = session.agents.of_turn(&session.items);
         if subs.is_empty() {
             return None;
         }

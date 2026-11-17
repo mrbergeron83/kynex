@@ -330,6 +330,8 @@ pub struct Session {
     conversation: bool,
     /// Background tasks running in this session's process.
     pub tasks: Tasks,
+    /// The subagents of the turn in progress, each call's input parsed once.
+    pub agents: crate::subagents::Agents,
     /// The MCP servers its process reported when it started, and how they're doing.
     pub mcp: Vec<crate::mcp::Server>,
     /// The tools each of those servers offers, by server name.
@@ -383,6 +385,10 @@ pub struct Session {
     perm_gen: u64,
     /// `waiting()` as last scanned: (item count, `perm_gen`, answer). It is asked every frame.
     waiting_cache: std::cell::Cell<Option<(usize, u64, bool)>>,
+    /// `counts()` as last scanned: (item count, revision, turns, subagents). Asked every frame.
+    counts_cache: std::cell::Cell<Option<(usize, u64, usize, usize)>>,
+    /// `wants_browser()` as last worked out: (item count, revision, answer). Asked every frame.
+    browser_cache: std::cell::Cell<Option<(usize, u64, bool)>>,
     next_request: u64,
     /// `mcp_reconnect` and `mcp_status` requests awaiting an answer.
     mcp_requests: Vec<String>,
@@ -532,6 +538,7 @@ impl Session {
             reopened: false,
             conversation: false,
             tasks: Tasks::default(),
+            agents: Default::default(),
             mcp: Vec::new(),
             mcp_tools: Default::default(),
             browser: false,
@@ -559,6 +566,8 @@ impl Session {
             revision: 0,
             perm_gen: 0,
             waiting_cache: std::cell::Cell::new(None),
+            counts_cache: std::cell::Cell::new(None),
+            browser_cache: std::cell::Cell::new(None),
             next_request: 0,
             stopping: HashMap::new(),
             mcp_requests: Vec::new(),
@@ -792,6 +801,35 @@ impl Session {
         }
         let answer = self.items.iter().any(|i| matches!(i, Item::Permission { state: PermState::Pending, .. }));
         self.waiting_cache.set(Some((key.0, key.1, answer)));
+        answer
+    }
+
+    /// How many turns it has finished and how many subagents it has called, for
+    /// the header; scanned again only when its items change.
+    pub fn counts(&self) -> (usize, usize) {
+        let key = (self.items.len(), self.revision);
+        if let Some((n, r, turns, agents)) = self.counts_cache.get()
+            && (n, r) == key
+        {
+            return (turns, agents);
+        }
+        let turns = self.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
+        let agents = crate::subagents::count(&self.items);
+        self.counts_cache.set(Some((key.0, key.1, turns, agents)));
+        (turns, agents)
+    }
+
+    /// Whether its last turn ended asking you to do something in the browser
+    /// ([`crate::mcp::handoff`]); worked out again only when its items change.
+    pub fn wants_browser(&self) -> bool {
+        let key = (self.items.len(), self.revision);
+        if let Some((n, r, answer)) = self.browser_cache.get()
+            && (n, r) == key
+        {
+            return answer;
+        }
+        let answer = crate::mcp::handoff(&self.items).is_some();
+        self.browser_cache.set(Some((key.0, key.1, answer)));
         answer
     }
 

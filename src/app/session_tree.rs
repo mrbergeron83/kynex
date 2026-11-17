@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::SystemTime;
 
 use gpui::{AnyElement, Context, div, prelude::*};
@@ -136,7 +137,7 @@ impl KynexApp {
         if wanted {
             loading = self.want_list(&path, if here { ctx.current.clone() } else { None }, &open, cx);
         }
-        let items: Vec<SessionInfo> = self.sessions.get(&path).map(|l| l.items.clone()).unwrap_or_default();
+        let items: Rc<Vec<SessionInfo>> = self.sessions.get(&path).map(|l| l.items.clone()).unwrap_or_default();
         if here {
             self.name_sessions(&items, cx);
         }
