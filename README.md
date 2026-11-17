@@ -102,6 +102,7 @@ knx session close <s> | rename <s> <title…> | archive <s> | pin <s> [--off]
 knx request status <id> | wait <id>           # a request still waiting for your OK
 knx notify <title> [body…] [--pane <id>] [--session <s>]   # a toast, or an OS notification when Kynex is in the background; a click goes there
 knx events                                    # a line per finished turn, session or agent pane that needs you, session.created / session.closed
+knx api schema                                # the requests, answers and events as JSON (works without Kynex running)
 ```
 
 Whatever changes something (everything but listing, reading, waiting, moving around and `notify`) waits

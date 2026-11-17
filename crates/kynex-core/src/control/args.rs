@@ -10,9 +10,10 @@
 //! knx session fork <s> [--at N] [--pane …] | open <id> [--pane …] | close <s> | rename <s> <title…>
 //! knx session archive <s> | pin <s> [--off]
 //! knx request status <id> | wait <id>
-//! knx notify <title> [body…] [--pane <id>] [--session <s>]
+//! knx notify <title> [body…] [--pane <id> | --session <s>]
 //! (waits take --timeout <seconds>)
 //! knx events
+//! knx api schema   (printed by knx itself: the protocol as JSON, no app needed)
 //! ```
 
 use std::path::Path;
@@ -21,11 +22,16 @@ use super::Request;
 use super::protocol::{Place, SessionRef};
 
 /// The first words that make a command line a subcommand, not a folder to open.
-const GROUPS: [&str; 7] = ["project", "workspace", "pane", "session", "request", "notify", "events"];
+const GROUPS: [&str; 8] = ["project", "workspace", "pane", "session", "request", "notify", "events", "api"];
 
 /// Whether `args` (without the program name) is a control subcommand.
 pub fn is_command(args: &[String]) -> bool {
     args.first().is_some_and(|a| GROUPS.contains(&a.as_str()))
+}
+
+/// Whether `args` is `api schema`: answered by `knx` itself, not a request to the app.
+pub fn wants_schema(args: &[String]) -> bool {
+    matches!(args, [a, b] if a == "api" && b == "schema")
 }
 
 /// The request for `args`, with folders made absolute against the current folder.
@@ -290,6 +296,7 @@ pub const USAGE: &str = "usage:
   knx notify <title> [body…] [--pane <id in the shown workspace> | --session <s>]
   (<s>: a session's number or its session id; --wait and wait take --timeout <seconds>)
   knx events
+  knx api schema        (the requests, answers and events as JSON; needs no running Kynex)
 Requests that change something wait for your OK in Kynex; one not answered within a short
 wait says `pending` with a request id for `knx request wait`.";
 
@@ -307,6 +314,10 @@ mod tests {
         assert!(is_command(&words("events")));
         assert!(is_command(&words("notify Done")));
         assert!(is_command(&words("workspace list")));
+        assert!(is_command(&words("api schema")));
+        assert!(wants_schema(&words("api schema")));
+        assert!(!wants_schema(&words("api")) && !wants_schema(&words("api schema now")));
+        assert!(parse(&words("api nope")).unwrap_err().contains("usage"));
         assert!(!is_command(&words("C:/work/app")));
         assert!(!is_command(&[]));
     }

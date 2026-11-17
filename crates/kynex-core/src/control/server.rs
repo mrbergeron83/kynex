@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use interprocess::local_socket::{GenericFilePath, ListenerOptions, Stream, ToFsName, prelude::*};
 use serde_json::{Value, json};
 
-use super::protocol::{Incoming, MAX_LINE, Request, answer, event_line, parse_incoming};
+use super::protocol::{Event, Incoming, MAX_LINE, Request, answer, event_line, parse_incoming};
 
 /// One request waiting for the app. `reply` takes the answer, once.
 pub struct Call {
@@ -87,8 +87,8 @@ impl Server {
 
     /// Tells everyone listening to `events` about `name`; `data` is an object whose fields go
     /// into the line.
-    pub fn broadcast(&self, name: &str, data: Value) {
-        let line = event_line(name, data);
+    pub fn broadcast(&self, event: Event, data: Value) {
+        let line = event_line(event, data);
         if let Ok(mut subs) = self.subscribers.lock() {
             subs.retain(|s| s.send(line.clone()).is_ok());
         }
@@ -253,7 +253,7 @@ mod tests {
             });
         });
         assert!(rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap().contains("subscribed"));
-        server.broadcast("turn_end", json!({ "session": 4 }));
+        server.broadcast(Event::TurnEnd, json!({ "session": 4 }));
         let line = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
         assert_eq!(serde_json::from_str::<Value>(&line).unwrap(), json!({ "event": "turn_end", "session": 4 }));
         let _ = std::fs::remove_dir_all(&dir);

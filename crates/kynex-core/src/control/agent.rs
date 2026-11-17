@@ -28,7 +28,8 @@ sessions, `knx session new [--workspace <folder>] [--title <t>] [--pane right|do
 <id>`, `knx session rename <id> <title>`, `knx session pin <id> [--off]` and `knx workspace create \
 <branch> --session [--prompt <message>]`. Requests that change \
 something wait for the user's OK in Kynex; one not answered within 30 seconds says `pending` \
-with a request id, and `knx request wait <id>` gets its outcome (it also comes to you as a message). A session you start is your child: when its turn ends, its answer comes to you as a <session-notification> message, so you needn't wait on it. Your session's id is in the \
+with a request id, and `knx request wait <id>` gets its outcome (it also comes to you as a message). `knx api schema` \
+prints the whole protocol as JSON. A session you start is your child: when its turn ends, its answer comes to you as a <session-notification> message, so you needn't wait on it. Your session's id is in the \
 KYNEX_SESSION environment variable, your workspace folder in KYNEX_WORKSPACE_DIR. \
 Use it only when the user's request calls for it.";
 

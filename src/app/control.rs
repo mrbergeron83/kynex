@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use gpui::{Context, Window};
 use kynex_core::control::Request;
 use kynex_core::control::approval;
+use kynex_core::control::protocol::Event;
 use kynex_core::control::server::Call;
 use kynex_core::layout::{Axis, PaneId};
 use kynex_core::live::Key;
@@ -337,19 +338,19 @@ impl KynexApp {
         // Opened and closed since the last look, with who started them.
         for s in self.all_sessions().filter(|s| !self.control_seen.contains_key(&s.uid)) {
             let data = json!({ "session": s.uid, "id": s.session_id, "parent": self.parent_key(s.uid) });
-            server.broadcast("session.created", data);
+            server.broadcast(Event::SessionCreated, data);
         }
         for gone in self.control_seen.keys().filter(|k| !now.contains_key(k)) {
             let parent = self.approvals.maker(&kynex_core::control::approval::Made::Session(*gone));
-            server.broadcast("session.closed", json!({ "session": gone, "parent": parent }));
+            server.broadcast(Event::SessionClosed, json!({ "session": gone, "parent": parent }));
         }
         for s in self.all_sessions() {
             let (was_busy, was_waiting) = self.control_seen.get(&s.uid).copied().unwrap_or((false, false));
             if was_busy && !s.busy {
-                server.broadcast("turn_end", json!({ "session": s.uid, "state": turn_state(s)["state"] }));
+                server.broadcast(Event::TurnEnd, json!({ "session": s.uid, "state": turn_state(s)["state"] }));
             }
             if !was_waiting && s.waiting() {
-                server.broadcast("needs_you", json!({ "session": s.uid }));
+                server.broadcast(Event::NeedsYou, json!({ "session": s.uid }));
             }
         }
         self.control_seen = now;

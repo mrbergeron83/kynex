@@ -4,6 +4,7 @@
 //!
 //! - [`protocol`]: the requests, the response lines, and the parser for what arrives (fuzzed).
 //! - [`args`]: command-line words into a request.
+//! - [`schema`]: the protocol as JSON Schema (`knx api schema`), generated from its types.
 //! - [`approval`]: the card you answer before a request that changes something is done.
 //! - [`server`] / [`client`]: the two ends of the socket.
 //!
@@ -16,6 +17,7 @@ pub mod approval;
 pub mod args;
 pub mod client;
 pub mod protocol;
+pub mod schema;
 pub mod server;
 
 pub use protocol::Request;
