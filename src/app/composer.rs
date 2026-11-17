@@ -183,6 +183,7 @@ impl KynexApp {
         let queued = key.and_then(|k| self.render_queue(k, cx));
         let running = key.and_then(|k| self.render_running_tasks(k, cx));
         let agents = key.and_then(|k| self.render_turn_agents(k, cx));
+        let todos = key.and_then(|k| self.render_todos(k, cx));
         let handoff = key.and_then(|k| self.render_handoff(k, cx));
         let files_badge = key.and_then(|k| self.scratch_badge(k, cx));
         // A prompt is the one surface that needs you: it gets the amber lamp colour.
@@ -227,6 +228,7 @@ impl KynexApp {
                     .gap_1p5()
                     .children(update)
                     .children(trust)
+                    .children(todos)
                     .children(agents)
                     .children(running)
                     .children(handoff)

@@ -389,6 +389,8 @@ pub struct Session {
     counts_cache: std::cell::Cell<Option<(usize, u64, usize, usize)>>,
     /// `wants_browser()` as last worked out: (item count, revision, answer). Asked every frame.
     browser_cache: std::cell::Cell<Option<(usize, u64, bool)>>,
+    /// `todos()` as last read: (item count, revision, the list). Asked every frame.
+    todos_cache: std::cell::RefCell<Option<(usize, u64, std::sync::Arc<Vec<crate::todos::Todo>>)>>,
     next_request: u64,
     /// `mcp_reconnect` and `mcp_status` requests awaiting an answer.
     mcp_requests: Vec<String>,
@@ -568,6 +570,7 @@ impl Session {
             waiting_cache: std::cell::Cell::new(None),
             counts_cache: std::cell::Cell::new(None),
             browser_cache: std::cell::Cell::new(None),
+            todos_cache: Default::default(),
             next_request: 0,
             stopping: HashMap::new(),
             mcp_requests: Vec::new(),
@@ -831,6 +834,20 @@ impl Session {
         let answer = crate::mcp::handoff(&self.items).is_some();
         self.browser_cache.set(Some((key.0, key.1, answer)));
         answer
+    }
+
+    /// Claude's todo list as it stands ([`crate::todos`]); read again only when its
+    /// items change.
+    pub fn todos(&self) -> std::sync::Arc<Vec<crate::todos::Todo>> {
+        let key = (self.items.len(), self.revision);
+        if let Some((n, r, list)) = &*self.todos_cache.borrow()
+            && (*n, *r) == key
+        {
+            return list.clone();
+        }
+        let list = std::sync::Arc::new(crate::todos::of(&self.items));
+        *self.todos_cache.borrow_mut() = Some((key.0, key.1, list.clone()));
+        list
     }
 
     /// Whether this session wants the user: a turn ended unseen, or a prompt waits.
@@ -2335,6 +2352,8 @@ fn tool_summary(name: &str, input: &Value) -> String {
         "WebFetch" => "url",
         "WebSearch" => "query",
         "Task" | "Agent" | "spawn_subagent" => "description",
+        "TodoWrite" => return crate::todos::summary(input),
+        "TaskCreate" | "TaskUpdate" => "subject",
         // MCP calls read as what they do: "Click “Sign in”".
         _ => return crate::mcp::describe(name, input).map(|(_, target)| target).unwrap_or_default(),
     };

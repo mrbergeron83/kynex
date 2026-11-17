@@ -37,6 +37,7 @@
 //! | `agent_panes.rs`    | other agent CLIs in panes, their state off the screen |
 //! | `agents_pane.rs`    | the Agents pane: what runs or wants you, every project |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
+//! | `todos.rs`          | Claude's todo list over the composer                 |
 //! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
 //! | `transcript.rs`     | the conversation list, its scrolling and follow-the-tail |
@@ -178,6 +179,7 @@ pub(crate) mod timeline;
 mod title_bar;
 mod titles;
 mod toasts;
+mod todos;
 mod tool_panes;
 mod tool_rows;
 mod toolbar;
@@ -243,6 +245,8 @@ pub struct KynexApp {
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
     /// Which worktree each session is working in, as last worked out (`worktrees.rs`).
     working: HashMap<Key, worktrees::Working>,
+    /// Sessions whose todo list is opened again after its turn ended (`todos.rs`).
+    todos_open: std::collections::HashSet<Key>,
     /// Each project's saved workspaces (selection, sessions, order), read on first use.
     workspaces: HashMap<PathBuf, kynex_core::workspace::Workspaces>,
     workspace_ui: workspace_new::WorkspaceUi,
@@ -640,6 +644,7 @@ impl KynexApp {
             want_git_pane: None,
             worktrees: HashMap::new(),
             working: HashMap::new(),
+            todos_open: Default::default(),
             workspaces: HashMap::new(),
             workspace_ui: Default::default(),
             removed_ui: Default::default(),
