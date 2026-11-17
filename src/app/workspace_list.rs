@@ -179,10 +179,10 @@ impl KynexApp {
                     .child(b)
             }))
             .child(
+                // Always there on the shown workspace, on the others when hovered.
                 icon_button(("workspace-new-session", n), Icon::Plus, cx)
-                    .invisible()
-                    .group_hover("workspace-row", |s| s.visible())
-                    .tooltip(Tooltip::text("New session here"))
+                    .when(!selected, |b| b.invisible().group_hover("workspace-row", |s| s.visible()))
+                    .tooltip(Tooltip::text("New session in this workspace"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.new_session_in(&new_path, selected, window, cx);

@@ -1,7 +1,8 @@
 //! The sidebar's tree: each workspace of the project a row that folds (`workspace_list.rs`),
 //! and under it its sessions in sections: Pinned, Recent, the groups, Older, Archived. The
-//! rules for what goes where are `kynex_core::tree`; this draws them. A project with one
-//! workspace, and chat, draw no workspace row: just the sessions.
+//! rules for what goes where are `kynex_core::tree`; this draws them. A project always has
+//! its workspace rows, even with just the one, as new sessions are made from them; chat
+//! draws none: just the sessions.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -50,15 +51,15 @@ struct Place {
 }
 
 impl KynexApp {
-    /// The workspaces to draw: the project's, in their steady order; in chat, or a project
-    /// that has just the one, its folder without a row.
+    /// The workspaces to draw: the project's, in their steady order; in chat, its folder
+    /// without a row.
     fn places(&mut self, ctx: &TreeCtx, cx: &mut Context<Self>) -> Vec<Place> {
         let project = self.workspace_project().filter(|_| ctx.kind == Kind::Code);
         let list = match &project {
             Some(p) => self.workspaces_of(p, cx),
             None => Vec::new(),
         };
-        if list.len() < 2 {
+        if list.is_empty() {
             return vec![Place { path: ctx.cwd.clone(), row: None, selected: true }];
         }
         let selected = list.iter().position(|(c, _)| c.at(&ctx.cwd)).unwrap_or(0);
