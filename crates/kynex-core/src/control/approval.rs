@@ -82,9 +82,9 @@ pub fn card_text(request: &Request) -> (String, Option<String>) {
         Request::ProjectCreate { path } => (format!("Make the folder {path} and open it as a project"), None),
         Request::ProjectOpen { path } => (format!("Open {path} as a project"), None),
         Request::ProjectRemove { path } => (format!("Close the project {path}"), None),
-        Request::WorkspaceCreate { branch, session, prompt } => {
+        Request::WorkspaceCreate { branch, session, prompt, why } => {
             let with = if *session { " with a session in it" } else { "" };
-            (format!("Make a workspace on branch {branch}{with}"), prompt.clone())
+            (format!("Make a workspace on branch {branch}{with}{}", because(why)), prompt.clone())
         }
         Request::WorkspaceRemove { path, force: false } => (format!("Remove the workspace {}", folder(path)), None),
         Request::WorkspaceRemove { path, force: true } => {
@@ -103,12 +103,12 @@ pub fn card_text(request: &Request) -> (String, Option<String>) {
         Request::SessionPrompt { session, text, .. } => {
             (format!("Send a message to session {session}"), Some(text.clone()))
         }
-        Request::SessionNew { workspace, prompt, title, pane } => {
+        Request::SessionNew { workspace, prompt, title, pane, why } => {
             let what = title
                 .as_deref()
                 .map_or_else(|| "Start a new session".to_string(), |t| format!("Start a new session \"{t}\""));
             let r#where = workspace.as_deref().map(|w| format!(" in {}", folder(w))).unwrap_or_default();
-            (format!("{what}{where}{}", place(pane)), prompt.clone())
+            (format!("{what}{where}{}{}", place(pane), because(why)), prompt.clone())
         }
         Request::SessionFork { session, at, pane } => {
             let at = at.map(|n| format!(" from before its message {n}")).unwrap_or_default();
@@ -128,6 +128,11 @@ pub fn card_text(request: &Request) -> (String, Option<String>) {
         // Never carded.
         _ => ("Change something in Kynex".into(), None),
     }
+}
+
+/// A request's reason, as the card says it after what is asked.
+fn because(why: &Option<String>) -> String {
+    why.as_deref().map(str::trim).filter(|w| !w.is_empty()).map(|w| format!(", to {w}")).unwrap_or_default()
 }
 
 /// Something a request made, to tell later whether the one asking to change it made it.
@@ -195,17 +200,42 @@ struct Entry {
     waiters: Vec<(u64, Sender<Answer>)>,
 }
 
+/// The outcome of a request whose asker was told `pending`, for the app to send it the asking
+/// session as a message (the agent heard nothing more otherwise).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Settled {
+    pub caller: u64,
+    pub id: u64,
+    /// What was asked, as the card said it.
+    pub asked: String,
+    pub answer: Answer,
+}
+
+impl Settled {
+    /// The message for the asking session.
+    pub fn text(&self) -> String {
+        match &self.answer {
+            Ok(v) => format!("Your Kynex request {} ({}) was approved and done: {v}", self.id, self.asked),
+            Err(e) => format!("Your Kynex request {} ({}) didn't go ahead: {e}", self.id, self.asked),
+        }
+    }
+}
+
 impl Entry {
-    /// Settles it on `state`, telling everyone still waiting.
-    fn settle(&mut self, state: State) {
+    /// Settles it on `state`, telling everyone still waiting. Returns the outcome for the
+    /// asking session when its client had stopped waiting (it was told `pending`).
+    fn settle(&mut self, state: State) -> Option<Settled> {
         self.state = state;
-        let Some(answer) = self.state.outcome() else { return };
+        let answer = self.state.outcome()?;
+        let told_pending = self.client.is_none();
         if let Some(c) = self.client.take() {
             let _ = c.send(answer.clone());
         }
         for (_, w) in self.waiters.drain(..) {
             let _ = w.send(answer.clone());
         }
+        let caller = self.caller.filter(|_| told_pending && self.state != State::AskerClosed)?;
+        Some(Settled { caller, id: self.id, asked: card_text(&self.request).0, answer })
     }
 }
 
@@ -215,6 +245,8 @@ struct Inner {
     entries: Vec<Entry>,
     /// What requests made, and the session that asked for it.
     made: HashMap<Made, u64>,
+    /// Outcomes for asking sessions told `pending`, until the app takes them.
+    settled: Vec<Settled>,
 }
 
 impl Inner {
@@ -299,7 +331,8 @@ impl Approvals {
         let mut inner = self.lock();
         let e = inner.entry(id).filter(|e| e.state == State::Asked)?;
         if choice == Choice::NotNow {
-            e.settle(State::Declined);
+            let s = e.settle(State::Declined);
+            inner.settled.extend(s);
             inner.trim();
             return None;
         }
@@ -311,7 +344,8 @@ impl Approvals {
     pub fn finish(&self, id: u64, answer: Answer) {
         let mut inner = self.lock();
         if let Some(e) = inner.entry(id).filter(|e| e.state == State::Running) {
-            e.settle(State::Done(answer));
+            let s = e.settle(State::Done(answer));
+            inner.settled.extend(s);
         }
         inner.trim();
     }
@@ -322,7 +356,7 @@ impl Approvals {
         let mut inner = self.lock();
         for e in &mut inner.entries {
             if e.state == State::Asked && e.caller.is_some_and(|c| !open(c)) {
-                e.settle(State::AskerClosed);
+                let _ = e.settle(State::AskerClosed);
             }
         }
         inner.trim();
@@ -363,6 +397,21 @@ impl Approvals {
         }
     }
 
+    /// The outcomes waiting to reach their asking sessions (see [`Settled`]), oldest first.
+    pub fn take_settled(&self) -> Vec<Settled> {
+        std::mem::take(&mut self.lock().settled)
+    }
+
+    /// Whether any outcome waits for [`Self::take_settled`] (cheap).
+    pub fn any_settled(&self) -> bool {
+        !self.lock().settled.is_empty()
+    }
+
+    /// The session that asked for `made`, if a session did.
+    pub fn maker(&self, made: &Made) -> Option<u64> {
+        self.lock().made.get(made).copied()
+    }
+
     /// Notes that `made` was made at the request of session `by`.
     pub fn record_made(&self, made: Made, by: Option<u64>) {
         if let Some(by) = by {
@@ -397,7 +446,7 @@ mod tests {
     use super::*;
 
     fn new_session() -> Request {
-        Request::SessionNew { workspace: None, prompt: Some("go".into()), title: None, pane: None }
+        Request::SessionNew { workspace: None, prompt: Some("go".into()), title: None, pane: None, why: None }
     }
 
     #[test]
@@ -426,8 +475,10 @@ mod tests {
             prompt: Some("fix it".into()),
             title: Some("Fix".into()),
             pane: Some(Place::Hidden),
+            why: Some("run the tests".into()),
         });
         assert!(title.contains("\"Fix\"") && title.contains("app-wt") && title.contains("not shown"), "{title}");
+        assert!(title.ends_with(", to run the tests"), "{title}");
         assert_eq!(detail.as_deref(), Some("fix it"));
         let (title, _) = card_text(&Request::WorkspaceRemove { path: "/p/w".into(), force: true });
         assert!(title.contains("throwing away"), "{title}");
@@ -499,6 +550,38 @@ mod tests {
         assert_eq!(a.status(gone).unwrap()["state"], "asker_closed");
         let up: Vec<u64> = a.cards().iter().map(|c| c.id).collect();
         assert_eq!(up, [kept, outside]);
+    }
+
+    #[test]
+    fn an_asker_told_pending_hears_the_outcome_later() {
+        let a = Approvals::default();
+        // Answered in time: the client had it, nothing more to say.
+        let quick = a.ask(Some(1), new_session(), None, channel().0);
+        a.decide(quick, Choice::Start);
+        a.finish(quick, Ok(json!({ "session": 2 })));
+        assert!(a.take_settled().is_empty());
+        // Told pending, then started: the outcome waits for the app.
+        let slow = a.ask(Some(1), new_session(), None, channel().0);
+        a.stop_waiting(slow);
+        a.decide(slow, Choice::Start);
+        assert!(!a.any_settled(), "running: no outcome yet");
+        a.finish(slow, Ok(json!({ "session": 3 })));
+        let got = a.take_settled();
+        assert_eq!((got.len(), got[0].caller, got[0].id), (1, 1, slow));
+        assert!(got[0].text().contains("approved and done"), "{}", got[0].text());
+        // Told pending, then declined.
+        let no = a.ask(Some(4), new_session(), None, channel().0);
+        a.stop_waiting(no);
+        a.decide(no, Choice::NotNow);
+        assert!(a.take_settled()[0].text().contains("didn't go ahead"));
+        // From a script, or an asker gone: nobody to tell.
+        let script = a.ask(None, new_session(), None, channel().0);
+        a.stop_waiting(script);
+        a.decide(script, Choice::NotNow);
+        let gone = a.ask(Some(5), new_session(), None, channel().0);
+        a.stop_waiting(gone);
+        a.drop_closed(|_| false);
+        assert!(a.take_settled().is_empty());
     }
 
     #[test]

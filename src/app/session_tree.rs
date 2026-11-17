@@ -10,6 +10,7 @@ use std::rc::Rc;
 use std::time::SystemTime;
 
 use gpui::{AnyElement, Context, div, prelude::*};
+use kynex_core::lineage::Placed;
 use kynex_core::session::{Kind, SessionInfo};
 use kynex_core::tree::{self, Branch, Section, View};
 use kynex_core::workspace;
@@ -165,7 +166,7 @@ impl KynexApp {
         }
         // Grouped by provider, when picked and there's more than one: Recent's listed
         // sessions under a header each, after the new ones.
-        let by_provider = (self.saved.sessions_by_provider && !filtering)
+        let mut by_provider = (self.saved.sessions_by_provider && !filtering)
             .then(|| {
                 let listed_recent: Vec<String> =
                     sections.recent.iter().filter(|k| index.contains_key(*k)).cloned().collect();
@@ -175,6 +176,30 @@ impl KynexApp {
         if let Some(split) = &by_provider {
             let new: Vec<String> = sections.recent.iter().filter(|k| !index.contains_key(*k)).cloned().collect();
             sections.recent = new.into_iter().chain(split.iter().flat_map(|(_, ids)| ids.iter().cloned())).collect();
+        }
+        // Sessions another one started, right under it (not while filtering: a folded parent
+        // would hide what matches).
+        let mut nest: HashMap<String, Placed> = HashMap::new();
+        if ctx.kind == Kind::Code
+            && !filtering
+            && let Some(project) = self.workspace_project()
+        {
+            let lineage = self.lineage_for(&project);
+            let mut arrange = |keys: &mut Vec<String>| nest.extend(lineage.arrange(keys));
+            arrange(&mut sections.pinned);
+            sections.groups.iter_mut().for_each(&mut arrange);
+            arrange(&mut sections.older);
+            arrange(&mut sections.archived);
+            match &mut by_provider {
+                Some(split) => {
+                    split.iter_mut().for_each(|(_, ids)| arrange(ids));
+                    let new: Vec<String> =
+                        sections.recent.iter().filter(|k| !index.contains_key(*k)).cloned().collect();
+                    sections.recent =
+                        new.into_iter().chain(split.iter().flat_map(|(_, ids)| ids.iter().cloned())).collect();
+                }
+                None => arrange(&mut sections.recent),
+            }
         }
         let view = View { groups: &groups, show_archived: self.saved.sessions_show_archived, filtering };
         let is_open =
@@ -220,6 +245,7 @@ impl KynexApp {
             picked_ids: self.organize.selection.ids.clone(),
             default_branch,
             open: &open,
+            nest: &nest,
             t: t.clone(),
         };
         let take = |this: &mut Self, keys: &[String], cx: &mut Context<Self>| -> Vec<AnyElement> {

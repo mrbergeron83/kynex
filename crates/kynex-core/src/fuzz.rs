@@ -358,6 +358,20 @@ pub fn highlight(text: &str) {
     }
 }
 
+/// Messages from other sessions (`<session-notification>`), as the transcript takes them out
+/// of a message from a session's log. What a notice written back says reads back the same.
+pub fn session_notice(text: &str) {
+    use crate::lineage::{Notice, notice, parse_notice, split_notices};
+    let (found, _) = split_notices(text);
+    let _ = parse_notice(text);
+    for n in found {
+        let back = parse_notice(&notice(&n)).expect("a notice reads back");
+        assert_eq!(back.from, n.from.replace(['"', '<', '>', '\n'], " "));
+    }
+    let n = Notice { from: "x".into(), title: text.into(), text: text.into() };
+    assert!(parse_notice(&notice(&n)).is_some());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -183,3 +183,10 @@ path = "fuzz_targets/grok_acp.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "session_notice"
+path = "fuzz_targets/session_notice.rs"
+test = false
+doc = false
+bench = false

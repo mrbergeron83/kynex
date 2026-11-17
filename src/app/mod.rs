@@ -22,6 +22,7 @@
 //! | `control_panes.rs`  | its terminal / agent pane commands: read, run, prompt, wait |
 //! | `control_cards.rs`  | the card you answer before a `knx` request changes something |
 //! | `control_sessions.rs` | its session commands: new, fork, open, close, rename, archive, pin |
+//! | `lineage.rs`        | which session started which: links, caps, answers sent back |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
 //! | `layout_history.rs` | undo / redo of pane changes, reopening a pane, older layouts |
 //! | `toolbar.rs`        | path, panes' buttons (timeline, Git), open-in buttons |
@@ -139,6 +140,7 @@ mod layout;
 mod layout_history;
 mod layouts;
 mod leaving;
+mod lineage;
 pub(crate) mod mentions;
 mod menus;
 mod models;
@@ -426,6 +428,10 @@ pub struct KynexApp {
     approval_token: u64,
     /// Titles asked for sessions with no CLI id yet, given once they have one.
     pending_titles: Vec<(kynex_core::live::Key, String)>,
+    /// Each project's parent links (`lineage.rs`), read the first time they're needed.
+    lineage: HashMap<PathBuf, kynex_core::lineage::Lineage>,
+    /// Parent links whose child has no CLI id yet.
+    pending_parents: Vec<lineage::PendingParent>,
     /// The loop looking at waits on panes is running.
     pane_wait_watch: bool,
     /// Themes read from the data dir's `themes/` folder, the files that couldn't be used, and the watch on it.
@@ -748,6 +754,8 @@ impl KynexApp {
             approvals: Default::default(),
             approval_token: 0,
             pending_titles: Vec::new(),
+            lineage: HashMap::new(),
+            pending_parents: Vec::new(),
             pane_wait_watch: false,
             custom_themes: Vec::new(),
             theme_errors: Vec::new(),
@@ -796,6 +804,8 @@ impl KynexApp {
         // Sessions whose history came in from their log, and how many items went in front.
         let mut histories = Vec::new();
         let mut openrouter_turn_ended = false;
+        // Sessions whose turn just ended, for the answers going back to who started them.
+        let mut turn_ends = Vec::new();
         for s in self.all_sessions_mut() {
             // Before `seen`: history isn't news (no toasts for old tasks).
             if let Some(n) = s.take_history() {
@@ -813,6 +823,12 @@ impl KynexApp {
                 touched.insert(s.cwd.clone());
             }
             shown_ended |= was_busy && !s.busy && Some(s.uid) == shown;
+            // Every turn's end, also one whose queued messages went out at once (still busy).
+            for (i, item) in s.items.iter().enumerate().skip(seen) {
+                if matches!(item, session::Item::Result { .. }) {
+                    turn_ends.push((s.uid, i));
+                }
+            }
             openrouter_turn_ended |= was_busy && !s.busy && s.provider().provider().is_openrouter();
             for item in s.items.get(seen..).into_iter().flatten() {
                 if let session::Item::Task(n) = item {
@@ -881,6 +897,7 @@ impl KynexApp {
         self.sync_session_ids();
         self.save_layouts(cx);
         self.finish_control_waits(cx);
+        self.report_back(&turn_ends);
         self.control_events();
         self.sync_attention(cx);
         self.sync_awake();

@@ -134,8 +134,8 @@ impl KynexApp {
                 window.activate_window();
                 Ok(json!({ "opened": target }))
             }
-            Request::WorkspaceCreate { branch, session, prompt } => {
-                let start = session.then_some(prompt);
+            Request::WorkspaceCreate { branch, session, prompt, why } => {
+                let start = session.then_some((prompt, why));
                 self.create_workspace_for(branch, start, caller, reply.clone(), cx);
                 Err(None)
             }
@@ -223,8 +223,8 @@ impl KynexApp {
                 self.hold(Target::Session(key), true, timeout, cx);
                 Err(None)
             }
-            Request::SessionNew { workspace, prompt, title, pane } => {
-                let new = NewSession { workspace, prompt, title, place: pane.unwrap_or_default() };
+            Request::SessionNew { workspace, prompt, title, pane, why } => {
+                let new = NewSession { workspace, prompt, title, place: pane.unwrap_or_default(), why };
                 self.control_session_new(new, caller, worktree, reply.clone(), window, cx).map_err(Some)?;
                 Err(None)
             }
@@ -280,6 +280,7 @@ impl KynexApp {
     pub(super) fn finish_control_waits(&mut self, cx: &mut Context<Self>) {
         self.drop_closed_cards();
         self.give_pending_titles();
+        self.give_pending_parents();
         if self.control_waits.is_empty() {
             return;
         }
@@ -330,6 +331,15 @@ impl KynexApp {
     pub(super) fn control_events(&mut self) {
         let Some(server) = &self.control else { return };
         let now: Seen = self.all_sessions().map(|s| (s.uid, (s.busy, s.waiting()))).collect();
+        // Opened and closed since the last look, with who started them.
+        for s in self.all_sessions().filter(|s| !self.control_seen.contains_key(&s.uid)) {
+            let data = json!({ "session": s.uid, "id": s.session_id, "parent": self.parent_key(s.uid) });
+            server.broadcast("session.created", data);
+        }
+        for gone in self.control_seen.keys().filter(|k| !now.contains_key(k)) {
+            let parent = self.approvals.maker(&kynex_core::control::approval::Made::Session(*gone));
+            server.broadcast("session.closed", json!({ "session": gone, "parent": parent }));
+        }
         for s in self.all_sessions() {
             let (was_busy, was_waiting) = self.control_seen.get(&s.uid).copied().unwrap_or((false, false));
             if was_busy && !s.busy {

@@ -62,7 +62,8 @@ impl KynexApp {
             }
             _ => return None,
         };
-        let theirs = made.is_some_and(|m| self.approvals.made_by_or_under(&m, c));
+        let theirs = made.as_ref().is_some_and(|m| self.approvals.made_by_or_under(m, c))
+            || matches!(made, Some(Made::Session(k)) if self.started_by(k, c));
         (!theirs).then(|| format!("Session {c} didn't start this: it isn't one of its own."))
     }
 
@@ -157,11 +158,13 @@ impl KynexApp {
         cx.notify();
         let Some((request, caller)) = self.approvals.decide(id, choice) else { return };
         let (tx, rx) = channel();
-        let approvals = self.approvals.clone();
+        let (approvals, wake) = (self.approvals.clone(), self.wake.clone());
         // The outcome may come much later (a prompt that waits for its turn): a thread holds on.
+        // Then the app looks again, for an outcome that goes back to the asking session.
         std::thread::spawn(move || {
             let answer = rx.recv().unwrap_or_else(|_| Err("Kynex dropped the request".into()));
             approvals.finish(id, answer);
+            wake();
         });
         self.dispatch(request, caller, choice == Choice::StartInWorktree, tx, window, cx);
     }

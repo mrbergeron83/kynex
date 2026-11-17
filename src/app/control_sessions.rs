@@ -11,6 +11,7 @@ use kynex_core::control::approval::Made;
 use kynex_core::control::protocol::{Place, SessionRef};
 use kynex_core::git;
 use kynex_core::layout::{Direction, PaneId};
+use kynex_core::lineage;
 use kynex_core::live::Key;
 use kynex_core::provider::Provider;
 use kynex_core::rewind::{self, Point};
@@ -28,6 +29,8 @@ pub(super) struct NewSession {
     pub prompt: Option<String>,
     pub title: Option<String>,
     pub place: Place,
+    /// Why the asking session wants it, said in the first message.
+    pub why: Option<String>,
 }
 
 impl KynexApp {
@@ -39,11 +42,6 @@ impl KynexApp {
             .ok_or_else(|| format!("no open session {r}"))
     }
 
-    /// The project holding open session `key`.
-    fn project_of(&self, key: Key) -> Option<PathBuf> {
-        self.code.iter().find(|(_, l)| l.sessions.iter().any(|s| s.uid == key)).map(|(p, _)| p.clone())
-    }
-
     /// The project a request is about: the asking session's, else the shown one.
     pub(super) fn request_project(&self, caller: Option<Key>) -> Result<PathBuf, String> {
         caller
@@ -52,10 +50,12 @@ impl KynexApp {
             .ok_or_else(|| "no project is shown".to_string())
     }
 
-    /// Whether `project` is open and may start one more session (checked again after any
-    /// wait, since other sessions may have started meanwhile).
-    fn room_in(&self, project: &Path) -> Result<(), String> {
-        self.code.get(project).ok_or_else(|| format!("{} isn't open", project.display()))?.room_for_new()
+    /// Whether `project` is open and may start one more session, and `parent` (the session
+    /// asking, if one does) one more child (checked again after any wait, since other
+    /// sessions may have started meanwhile).
+    fn room_in(&mut self, project: &Path, parent: Option<Key>) -> Result<(), String> {
+        self.code.get(project).ok_or_else(|| format!("{} isn't open", project.display()))?.room_for_new()?;
+        self.check_caps(parent)
     }
 
     /// `session new`: checks what it can at once; `reply` gets the session.
@@ -84,7 +84,7 @@ impl KynexApp {
                 .or_else(|| self.tiling_scope().filter(|(p, _, _)| *p == project).map(|(_, ws, _)| ws))
                 .unwrap_or_else(|| project.clone()),
         };
-        self.room_in(&project)?;
+        self.room_in(&project, caller)?;
         if !worktree {
             let _ = reply.send(self.start_control_session(&project, folder, new, caller));
             return Ok(());
@@ -115,7 +115,7 @@ impl KynexApp {
                     if shown {
                         this.select_workspace(&path, cx);
                     }
-                    this.session_in_new_workspace(&project, path.clone(), None, new.title, shown, caller)
+                    this.session_in_new_workspace(&project, path.clone(), None, new.title, new.why, shown, caller)
                         .map(|s| json!({ "session": s["session"], "workspace": path }))
                 });
                 let _ = reply.send(answer);
@@ -135,19 +135,21 @@ impl KynexApp {
         new: NewSession,
         caller: Option<Key>,
     ) -> Answer {
-        self.room_in(project)?;
-        let s = self.new_control_session(folder.clone(), new.prompt, new.title, caller);
+        self.room_in(project, caller)?;
+        let s = self.new_control_session(folder.clone(), new.prompt, new.title, new.why, caller);
         let key = s.uid;
         let pane = self.place_session(project, &folder, s, new.place, caller)?;
         Ok(json!({ "session": key, "workspace": folder, "pane": pane }))
     }
 
     /// A new session in `folder`, started, sent `prompt` and named `title` (once it has an id).
+    /// Started by session `caller`, it's that one's child, and its first message says so.
     pub(super) fn new_control_session(
         &mut self,
         folder: PathBuf,
         prompt: Option<String>,
         title: Option<String>,
+        why: Option<String>,
         caller: Option<Key>,
     ) -> Session {
         let mut s = Session::new(Kind::Code, folder);
@@ -155,12 +157,21 @@ impl KynexApp {
         self.start_model(&mut s);
         s.wake = self.wake.clone();
         if let Some(p) = prompt.filter(|p| !p.trim().is_empty()) {
+            let p = match caller.and_then(|c| self.session_by_key(c)) {
+                Some(parent) => {
+                    let id = parent.session_id.clone().unwrap_or_else(|| parent.uid.to_string());
+                    lineage::first_prompt(&self.running_name(parent), &id, why.as_deref(), &p)
+                }
+                None => p,
+            };
             s.send(p, Vec::new());
         }
         if let Some(t) = title {
             self.pending_titles.push((s.uid, t));
         }
-        self.approvals.record_made(Made::Session(s.uid), caller);
+        if let Some(c) = caller {
+            self.record_parent(&s, c, true);
+        }
         s
     }
 
@@ -227,7 +238,7 @@ impl KynexApp {
             .filter(|_| !s.items.is_empty() && s.forked_from().is_none())
             .ok_or_else(|| format!("session {r} has nothing to fork yet"))?;
         let cwd = s.cwd.clone();
-        self.room_in(&project)?;
+        self.room_in(&project, caller)?;
         let Some(n) = at else {
             let _ = reply.send(self.finish_fork(&project, cwd, id, None, place, caller));
             return Ok(());
@@ -260,7 +271,7 @@ impl KynexApp {
         if place == Place::Hidden {
             return Err("a fork has to be shown: `--pane right`, `down` or `tab`".into());
         }
-        self.room_in(project)?;
+        self.room_in(project, caller)?;
         let mut fork = Session::fork(Kind::Code, cwd.clone(), id.clone(), self.wake.clone());
         if let Some(p) = &point {
             fork.rewind_to(p);
@@ -269,7 +280,14 @@ impl KynexApp {
         self.start_model(&mut fork);
         fork.wake = self.wake.clone();
         let key = fork.uid;
-        self.approvals.record_made(Made::Session(key), caller);
+        // Its parent: the session that asked for it, which hears back; else the one it
+        // copies, under which it only nests.
+        let source = self.all_sessions().find(|s| s.session_id.as_deref() == Some(id.as_str())).map(|s| s.uid);
+        match (caller, source) {
+            (Some(c), _) => self.record_parent(&fork, c, true),
+            (None, Some(s)) => self.record_parent(&fork, s, false),
+            (None, None) => {}
+        }
         let pane = self.place_session(project, &cwd, fork, place, caller)?;
         Ok(json!({ "session": key, "forked_from": id, "pane": pane }))
     }
@@ -294,7 +312,7 @@ impl KynexApp {
             .folder_of_listed(&id)
             .filter(|f| self.workspaces_of(&project, cx).iter().any(|(w, _)| w.at(f)))
             .ok_or_else(|| format!("no past session {id} in {}'s workspaces", project.display()))?;
-        self.room_in(&project)?;
+        self.room_in(&project, None)?;
         self.edit_groups(&cwd, |g| {
             g.unarchive(&id);
         });
@@ -362,7 +380,7 @@ impl KynexApp {
     pub(super) fn control_session_archive(&mut self, r: &SessionRef) -> Answer {
         let (cwd, id, _) = self.session_place(r)?;
         let id = id.ok_or_else(|| format!("session {r} has nothing to archive yet"))?;
-        self.edit_groups(&cwd, |g| g.archive(&id));
+        self.archive_nest(&cwd, std::slice::from_ref(&id));
         Ok(json!({ "archived": id }))
     }
 
@@ -403,10 +421,11 @@ impl KynexApp {
         path: PathBuf,
         prompt: Option<String>,
         title: Option<String>,
+        why: Option<String>,
         shown: bool,
         caller: Option<Key>,
     ) -> Answer {
-        self.room_in(project)?;
+        self.room_in(project, caller)?;
         // Not shown, it has no pane, and a session with nothing sent would be tidied away.
         if !shown && prompt.is_none() {
             return Ok(json!({
@@ -414,7 +433,7 @@ impl KynexApp {
                 "note": "the project isn't shown, so a session with no prompt wasn't started; ask with --prompt",
             }));
         }
-        let s = self.new_control_session(path, prompt, title, caller);
+        let s = self.new_control_session(path, prompt, title, why, caller);
         let key = s.uid;
         let Some(live) = self.code.get_mut(project) else { return Err(format!("{} isn't open", project.display())) };
         live.sessions.push(s);
