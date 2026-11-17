@@ -288,13 +288,12 @@ impl KynexApp {
             1002,
             cx,
             Box::new(move |this, _, _| {
-                this.edit_groups(&archive_cwd, |g| {
-                    if archived {
-                        g.unarchive(&archive_id);
-                    } else {
-                        g.archive(&archive_id);
-                    }
-                })
+                if archived {
+                    this.unarchive_nest(&archive_cwd, std::slice::from_ref(&archive_id));
+                } else {
+                    // With the sessions it started.
+                    this.archive_nest(&archive_cwd, std::slice::from_ref(&archive_id));
+                }
             }),
         ));
         // Its disk use, which opens Settings → Storage on it.
@@ -451,7 +450,7 @@ impl KynexApp {
                 if d.cwd != drop_cwd {
                     return;
                 }
-                this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.archive(id)));
+                this.archive_nest(&drop_cwd, &d.ids);
                 this.organize.selection.clear();
                 cx.notify();
             }))

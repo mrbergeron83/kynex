@@ -2,11 +2,13 @@
 //! ran, its lamp, its menu, delete, drag, and picking. One look for every session,
 //! listed or new, in whichever workspace it is.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::ui::px;
 use gpui::{Anchor, AnyElement, App, Context, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*};
 use kynex_core::fmt::ago;
+use kynex_core::lineage::Placed;
 use kynex_core::live::Key;
 use kynex_core::session::{self, Item, Kind, Session, SessionInfo};
 use kynex_core::toasts::Toast;
@@ -172,6 +174,8 @@ pub(super) struct RowCtx<'a> {
     pub picked_ids: Vec<String>,
     pub default_branch: Option<String>,
     pub open: &'a [OpenSession],
+    /// Where each row landed among the sessions that started each other.
+    pub nest: &'a HashMap<String, Placed>,
     pub t: Palette,
 }
 
@@ -266,8 +270,14 @@ impl KynexApp {
         let (open_id, del_id) = (id.clone(), id.clone());
         let (cwd2, cwd3) = (cwd.clone(), cwd.clone());
         let picked = this.organize.selection.contains(&id);
-        let state = ctx.open_state(&id);
-        let busy = state == Lamp::Working;
+        let placed = ctx.nest.get(&id).cloned().unwrap_or_default();
+        let busy = ctx.open_state(&id) == Lamp::Working;
+        // Folded, a parent's lamp shows what its nest is up to too.
+        let state = std::iter::once(&id)
+            .chain(&placed.hidden)
+            .map(|k| ctx.open_state(k))
+            .find(|l| *l != Lamp::Idle)
+            .unwrap_or(Lamp::Idle);
         let delete = if confirming {
             div()
                 .id(("confirm-delete", n))
@@ -342,7 +352,10 @@ impl KynexApp {
             false => title,
         };
         let provider = this.groups_for(cwd).provider_of(&id);
+        let nest_marks = this.nest_marks(n, &id, &placed, cx);
         let row = session_row_with(("session", n), title, is_current || picked, t)
+            .when(placed.depth > 0, |r| r.pl(px(8. + 14. * placed.depth as f32)))
+            .children(nest_marks)
             .when(provider.is_openrouter(), |r| {
                 r.child(provider_mark(("session-provider", n), "OR", "Runs on OpenRouter", t))
             })

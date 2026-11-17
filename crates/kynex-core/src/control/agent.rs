@@ -24,11 +24,11 @@ command (on your PATH) can see and arrange the app from your shell: `knx session
 `knx project list`; for terminal and agent-CLI panes, `knx pane read <id> [--lines N]`, \
 `knx pane run <id> <command> [--wait]` and `knx pane prompt <id> <message> [--wait]`; for \
 sessions, `knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] \
-[--prompt <message>]`, `knx session fork <id> [--at <message number>]`, `knx session open|close|archive \
+[--why <reason>] [--prompt <message>]`, `knx session fork <id> [--at <message number>]`, `knx session open|close|archive \
 <id>`, `knx session rename <id> <title>`, `knx session pin <id> [--off]` and `knx workspace create \
 <branch> --session [--prompt <message>]`. Requests that change \
 something wait for the user's OK in Kynex; one not answered within 30 seconds says `pending` \
-with a request id, and `knx request wait <id>` gets its outcome. Your session's id is in the \
+with a request id, and `knx request wait <id>` gets its outcome (it also comes to you as a message). A session you start is your child: when its turn ends, its answer comes to you as a <session-notification> message, so you needn't wait on it. Your session's id is in the \
 KYNEX_SESSION environment variable, your workspace folder in KYNEX_WORKSPACE_DIR. \
 Use it only when the user's request calls for it.";
 

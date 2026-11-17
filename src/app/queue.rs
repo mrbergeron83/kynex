@@ -117,7 +117,11 @@ impl KynexApp {
         }
         let t = theme(cx).clone();
         let rows = items.iter().enumerate().map(|(i, m)| {
-            let first_line = m.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").to_string();
+            // An answer from a session it started: who from, not the tag.
+            let first_line = match kynex_core::lineage::parse_notice(&m.text) {
+                Some(n) => format!("From {}", n.title),
+                None => m.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").to_string(),
+            };
             let images = m.attachments.iter().filter_map(|a| a.preview.clone().downcast::<Image>().ok());
             div()
                 .flex()

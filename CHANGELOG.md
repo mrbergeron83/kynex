@@ -11,6 +11,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `/fork` (or `/branch`) copies a session into a pane beside it. Sending to the copy continues the conversation as a new session (`--fork-session`); the original stays as it was.
 - Steer a running turn: Alt+Enter, or Steer on the queue, sends the queued messages and the draft into the turn without stopping it, and Claude reads them at its next step. Ctrl+Enter still stops the turn first.
 - `knx session new | fork | open | close | rename | archive | pin` and `knx workspace create <branch> --session [--prompt …]` let a session (or a script) start and arrange sessions. A session can be named by its number or by its session id.
+- Sessions started or forked by another session, or with `/fork`, are its children: the sessions tree nests them under it (a parent folds them away, and its lamp shows theirs), the session header links to the parent and counts the children, and the Agents pane nests running ones. Deleting a parent moves its children up a level; archiving it archives them too. The links survive a restart.
+- A session started at another session's request sends its answer back to it when its turn ends, shown there as a notice, as does the outcome of a `knx` request that answered `pending`. `knx session new --why <reason>` says in the child's first message why it was started, and `knx events` adds `session.created` and `session.closed`.
 
 ### Changed
 

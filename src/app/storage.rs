@@ -195,6 +195,7 @@ impl KynexApp {
                 if let Some(path) = self.project_for_slug(slug) {
                     self.edit_groups(&path, |g| g.forget(id));
                 }
+                self.unlink_session(id);
             }
             self.reread_sessions();
         }

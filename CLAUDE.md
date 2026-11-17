@@ -102,6 +102,8 @@ A cargo workspace with two crates:
   - `scrollback.rs` — terminal panes' scrollback kept across a restart (bounded, one file per pane)
   - `user_commands.rs` — custom commands (`commands.json`, user and per project): argv, placement, key, env
   - `groups.rs` — session groups and the archive in the sessions panel (`sessions.json` per project)
+  - `lineage.rs` — which session started which (`parents.json` per project): nesting in the tree,
+    caps on depth and open children, and a child's answer sent back to its parent as a notice
   - `grok/` — the Grok provider: `grok agent stdio` over ACP (`acp.rs` maps it to and from
     stream-json, so sessions draw it like `claude`), usage and models (`usage.rs`), Grok's own
     session records for the list and reopening (`log.rs`), install / sign-in (`setup.rs`)

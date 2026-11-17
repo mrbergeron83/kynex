@@ -39,21 +39,23 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["workspace", "list"] => Ok(Request::WorkspaceList),
         ["workspace", "open", p] => Ok(Request::WorkspaceOpen { path: absolute(p) }),
         ["workspace", "create", branch, rest @ ..] => {
-            let o = options(rest, &["--session"], &[])?;
-            let prompt = o.prompt;
+            let o = options(rest, &["--session"], &["--why"])?;
+            let prompt = o.prompt.clone();
             Ok(Request::WorkspaceCreate {
                 branch: branch.to_string(),
                 session: o.switches.contains(&"--session") || prompt.is_some(),
                 prompt,
+                why: o.value("--why").map(str::to_string),
             })
         }
         ["session", "new", rest @ ..] => {
-            let o = options(rest, &[], &["--workspace", "--title", "--pane"])?;
+            let o = options(rest, &[], &["--workspace", "--title", "--pane", "--why"])?;
             Ok(Request::SessionNew {
                 workspace: o.value("--workspace").map(absolute),
                 prompt: o.prompt.clone(),
                 title: o.value("--title").map(str::to_string),
                 pane: o.value("--pane").map(Place::parse).transpose()?,
+                why: o.value("--why").map(str::to_string),
             })
         }
         ["session", "fork", s, rest @ ..] => {
@@ -245,11 +247,12 @@ fn absolute(p: &str) -> String {
 pub const USAGE: &str = "usage:
   knx project list | create <folder> | open <folder> | remove <folder>
   knx workspace list | open <folder> | remove <folder> [--force]
-  knx workspace create <branch> [--session] [--prompt <message…>]
+  knx workspace create <branch> [--session] [--why <reason>] [--prompt <message…>]
   knx pane list [--all] | split [row|column] | focus <id> | close [id]
   knx pane read <id> [--lines N] | run <id|new> <command…> [--wait] | prompt <id> <message…> [--wait] | wait <id>
   knx session list | prompt <s> <message…> [--wait] | read <s> | wait <s>
-  knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] [--prompt <message…>]
+  knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] [--why <reason>]
+                  [--prompt <message…>]
   knx session fork <s> [--at <message number>] [--pane …] | open <session id> [--pane …]
   knx session close <s> | rename <s> <title…> | archive <s> | pin <s> [--off]
   knx request status <id> | wait <id>
@@ -283,7 +286,7 @@ mod tests {
         assert_eq!(parse(&words("pane focus 4")), Ok(Request::PaneFocus { pane: 4 }));
         assert_eq!(
             parse(&words("workspace create fix/login")),
-            Ok(Request::WorkspaceCreate { branch: "fix/login".into(), session: false, prompt: None })
+            Ok(Request::WorkspaceCreate { branch: "fix/login".into(), session: false, prompt: None, why: None })
         );
         assert!(matches!(
             parse(&words("workspace remove sub --force")),
@@ -344,12 +347,13 @@ mod tests {
     #[test]
     fn session_requests_from_words() {
         assert_eq!(
-            parse(&words("session new --title Fix --pane none --prompt fix the --pane build")),
+            parse(&words("session new --title Fix --pane none --why tests --prompt fix the --pane build")),
             Ok(Request::SessionNew {
                 workspace: None,
                 prompt: Some("fix the --pane build".into()),
                 title: Some("Fix".into()),
                 pane: Some(Place::Hidden),
+                why: Some("tests".into()),
             })
         );
         let Ok(Request::SessionNew { workspace: Some(w), .. }) = parse(&words("session new --workspace sub")) else {
@@ -377,11 +381,16 @@ mod tests {
         );
         assert_eq!(
             parse(&words("workspace create fix/x --session")),
-            Ok(Request::WorkspaceCreate { branch: "fix/x".into(), session: true, prompt: None })
+            Ok(Request::WorkspaceCreate { branch: "fix/x".into(), session: true, prompt: None, why: None })
         );
         assert_eq!(
             parse(&words("workspace create fix/x --prompt do it")),
-            Ok(Request::WorkspaceCreate { branch: "fix/x".into(), session: true, prompt: Some("do it".into()) })
+            Ok(Request::WorkspaceCreate {
+                branch: "fix/x".into(),
+                session: true,
+                prompt: Some("do it".into()),
+                why: None
+            })
         );
         assert_eq!(parse(&words("request status 7")), Ok(Request::RequestStatus { request: 7 }));
         assert_eq!(

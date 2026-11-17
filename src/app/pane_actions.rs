@@ -44,6 +44,8 @@ impl KynexApp {
         }
         let (kind, cwd) = (s.kind, s.cwd.clone());
         let fork = Session::fork(kind, cwd, id, self.wake.clone());
+        // The copy is the original's child, nested under it.
+        self.record_parent(&fork, key, false);
         let beside = self
             .tiling_scope()
             .and_then(|(project, ws, _)| Some((project, ws.clone(), self.tiles.get(&ws)?.pane_of(key)?)));
