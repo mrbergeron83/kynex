@@ -414,6 +414,11 @@ pub struct Session {
     /// A fork's original ([`Self::fork`]): its process continues that one as a new
     /// session, until the first message is sent and the new one has its own log.
     fork_from: Option<String>,
+    /// A message was written into the turn in progress ([`Self::steer`]).
+    steered: bool,
+    /// The last turn ended with a steer written into it, which the CLI may not have
+    /// read in time: if it starts a turn of its own for it, that turn is busy too.
+    late_steer: bool,
     /// A Grok process's protocol state ([`crate::grok::acp`]): what it writes and reads goes through it.
     acp: Option<crate::grok::acp::Acp>,
     /// Counts processes started, so [`Self::poll`] drops what an old one sent
@@ -585,6 +590,8 @@ impl Session {
             limits: None,
             resume_at: None,
             fork_from: None,
+            steered: false,
+            late_steer: false,
             acp: None,
             runs: 0,
             loader: None,
@@ -1098,6 +1105,8 @@ impl Session {
             content.push(json!({ "type": "text", "text": text }));
         }
         self.items.push(Item::User { text, images });
+        // A new turn: one a late steer may start is this one.
+        self.late_steer = false;
         self.busy = true;
         self.talked = true;
         self.conversation = true;
@@ -1196,6 +1205,28 @@ impl Session {
     /// Stops the turn. Anything queued goes out as soon as it has ended.
     pub fn interrupt(&mut self) {
         self.control(json!({ "subtype": "interrupt" }));
+    }
+
+    /// Whether a message can go into the turn in progress without stopping it:
+    /// `claude` reads one written mid-turn at its next step (Grok can't).
+    pub fn can_steer(&self) -> bool {
+        self.busy && self.is_running() && !self.loading() && self.provider.provider() != crate::provider::Provider::Grok
+    }
+
+    /// Sends a message into the turn in progress, which takes it in at its next
+    /// step instead of after the turn; when it can't ([`Self::can_steer`]), it's
+    /// sent as usual (queued while a turn runs).
+    pub fn steer(&mut self, text: String, attachments: Vec<Attachment>) {
+        let steering = self.can_steer();
+        self.send(text, attachments);
+        self.steered |= steering;
+    }
+
+    /// The queue, into the turn in progress ([`Self::steer`]); sent as usual when idle.
+    pub fn steer_queue(&mut self) {
+        if let Some(m) = self.queue.take_all() {
+            self.steer(m.text, m.attachments);
+        }
     }
 
     /// Sends the queue now: right away when idle, otherwise it stops the turn
@@ -1429,6 +1460,8 @@ impl Session {
         self.settle_thoughts();
         self.tasks.clear();
         self.stopping.clear();
+        self.steered = false;
+        self.late_steer = false;
         // Nobody is left to answer them.
         self.cancel_permissions(|_| true);
     }
@@ -1502,6 +1535,16 @@ impl Session {
     }
 
     pub(crate) fn handle(&mut self, v: Value) {
+        // The CLI started a turn of its own for a steer that came too late for the last one.
+        if self.late_steer
+            && !self.busy
+            && matches!(v["type"].as_str(), Some("assistant" | "stream_event"))
+            && v["parent_tool_use_id"].is_null()
+        {
+            self.late_steer = false;
+            self.busy = true;
+            self.finished = false;
+        }
         if let Some(id) = v["session_id"].as_str() {
             self.session_id = Some(id.to_string());
         }
@@ -1743,6 +1786,7 @@ impl Session {
                 });
                 self.busy = false;
                 self.finished = true;
+                self.late_steer = std::mem::take(&mut self.steered);
                 if let Some(next) = self.queue.take_all() {
                     self.send(next.text, next.attachments);
                 }
@@ -2431,6 +2475,28 @@ mod tests {
 
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_steer_the_cli_answers_in_a_turn_of_its_own_keeps_the_session_busy() {
+        let mut s = Session::new(Kind::Code, std::env::temp_dir());
+        // Not running: a steer is an ordinary message.
+        assert!(!s.can_steer());
+        // Taken in during the turn: one result, and the session is idle after it.
+        s.busy = true;
+        s.steered = true;
+        s.handle(json!({ "type": "result", "duration_ms": 1, "total_cost_usd": 0.0 }));
+        assert!(!s.busy && s.late_steer);
+        // Too late for that turn: the CLI starts another for it, which is busy too.
+        s.handle(json!({ "type": "stream_event", "parent_tool_use_id": null,
+            "event": { "type": "message_start" } }));
+        assert!(s.busy && !s.late_steer && !s.finished);
+        s.handle(json!({ "type": "result", "duration_ms": 1, "total_cost_usd": 0.0 }));
+        assert!(!s.busy && !s.late_steer);
+        // Without a steer, output after a result (a background task's turn) doesn't.
+        s.handle(json!({ "type": "stream_event", "parent_tool_use_id": null,
+            "event": { "type": "message_start" } }));
+        assert!(!s.busy);
+    }
 
     #[test]
     fn result_recaps_the_turn() {
@@ -3388,6 +3454,88 @@ mod tests {
         let reply = turn(&mut s, "List every word I asked you to remember, nothing else.");
         assert!(reply.contains("APPLE") && !reply.contains("BANANA"), "got: {reply:?}");
         assert_eq!(s.session_id.as_deref(), Some(id.as_str()));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn live_session(name: &str) -> (PathBuf, Session) {
+        let root = std::env::temp_dir().join(format!("kynex-{name}-{}", std::process::id()));
+        let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        unsafe { std::env::set_var("KYNEX_DATA_DIR", root.join("data")) };
+        let mut s = Session::new(Kind::Code, project);
+        s.model = "haiku".into();
+        s.mode = project::Mode::Bypass;
+        s.bypass = true;
+        (root, s)
+    }
+
+    fn wait_idle(s: &mut Session) {
+        let start = Instant::now();
+        while (s.busy || s.loading()) && start.elapsed() < Duration::from_secs(120) {
+            // As the app does: the log read in the background comes in here.
+            s.take_history();
+            s.poll();
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn last_reply(s: &Session) -> String {
+        s.items
+            .iter()
+            .rev()
+            .find_map(|i| if let Item::Assistant(t) = i { Some(t.clone()) } else { None })
+            .unwrap_or_default()
+    }
+
+    /// A message written mid-turn is read in that turn: one result, and the reply
+    /// follows it. Run with `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn steer_live() {
+        let (root, mut s) = live_session("steer");
+        s.send("Use the Bash tool to run: sleep 6 && echo first. Then run: sleep 6 && echo second. Then reply in one line.".into(), Vec::new());
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(4) {
+            s.poll();
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(s.can_steer(), "the turn ended before the steer");
+        s.steer("Change of plan: end your final reply with the word BANANA.".into(), Vec::new());
+        wait_idle(&mut s);
+        let results = s.items.iter().filter(|i| matches!(i, Item::Result { .. })).count();
+        let reply = last_reply(&s);
+        assert!(reply.contains("BANANA"), "got: {reply:?}");
+        assert!(results <= 2 && !s.busy, "{results} results");
+        s.kill();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `/fork` continues a session as a new one, and the original's log is left as it was.
+    #[test]
+    #[ignore]
+    fn fork_live() {
+        let (root, mut s) = live_session("fork");
+        s.send("Remember the word APPLE. Reply only OK.".into(), Vec::new());
+        wait_idle(&mut s);
+        let orig = s.session_id.clone().unwrap();
+        let cwd = s.cwd.clone();
+        s.kill();
+        let mut f = Session::fork(Kind::Code, cwd.clone(), orig.clone(), Arc::new(|| {}));
+        f.model = "haiku".into();
+        wait_idle(&mut f);
+        f.send("Which word did I ask you to remember? Reply with just it.".into(), Vec::new());
+        wait_idle(&mut f);
+        assert!(last_reply(&f).contains("APPLE"), "got: {:?}", last_reply(&f));
+        let new = f.session_id.clone().unwrap();
+        assert_ne!(new, orig);
+        assert_eq!(f.resume_id(), Some(new.as_str()));
+        f.kill();
+        let users = |id: &str| {
+            let log = std::fs::read_to_string(transcript_path(&cwd, id).unwrap()).unwrap_or_default();
+            log.lines().filter(|l| l.contains(r#""type":"user""#) && !l.contains("tool_result")).count()
+        };
+        assert_eq!(users(&orig), 1, "the original grew");
+        assert!(users(&new) >= 2);
         let _ = std::fs::remove_dir_all(&root);
     }
 

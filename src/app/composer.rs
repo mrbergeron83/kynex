@@ -527,6 +527,11 @@ impl KynexApp {
                     this.send_queue_now(key, cx);
                     cx.stop_propagation();
                 }
+                // Alt+Enter steers: the queue and the draft go into the running turn.
+                if k.key == "enter" && m.alt && !m.control && !m.shift && !m.platform {
+                    this.steer_now(key, cx);
+                    cx.stop_propagation();
+                }
             }))
             .when(!self.pane.attachments.is_empty(), |d| d.child(attachments))
             .children(mode_badge)
