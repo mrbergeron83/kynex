@@ -33,6 +33,8 @@ pub(super) struct Spec {
     pub bypass: bool,
     pub resume: Option<String>,
     pub resume_at: Option<String>,
+    /// Continue `resume` as a new session of its own (`--fork-session`).
+    pub fork: bool,
     pub wake: Wake,
 }
 
@@ -142,7 +144,8 @@ fn command(spec: &mut Spec, started: &mut Started) -> Result<(Command, &'static 
     // OpenRouter chat: Kynex's own harness in the CLI's place, same protocol.
     if let Launch::OpenRouterChat { key, settings } = spec.provider.with_model(&spec.model) {
         let at = spec.resume_at.take();
-        let cmd = crate::chat_api::command(&spec.cwd, &key, &settings, spec.resume.as_deref(), at.as_deref())?;
+        let cmd =
+            crate::chat_api::command(&spec.cwd, &key, &settings, spec.resume.as_deref(), at.as_deref(), spec.fork)?;
         return Ok((cmd, "the chat"));
     }
     let mut cmd = claude_command(&spec.cwd, &spec.provider.with_model(&spec.model));
@@ -217,6 +220,9 @@ fn command(spec: &mut Spec, started: &mut Started) -> Result<(Command, &'static 
         // After a rewind: continue from there, branching off what came after.
         if let Some(at) = spec.resume_at.take() {
             cmd.args(["--resume-session-at", &at]);
+        }
+        if spec.fork {
+            cmd.arg("--fork-session");
         }
     }
     Ok((cmd, "`claude`"))

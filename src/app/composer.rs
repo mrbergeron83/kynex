@@ -34,7 +34,7 @@ impl KynexApp {
     }
 
     /// Sends the composer's message on the session `key` (queued while it works).
-    fn send_to(&mut self, key: Option<Key>, _window: &mut Window, cx: &mut Context<Self>) {
+    fn send_to(&mut self, key: Option<Key>, window: &mut Window, cx: &mut Context<Self>) {
         let busy = key.and_then(|k| self.session_for(k)).is_some_and(|s| s.busy);
         let raw = self.pane.composer.read(cx).text().to_string();
         self.pane.slash.dismissed = None;
@@ -53,7 +53,7 @@ impl KynexApp {
         let pasted = self.pane.composer.read(cx).pasted() || !self.pane.pastes.is_empty();
         self.remember_sent(&text, cx);
         // Built-ins Kynex runs itself (`/clear`, `/model`…) work even mid-reply.
-        if self.pane.attachments.is_empty() && self.run_command(&text, cx) {
+        if self.pane.attachments.is_empty() && self.run_command(&text, window, cx) {
             self.pane.composer.update(cx, |c, cx| c.set_text("", cx));
             self.reset_input_mode();
             return;

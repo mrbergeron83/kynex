@@ -411,6 +411,9 @@ pub struct Session {
     limits: Option<crate::usage::Limits>,
     /// The log entry a rewind went back to, which the next process continues from.
     resume_at: Option<String>,
+    /// A fork's original ([`Self::fork`]): its process continues that one as a new
+    /// session, until the first message is sent and the new one has its own log.
+    fork_from: Option<String>,
     /// A Grok process's protocol state ([`crate::grok::acp`]): what it writes and reads goes through it.
     acp: Option<crate::grok::acp::Acp>,
     /// Counts processes started, so [`Self::poll`] drops what an old one sent
@@ -581,6 +584,7 @@ impl Session {
             init: None,
             limits: None,
             resume_at: None,
+            fork_from: None,
             acp: None,
             runs: 0,
             loader: None,
@@ -649,11 +653,30 @@ impl Session {
         s
     }
 
+    /// A copy of session `from` to take somewhere else (`/fork`): it shows its
+    /// conversation, and its process continues it as a new session with
+    /// `--fork-session`; `from` stays as it is. It has no id of its own until its
+    /// process reports one.
+    pub fn fork(kind: Kind, cwd: PathBuf, from: String, wake: Wake) -> Self {
+        let mut s = Self::new(kind, cwd);
+        s.fork_from = Some(from);
+        s.reopened = true;
+        s.wake = wake;
+        s.load(None);
+        s
+    }
+
+    /// The session a fork continues, until its first message is sent.
+    pub fn forked_from(&self) -> Option<&str> {
+        self.fork_from.as_deref()
+    }
+
     /// Starts filling the transcript from the session log's current branch, up
     /// to and including entry `until` if given.
     fn load(&mut self, until: Option<String>) {
         let (tx, rx) = channel();
-        let (cwd, id, wake) = (self.cwd.clone(), self.session_id.clone().unwrap_or_default(), self.wake.clone());
+        let id = self.session_id.clone().or_else(|| self.fork_from.clone()).unwrap_or_default();
+        let (cwd, wake) = (self.cwd.clone(), self.wake.clone());
         thread::spawn(move || {
             read_history(&cwd, &id, until.as_deref(), &tx, &wake);
             // The last ring comes after the channel closes, so the app sees it closed.
@@ -862,7 +885,7 @@ impl Session {
 
     /// The conversation a new process continues, if there is one to continue.
     fn resume_id(&self) -> Option<&str> {
-        self.session_id.as_deref().filter(|_| self.conversation)
+        self.fork_from.as_deref().or(self.session_id.as_deref().filter(|_| self.conversation))
     }
 
     /// Starts its process on a thread ([`launch::begin`]) and returns at once.
@@ -883,6 +906,7 @@ impl Session {
             bypass: self.bypass,
             resume: self.resume_id().map(str::to_string),
             resume_at: if grok { None } else { self.resume_at.take() },
+            fork: self.fork_from.is_some(),
             wake: self.wake.clone(),
         };
         self.starting = Some(launch::begin(spec, tx));
@@ -1085,6 +1109,9 @@ impl Session {
             msg["ultrathink_typed"] = json!(true);
         }
         self.write(msg);
+        // A fork's process has the message: it writes the new session's log, which
+        // a later process resumes by the id it reports.
+        self.fork_from = None;
     }
 
     /// Starts the process ahead of the first message, so sending doesn't wait
@@ -3142,6 +3169,23 @@ mod tests {
         // A reopened one always is.
         let resumed = Session::resume(Kind::Code, std::env::temp_dir(), "abc".into(), Arc::new(|| {}));
         assert_eq!(resumed.resume_id(), Some("abc"));
+    }
+
+    #[test]
+    fn a_fork_continues_its_original_until_it_has_its_own_id() {
+        let mut s = Session::fork(Kind::Code, std::env::temp_dir(), "orig".into(), Arc::new(|| {}));
+        // No id of its own, so it never stands in for the original.
+        assert_eq!((s.session_id.as_deref(), s.forked_from()), (None, Some("orig")));
+        assert_eq!(s.resume_id(), Some("orig"));
+        // A warmed-up process reports the new id; until a message goes out the
+        // next process still forks the original.
+        s.handle(json!({ "type": "system", "subtype": "init", "session_id": "new" }));
+        assert_eq!(s.resume_id(), Some("orig"));
+        assert!(!s.is_new());
+        // Once the message went out, the new session is the one resumed.
+        s.fork_from = None;
+        s.conversation = true;
+        assert_eq!(s.resume_id(), Some("new"));
     }
 
     #[test]

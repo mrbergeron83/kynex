@@ -22,7 +22,11 @@ impl Log {
     /// The log of a conversation in `cwd`: session `resume`'s, continued from
     /// its entry `at` if given, or a new one. Returns it with the messages so
     /// far, as the chat API takes them (tool calls left out). Blocks on reading the log.
-    pub fn open(cwd: &Path, resume: Option<&str>, at: Option<&str>) -> (Log, Vec<Value>) {
+    ///
+    /// With `fork`, the resumed conversation goes on in a new log of its own (the
+    /// CLI's `--fork-session`): its entries up to there are copied over, the
+    /// original's left as it is.
+    pub fn open(cwd: &Path, resume: Option<&str>, at: Option<&str>, fork: bool) -> (Log, Vec<Value>) {
         let session_id = resume.map_or_else(new_id, str::to_string);
         let path = crate::session::transcript_path(cwd, &session_id);
         let entries = match (&path, resume) {
@@ -32,8 +36,29 @@ impl Log {
             _ => Vec::new(),
         };
         let parent = entries.last().and_then(|v| v["uuid"].as_str()).map(str::to_string);
-        let log = Log { session_id, path, cwd: cwd.to_string_lossy().into_owned(), parent };
+        let mut log = Log { session_id, path, cwd: cwd.to_string_lossy().into_owned(), parent };
+        if fork && resume.is_some() {
+            log.session_id = new_id();
+            log.path = crate::session::transcript_path(cwd, &log.session_id);
+            // Best effort: if the copy fails, the next message's write reports it.
+            let _ = log.copy_in(&entries);
+        }
         (log, messages(&entries))
+    }
+
+    /// Writes `entries` (another log's) into this one, as its own.
+    fn copy_in(&self, entries: &[Value]) -> std::io::Result<()> {
+        let Some(path) = &self.path else { return Ok(()) };
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        for entry in entries {
+            let mut entry = entry.clone();
+            entry["sessionId"] = self.session_id.clone().into();
+            writeln!(file, "{entry}")?;
+        }
+        Ok(())
     }
 
     /// Logs a message the user sent (`content` as Kynex sent it).
