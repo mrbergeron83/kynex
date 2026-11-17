@@ -1,7 +1,8 @@
-//! The control socket (`kynex_core::control`): answering what `knx context | pane | session`
-//! and scripts ask of the running app, and the events they can listen to. A prompt sent this
-//! way is an ordinary message to the session, so it runs under the session's permission mode
-//! and a permission prompt is still answered in the app.
+//! The control socket (`kynex_core::control`): answering what `knx project | workspace | pane |
+//! session | request` and scripts ask of the running app, and the events they can listen to.
+//! What changes something waits for your OK on a card first (`control_cards.rs`). A prompt
+//! sent this way is an ordinary message to the session, so it runs under the session's
+//! permission mode and a permission prompt is still answered in the app.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -10,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{Context, Window};
 use kynex_core::control::Request;
+use kynex_core::control::approval;
 use kynex_core::control::server::Call;
 use kynex_core::layout::{Axis, PaneId};
 use kynex_core::live::Key;
@@ -18,6 +20,7 @@ use kynex_core::workspace::same_folder;
 use serde_json::{Value, json};
 
 use super::KynexApp;
+use super::control_sessions::NewSession;
 use super::state::Active;
 
 /// A folder given on the command line (`knx <folder>`) when no running app took it: opened at start.
@@ -65,31 +68,52 @@ pub(super) type Seen = HashMap<Key, (bool, bool)>;
 pub(super) type Answer = Result<Value, String>;
 
 impl KynexApp {
-    /// Answers every request that came in on the socket.
+    /// Answers every request that came in on the socket; one that changes something puts up
+    /// a card first (`control_cards.rs`).
     pub(super) fn serve_control(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let calls = self.control.as_ref().map(|c| c.take()).unwrap_or_default();
-        for Call { request, reply, .. } in calls {
-            match self.control_request(request, &reply, window, cx) {
-                // The answer comes when the turn ends.
-                Err(None) => {}
-                Ok(v) => {
-                    let _ = reply.send(Ok(v));
-                }
-                Err(Some(e)) => {
-                    let _ = reply.send(Err(e));
-                }
-            }
-            if let Some(wait) = self.control_wait_for.take() {
-                self.control_waits.push(Wait { reply, ..wait });
+        for Call { request, reply, caller } in calls {
+            if approval::needs_card(&request) {
+                self.ask_card(request, caller, reply, cx);
+            } else {
+                self.dispatch(request, caller, false, reply, window, cx);
             }
         }
         cx.notify();
     }
 
-    /// `Err(None)`: the answer is held back (see `control_wait_for`).
+    /// Does `request` from session `caller`; `reply` gets the answer, now or later.
+    /// `worktree`: the card's "Start in a new worktree" was picked.
+    pub(super) fn dispatch(
+        &mut self,
+        request: Request,
+        caller: Option<Key>,
+        worktree: bool,
+        reply: Sender<Answer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.control_request(request, caller, worktree, &reply, window, cx) {
+            // The answer comes when the turn ends.
+            Err(None) => {}
+            Ok(v) => {
+                let _ = reply.send(Ok(v));
+            }
+            Err(Some(e)) => {
+                let _ = reply.send(Err(e));
+            }
+        }
+        if let Some(wait) = self.control_wait_for.take() {
+            self.control_waits.push(Wait { reply, ..wait });
+        }
+    }
+
+    /// `Err(None)`: the answer is held back (see `control_wait_for`), or comes on `reply`.
     fn control_request(
         &mut self,
         request: Request,
+        caller: Option<Key>,
+        worktree: bool,
         reply: &Sender<Answer>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -110,8 +134,9 @@ impl KynexApp {
                 window.activate_window();
                 Ok(json!({ "opened": target }))
             }
-            Request::WorkspaceCreate { branch } => {
-                self.create_workspace_for(branch, reply.clone(), cx);
+            Request::WorkspaceCreate { branch, session, prompt } => {
+                let start = session.then_some(prompt);
+                self.create_workspace_for(branch, start, caller, reply.clone(), cx);
                 Err(None)
             }
             Request::WorkspaceRemove { path, force } => {
@@ -173,26 +198,51 @@ impl KynexApp {
             }
             Request::SessionList => Ok(self.session_list()),
             Request::SessionRead { session } => {
-                let s = self.session_by_key(session).ok_or_else(|| Some(no_session(session)))?;
+                let key = self.resolve_session(&session).map_err(Some)?;
+                let s = self.session_by_key(key).ok_or_else(|| Some(no_session(key)))?;
                 Ok(json!({ "text": last_said(s), "busy": s.busy, "waiting": s.waiting() }))
             }
             Request::SessionPrompt { session, text, wait, timeout } => {
-                let s = self.all_sessions_mut().find(|s| s.uid == session).ok_or_else(|| Some(no_session(session)))?;
+                let key = self.resolve_session(&session).map_err(Some)?;
+                let s = self.session_for(key).ok_or_else(|| Some(no_session(key)))?;
                 s.send(text, Vec::new());
                 // Working at once, or the message waits (the log is loading): then the next poll sees it start.
                 let started = s.busy;
                 if wait {
-                    self.hold(Target::Session(session), started, timeout, cx);
+                    self.hold(Target::Session(key), started, timeout, cx);
                     return Err(None);
                 }
                 Ok(json!({ "sent": true }))
             }
             Request::SessionWait { session, timeout } => {
-                let s = self.session_by_key(session).ok_or_else(|| Some(no_session(session)))?;
+                let key = self.resolve_session(&session).map_err(Some)?;
+                let s = self.session_by_key(key).ok_or_else(|| Some(no_session(key)))?;
                 if !s.busy {
                     return Ok(turn_state(s));
                 }
-                self.hold(Target::Session(session), true, timeout, cx);
+                self.hold(Target::Session(key), true, timeout, cx);
+                Err(None)
+            }
+            Request::SessionNew { workspace, prompt, title, pane } => {
+                let new = NewSession { workspace, prompt, title, place: pane.unwrap_or_default() };
+                self.control_session_new(new, caller, worktree, reply.clone(), window, cx).map_err(Some)?;
+                Err(None)
+            }
+            Request::SessionFork { session, at, pane } => {
+                self.control_session_fork(&session, at, pane.unwrap_or_default(), caller, reply.clone(), window, cx)
+                    .map_err(Some)?;
+                Err(None)
+            }
+            Request::SessionOpen { session, pane } => {
+                self.control_session_open(session, pane.unwrap_or_default(), caller, window, cx).map_err(Some)
+            }
+            Request::SessionClose { session } => self.control_session_close(&session, window, cx).map_err(Some),
+            Request::SessionRename { session, title } => self.control_session_rename(&session, &title).map_err(Some),
+            Request::SessionArchive { session } => self.control_session_archive(&session).map_err(Some),
+            Request::SessionPin { session, off } => self.control_session_pin(&session, off).map_err(Some),
+            Request::RequestStatus { request } => self.approvals.status(request).map_err(Some),
+            Request::RequestWait { request, timeout } => {
+                self.request_wait(request, timeout, reply.clone(), cx);
                 Err(None)
             }
             // Handled by the socket itself.
@@ -228,6 +278,8 @@ impl KynexApp {
     /// Answers the waits whose turn ended, whose session needs you, whose session went away
     /// or never started. Called after every poll of the sessions.
     pub(super) fn finish_control_waits(&mut self, cx: &mut Context<Self>) {
+        self.drop_closed_cards();
+        self.give_pending_titles();
         if self.control_waits.is_empty() {
             return;
         }

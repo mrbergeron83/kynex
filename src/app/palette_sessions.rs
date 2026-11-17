@@ -52,7 +52,8 @@ impl KynexApp {
         // workspace's group. One with an id waits for its folder's listing, so it isn't shown twice.
         for f in folders.iter().filter(|f| f.section.workspace == 0) {
             let Some(live) = self.code.get(&f.project) else { continue };
-            for o in &live.sessions {
+            // An empty session (nothing sent) isn't worth a row, as in the sessions tree.
+            for o in live.sessions.iter().filter(|s| !s.is_new()) {
                 let home = folders
                     .iter()
                     .find(|g| g.project == f.project && workspace::same_folder(&g.path, &o.cwd))

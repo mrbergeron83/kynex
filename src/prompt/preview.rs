@@ -25,6 +25,7 @@ pub fn title(tool: &str, input: &Value) -> String {
         }
         "ExitPlanMode" => "Ready to code? Here is Claude's plan:".into(),
         "AskUserQuestion" => "Claude has a question".into(),
+        super::CARD_TOOL => format!("{}?", input["title"].as_str().unwrap_or("Change something in Kynex")),
         // MCP calls say what they'll do: `Click "Delete repository" in Edge?`.
         _ => mcp::ask(tool, input).unwrap_or_else(|| format!("Allow Claude to use {tool}?")),
     }

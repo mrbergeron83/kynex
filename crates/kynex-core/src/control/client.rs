@@ -64,8 +64,10 @@ fn patience(request: &Request) -> Option<Duration> {
         | Request::SessionPrompt { wait: true, .. }
         | Request::PaneWait { .. }
         | Request::PaneRun { wait: true, .. }
-        | Request::PanePrompt { wait: true, .. } => None,
-        Request::WorkspaceCreate { .. } | Request::WorkspaceRemove { .. } => Some(Duration::from_secs(300)),
+        | Request::PanePrompt { wait: true, .. }
+        | Request::RequestWait { .. } => None,
+        // The card's short wait, then git or a session's start.
+        r if super::approval::needs_card(r) => Some(super::approval::SHORT_WAIT + Duration::from_secs(300)),
         _ => Some(Duration::from_secs(15)),
     }
 }

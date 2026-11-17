@@ -10,13 +10,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Claude's todo list shows above the composer while Claude works, with the item in hand marked. When the turn is over it folds to one line, and goes away once everything is done.
 - `/fork` (or `/branch`) copies a session into a pane beside it. Sending to the copy continues the conversation as a new session (`--fork-session`); the original stays as it was.
 - Steer a running turn: Alt+Enter, or Steer on the queue, sends the queued messages and the draft into the turn without stopping it, and Claude reads them at its next step. Ctrl+Enter still stops the turn first.
+- `knx session new | fork | open | close | rename | archive | pin` and `knx workspace create <branch> --session [--prompt …]` let a session (or a script) start and arrange sessions. A session can be named by its number or by its session id.
 
 ### Changed
 
+- Every `knx` request that changes something (making or removing projects, workspaces and sessions, splitting or closing panes, running a command, sending a message) now waits for your OK on a card in Kynex, whoever asks, since a session's shell can run `knx` without a permission prompt. Not answered within 30 seconds, it says `pending` with a request id for `knx request wait`.
 - Less work on every redraw: the sessions tree, the session header and the strips over the composer no longer rescan a session's history or the saved sessions each frame. With animations set to Reduced, the transcript jumps to a new reply instead of gliding and the scrollbar hides without fading.
 
 ### Fixed
 
+- The sessions list and Ctrl+K no longer start with a "New session" row for every empty session a pane keeps ready; a session gets its row once something is sent to it.
 - Deleting a session or removing a workspace no longer hides the other workspaces for a moment or freezes the window, and a deleted session no longer flashes back in the list.
 
 ## [0.0.31] - 2026-11-16

@@ -22,8 +22,14 @@ pub const NOTE: &str = "You are running inside Kynex, a desktop app for Claude C
 command (on your PATH) can see and arrange the app from your shell: `knx session list`, \
 `knx session read <id>`, `knx session wait <id>`, `knx workspace list`, `knx pane list`, \
 `knx project list`; for terminal and agent-CLI panes, `knx pane read <id> [--lines N]`, \
-`knx pane run <id> <command> [--wait]` and `knx pane prompt <id> <message> [--wait]`. Your session's id is in the KYNEX_SESSION environment variable, your \
-workspace folder in KYNEX_WORKSPACE_DIR. \
+`knx pane run <id> <command> [--wait]` and `knx pane prompt <id> <message> [--wait]`; for \
+sessions, `knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] \
+[--prompt <message>]`, `knx session fork <id> [--at <message number>]`, `knx session open|close|archive \
+<id>`, `knx session rename <id> <title>`, `knx session pin <id> [--off]` and `knx workspace create \
+<branch> --session [--prompt <message>]`. Requests that change \
+something wait for the user's OK in Kynex; one not answered within 30 seconds says `pending` \
+with a request id, and `knx request wait <id>` gets its outcome. Your session's id is in the \
+KYNEX_SESSION environment variable, your workspace folder in KYNEX_WORKSPACE_DIR. \
 Use it only when the user's request calls for it.";
 
 /// The folder of `data_dir` the shims go in.

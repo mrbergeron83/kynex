@@ -2,10 +2,14 @@
 //!
 //! ```text
 //! knx project list | create <folder> | open <folder> | remove <folder>
-//! knx workspace list | open <folder> | create <branch> | remove <folder> [--force]
+//! knx workspace list | open <folder> | create <branch> [--session] [--prompt <text…>] | remove <folder> [--force]
 //! knx pane list [--all] | split [row|column] | focus <id> | close [id]
 //! knx pane read <id> [--lines N] | run <id|new> <command…> [--wait] | prompt <id> <text…> [--wait] | wait <id>
-//! knx session list | prompt <id> <text…> [--wait] | read <id> | wait <id>
+//! knx session list | prompt <s> <text…> [--wait] | read <s> | wait <s>
+//! knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] [--prompt <text…>]
+//! knx session fork <s> [--at N] [--pane …] | open <id> [--pane …] | close <s> | rename <s> <title…>
+//! knx session archive <s> | pin <s> [--off]
+//! knx request status <id> | wait <id>
 //! (waits take --timeout <seconds>)
 //! knx events
 //! ```
@@ -13,9 +17,10 @@
 use std::path::Path;
 
 use super::Request;
+use super::protocol::{Place, SessionRef};
 
 /// The first words that make a command line a subcommand, not a folder to open.
-const GROUPS: [&str; 5] = ["project", "workspace", "pane", "session", "events"];
+const GROUPS: [&str; 6] = ["project", "workspace", "pane", "session", "request", "events"];
 
 /// Whether `args` (without the program name) is a control subcommand.
 pub fn is_command(args: &[String]) -> bool {
@@ -33,7 +38,51 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["project", "remove", p] => Ok(Request::ProjectRemove { path: absolute(p) }),
         ["workspace", "list"] => Ok(Request::WorkspaceList),
         ["workspace", "open", p] => Ok(Request::WorkspaceOpen { path: absolute(p) }),
-        ["workspace", "create", branch] => Ok(Request::WorkspaceCreate { branch: branch.to_string() }),
+        ["workspace", "create", branch, rest @ ..] => {
+            let o = options(rest, &["--session"], &[])?;
+            let prompt = o.prompt;
+            Ok(Request::WorkspaceCreate {
+                branch: branch.to_string(),
+                session: o.switches.contains(&"--session") || prompt.is_some(),
+                prompt,
+            })
+        }
+        ["session", "new", rest @ ..] => {
+            let o = options(rest, &[], &["--workspace", "--title", "--pane"])?;
+            Ok(Request::SessionNew {
+                workspace: o.value("--workspace").map(absolute),
+                prompt: o.prompt.clone(),
+                title: o.value("--title").map(str::to_string),
+                pane: o.value("--pane").map(Place::parse).transpose()?,
+            })
+        }
+        ["session", "fork", s, rest @ ..] => {
+            let o = options(rest, &[], &["--at", "--pane"])?;
+            let at = o.value("--at").map(message_number).transpose()?;
+            no_prompt(&o)?;
+            Ok(Request::SessionFork {
+                session: SessionRef::parse(s)?,
+                at,
+                pane: o.value("--pane").map(Place::parse).transpose()?,
+            })
+        }
+        ["session", "open", id, rest @ ..] => {
+            let o = options(rest, &[], &["--pane"])?;
+            no_prompt(&o)?;
+            Ok(Request::SessionOpen { session: id.to_string(), pane: o.value("--pane").map(Place::parse).transpose()? })
+        }
+        ["session", "close", s] => Ok(Request::SessionClose { session: SessionRef::parse(s)? }),
+        ["session", "rename", s, title @ ..] => {
+            Ok(Request::SessionRename { session: SessionRef::parse(s)?, title: title.join(" ") })
+        }
+        ["session", "archive", s] => Ok(Request::SessionArchive { session: SessionRef::parse(s)? }),
+        ["session", "pin", s] => Ok(Request::SessionPin { session: SessionRef::parse(s)?, off: false }),
+        ["session", "pin", s, "--off"] => Ok(Request::SessionPin { session: SessionRef::parse(s)?, off: true }),
+        ["request", "status", n] => Ok(Request::RequestStatus { request: number(n)? }),
+        ["request", "wait", n, rest @ ..] => {
+            let f = flags(rest, None)?;
+            Ok(Request::RequestWait { request: number(n)?, timeout: f.timeout })
+        }
         ["workspace", "remove", p] => Ok(Request::WorkspaceRemove { path: absolute(p), force: false }),
         ["workspace", "remove", p, "--force"] => Ok(Request::WorkspaceRemove { path: absolute(p), force: true }),
         ["pane", "list"] => Ok(Request::PaneList { all: false }),
@@ -44,10 +93,10 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["pane", "close"] => Ok(Request::PaneClose { pane: None }),
         ["pane", "close", n] => Ok(Request::PaneClose { pane: Some(number(n)?) }),
         ["session", "list"] => Ok(Request::SessionList),
-        ["session", "read", n] => Ok(Request::SessionRead { session: number(n)? }),
+        ["session", "read", n] => Ok(Request::SessionRead { session: SessionRef::parse(n)? }),
         ["session", "wait", n, rest @ ..] => {
             let f = flags(rest, None)?;
-            Ok(Request::SessionWait { session: number(n)?, timeout: f.timeout })
+            Ok(Request::SessionWait { session: SessionRef::parse(n)?, timeout: f.timeout })
         }
         ["pane", "read", n] => Ok(Request::PaneRead { pane: number(n)?, lines: None }),
         ["pane", "read", n, "--lines", l] => Ok(Request::PaneRead { pane: number(n)?, lines: Some(count(l)?) }),
@@ -66,7 +115,12 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         }
         ["session", "prompt", n, rest @ ..] => {
             let f = flags(rest, Some("session prompt needs a message"))?;
-            Ok(Request::SessionPrompt { session: number(n)?, text: f.text, wait: f.wait, timeout: f.timeout })
+            Ok(Request::SessionPrompt {
+                session: SessionRef::parse(n)?,
+                text: f.text,
+                wait: f.wait,
+                timeout: f.timeout,
+            })
         }
         _ => Err(USAGE.into()),
     }
@@ -129,6 +183,57 @@ fn flags(rest: &[&str], missing: Option<&str>) -> Result<Flags, String> {
     }
 }
 
+/// The options of a request that makes something: switches, `--name value` pairs, and
+/// `--prompt`, which takes every word after it (so it comes last).
+#[derive(Debug, Default)]
+struct Options<'a> {
+    switches: Vec<&'a str>,
+    values: Vec<(&'a str, &'a str)>,
+    prompt: Option<String>,
+}
+
+impl<'a> Options<'a> {
+    fn value(&self, name: &str) -> Option<&'a str> {
+        self.values.iter().rev().find(|(n, _)| *n == name).map(|(_, v)| *v)
+    }
+}
+
+/// [`Options`] from `rest`; `switches` and `valued` are the names allowed besides `--prompt`.
+fn options<'a>(rest: &[&'a str], switches: &[&'a str], valued: &[&str]) -> Result<Options<'a>, String> {
+    let mut o = Options::default();
+    let mut i = 0;
+    while i < rest.len() {
+        let w = rest[i];
+        if w == "--prompt" {
+            let text = rest[i + 1..].join(" ");
+            if text.trim().is_empty() {
+                return Err("--prompt needs a message".into());
+            }
+            o.prompt = Some(text);
+            break;
+        } else if let Some(s) = switches.iter().find(|s| **s == w) {
+            o.switches.push(s);
+            i += 1;
+        } else if valued.contains(&w) {
+            let v = rest.get(i + 1).ok_or_else(|| format!("{w} needs a value"))?;
+            o.values.push((w, v));
+            i += 2;
+        } else {
+            return Err(USAGE.into());
+        }
+    }
+    Ok(o)
+}
+
+fn no_prompt(o: &Options) -> Result<(), String> {
+    if o.prompt.is_some() { Err(USAGE.into()) } else { Ok(()) }
+}
+
+/// A message's number in a session, from 1.
+fn message_number(s: &str) -> Result<usize, String> {
+    s.parse().ok().filter(|n| *n > 0).ok_or_else(|| format!("`{s}` isn't a message number (from 1)"))
+}
+
 fn seconds(s: &str) -> Result<u64, String> {
     s.parse().ok().filter(|n| *n > 0).ok_or_else(|| format!("`{s}` isn't a number of seconds"))
 }
@@ -139,12 +244,19 @@ fn absolute(p: &str) -> String {
 
 pub const USAGE: &str = "usage:
   knx project list | create <folder> | open <folder> | remove <folder>
-  knx workspace list | open <folder> | create <branch> | remove <folder> [--force]
+  knx workspace list | open <folder> | remove <folder> [--force]
+  knx workspace create <branch> [--session] [--prompt <message…>]
   knx pane list [--all] | split [row|column] | focus <id> | close [id]
   knx pane read <id> [--lines N] | run <id|new> <command…> [--wait] | prompt <id> <message…> [--wait] | wait <id>
-  knx session list | prompt <id> <message…> [--wait] | read <id> | wait <id>
-  (--wait and wait take --timeout <seconds>)
-  knx events";
+  knx session list | prompt <s> <message…> [--wait] | read <s> | wait <s>
+  knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] [--prompt <message…>]
+  knx session fork <s> [--at <message number>] [--pane …] | open <session id> [--pane …]
+  knx session close <s> | rename <s> <title…> | archive <s> | pin <s> [--off]
+  knx request status <id> | wait <id>
+  (<s>: a session's number or its session id; --wait and wait take --timeout <seconds>)
+  knx events
+Requests that change something wait for your OK in Kynex; one not answered within a short
+wait says `pending` with a request id for `knx request wait`.";
 
 #[cfg(test)]
 mod tests {
@@ -171,7 +283,7 @@ mod tests {
         assert_eq!(parse(&words("pane focus 4")), Ok(Request::PaneFocus { pane: 4 }));
         assert_eq!(
             parse(&words("workspace create fix/login")),
-            Ok(Request::WorkspaceCreate { branch: "fix/login".into() })
+            Ok(Request::WorkspaceCreate { branch: "fix/login".into(), session: false, prompt: None })
         );
         assert!(matches!(
             parse(&words("workspace remove sub --force")),
@@ -180,7 +292,12 @@ mod tests {
         assert!(matches!(parse(&words("workspace remove sub")), Ok(Request::WorkspaceRemove { force: false, .. })));
         assert_eq!(
             parse(&words("session prompt 2 fix the build --wait")),
-            Ok(Request::SessionPrompt { session: 2, text: "fix the build".into(), wait: true, timeout: None })
+            Ok(Request::SessionPrompt {
+                session: SessionRef::Uid(2),
+                text: "fix the build".into(),
+                wait: true,
+                timeout: None
+            })
         );
         assert_eq!(parse(&words("pane read 3")), Ok(Request::PaneRead { pane: 3, lines: None }));
         assert_eq!(parse(&words("pane read 3 --lines 40")), Ok(Request::PaneRead { pane: 3, lines: Some(40) }));
@@ -200,7 +317,7 @@ mod tests {
         );
         assert_eq!(
             parse(&words("session prompt 2 --wait go --timeout 9")),
-            Ok(Request::SessionPrompt { session: 2, text: "go".into(), wait: true, timeout: Some(9) })
+            Ok(Request::SessionPrompt { session: SessionRef::Uid(2), text: "go".into(), wait: true, timeout: Some(9) })
         );
     }
 
@@ -214,6 +331,64 @@ mod tests {
         assert!(parse(&words("pane wait 2 now")).unwrap_err().contains("usage"));
         assert!(parse(&words("pane split diagonal")).unwrap_err().contains("usage"));
         assert!(parse(&[]).is_err());
+        assert!(parse(&words("session new --prompt")).unwrap_err().contains("needs a message"));
+        assert!(parse(&words("session new --title")).unwrap_err().contains("needs a value"));
+        assert!(parse(&words("session new --pane left")).unwrap_err().contains("isn't right"));
+        assert!(parse(&words("session new --colour red")).unwrap_err().contains("usage"));
+        assert!(parse(&words("session fork 2 --at 0")).unwrap_err().contains("message number"));
+        assert!(parse(&words("session fork 2 --prompt hi")).unwrap_err().contains("usage"));
+        assert!(parse(&words("session pin 2 --on")).unwrap_err().contains("usage"));
+        assert!(parse(&words("request wait x")).unwrap_err().contains("isn't a number"));
+    }
+
+    #[test]
+    fn session_requests_from_words() {
+        assert_eq!(
+            parse(&words("session new --title Fix --pane none --prompt fix the --pane build")),
+            Ok(Request::SessionNew {
+                workspace: None,
+                prompt: Some("fix the --pane build".into()),
+                title: Some("Fix".into()),
+                pane: Some(Place::Hidden),
+            })
+        );
+        let Ok(Request::SessionNew { workspace: Some(w), .. }) = parse(&words("session new --workspace sub")) else {
+            panic!()
+        };
+        assert!(Path::new(&w).is_absolute());
+        assert_eq!(
+            parse(&words("session fork 5f3c --at 3 --pane tab")),
+            Ok(Request::SessionFork { session: SessionRef::Id("5f3c".into()), at: Some(3), pane: Some(Place::Tab) })
+        );
+        assert_eq!(parse(&words("session open 5f3c")), Ok(Request::SessionOpen { session: "5f3c".into(), pane: None }));
+        assert_eq!(parse(&words("session close 4")), Ok(Request::SessionClose { session: SessionRef::Uid(4) }));
+        assert_eq!(
+            parse(&words("session rename 4 Login fix")),
+            Ok(Request::SessionRename { session: SessionRef::Uid(4), title: "Login fix".into() })
+        );
+        assert_eq!(parse(&words("session archive 4")), Ok(Request::SessionArchive { session: SessionRef::Uid(4) }));
+        assert_eq!(
+            parse(&words("session pin 4 --off")),
+            Ok(Request::SessionPin { session: SessionRef::Uid(4), off: true })
+        );
+        assert_eq!(
+            parse(&words("session read 5f3c")),
+            Ok(Request::SessionRead { session: SessionRef::Id("5f3c".into()) })
+        );
+        assert_eq!(
+            parse(&words("workspace create fix/x --session")),
+            Ok(Request::WorkspaceCreate { branch: "fix/x".into(), session: true, prompt: None })
+        );
+        assert_eq!(
+            parse(&words("workspace create fix/x --prompt do it")),
+            Ok(Request::WorkspaceCreate { branch: "fix/x".into(), session: true, prompt: Some("do it".into()) })
+        );
+        assert_eq!(parse(&words("request status 7")), Ok(Request::RequestStatus { request: 7 }));
+        assert_eq!(
+            parse(&words("request wait 7 --timeout 60")),
+            Ok(Request::RequestWait { request: 7, timeout: Some(60) })
+        );
+        assert!(is_command(&words("request status 7")));
     }
 
     #[test]

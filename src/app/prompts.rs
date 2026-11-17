@@ -70,6 +70,24 @@ impl KynexApp {
 
     /// Keeps the prompt view in step with the oldest pending request of the active session.
     pub(super) fn sync_prompt(&mut self, shown: Option<Key>, window: &mut Window, cx: &mut Context<Self>) {
+        // A `knx` request waiting for your OK comes first.
+        if let Some(key) = shown
+            && let Some(card) = self.card_for(key)
+        {
+            let kind = self.session_by_key(key).map_or(session::Kind::Code, |s| s.kind);
+            let req = self.card_prompt(&card, kind);
+            if self.pane.prompt.as_ref().is_none_or(|p| p.key != key || p.id != req.id) {
+                let id = req.id.clone();
+                // Never takes the keyboard: an Enter typed for something else mustn't say Start.
+                let view = cx.new(|cx| PromptView::new(req, false, window, cx));
+                let card_id = card.id;
+                let sub = cx.subscribe_in(&view, window, move |this, _, PromptAnswer(answer, _), window, cx| {
+                    this.answer_card(card_id, answer, window, cx)
+                });
+                self.pane.prompt = Some(ActivePrompt { key, id, view, _sub: sub });
+            }
+            return;
+        }
         // `waiting()` is cached, so the usual answer, nothing pending, costs no scan.
         let pending = shown.and_then(|k| self.session_by_key(k)).filter(|s| s.waiting()).and_then(|s| {
             let mut it = s.items.iter().filter_map(|i| request_for(s, i));
