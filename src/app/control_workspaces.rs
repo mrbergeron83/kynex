@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
 use gpui::{AppContext, Context};
+use kynex_core::control::approval::Made;
 use kynex_core::git;
+use kynex_core::live::Key;
 use kynex_core::workspace::{self, same_folder};
 use serde_json::{Value, json};
 
@@ -48,11 +50,22 @@ impl KynexApp {
     }
 
     /// Makes a workspace on `branch` for the shown project and shows it; `reply` gets its folder
-    /// once git is done.
-    pub(super) fn create_workspace_for(&mut self, branch: String, reply: Sender<Answer>, cx: &mut Context<Self>) {
-        let Some(project) = self.workspace_project() else {
-            let _ = reply.send(Err("no project is shown".into()));
-            return;
+    /// once git is done. With `session` (`Some(prompt)`), a session in it too, sent the prompt.
+    pub(super) fn create_workspace_for(
+        &mut self,
+        branch: String,
+        session: Option<Option<String>>,
+        caller: Option<Key>,
+        reply: Sender<Answer>,
+        cx: &mut Context<Self>,
+    ) {
+        // The asking session's project, which may not be the one shown.
+        let project = match self.request_project(caller) {
+            Ok(p) => p,
+            Err(e) => {
+                let _ = reply.send(Err(e));
+                return;
+            }
         };
         cx.spawn(async move |this, cx| {
             let root = project.clone();
@@ -66,11 +79,20 @@ impl KynexApp {
                 match made {
                     Ok(path) => {
                         this.refresh_worktrees([&project], cx);
+                        this.approvals.record_made(Made::Workspace(path.clone()), caller);
                         // The project may have been switched meanwhile; the workspace is its own project's.
-                        if this.workspace_project().as_deref() == Some(project.as_path()) {
+                        let shown = this.workspace_project().as_deref() == Some(project.as_path());
+                        if shown {
                             this.select_workspace(&path, cx);
                         }
-                        let _ = reply.send(Ok(json!({ "created": path })));
+                        let answer = match session {
+                            None => Ok(json!({ "created": path })),
+                            Some(prompt) => this
+                                .session_in_new_workspace(&project, path.clone(), prompt, None, shown, caller)
+                                .map(|s| json!({ "created": path, "session": s["session"] }))
+                                .map_err(|e| format!("made {}, but no session in it: {e}", path.display())),
+                        };
+                        let _ = reply.send(answer);
                     }
                     Err(e) => {
                         let _ = reply.send(Err(e));

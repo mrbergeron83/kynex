@@ -123,6 +123,15 @@ pub fn remove(project: &Path, path: &Path, force: bool) -> Result<(), String> {
     git::remove_worktree(project, path, force)
 }
 
+/// A new branch for a session started in a worktree of its own: `kynex/` and the first words
+/// of `about` (its title or prompt), made unique with `stamp` (say, the time in seconds).
+pub fn branch_for(about: &str, stamp: u64) -> String {
+    let words: Vec<&str> = about.split_whitespace().take(6).collect();
+    let slug = branch_slug(&words.join(" "));
+    let slug: String = slug.chars().take(30).collect();
+    format!("kynex/{}-{:x}", slug.trim_end_matches(['-', '.']), stamp & 0xff_ffff)
+}
+
 /// A branch name as a folder name: lower case (one folder on case-insensitive disks),
 /// letters, digits, `-`, `_` and `.` kept, everything else (`/` included) a single `-`.
 /// Never empty, never a name Windows reserves.
@@ -613,6 +622,20 @@ mod tests {
         assert_eq!(c.selected, Some(PathBuf::from("/work/app")));
         assert_eq!(c.sessions.len(), 1);
         assert_eq!(c.layouts.keys().collect::<Vec<_>>(), ["good"]);
+    }
+
+    #[test]
+    fn a_session_of_its_own_gets_a_branch_named_for_it() {
+        assert_eq!(
+            branch_for("Fix the login page, then the tests and docs too", 0x1234),
+            "kynex/fix-the-login-page-then-the-1234"
+        );
+        assert_eq!(
+            branch_for("a much longer title with lengthy wordsssssssss", 2),
+            "kynex/a-much-longer-title-with-lengt-2"
+        );
+        assert_eq!(branch_for("", 0xabc), "kynex/branch-abc");
+        assert_eq!(branch_for("Ünïcode / ok", 1), "kynex/ünïcode-ok-1");
     }
 
     #[test]

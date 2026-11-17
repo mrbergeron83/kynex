@@ -34,9 +34,14 @@ pub enum Request {
     WorkspaceOpen {
         path: String,
     },
-    /// Makes a workspace on `branch` (an existing branch, or a new one from the default branch).
+    /// Makes a workspace on `branch` (an existing branch, or a new one from the default branch);
+    /// with `session`, a session in it too, sent `prompt` if given.
     WorkspaceCreate {
         branch: String,
+        #[serde(default)]
+        session: bool,
+        #[serde(default)]
+        prompt: Option<String>,
     },
     /// Removes a workspace; git refuses while it has changes, unless `force`.
     WorkspaceRemove {
@@ -102,7 +107,7 @@ pub enum Request {
     /// Sends a message to an open session. With `wait`, the answer comes when the turn ends
     /// (or the session needs you: permissions are still answered in the app).
     SessionPrompt {
-        session: u64,
+        session: SessionRef,
         text: String,
         #[serde(default)]
         wait: bool,
@@ -111,15 +116,131 @@ pub enum Request {
     },
     /// The last thing the session said.
     SessionRead {
-        session: u64,
+        session: SessionRef,
     },
     /// Answers when the session isn't working any more.
     SessionWait {
-        session: u64,
+        session: SessionRef,
         #[serde(default)]
         timeout: Option<u64>,
     },
+    /// A new session in a workspace of the project (`workspace`: its folder; the asking
+    /// session's, else the shown one, by default), sent `prompt` if given.
+    SessionNew {
+        #[serde(default)]
+        workspace: Option<String>,
+        #[serde(default)]
+        prompt: Option<String>,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        pane: Option<Place>,
+    },
+    /// A copy of a session's conversation as a new session; with `at`, only what came before
+    /// its `at`th message (from 1), as a rewind there would leave it.
+    SessionFork {
+        session: SessionRef,
+        #[serde(default)]
+        at: Option<usize>,
+        #[serde(default)]
+        pane: Option<Place>,
+    },
+    /// Opens a past session of the shown project by its CLI id (`id` is the envelope's).
+    SessionOpen {
+        session: String,
+        #[serde(default)]
+        pane: Option<Place>,
+    },
+    /// Closes an open session that isn't working (its transcript stays).
+    SessionClose {
+        session: SessionRef,
+    },
+    /// Names a session; an empty title goes back to the generated one.
+    SessionRename {
+        session: SessionRef,
+        title: String,
+    },
+    SessionArchive {
+        session: SessionRef,
+    },
+    /// Pins a session above the rest; with `off`, unpins it.
+    SessionPin {
+        session: SessionRef,
+        #[serde(default)]
+        off: bool,
+    },
+    /// Answers when a request that waited for your OK (see `approval`) has its outcome.
+    RequestWait {
+        request: u64,
+        #[serde(default)]
+        timeout: Option<u64>,
+    },
+    /// How a request that waited for your OK stands, at once.
+    RequestStatus {
+        request: u64,
+    },
     Events,
+}
+
+/// A session, by its uid in this run (a number) or its CLI session id, which survives a restart.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SessionRef {
+    Uid(u64),
+    Id(String),
+}
+
+impl SessionRef {
+    /// A word from the command line: a number is a uid, anything else a CLI id.
+    pub fn parse(word: &str) -> Result<Self, String> {
+        let word = word.trim();
+        if word.is_empty() {
+            return Err("a session is a number or a session id".into());
+        }
+        Ok(word.parse().map_or_else(|_| Self::Id(word.to_string()), Self::Uid))
+    }
+
+    /// Whether this names the session with uid `uid` and CLI id `id`.
+    pub fn names(&self, uid: u64, id: Option<&str>) -> bool {
+        match self {
+            Self::Uid(u) => *u == uid,
+            Self::Id(s) => id == Some(s.as_str()),
+        }
+    }
+}
+
+impl std::fmt::Display for SessionRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Uid(u) => write!(f, "{u}"),
+            Self::Id(s) => f.write_str(s),
+        }
+    }
+}
+
+/// Where a session a request makes is shown: in a pane at the right of or below the asking
+/// (else the focused) pane, in a new pane tab, or nowhere (`none`: only in the sessions list).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Place {
+    #[default]
+    Right,
+    Down,
+    Tab,
+    #[serde(rename = "none")]
+    Hidden,
+}
+
+impl Place {
+    pub fn parse(word: &str) -> Result<Self, String> {
+        match word {
+            "right" => Ok(Self::Right),
+            "down" => Ok(Self::Down),
+            "tab" => Ok(Self::Tab),
+            "none" => Ok(Self::Hidden),
+            _ => Err(format!("`{word}` isn't right, down, tab or none")),
+        }
+    }
 }
 
 /// A line from a client.
@@ -200,11 +321,43 @@ mod tests {
         let (id, r) =
             parse_request(r#"{"id": 7, "cmd": "session_prompt", "session": 3, "text": "hi", "wait": true}"#).unwrap();
         assert_eq!(id, Some(json!(7)));
-        assert_eq!(r, Request::SessionPrompt { session: 3, text: "hi".into(), wait: true, timeout: None });
+        assert_eq!(
+            r,
+            Request::SessionPrompt { session: SessionRef::Uid(3), text: "hi".into(), wait: true, timeout: None }
+        );
         let (id, r) = parse_request(r#"{"cmd":"pane_list"}"#).unwrap();
         assert_eq!((id, r), (None, Request::PaneList { all: false }));
         let (_, r) = parse_request(r#"{"cmd":"session_prompt","session":1,"text":"x"}"#).unwrap();
-        assert_eq!(r, Request::SessionPrompt { session: 1, text: "x".into(), wait: false, timeout: None });
+        assert_eq!(
+            r,
+            Request::SessionPrompt { session: SessionRef::Uid(1), text: "x".into(), wait: false, timeout: None }
+        );
+    }
+
+    #[test]
+    fn a_session_is_a_uid_or_a_cli_id() {
+        let (_, r) = parse_request(r#"{"cmd":"session_read","session":"5f3c-ab"}"#).unwrap();
+        assert_eq!(r, Request::SessionRead { session: SessionRef::Id("5f3c-ab".into()) });
+        assert_eq!(SessionRef::parse("12"), Ok(SessionRef::Uid(12)));
+        assert_eq!(SessionRef::parse("5f3c"), Ok(SessionRef::Id("5f3c".into())));
+        assert!(SessionRef::parse(" ").is_err());
+        assert!(SessionRef::Uid(4).names(4, None));
+        assert!(SessionRef::Id("a".into()).names(9, Some("a")));
+        assert!(!SessionRef::Id("a".into()).names(9, None));
+        assert_eq!(SessionRef::Id("a".into()).to_string(), "a");
+    }
+
+    #[test]
+    fn new_session_requests_parse_with_their_defaults() {
+        let (_, r) = parse_request(r#"{"cmd":"session_new"}"#).unwrap();
+        assert_eq!(r, Request::SessionNew { workspace: None, prompt: None, title: None, pane: None });
+        let (_, r) = parse_request(r#"{"cmd":"session_new","pane":"none","prompt":"go"}"#).unwrap();
+        assert!(matches!(r, Request::SessionNew { pane: Some(Place::Hidden), prompt: Some(_), .. }));
+        let (_, r) = parse_request(r#"{"cmd":"workspace_create","branch":"x"}"#).unwrap();
+        assert_eq!(r, Request::WorkspaceCreate { branch: "x".into(), session: false, prompt: None });
+        assert!(parse_request(r#"{"cmd":"session_new","pane":"left"}"#).is_err());
+        assert_eq!(Place::parse("tab"), Ok(Place::Tab));
+        assert!(Place::parse("left").is_err());
     }
 
     #[test]
@@ -229,7 +382,21 @@ mod tests {
         let all = [
             Request::ProjectList,
             Request::ProjectOpen { path: "/a".into() },
-            Request::WorkspaceCreate { branch: "x".into() },
+            Request::WorkspaceCreate { branch: "x".into(), session: true, prompt: Some("go".into()) },
+            Request::SessionNew {
+                workspace: Some("/w".into()),
+                prompt: Some("fix it".into()),
+                title: Some("Fix".into()),
+                pane: Some(Place::Tab),
+            },
+            Request::SessionFork { session: SessionRef::Id("abc".into()), at: Some(2), pane: Some(Place::Hidden) },
+            Request::SessionOpen { session: "abc".into(), pane: None },
+            Request::SessionClose { session: SessionRef::Uid(3) },
+            Request::SessionRename { session: SessionRef::Uid(3), title: "t".into() },
+            Request::SessionArchive { session: SessionRef::Id("abc".into()) },
+            Request::SessionPin { session: SessionRef::Uid(3), off: true },
+            Request::RequestWait { request: 4, timeout: Some(10) },
+            Request::RequestStatus { request: 4 },
             Request::WorkspaceRemove { path: "/w".into(), force: true },
             Request::PaneSplit { axis: Some("row".into()) },
             Request::PaneClose { pane: None },
@@ -239,7 +406,7 @@ mod tests {
             Request::PaneList { all: true },
             Request::PanePrompt { pane: 5, text: "fix it".into(), wait: false, timeout: None },
             Request::PaneWait { pane: 5, timeout: Some(1) },
-            Request::SessionWait { session: 2, timeout: None },
+            Request::SessionWait { session: SessionRef::Uid(2), timeout: None },
             Request::Events,
         ];
         for r in all {

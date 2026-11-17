@@ -89,14 +89,27 @@ line; errors go to stderr with exit code 1.
 ```sh
 knx <folder>                                  # open a folder in the running Kynex (or start on it)
 knx project list | create <folder> | open <folder> | remove <folder>   # projects (tabs)
-knx workspace list | open <folder> | create <branch> | remove <folder> [--force]   # the shown project's checkouts
+knx workspace list | open <folder> | remove <folder> [--force]   # the shown project's checkouts
+knx workspace create <branch> [--session] [--prompt <message…>]   # a new checkout, with a session in it
 knx pane list [--all] | split [row|column] | focus <id> | close [id]   # panes of the shown tab (--all: every workspace)
 knx pane read <id> [--lines N]                # a terminal or agent pane's screen, or its last N lines
 knx pane run <id|new> <command…> [--wait]     # type a command into a shell pane; --wait gives its exit code and output
 knx pane prompt <id> <message…> [--wait] | wait <id>   # agent-CLI panes (codex, opencode…): done or blocked
-knx session list | prompt <id> <message…> [--wait] | read <id> | wait <id>
+knx session list | prompt <s> <message…> [--wait] | read <s> | wait <s>   # <s>: a session's number or its session id
+knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] [--prompt <message…>]
+knx session fork <s> [--at <message number>] [--pane …] | open <session id> [--pane …]
+knx session close <s> | rename <s> <title…> | archive <s> | pin <s> [--off]
+knx request status <id> | wait <id>           # a request still waiting for your OK
 knx events                                    # a line per finished turn, session or agent pane that needs you
 ```
+
+Whatever changes something (everything but listing, reading, waiting and moving around) waits
+for your OK on a card in Kynex first, whoever asks: **Start**, **Start in a new worktree** for a
+new session, or **Not now**. Sessions started this way don't take the focus. A request not
+answered within 30 seconds prints `{"state": "pending", "request": N}`; `knx request wait N`
+gets its outcome. Asked from inside a session, the card says which one, and notes when the
+request is about something that session didn't start; `workspace remove --force` isn't offered
+to a session at all.
 
 Every wait takes `--timeout <seconds>`. Kynex's terminals start PowerShell and bash with small
 hooks that tell it when a command ends, its exit code and what it printed (nothing is printed or

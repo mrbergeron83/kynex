@@ -20,6 +20,8 @@
 //! | `control.rs`        | the control socket: `knx project / workspace / pane / session / events` |
 //! | `control_workspaces.rs` | its `workspace` commands: list, show, make, remove |
 //! | `control_panes.rs`  | its terminal / agent pane commands: read, run, prompt, wait |
+//! | `control_cards.rs`  | the card you answer before a `knx` request changes something |
+//! | `control_sessions.rs` | its session commands: new, fork, open, close, rename, archive, pin |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
 //! | `layout_history.rs` | undo / redo of pane changes, reopening a pane, older layouts |
 //! | `toolbar.rs`        | path, panes' buttons (timeline, Git), open-in buttons |
@@ -109,7 +111,9 @@ mod attention;
 mod background;
 mod composer;
 mod control;
+mod control_cards;
 mod control_panes;
+mod control_sessions;
 mod control_workspaces;
 mod custom_commands;
 mod custom_themes;
@@ -416,6 +420,12 @@ pub struct KynexApp {
     control_seen: control::Seen,
     /// The last marker a `knx pane run --wait` command was typed with.
     control_marker: u64,
+    /// Requests that wait for your OK on a card, and those answered lately (`control_cards.rs`).
+    approvals: kynex_core::control::approval::Approvals,
+    /// The last token a `knx request wait` was given.
+    approval_token: u64,
+    /// Titles asked for sessions with no CLI id yet, given once they have one.
+    pending_titles: Vec<(kynex_core::live::Key, String)>,
     /// The loop looking at waits on panes is running.
     pane_wait_watch: bool,
     /// Themes read from the data dir's `themes/` folder, the files that couldn't be used, and the watch on it.
@@ -735,6 +745,9 @@ impl KynexApp {
             control_wait_for: None,
             control_seen: HashMap::new(),
             control_marker: 0,
+            approvals: Default::default(),
+            approval_token: 0,
+            pending_titles: Vec::new(),
             pane_wait_watch: false,
             custom_themes: Vec::new(),
             theme_errors: Vec::new(),

@@ -36,6 +36,10 @@ actions!(prompt, [SelectPrev, SelectNext, Confirm, Cancel, Tab, NextTab, PrevTab
 
 const CONTEXT: &str = "Prompt";
 
+/// The "tool" of a card for a `knx` request waiting for your OK (`app/control_cards.rs`).
+/// Its input has `title`, `asker`, `detail` and `note`, and `worktree` when it offers one.
+pub const CARD_TOOL: &str = "kynex:request";
+
 pub fn bind_keys(cx: &mut App) {
     let c = Some(CONTEXT);
     cx.bind_keys([
@@ -143,6 +147,14 @@ impl PromptView {
                 ("Yes, and manually approve edits".to_string(), Answer::Plan(Mode::Manual)),
             ],
             "AskUserQuestion" => Vec::new(),
+            // The "No" row is Not now.
+            CARD_TOOL => {
+                let mut choices = vec![("Start".to_string(), Answer::Once)];
+                if req.input["worktree"] == true {
+                    choices.push(("Start in a new worktree".to_string(), Answer::Session));
+                }
+                choices
+            }
             _ => {
                 let mut choices = vec![("Yes".to_string(), Answer::Once)];
                 if let Some(label) = session_label(&req.suggestions) {
@@ -170,11 +182,17 @@ impl PromptView {
         if take_focus {
             focus.focus(window, cx);
         }
-        Self { req, queued: 0, focus, selected: 0, feedback, choices, commenting: None, comment, form, other }
+        // A card's cursor starts on Not now: a stray Enter does nothing.
+        let selected = if req.tool == CARD_TOOL { choices.len() } else { 0 };
+        Self { req, queued: 0, focus, selected, feedback, choices, commenting: None, comment, form, other }
     }
 
     fn is_questions(&self) -> bool {
         self.req.tool == "AskUserQuestion"
+    }
+
+    fn is_card(&self) -> bool {
+        self.req.tool == CARD_TOOL
     }
 
     fn typing(&self, window: &Window, cx: &App) -> bool {
@@ -187,7 +205,7 @@ impl PromptView {
     fn sync_focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         let field = if self.is_questions() {
             self.form.on_other_row().then(|| self.other.get(self.form.tab)).flatten()
-        } else if self.selected == self.choices.len() {
+        } else if self.selected == self.choices.len() && !self.is_card() {
             Some(&self.feedback)
         } else {
             (self.commenting == Some(self.selected)).then_some(&self.comment)
@@ -216,6 +234,9 @@ impl PromptView {
             let comment =
                 if self.commenting == Some(n) { self.comment.read(cx).text().to_string() } else { String::new() };
             cx.emit(PromptAnswer(answer.clone(), comment));
+        } else if self.is_card() {
+            // Not now: nothing to tell anyone.
+            cx.emit(PromptAnswer(Answer::Deny(String::new()), String::new()));
         } else if self.selected != n {
             self.selected = n;
             self.sync_focus(window, cx);
@@ -269,6 +290,9 @@ impl PromptView {
     /// comment for Claude to go with it (the "No" row's field is open already).
     /// On a plain no it moves to that field: a no with words is that row.
     fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_card() {
+            return;
+        }
         if self.is_questions() || self.selected >= self.choices.len() {
             return self.next_tab(&NextTab, window, cx);
         }
@@ -291,6 +315,9 @@ impl PromptView {
     }
 
     fn prev_tab(&mut self, _: &PrevTab, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_card() {
+            return;
+        }
         if !self.form.has_tabs() {
             // As in Claude Code, Shift+Tab on a permission prompt allows the
             // action for the rest of the session; without that choice it
@@ -401,6 +428,37 @@ impl PromptView {
             .child(self.choice_list(cx))
     }
 
+    /// A `knx` request waiting for your OK: who asks, what, and what goes with it.
+    fn render_card(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
+        let t = theme(cx).clone();
+        let max_h = window.viewport_size().height * 0.3;
+        let text = |k: &str| self.req.input[k].as_str().unwrap_or("").to_string();
+        let (asker, note, detail) = (text("asker"), text("note"), text("detail"));
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(div().text_xs().text_color(t.text_muted).child(asker))
+            .child(self.header(cx))
+            .when(!note.is_empty(), |d| d.child(div().text_xs().text_color(t.warning).child(note)))
+            .when(!detail.is_empty(), |d| {
+                let scroll = scrollbar::handle("card-detail");
+                let area = div()
+                    .id("card-detail")
+                    .max_h(max_h)
+                    .overflow_y_scroll()
+                    .track_scroll(&scroll)
+                    .p_2()
+                    .text_sm()
+                    .font_family(mono())
+                    .child(detail);
+                d.child(scrollbar::vertical_over("card-detail-bar", scroll, area, |d| {
+                    d.rounded_md().overflow_hidden().border_1().border_color(t.border_variant).bg(t.editor)
+                }))
+            })
+            .child(self.choice_list(cx))
+    }
+
     /// The numbered choices, then "No" with its field opening in place.
     fn choice_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
@@ -415,10 +473,13 @@ impl PromptView {
         });
         let no_label = match self.req.tool.as_str() {
             "ExitPlanMode" => "No, keep planning (esc)",
+            CARD_TOOL => "Not now (esc)",
             _ => "No, and tell Claude what to do differently",
         };
         let typed = self.feedback.read(cx).text().to_string();
-        let no_body = if self.selected == no {
+        let no_body = if self.is_card() {
+            div().text_sm().child(no_label)
+        } else if self.selected == no {
             div().flex_1().text_sm().text_color(t.text).child(self.feedback.clone())
         } else if !typed.trim().is_empty() {
             div().flex_1().min_w_0().truncate().text_sm().text_color(t.text_muted).child(typed)
@@ -435,7 +496,9 @@ impl PromptView {
                     .on_click(cx.listener(move |this, _, window, cx| this.pick(no, window, cx))),
             )
             .child(hint(
-                if self.commenting.is_some() {
+                if self.is_card() {
+                    "↑↓ Enter or 1–9 to choose · Esc for Not now"
+                } else if self.commenting.is_some() {
                     "Enter to answer with the comment · Esc to close it"
                 } else {
                     "↑↓ Enter or 1–9 to choose · Tab to add a comment · Esc to say no and stop"
@@ -456,6 +519,7 @@ impl Render for PromptView {
         let body = match self.req.tool.as_str() {
             "AskUserQuestion" => self.render_questions(window, cx),
             "ExitPlanMode" => self.render_plan(window, cx),
+            CARD_TOOL => self.render_card(window, cx),
             _ => self.render_permission(window, cx),
         };
         div()

@@ -134,6 +134,11 @@ impl Live {
         check_room(has, self.running(), MAX_RUNNING)
     }
 
+    /// Whether one more session may start a process here: room under [`MAX_RUNNING`].
+    pub fn room_for_new(&self) -> Result<(), String> {
+        check_room(false, self.running(), MAX_RUNNING)
+    }
+
     /// Shows the first open session that matches, if any.
     pub fn show_where(&mut self, f: impl Fn(&Session) -> bool) -> bool {
         match self.sessions.iter().position(f) {
