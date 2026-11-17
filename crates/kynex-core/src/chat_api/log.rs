@@ -16,6 +16,8 @@ pub struct Log {
     cwd: String,
     /// The entry the next one follows.
     parent: Option<String>,
+    /// A fork's copy of the conversation it continues, written ahead of its first entry.
+    copy: Vec<Value>,
 }
 
 impl Log {
@@ -36,29 +38,15 @@ impl Log {
             _ => Vec::new(),
         };
         let parent = entries.last().and_then(|v| v["uuid"].as_str()).map(str::to_string);
-        let mut log = Log { session_id, path, cwd: cwd.to_string_lossy().into_owned(), parent };
+        let mut log = Log { session_id, path, cwd: cwd.to_string_lossy().into_owned(), parent, copy: Vec::new() };
         if fork && resume.is_some() {
             log.session_id = new_id();
             log.path = crate::session::transcript_path(cwd, &log.session_id);
-            // Best effort: if the copy fails, the next message's write reports it.
-            let _ = log.copy_in(&entries);
+            // Copied with the first entry written, so a process that ends before
+            // then (a warm-up, a restart) leaves no stray log.
+            log.copy = entries.clone();
         }
         (log, messages(&entries))
-    }
-
-    /// Writes `entries` (another log's) into this one, as its own.
-    fn copy_in(&self, entries: &[Value]) -> std::io::Result<()> {
-        let Some(path) = &self.path else { return Ok(()) };
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
-        for entry in entries {
-            let mut entry = entry.clone();
-            entry["sessionId"] = self.session_id.clone().into();
-            writeln!(file, "{entry}")?;
-        }
-        Ok(())
     }
 
     /// Logs a message the user sent (`content` as Kynex sent it).
@@ -110,9 +98,17 @@ impl Log {
                 std::fs::create_dir_all(dir)?;
             }
             let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+            // A fork's first entry: the conversation it continues goes in first, as its own.
+            for copied in &self.copy {
+                let mut copied = copied.clone();
+                copied["sessionId"] = self.session_id.clone().into();
+                writeln!(file, "{copied}")?;
+            }
             writeln!(file, "{entry}")
         };
-        write().map_err(|e| format!("couldn't save the conversation to {}: {e}", path.display()))
+        write().map_err(|e| format!("couldn't save the conversation to {}: {e}", path.display()))?;
+        self.copy.clear();
+        Ok(())
     }
 }
 
@@ -219,7 +215,14 @@ mod tests {
     fn a_log_is_written_and_continued() {
         let home = std::env::temp_dir().join(format!("kynex-chat-log-{}", new_id()));
         let path = home.join("s.jsonl");
-        let mut log = Log { session_id: "s".into(), path: Some(path.clone()), cwd: "C:\\w".into(), parent: None };
+        let at = |id: &str, path: &std::path::Path, parent, copy| Log {
+            session_id: id.into(),
+            path: Some(path.to_path_buf()),
+            cwd: "C:\\w".into(),
+            parent,
+            copy,
+        };
+        let mut log = at("s", &path, None, Vec::new());
         log.user(&json!("hi")).unwrap();
         log.assistant("g1", "m/x", vec![json!({ "type": "text", "text": "hello" })], &stream::Usage::default())
             .unwrap();
@@ -234,6 +237,19 @@ mod tests {
         // Continued from the first entry: the reply is on another branch.
         let first = branch[0]["uuid"].as_str().unwrap();
         assert_eq!(messages(&crate::rewind::branch_at(&text, Some(first))).len(), 1);
+
+        // A fork writes nothing until its first entry, which follows a copy of the conversation.
+        let fork_path = home.join("f.jsonl");
+        let parent = branch.last().and_then(|v| v["uuid"].as_str()).map(str::to_string);
+        let mut fork = at("f", &fork_path, parent, branch.clone());
+        assert!(!fork_path.exists(), "a fork that wrote nothing leaves no log");
+        fork.user(&json!("again")).unwrap();
+        fork.user(&json!("and again")).unwrap();
+        let forked = crate::rewind::branch(&std::fs::read_to_string(&fork_path).unwrap());
+        assert_eq!(forked.len(), 4, "the copy is written once");
+        assert!(forked.iter().all(|e| e["sessionId"] == "f"));
+        assert_eq!(forked[2]["parentUuid"], forked[1]["uuid"]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text, "the original is left as it was");
         let _ = std::fs::remove_dir_all(&home);
     }
 }

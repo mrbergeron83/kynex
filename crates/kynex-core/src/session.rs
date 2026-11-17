@@ -685,7 +685,8 @@ impl Session {
     /// to and including entry `until` if given.
     fn load(&mut self, until: Option<String>) {
         let (tx, rx) = channel();
-        let id = self.session_id.clone().or_else(|| self.fork_from.clone()).unwrap_or_default();
+        // An unsent fork's conversation is its original's, whatever id its process reported.
+        let id = self.fork_from.clone().or_else(|| self.session_id.clone()).unwrap_or_default();
         let (cwd, wake) = (self.cwd.clone(), self.wake.clone());
         thread::spawn(move || {
             read_history(&cwd, &id, until.as_deref(), &tx, &wake);
@@ -754,6 +755,7 @@ impl Session {
     pub fn rewind_to(&mut self, point: &crate::rewind::Point) {
         self.kill();
         self.items.clear();
+        self.revision += 1;
         self.perm_gen += 1;
         self.context = ContextUse::default();
         self.queue = Queue::default();
@@ -768,6 +770,8 @@ impl Session {
                 self.session_id = None;
                 self.conversation = false;
                 self.resume_at = None;
+                // Back to the start: a fork that sent nothing has nothing to continue.
+                self.fork_from = None;
             }
         }
     }
