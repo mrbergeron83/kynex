@@ -49,13 +49,13 @@ pub(super) struct Reads {
 }
 
 impl KynexApp {
-    /// Sessions were deleted: they leave the lists now, and they're read again
-    /// ([`Self::reread_sessions`]), showing the rest meanwhile.
+    /// Sessions are being deleted: they leave the lists now. The caller has them read
+    /// again ([`Self::reread_sessions`]) once their files are gone; a read before that
+    /// would bring them back for a moment.
     pub(super) fn relist_sessions(&mut self, gone: &[String]) {
         for l in self.sessions.values_mut() {
             l.items.retain(|i| !gone.contains(&i.id));
         }
-        self.reread_sessions();
     }
 
     /// Reads a folder's past sessions off the UI thread (each transcript's ends); the

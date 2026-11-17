@@ -69,7 +69,13 @@ impl Worktrees {
             // The list first (one `git` call), so a new or removed worktree shows at once;
             // each one's changes follow, read in parallel.
             let at = root.clone();
-            let mut list = cx.background_spawn(async move { git::list_worktrees_quick(&at).unwrap_or_default() }).await;
+            let read = cx.background_spawn(async move { git::list_worktrees_quick(&at) }).await;
+            // A read that fails (a worktree half removed, git busy) keeps the last list: an
+            // empty one would drop every workspace row until the next read.
+            let Ok(mut list) = read else {
+                this.update(cx, |this, cx| this.read_done(cx)).ok();
+                return;
+            };
             this.update(cx, |this, cx| {
                 let _t = kynex_core::trace::span("worktrees: publish the list (UI thread)");
                 // Until its numbers are in, a worktree keeps the last ones.
@@ -100,22 +106,27 @@ impl Worktrees {
                 .await;
             this.update(cx, |this, cx| {
                 let _t = kynex_core::trace::span("worktrees: publish the numbers (UI thread)");
-                this.reading = false;
-                // `worktrees` appears with the first linked worktree and goes with the last.
-                if let Some(w) = &mut this.watch {
-                    w.rewatch();
-                }
                 if this.list != list {
                     this.list = list;
                     cx.notify();
                 }
-                if std::mem::take(&mut this.again) {
-                    this.refresh(cx);
-                }
+                this.read_done(cx);
             })
             .ok();
         })
         .detach();
+    }
+
+    /// A read is over: watch what's there now, and read again if that was asked meanwhile.
+    fn read_done(&mut self, cx: &mut Context<Self>) {
+        self.reading = false;
+        // `worktrees` appears with the first linked worktree and goes with the last.
+        if let Some(w) = &mut self.watch {
+            w.rewatch();
+        }
+        if std::mem::take(&mut self.again) {
+            self.refresh(cx);
+        }
     }
 
     /// The worktree whose folder is `path`.

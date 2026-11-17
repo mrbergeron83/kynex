@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Deleting a session or removing a workspace no longer hides the other workspaces for a moment or freezes the window, and a deleted session no longer flashes back in the list.
+
 ## [0.0.31] - 2026-11-16
 
 ### Added
