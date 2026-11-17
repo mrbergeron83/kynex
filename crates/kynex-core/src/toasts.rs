@@ -38,6 +38,8 @@ impl Kind {
 pub enum Action {
     /// "Go to session": shows that session.
     GoToSession(Key),
+    /// "Go to pane": focuses that pane of the shown workspace.
+    GoToPane(u64),
     /// "View": the About modal, where a new version installs.
     ViewUpdate,
     /// "Continue in Chat": moves an OpenRouter session whose model takes no
@@ -49,6 +51,7 @@ impl Action {
     pub fn label(self) -> &'static str {
         match self {
             Action::GoToSession(_) => "Go to session",
+            Action::GoToPane(_) => "Go to pane",
             Action::ViewUpdate => "View",
             Action::ContinueInChat(_) => "Continue in Chat",
         }

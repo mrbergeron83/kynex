@@ -52,6 +52,7 @@ pub fn needs_card(request: &Request) -> bool {
             | Request::WorkspaceOpen { .. }
             | Request::PaneList { .. }
             | Request::PaneFocus { .. }
+            | Request::Notify { .. }
             | Request::PaneRead { .. }
             | Request::PaneWait { .. }
             | Request::SessionList
@@ -464,6 +465,7 @@ mod tests {
         assert!(!needs_card(&Request::SessionRead { session: SessionRef::Uid(1) }));
         assert!(!needs_card(&Request::RequestStatus { request: 1 }));
         assert!(!needs_card(&Request::PaneFocus { pane: 1 }));
+        assert!(!needs_card(&Request::Notify { title: "t".into(), body: None, pane: None, session: None }));
         assert!(offers_worktree(&new_session()));
         assert!(!offers_worktree(&Request::SessionClose { session: SessionRef::Uid(1) }));
     }

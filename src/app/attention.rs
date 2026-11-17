@@ -12,7 +12,7 @@ use kynex_core::toasts::{Action, Toast};
 use super::KynexApp;
 
 /// A session's notification tag, which a click hands back.
-fn tag(key: Key) -> String {
+pub(super) fn tag(key: Key) -> String {
     format!("session-{key}")
 }
 
@@ -22,15 +22,21 @@ impl KynexApp {
         let this = cx.entity().downgrade();
         let handle = window.window_handle();
         cx.on_system_notification_response(move |response, cx| {
-            let Some(key) = response.tag.strip_prefix("session-").and_then(|k| k.parse::<Key>().ok()) else {
+            let key = response.tag.strip_prefix("session-").and_then(|k| k.parse::<Key>().ok());
+            let pane = response.tag.strip_prefix("pane-").and_then(|p| p.parse::<u64>().ok());
+            if key.is_none() && pane.is_none() {
                 return;
-            };
+            }
             handle
                 .update(cx, |_, window, cx| {
                     window.activate_window();
                     this.update(cx, |this, cx| {
                         this.show_from_background(cx);
-                        this.go_to_session(key, window, cx)
+                        if let Some(key) = key {
+                            this.go_to_session(key, window, cx);
+                        } else if let Some(pane) = pane {
+                            this.focus_pane(pane, window, cx);
+                        }
                     })
                     .ok();
                 })
