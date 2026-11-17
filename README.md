@@ -92,6 +92,8 @@ knx project list | create <folder> | open <folder> | remove <folder>   # project
 knx workspace list | open <folder> | remove <folder> [--force]   # the shown project's checkouts
 knx workspace create <branch> [--session] [--why <reason>] [--prompt <message…>]   # a new checkout, with a session in it
 knx pane list [--all] | split [row|column] | focus <id> | close [id]   # panes of the shown tab (--all: every workspace)
+knx pane move <id> left|right|up|down|new-tab|tab <n> | swap <id> <other>   # rearrange panes
+knx pane resize <id> left|right|up|down [--by <px>] | zoom <id> [--off]
 knx pane read <id> [--lines N]                # a terminal or agent pane's screen, or its last N lines
 knx pane run <id|new> <command…> [--wait]     # type a command into a shell pane; --wait gives its exit code and output
 knx pane prompt <id> <message…> [--wait] | wait <id>   # agent-CLI panes (codex, opencode…): done or blocked
@@ -100,7 +102,7 @@ knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none
 knx session fork <s> [--at <message number>] [--pane …] | open <session id> [--pane …]
 knx session close <s> | rename <s> <title…> | archive <s> | pin <s> [--off]
 knx request status <id> | wait <id>           # a request still waiting for your OK
-knx notify <title> [body…] [--pane <id>] [--session <s>]   # a toast, or an OS notification when Kynex is in the background; a click goes there
+knx notify <title> [body…] [--pane <id> | --session <s>]   # a toast, or an OS notification when Kynex is in the background; a click goes there
 knx events                                    # a line per finished turn, session or agent pane that needs you, session.created / session.closed
 knx api schema                                # the requests, answers and events as JSON (works without Kynex running)
 ```

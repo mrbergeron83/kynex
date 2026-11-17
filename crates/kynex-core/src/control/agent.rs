@@ -21,8 +21,11 @@ pub const CONTROL_VAR: &str = "KYNEX_CONTROL";
 pub const NOTE: &str = "You are running inside Kynex, a desktop app for Claude Code. Its `knx` \
 command (on your PATH) can see and arrange the app from your shell: `knx session list`, \
 `knx session read <id>`, `knx session wait <id>`, `knx workspace list`, `knx pane list`, \
-`knx project list`, `knx notify <title> [body…] [--pane <id>] [--session <id>]` (a notification, no OK needed); for terminal and agent-CLI panes, `knx pane read <id> [--lines N]`, \
-`knx pane run <id> <command> [--wait]` and `knx pane prompt <id> <message> [--wait]`; for \
+`knx project list`, `knx notify <title> [body…] [--pane <id> | --session <id>]` (a notification, no OK needed); \
+for terminal and agent-CLI panes, `knx pane read <id> [--lines N]`, \
+`knx pane run <id> <command> [--wait]` and `knx pane prompt <id> <message> [--wait]`; to rearrange panes, `knx pane move <id> \
+left|right|up|down|new-tab|tab <n>`, `knx pane swap <id> <other>`, `knx pane resize <id> <dir> [--by <px>]` and \
+`knx pane zoom <id> [--off]`; for \
 sessions, `knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] \
 [--why <reason>] [--prompt <message>]`, `knx session fork <id> [--at <message number>]`, `knx session open|close|archive \
 <id>`, `knx session rename <id> <title>`, `knx session pin <id> [--off]` and `knx workspace create \

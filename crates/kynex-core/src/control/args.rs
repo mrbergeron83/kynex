@@ -4,6 +4,8 @@
 //! knx project list | create <folder> | open <folder> | remove <folder>
 //! knx workspace list | open <folder> | create <branch> [--session] [--prompt <text…>] | remove <folder> [--force]
 //! knx pane list [--all] | split [row|column] | focus <id> | close [id]
+//! knx pane move <id> left|right|up|down|new-tab | move <id> tab <n> | swap <id> <other>
+//! knx pane resize <id> left|right|up|down [--by <px>] | zoom <id> [--off]
 //! knx pane read <id> [--lines N] | run <id|new> <command…> [--wait] | prompt <id> <text…> [--wait] | wait <id>
 //! knx session list | prompt <s> <text…> [--wait] | read <s> | wait <s>
 //! knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] [--prompt <text…>]
@@ -19,7 +21,8 @@
 use std::path::Path;
 
 use super::Request;
-use super::protocol::{Place, SessionRef};
+use super::protocol::{PaneTarget, Place, SessionRef};
+use crate::layout::Direction;
 
 /// The first words that make a command line a subcommand, not a folder to open.
 const GROUPS: [&str; 8] = ["project", "workspace", "pane", "session", "request", "notify", "events", "api"];
@@ -100,6 +103,24 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         ["pane", "split"] => Ok(Request::PaneSplit { axis: None }),
         ["pane", "split", a @ ("row" | "column")] => Ok(Request::PaneSplit { axis: Some(a.to_string()) }),
         ["pane", "focus", n] => Ok(Request::PaneFocus { pane: number(n)? }),
+        ["pane", "move", _, "workspace", ..] => {
+            Err("moving a pane to another workspace isn't supported; use left, right, up, down, tab <n> or new-tab"
+                .into())
+        }
+        ["pane", "move", n, "tab", t] => {
+            let tab = t.parse().ok().filter(|t| *t > 0).ok_or_else(|| format!("`{t}` isn't a tab number (from 1)"))?;
+            Ok(Request::PaneMove { pane: number(n)?, to: PaneTarget::Tab(tab) })
+        }
+        ["pane", "move", n, "new-tab"] => Ok(Request::PaneMove { pane: number(n)?, to: PaneTarget::NewTab }),
+        ["pane", "move", n, d] => Ok(Request::PaneMove { pane: number(n)?, to: PaneTarget::Dir(direction(d)?) }),
+        ["pane", "swap", n, o] => Ok(Request::PaneSwap { pane: number(n)?, other: number(o)? }),
+        ["pane", "resize", n, d] => Ok(Request::PaneResize { pane: number(n)?, dir: direction(d)?, by: None }),
+        ["pane", "resize", n, d, "--by", px] => {
+            let by = px.parse().ok().filter(|p| *p > 0).ok_or_else(|| format!("`{px}` isn't a number of pixels"))?;
+            Ok(Request::PaneResize { pane: number(n)?, dir: direction(d)?, by: Some(by) })
+        }
+        ["pane", "zoom", n] => Ok(Request::PaneZoom { pane: number(n)?, off: false }),
+        ["pane", "zoom", n, "--off"] => Ok(Request::PaneZoom { pane: number(n)?, off: true }),
         ["pane", "close"] => Ok(Request::PaneClose { pane: None }),
         ["pane", "close", n] => Ok(Request::PaneClose { pane: Some(number(n)?) }),
         ["session", "list"] => Ok(Request::SessionList),
@@ -167,6 +188,16 @@ fn notify(rest: &[&str]) -> Result<Request, String> {
 
 fn number(s: &str) -> Result<u64, String> {
     s.parse().map_err(|_| format!("`{s}` isn't a number"))
+}
+
+fn direction(s: &str) -> Result<Direction, String> {
+    match s {
+        "left" => Ok(Direction::Left),
+        "right" => Ok(Direction::Right),
+        "up" => Ok(Direction::Up),
+        "down" => Ok(Direction::Down),
+        _ => Err(format!("`{s}` isn't left, right, up or down")),
+    }
 }
 
 fn count(s: &str) -> Result<usize, String> {
@@ -286,6 +317,8 @@ pub const USAGE: &str = "usage:
   knx workspace list | open <folder> | remove <folder> [--force]
   knx workspace create <branch> [--session] [--why <reason>] [--prompt <message…>]
   knx pane list [--all] | split [row|column] | focus <id> | close [id]
+  knx pane move <id> left|right|up|down|new-tab | move <id> tab <n> | swap <id> <other>
+  knx pane resize <id> left|right|up|down [--by <px>] | zoom <id> [--off]
   knx pane read <id> [--lines N] | run <id|new> <command…> [--wait] | prompt <id> <message…> [--wait] | wait <id>
   knx session list | prompt <s> <message…> [--wait] | read <s> | wait <s>
   knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] [--why <reason>]
@@ -328,6 +361,23 @@ mod tests {
         assert_eq!(parse(&words("pane list --all")), Ok(Request::PaneList { all: true }));
         assert_eq!(parse(&words("pane split column")), Ok(Request::PaneSplit { axis: Some("column".into()) }));
         assert_eq!(parse(&words("pane focus 4")), Ok(Request::PaneFocus { pane: 4 }));
+        assert_eq!(
+            parse(&words("pane move 4 left")),
+            Ok(Request::PaneMove { pane: 4, to: PaneTarget::Dir(Direction::Left) })
+        );
+        assert_eq!(parse(&words("pane move 4 tab 2")), Ok(Request::PaneMove { pane: 4, to: PaneTarget::Tab(2) }));
+        assert_eq!(parse(&words("pane move 4 new-tab")), Ok(Request::PaneMove { pane: 4, to: PaneTarget::NewTab }));
+        assert_eq!(parse(&words("pane swap 4 5")), Ok(Request::PaneSwap { pane: 4, other: 5 }));
+        assert_eq!(
+            parse(&words("pane resize 4 down --by 80")),
+            Ok(Request::PaneResize { pane: 4, dir: Direction::Down, by: Some(80) })
+        );
+        assert_eq!(
+            parse(&words("pane resize 4 up")),
+            Ok(Request::PaneResize { pane: 4, dir: Direction::Up, by: None })
+        );
+        assert_eq!(parse(&words("pane zoom 4")), Ok(Request::PaneZoom { pane: 4, off: false }));
+        assert_eq!(parse(&words("pane zoom 4 --off")), Ok(Request::PaneZoom { pane: 4, off: true }));
         assert_eq!(
             parse(&words("workspace create fix/login")),
             Ok(Request::WorkspaceCreate { branch: "fix/login".into(), session: false, prompt: None, why: None })
@@ -394,6 +444,12 @@ mod tests {
         assert!(parse(&words("pane wait 2 --timeout 0")).unwrap_err().contains("seconds"));
         assert!(parse(&words("pane wait 2 now")).unwrap_err().contains("usage"));
         assert!(parse(&words("pane split diagonal")).unwrap_err().contains("usage"));
+        assert!(parse(&words("pane move 2 sideways")).unwrap_err().contains("isn't left"));
+        assert!(parse(&words("pane move 2 tab 0")).unwrap_err().contains("tab number"));
+        assert!(parse(&words("pane move 2 tab x")).unwrap_err().contains("tab number"));
+        assert!(parse(&words("pane move 2 workspace /w")).unwrap_err().contains("another workspace"));
+        assert!(parse(&words("pane resize 2 left --by lots")).unwrap_err().contains("pixels"));
+        assert!(parse(&words("pane resize 2 in")).unwrap_err().contains("isn't left"));
         assert!(parse(&[]).is_err());
         assert!(parse(&words("session new --prompt")).unwrap_err().contains("needs a message"));
         assert!(parse(&words("session new --title")).unwrap_err().contains("needs a value"));

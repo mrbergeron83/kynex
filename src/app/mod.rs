@@ -22,6 +22,7 @@
 //! | `control_panes.rs`  | its terminal / agent pane commands: read, run, prompt, wait |
 //! | `control_cards.rs`  | the card you answer before a `knx` request changes something |
 //! | `control_notify.rs` | its `notify` command: a toast or OS notification |
+//! | `control_pane_layout.rs` | its pane layout commands: move, swap, resize, zoom |
 //! | `control_sessions.rs` | its session commands: new, fork, open, close, rename, archive, pin |
 //! | `lineage.rs`        | which session started which: links, caps, answers sent back |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
@@ -115,6 +116,7 @@ mod composer;
 mod control;
 mod control_cards;
 mod control_notify;
+mod control_pane_layout;
 mod control_panes;
 mod control_sessions;
 mod control_workspaces;

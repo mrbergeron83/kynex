@@ -10,6 +10,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::layout::Direction;
+
 /// The longest line read, in bytes. A longer one is an error and ends the connection.
 pub const MAX_LINE: usize = 1 << 20;
 
@@ -66,6 +68,30 @@ pub enum Request {
     },
     PaneFocus {
         pane: u64,
+    },
+    /// Moves a pane one step `left|right|up|down` past its neighbour, to tab `n` (from 1, as
+    /// shown) of its workspace, or to a new tab of its own.
+    PaneMove {
+        pane: u64,
+        to: PaneTarget,
+    },
+    /// Swaps two panes of one tab.
+    PaneSwap {
+        pane: u64,
+        other: u64,
+    },
+    /// Grows a pane `by` pixels (a keyboard step by default) towards a side.
+    PaneResize {
+        pane: u64,
+        dir: Direction,
+        #[serde(default)]
+        by: Option<u32>,
+    },
+    /// Zooms a pane to fill its tab; with `off`, puts the others back.
+    PaneZoom {
+        pane: u64,
+        #[serde(default)]
+        off: bool,
     },
     /// Closes a pane, the focused one if none is named.
     PaneClose {
@@ -198,6 +224,15 @@ pub enum Request {
         request: u64,
     },
     Events,
+}
+
+/// Where `pane move` puts a pane. A tab is numbered from 1, as the tab strip shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneTarget {
+    Dir(Direction),
+    Tab(usize),
+    NewTab,
 }
 
 /// A session, by its uid in this run (a number) or its CLI session id, which survives a restart.
@@ -494,6 +529,13 @@ pub(crate) mod tests {
             Request::PaneRun { pane: Some(4), command: "cargo test".into(), wait: true, timeout: Some(30) },
             Request::PaneRun { pane: None, command: "ls".into(), wait: false, timeout: None },
             Request::PaneList { all: true },
+            Request::PaneMove { pane: 2, to: PaneTarget::Dir(Direction::Left) },
+            Request::PaneMove { pane: 2, to: PaneTarget::Tab(2) },
+            Request::PaneMove { pane: 2, to: PaneTarget::NewTab },
+            Request::PaneSwap { pane: 2, other: 3 },
+            Request::PaneResize { pane: 2, dir: Direction::Down, by: Some(80) },
+            Request::PaneResize { pane: 2, dir: Direction::Up, by: None },
+            Request::PaneZoom { pane: 2, off: true },
             Request::PanePrompt { pane: 5, text: "fix it".into(), wait: false, timeout: None },
             Request::PaneWait { pane: 5, timeout: Some(1) },
             Request::SessionWait { session: SessionRef::Uid(2), timeout: None },

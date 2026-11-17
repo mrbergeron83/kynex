@@ -14,7 +14,7 @@ use super::menus::Menu;
 use super::state::Active;
 
 /// How far one press of a resize key moves a pane's edge, in logical pixels.
-const RESIZE_STEP: f32 = 40.0;
+pub(super) const RESIZE_STEP: f32 = 40.0;
 
 /// Where resize mode was started: the workspace, its focused pane and tab, the project tab.
 /// Moving anywhere else ends it.
