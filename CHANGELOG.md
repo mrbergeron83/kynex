@@ -19,6 +19,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The sessions list and Ctrl+K no longer start with a "New session" row for every empty session a pane keeps ready; a session gets its row once something is sent to it.
 - Deleting a session or removing a workspace no longer hides the other workspaces for a moment or freezes the window, and a deleted session no longer flashes back in the list.
 
 ## [0.0.31] - 2026-11-16

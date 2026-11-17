@@ -117,12 +117,15 @@ impl KynexApp {
         let t = theme(cx).clone();
         let filtering = !ctx.query.is_empty();
         let path = place.path.clone();
-        // The sessions open there: in chat every one, in a project those in its folder.
+        // The sessions open there: in chat every one, in a project those in its folder. An
+        // empty one (nothing sent, nothing to reopen) gets no row: its pane shows it, and
+        // every workspace keeps one ready, so the list would always start with one.
         let open: Vec<OpenSession> = self
             .live_mut()
             .map(|l| {
                 l.sessions
                     .iter()
+                    .filter(|s| !s.is_new())
                     .filter(|s| ctx.kind == Kind::Chat || workspace::same_folder(&s.cwd, &path))
                     .map(OpenSession::of)
                     .collect()
