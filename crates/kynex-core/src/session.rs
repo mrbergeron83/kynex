@@ -173,6 +173,9 @@ pub fn timeout_ms(input: &str) -> Option<u64> {
 /// Called from the reader threads whenever the process has news, so the UI drains it.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
+/// Claude's todo list as [`Session::todos`] hands it out, shared rather than copied.
+pub type TodoList = Arc<Vec<crate::todos::Todo>>;
+
 pub enum Item {
     User {
         text: String,
@@ -390,7 +393,7 @@ pub struct Session {
     /// `wants_browser()` as last worked out: (item count, revision, answer). Asked every frame.
     browser_cache: std::cell::Cell<Option<(usize, u64, bool)>>,
     /// `todos()` as last read: (item count, revision, the list). Asked every frame.
-    todos_cache: std::cell::RefCell<Option<(usize, u64, std::sync::Arc<Vec<crate::todos::Todo>>)>>,
+    todos_cache: std::cell::RefCell<Option<(usize, u64, TodoList)>>,
     next_request: u64,
     /// `mcp_reconnect` and `mcp_status` requests awaiting an answer.
     mcp_requests: Vec<String>,
@@ -868,7 +871,7 @@ impl Session {
 
     /// Claude's todo list as it stands ([`crate::todos`]); read again only when its
     /// items change.
-    pub fn todos(&self) -> std::sync::Arc<Vec<crate::todos::Todo>> {
+    pub fn todos(&self) -> TodoList {
         let key = (self.items.len(), self.revision);
         if let Some((n, r, list)) = &*self.todos_cache.borrow()
             && (*n, *r) == key
