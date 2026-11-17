@@ -67,13 +67,18 @@ impl KynexApp {
         ));
         items.push(div().my_1().child(divider(cx)).into_any_element());
         for (i, g) in groups.groups.iter().enumerate() {
+            let gid = g.id;
             let (ids, cwd) = (ids.to_vec(), cwd.clone());
             items.push(item(
                 format!("Move {n} to {}", g.name),
                 10 + i,
                 cx,
                 Box::new(move |this, _, _| {
-                    this.edit_groups(&cwd, |g| ids.iter().for_each(|id| g.move_to(id, Some(i))));
+                    this.edit_groups(&cwd, |g| {
+                        ids.iter().for_each(|id| {
+                            g.move_to(id, Some(gid));
+                        })
+                    });
                     this.organize.selection.clear();
                 }),
             ));
@@ -87,7 +92,9 @@ impl KynexApp {
                 let mut at = 0;
                 this.edit_groups(&new_cwd, |g| {
                     at = g.add_group("");
-                    new_ids.iter().for_each(|id| g.move_to(id, Some(at)));
+                    new_ids.iter().for_each(|id| {
+                        g.move_to(id, Some(at));
+                    });
                 });
                 this.organize.selection.clear();
                 this.start_group_rename(new_cwd.clone(), at, window, cx);
@@ -100,7 +107,11 @@ impl KynexApp {
                 2,
                 cx,
                 Box::new(move |this, _, _| {
-                    this.edit_groups(&cwd, |g| ids.iter().for_each(|id| g.move_to(id, None)));
+                    this.edit_groups(&cwd, |g| {
+                        ids.iter().for_each(|id| {
+                            g.move_to(id, None);
+                        })
+                    });
                 }),
             ));
         }

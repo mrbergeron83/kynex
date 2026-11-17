@@ -11,7 +11,7 @@ use gpui::{
     AnyElement, ClickEvent, Context, Entity, Focusable, MouseButton, MouseDownEvent, SharedString, Window, div,
     prelude::*,
 };
-use kynex_core::groups::{Selection, SessionGroups};
+use kynex_core::groups::{GroupId, Selection, SessionGroups};
 
 use kynex_core::toasts::Toast;
 
@@ -27,8 +27,8 @@ type MenuAction = Box<dyn Fn(&mut KynexApp, &mut Window, &mut Context<KynexApp>)
 /// What the name field is renaming.
 #[derive(Clone, PartialEq)]
 enum Editing {
-    /// Group `i` in this folder.
-    Group(PathBuf, usize),
+    /// This group in this folder.
+    Group(PathBuf, GroupId),
     /// A session, in its panel row or (`in_header`) the session header.
     Session { cwd: PathBuf, id: String, in_header: bool },
 }
@@ -85,7 +85,7 @@ pub(super) struct DraggedSession {
 #[derive(Clone)]
 pub(super) struct DraggedGroup {
     pub cwd: PathBuf,
-    pub index: usize,
+    pub id: GroupId,
     pub name: SharedString,
 }
 
@@ -128,14 +128,20 @@ impl KynexApp {
         }
     }
 
-    /// Shows the name field in place of group `i`'s header.
-    pub(super) fn start_group_rename(&mut self, cwd: PathBuf, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Shows the name field in place of group `id`'s header.
+    pub(super) fn start_group_rename(
+        &mut self,
+        cwd: PathBuf,
+        id: GroupId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // One open at a time: the field moves, so keep what the last one had.
         self.commit_rename(cx);
-        let name = self.groups_for(&cwd).groups.get(i).map(|g| g.name.clone()).unwrap_or_default();
+        let name = self.groups_for(&cwd).group(id).map(|g| g.name.clone()).unwrap_or_default();
         self.organize.name.update(cx, |input, cx| input.set_text(name, cx));
         self.organize.name.read(cx).focus_handle(cx).focus(window, cx);
-        self.organize.editing = Some(Editing::Group(cwd, i));
+        self.organize.editing = Some(Editing::Group(cwd, id));
         cx.notify();
     }
 
@@ -183,7 +189,7 @@ impl KynexApp {
         let Some(editing) = self.organize.editing.take() else { return };
         let name = self.organize.name.read(cx).text().to_string();
         match editing {
-            Editing::Group(cwd, i) => self.edit_groups(&cwd, |g| g.rename_group(i, &name)),
+            Editing::Group(cwd, id) => self.edit_groups(&cwd, |g| g.rename_group(id, &name)),
             Editing::Session { cwd, id, .. } => {
                 self.edit_groups(&cwd, |g| g.rename(&id, &name));
                 // Re-read the list so the new name shows everywhere.
@@ -248,13 +254,18 @@ impl KynexApp {
             Box::new(move |this, _, _| this.edit_groups(&pin_cwd, |g| g.toggle_pin(&pin_id))),
         ));
         items.push(div().my_1().child(divider(cx)).into_any_element());
-        for (i, g) in groups.groups.iter().enumerate().filter(|(i, _)| Some(*i) != current) {
+        for (i, g) in groups.groups.iter().enumerate().filter(|(_, g)| Some(g.id) != current) {
+            let gid = g.id;
             let (id, cwd) = (id.to_string(), cwd.clone());
             items.push(item(
                 format!("Move to {}", g.name),
                 i,
                 cx,
-                Box::new(move |this, _, _| this.edit_groups(&cwd, |g| g.move_to(&id, Some(i)))),
+                Box::new(move |this, _, _| {
+                    this.edit_groups(&cwd, |g| {
+                        g.move_to(&id, Some(gid));
+                    })
+                }),
             ));
         }
         let (new_id, new_cwd) = (id.to_string(), cwd.clone());
@@ -271,13 +282,17 @@ impl KynexApp {
                 this.start_group_rename(new_cwd.clone(), at, window, cx);
             }),
         ));
-        if let Some(i) = current {
+        if let Some(group) = current.and_then(|c| groups.group(c)) {
             let (id, cwd) = (id.to_string(), cwd.clone());
             items.push(item(
-                format!("Remove from {}", groups.groups[i].name),
+                format!("Remove from {}", group.name),
                 1001,
                 cx,
-                Box::new(move |this, _, _| this.edit_groups(&cwd, |g| g.move_to(&id, None))),
+                Box::new(move |this, _, _| {
+                    this.edit_groups(&cwd, |g| {
+                        g.move_to(&id, None);
+                    })
+                }),
             ));
         }
         items.push(div().my_1().child(divider(cx)).into_any_element());
@@ -309,7 +324,7 @@ impl KynexApp {
     }
 
     /// The menu for a group header: rename or delete it.
-    pub(super) fn group_menu_items(&mut self, cwd: &Path, i: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    pub(super) fn group_menu_items(&mut self, cwd: &Path, id: GroupId, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let cwd = cwd.to_path_buf();
         let t = theme(cx).clone();
         let (rename_cwd, archive_cwd) = (cwd.clone(), cwd.clone());
@@ -317,7 +332,7 @@ impl KynexApp {
             menu_item("group-rename", "Rename", false, cx)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.menu = None;
-                    this.start_group_rename(rename_cwd.clone(), i, window, cx);
+                    this.start_group_rename(rename_cwd.clone(), id, window, cx);
                 }))
                 .into_any_element(),
             div().my_1().child(divider(cx)).into_any_element(),
@@ -325,7 +340,7 @@ impl KynexApp {
                 .text_color(t.error)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.menu = None;
-                    this.edit_groups(&cwd, |g| g.delete_group(i));
+                    this.edit_groups(&cwd, |g| g.delete_group(id));
                     cx.notify();
                 }))
                 .into_any_element(),
@@ -333,7 +348,7 @@ impl KynexApp {
                 .text_color(t.error)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.menu = None;
-                    this.edit_groups(&archive_cwd, |g| g.delete_group_archiving(i));
+                    this.edit_groups(&archive_cwd, |g| g.delete_group_archiving(id));
                     cx.notify();
                 }))
                 .into_any_element(),
@@ -354,7 +369,8 @@ impl KynexApp {
     ) -> AnyElement {
         let t = theme(cx).clone();
         let Some(group) = self.groups_for(cwd).groups.get(i).cloned() else { return div().into_any_element() };
-        let editing = matches!(&self.organize.editing, Some(Editing::Group(p, e)) if p == cwd && *e == i);
+        let id = group.id;
+        let editing = matches!(&self.organize.editing, Some(Editing::Group(p, e)) if p == cwd && *e == id);
         let hover = t.hover;
         let (toggle_cwd, drop_cwd, menu_cwd) = (cwd.to_path_buf(), cwd.to_path_buf(), cwd.to_path_buf());
         let (reorder_cwd, group_cwd) = (cwd.to_path_buf(), cwd.to_path_buf());
@@ -388,7 +404,7 @@ impl KynexApp {
         .hover(move |s| s.text_color(text))
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
             if !editing {
-                this.edit_groups(&toggle_cwd, |g| g.toggle_group(i));
+                this.edit_groups(&toggle_cwd, |g| g.toggle_group(id));
                 cx.notify();
             }
         }))
@@ -397,11 +413,11 @@ impl KynexApp {
             cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                 // Not the pane's menu as well.
                 cx.stop_propagation();
-                this.open_menu(Menu::Group(menu_cwd.clone(), i), ev.position, gpui::Anchor::TopLeft, cx)
+                this.open_menu(Menu::Group(menu_cwd.clone(), id), ev.position, gpui::Anchor::TopLeft, cx)
             }),
         )
         // Dragged onto another group, it takes that group's place.
-        .on_drag(DraggedGroup { cwd: group_cwd, index: i, name: group.name.clone().into() }, |d, _, _, cx| {
+        .on_drag(DraggedGroup { cwd: group_cwd, id, name: group.name.clone().into() }, |d, _, _, cx| {
             cx.new(|_| d.clone())
         });
         div()
@@ -415,7 +431,11 @@ impl KynexApp {
                 if d.cwd != drop_cwd {
                     return;
                 }
-                this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.drop_into(id, Some(i))));
+                this.edit_groups(&drop_cwd, |g| {
+                    d.ids.iter().for_each(|sid| {
+                        g.drop_into(sid, Some(id));
+                    })
+                });
                 this.organize.selection.clear();
                 cx.notify();
             }))
@@ -425,7 +445,7 @@ impl KynexApp {
                 if d.cwd != reorder_cwd {
                     return;
                 }
-                this.edit_groups(&reorder_cwd, |g| g.move_group(d.index, i));
+                this.edit_groups(&reorder_cwd, |g| g.move_group(d.id, id));
                 cx.notify();
             }))
             .child(header)
