@@ -37,3 +37,8 @@ reason = "zvariant: unmaintained, transitive via gpui (Linux), no fix available"
 id = "RUSTSEC-2026-0372"
 ignoreUntil = 2027-01-31T00:00:00Z
 reason = "zvariant_derive: unmaintained, transitive via gpui (Linux), no fix available"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0543"
+ignoreUntil = 2027-01-31T00:00:00Z
+reason = "chrono: unmaintained, transitive via gpui (Kynex itself uses jiff), no fix available"

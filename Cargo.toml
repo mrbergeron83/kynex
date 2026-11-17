@@ -8,7 +8,6 @@ edition = "2024"
 alacritty_terminal = "0.26"
 async-channel = "2"
 base64 = "0.23.1"
-chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 dirs = "7.0.0"
 gpui = { package = "gpui-pre", version = "=0.3.10" }
 # gpui-pre 0.3.10 only gives macOS a text system (and therefore any text at
@@ -20,6 +19,7 @@ image = "0.25.10"
 # Reading git state in-process (worktrees, status, ahead/behind): no `git` process to start. Writes stay on the CLI.
 gix = { version = "0.90", default-features = false, features = ["status", "revision", "sha1"] }
 # Watching a session's scratch folder for the file explorer (ReadDirectoryChangesW, inotify, FSEvents).
+jiff = "0.2.42"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 kynex-core = { path = "crates/kynex-core" }
 pulldown-cmark = { version = "0.13", default-features = false }

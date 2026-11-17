@@ -86,7 +86,7 @@ impl Log {
             ("cwd", self.cwd.clone().into()),
             ("sessionId", self.session_id.clone().into()),
             ("uuid", uuid.clone().into()),
-            ("timestamp", chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string().into()),
+            ("timestamp", jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string().into()),
         ];
         for (k, v) in fields {
             entry[k] = v;
