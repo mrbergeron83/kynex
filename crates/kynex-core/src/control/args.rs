@@ -10,6 +10,7 @@
 //! knx session fork <s> [--at N] [--pane …] | open <id> [--pane …] | close <s> | rename <s> <title…>
 //! knx session archive <s> | pin <s> [--off]
 //! knx request status <id> | wait <id>
+//! knx notify <title> [body…] [--pane <id>] [--session <s>]
 //! (waits take --timeout <seconds>)
 //! knx events
 //! ```
@@ -20,7 +21,7 @@ use super::Request;
 use super::protocol::{Place, SessionRef};
 
 /// The first words that make a command line a subcommand, not a folder to open.
-const GROUPS: [&str; 6] = ["project", "workspace", "pane", "session", "request", "events"];
+const GROUPS: [&str; 7] = ["project", "workspace", "pane", "session", "request", "notify", "events"];
 
 /// Whether `args` (without the program name) is a control subcommand.
 pub fn is_command(args: &[String]) -> bool {
@@ -32,6 +33,7 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     match words.as_slice() {
         ["events"] => Ok(Request::Events),
+        ["notify", rest @ ..] => notify(rest),
         ["project", "list"] => Ok(Request::ProjectList),
         ["project", "create", p] => Ok(Request::ProjectCreate { path: absolute(p) }),
         ["project", "open", p] => Ok(Request::ProjectOpen { path: absolute(p) }),
@@ -126,6 +128,35 @@ pub fn parse(args: &[String]) -> Result<Request, String> {
         }
         _ => Err(USAGE.into()),
     }
+}
+
+/// `notify`: `--pane` and `--session` anywhere; the first other word is the title, the rest the body.
+fn notify(rest: &[&str]) -> Result<Request, String> {
+    let (mut pane, mut session, mut text) = (None, None, Vec::new());
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            w @ ("--pane" | "--session") => {
+                let v = rest.get(i + 1).ok_or_else(|| format!("{w} needs a value"))?;
+                if w == "--pane" {
+                    pane = Some(number(v)?);
+                } else {
+                    session = Some(SessionRef::parse(v)?);
+                }
+                i += 2;
+            }
+            w => {
+                text.push(w);
+                i += 1;
+            }
+        }
+    }
+    if pane.is_some() && session.is_some() {
+        return Err("notify takes --pane or --session, not both".into());
+    }
+    let Some((title, body)) = text.split_first() else { return Err("notify needs a title".into()) };
+    let body = (!body.is_empty()).then(|| body.join(" "));
+    Ok(Request::Notify { title: title.to_string(), body, pane, session })
 }
 
 fn number(s: &str) -> Result<u64, String> {
@@ -256,6 +287,7 @@ pub const USAGE: &str = "usage:
   knx session fork <s> [--at <message number>] [--pane …] | open <session id> [--pane …]
   knx session close <s> | rename <s> <title…> | archive <s> | pin <s> [--off]
   knx request status <id> | wait <id>
+  knx notify <title> [body…] [--pane <id in the shown workspace> | --session <s>]
   (<s>: a session's number or its session id; --wait and wait take --timeout <seconds>)
   knx events
 Requests that change something wait for your OK in Kynex; one not answered within a short
@@ -273,6 +305,7 @@ mod tests {
     fn subcommands_are_told_from_folders() {
         assert!(is_command(&words("session list")));
         assert!(is_command(&words("events")));
+        assert!(is_command(&words("notify Done")));
         assert!(is_command(&words("workspace list")));
         assert!(!is_command(&words("C:/work/app")));
         assert!(!is_command(&[]));
@@ -301,6 +334,23 @@ mod tests {
                 wait: true,
                 timeout: None
             })
+        );
+        assert_eq!(
+            parse(&words("notify Done --pane 3 all green")),
+            Ok(Request::Notify { title: "Done".into(), body: Some("all green".into()), pane: Some(3), session: None })
+        );
+        assert_eq!(
+            parse(&words("notify Done all --session 4 green")),
+            Ok(Request::Notify {
+                title: "Done".into(),
+                body: Some("all green".into()),
+                pane: None,
+                session: Some(SessionRef::Uid(4))
+            })
+        );
+        assert_eq!(
+            parse(&words("notify Done")),
+            Ok(Request::Notify { title: "Done".into(), body: None, pane: None, session: None })
         );
         assert_eq!(parse(&words("pane read 3")), Ok(Request::PaneRead { pane: 3, lines: None }));
         assert_eq!(parse(&words("pane read 3 --lines 40")), Ok(Request::PaneRead { pane: 3, lines: Some(40) }));
@@ -341,6 +391,11 @@ mod tests {
         assert!(parse(&words("session fork 2 --at 0")).unwrap_err().contains("message number"));
         assert!(parse(&words("session fork 2 --prompt hi")).unwrap_err().contains("usage"));
         assert!(parse(&words("session pin 2 --on")).unwrap_err().contains("usage"));
+        assert!(parse(&words("notify")).unwrap_err().contains("needs a title"));
+        assert!(parse(&words("notify --pane 2")).unwrap_err().contains("needs a title"));
+        assert!(parse(&words("notify hi --pane x")).unwrap_err().contains("isn't a number"));
+        assert!(parse(&words("notify hi --session")).unwrap_err().contains("needs a value"));
+        assert!(parse(&words("notify hi --pane 1 --session 2")).unwrap_err().contains("not both"));
         assert!(parse(&words("request wait x")).unwrap_err().contains("isn't a number"));
     }
 

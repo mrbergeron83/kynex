@@ -7,6 +7,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `knx notify <title> [body…] [--pane <id>] [--session <s>]` shows a toast in Kynex, or an OS notification while it's in the background; clicking it goes to that pane or session. It needs no OK.
 - Claude's todo list shows above the composer while Claude works, with the item in hand marked. When the turn is over it folds to one line, and goes away once everything is done.
 - `/fork` (or `/branch`) copies a session into a pane beside it. Sending to the copy continues the conversation as a new session (`--fork-session`); the original stays as it was.
 - Steer a running turn: Alt+Enter, or Steer on the queue, sends the queued messages and the draft into the turn without stopping it, and Claude reads them at its next step. Ctrl+Enter still stops the turn first.

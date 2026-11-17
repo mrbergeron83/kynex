@@ -70,6 +70,7 @@ impl KynexApp {
         self.toasts.dismiss(id);
         match action {
             Action::GoToSession(key) => self.go_to_session(key, window, cx),
+            Action::GoToPane(id) => self.focus_pane(id, window, cx),
             Action::ViewUpdate => self.open_about(cx),
             Action::ContinueInChat(key) => self.continue_in_chat(key, cx),
         }

@@ -100,10 +100,11 @@ knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none
 knx session fork <s> [--at <message number>] [--pane …] | open <session id> [--pane …]
 knx session close <s> | rename <s> <title…> | archive <s> | pin <s> [--off]
 knx request status <id> | wait <id>           # a request still waiting for your OK
+knx notify <title> [body…] [--pane <id>] [--session <s>]   # a toast, or an OS notification when Kynex is in the background; a click goes there
 knx events                                    # a line per finished turn, session or agent pane that needs you, session.created / session.closed
 ```
 
-Whatever changes something (everything but listing, reading, waiting and moving around) waits
+Whatever changes something (everything but listing, reading, waiting, moving around and `notify`) waits
 for your OK on a card in Kynex first, whoever asks: **Start**, **Start in a new worktree** for a
 new session, or **Not now**. Sessions started this way don't take the focus. A request not
 answered within 30 seconds prints `{"state": "pending", "request": N}`; `knx request wait N`

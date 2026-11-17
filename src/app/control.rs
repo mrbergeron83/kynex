@@ -240,6 +240,9 @@ impl KynexApp {
             Request::SessionRename { session, title } => self.control_session_rename(&session, &title).map_err(Some),
             Request::SessionArchive { session } => self.control_session_archive(&session).map_err(Some),
             Request::SessionPin { session, off } => self.control_session_pin(&session, off).map_err(Some),
+            Request::Notify { title, body, pane, session } => {
+                self.control_notify(&title, body, pane, session.as_ref(), cx).map_err(Some)
+            }
             Request::RequestStatus { request } => self.approvals.status(request).map_err(Some),
             Request::RequestWait { request, timeout } => {
                 self.request_wait(request, timeout, reply.clone(), cx);
@@ -396,7 +399,7 @@ impl KynexApp {
         self.tiles.get(&cwd)?.focus()
     }
 
-    fn tiles_have(&self, pane: u64) -> bool {
+    pub(super) fn tiles_have(&self, pane: u64) -> bool {
         self.tiling_scope().and_then(|(_, cwd, _)| self.tiles.get(&cwd)).is_some_and(|t| t.has(pane))
     }
 

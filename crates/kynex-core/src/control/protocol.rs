@@ -175,6 +175,17 @@ pub enum Request {
         #[serde(default)]
         off: bool,
     },
+    /// Shows a toast, or an OS notification when Kynex is in the background; a click goes to
+    /// `pane` or `session`.
+    Notify {
+        title: String,
+        #[serde(default)]
+        body: Option<String>,
+        #[serde(default)]
+        pane: Option<u64>,
+        #[serde(default)]
+        session: Option<SessionRef>,
+    },
     /// Answers when a request that waited for your OK (see `approval`) has its outcome.
     RequestWait {
         request: u64,
@@ -407,6 +418,8 @@ mod tests {
             Request::SessionRename { session: SessionRef::Uid(3), title: "t".into() },
             Request::SessionArchive { session: SessionRef::Id("abc".into()) },
             Request::SessionPin { session: SessionRef::Uid(3), off: true },
+            Request::Notify { title: "Done".into(), body: Some("all green".into()), pane: Some(2), session: None },
+            Request::Notify { title: "Hi".into(), body: None, pane: None, session: Some(SessionRef::Uid(3)) },
             Request::RequestWait { request: 4, timeout: Some(10) },
             Request::RequestStatus { request: 4 },
             Request::WorkspaceRemove { path: "/w".into(), force: true },
