@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -82,10 +83,38 @@ pub fn list(root: &Path) -> Vec<Workspace> {
     }
 }
 
-/// Where Kynex puts the worktrees it creates for a project:
+/// The folder picked in the app settings for new worktrees, if any.
+static APP_ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
+
+/// Sets the app-wide folder for new worktrees; `None` is the default under the data dir.
+pub fn set_worktree_root(root: Option<PathBuf>) {
+    if let Ok(mut r) = APP_ROOT.write() {
+        *r = root.filter(|p| !p.as_os_str().is_empty());
+    }
+}
+
+/// The app-wide folder for new worktrees, if one is set.
+pub fn worktree_root() -> Option<PathBuf> {
+    APP_ROOT.read().ok().and_then(|r| r.clone())
+}
+
+/// Where Kynex puts the worktrees it creates for a project: the project's own folder
+/// (Setup settings) as it is, else `<app folder>/<project>-<hash>`, else
 /// `<data dir>/worktrees/<project>-<hash>`.
 pub fn worktrees_dir(project: &Path) -> PathBuf {
-    data_dir().join("worktrees").join(project::folder_name(project))
+    let own = project::WorktreeSettings::load(project).root;
+    worktrees_dir_with(project, own.as_deref(), worktree_root().as_deref())
+}
+
+/// [`worktrees_dir`] for given settings. A project folder may be relative to the project
+/// or start with `~/`.
+pub fn worktrees_dir_with(project: &Path, project_root: Option<&Path>, app_root: Option<&Path>) -> PathBuf {
+    let sub = project::folder_name(project);
+    match (project_root, app_root) {
+        (Some(own), _) => crate::links::resolve(project, &own.to_string_lossy()),
+        (None, Some(app)) => crate::links::resolve(project, &app.to_string_lossy()).join(sub),
+        (None, None) => data_dir().join("worktrees").join(sub),
+    }
 }
 
 /// The folder for a new worktree on `branch`: `<worktrees dir>/<branch slug>`.
@@ -636,6 +665,21 @@ mod tests {
         );
         assert_eq!(branch_for("", 0xabc), "kynex/branch-abc");
         assert_eq!(branch_for("Ünïcode / ok", 1), "kynex/ünïcode-ok-1");
+    }
+
+    #[test]
+    fn the_worktrees_folder_follows_the_project_then_the_app() {
+        let project = Path::new("/work/app");
+        let (own, app) = (std::env::temp_dir().join("own"), std::env::temp_dir().join("app"));
+        let sub = project::folder_name(project);
+        // Default.
+        assert_eq!(worktrees_dir_with(project, None, None), data_dir().join("worktrees").join(&sub));
+        // App-wide: a folder per project inside it.
+        assert_eq!(worktrees_dir_with(project, None, Some(&app)), app.join(&sub));
+        // The project's own wins and is used as it is.
+        assert_eq!(worktrees_dir_with(project, Some(&own), Some(&app)), own);
+        // Relative to the project.
+        assert_eq!(worktrees_dir_with(project, Some(Path::new("../trees")), None), project.join("../trees"));
     }
 
     #[test]

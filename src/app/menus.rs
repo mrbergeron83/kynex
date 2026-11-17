@@ -438,7 +438,7 @@ impl KynexApp {
                         .text_color(t.error)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.menu = None;
-                            this.close_project(i);
+                            this.close_project(i, cx);
                             cx.notify();
                         }))
                         .into_any_element(),

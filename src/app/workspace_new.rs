@@ -598,7 +598,7 @@ impl KynexApp {
                         if changed && let Err(e) = workspaces.save(&project) {
                             this.toast(Toast::error(e));
                         }
-                        this.close_project(i);
+                        this.close_project(i, cx);
                     }
                 }
                 cx.notify();
