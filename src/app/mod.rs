@@ -52,6 +52,7 @@
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `workspaces.rs`     | workspaces: listing, selecting, their folders        |
 //! | `workspace_list.rs` | a workspace's row in the tree: lamp, fold, menu      |
+//! | `workspace_binding.rs` | a workspace bound to its branch: binding, drift warning |
 //! | `workspace_new.rs`  | making and removing workspaces, folding worktree tabs |
 //! | `removed_workspaces.rs` | the "Removed workspaces" section: their sessions, Forget, Continue in |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, in chat            |
@@ -197,6 +198,7 @@ mod transcript;
 mod transcript_rows;
 mod trust;
 mod viewer;
+mod workspace_binding;
 mod workspace_list;
 mod workspace_new;
 mod workspaces;
@@ -260,6 +262,8 @@ pub struct KynexApp {
     /// Each project's saved workspaces (selection, sessions, order), read on first use.
     workspaces: HashMap<PathBuf, kynex_core::workspace::Workspaces>,
     workspace_ui: workspace_new::WorkspaceUi,
+    /// Which drifted workspaces were warned about (`workspace_binding.rs`).
+    binding: workspace_binding::Binding,
     /// The "Removed workspaces" section: what is unfolded, and what a right-click asked.
     removed_ui: removed_workspaces::RemovedUi,
     /// Each open project's colour settings, read once.
@@ -667,6 +671,7 @@ impl KynexApp {
             todos_open: Default::default(),
             workspaces: HashMap::new(),
             workspace_ui: Default::default(),
+            binding: Default::default(),
             removed_ui: Default::default(),
             terminals: Vec::new(),
             term_panes: HashMap::new(),

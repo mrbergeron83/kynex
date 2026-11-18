@@ -34,6 +34,8 @@ something wait for the user's OK in Kynex; one not answered within 30 seconds sa
 with a request id, and `knx request wait <id>` gets its outcome (it also comes to you as a message). `knx api schema` \
 prints the whole protocol as JSON. A session you start is your child: when its turn ends, its answer comes to you as a <session-notification> message, so you needn't wait on it. Your session's id is in the \
 KYNEX_SESSION environment variable, your workspace folder in KYNEX_WORKSPACE_DIR. \
+Don't switch the branch of the workspace you're in; for issue or release work make a worktree \
+of its own with `knx workspace create <branch> --session`. \
 Use it only when the user's request calls for it.";
 
 /// The folder of `data_dir` the shims go in.

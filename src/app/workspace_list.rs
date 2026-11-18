@@ -42,6 +42,8 @@ pub(super) struct WorkspaceRow {
     pub label: String,
     /// Its branch when the name doesn't say it already, or "folder" / "missing".
     pub branch: Option<String>,
+    /// Set when it isn't on the branch it's bound to: what the branch's tooltip says.
+    pub drift: Option<String>,
     pub tip: String,
     pub selected: bool,
     /// Its sessions are drawn under it.
@@ -169,14 +171,17 @@ impl KynexApp {
                     .map(|c| div().flex_none().text_xs().text_color(t.text_placeholder).child(c.to_string())),
             )
             .children(w.branch.clone().map(|b| {
+                let drift = w.drift.clone();
                 div()
+                    .id(("workspace-branch", n))
                     .flex_none()
                     .max_w(px(100.))
                     .truncate()
                     .font_family(mono())
                     .text_xs()
-                    .text_color(t.text_placeholder)
+                    .text_color(if drift.is_some() { t.warning } else { t.text_placeholder })
                     .child(b)
+                    .when_some(drift, |d, tip| d.tooltip(Tooltip::text(tip)))
             }))
             .child(
                 // Always there on the shown workspace, on the others when hovered.

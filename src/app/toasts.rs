@@ -73,6 +73,7 @@ impl KynexApp {
             Action::GoToPane(id) => self.focus_pane(id, window, cx),
             Action::ViewUpdate => self.open_about(cx),
             Action::ContinueInChat(key) => self.continue_in_chat(key, cx),
+            Action::RebindWorkspace(id) => self.rebind_workspace(id, cx),
         }
         cx.notify();
     }
