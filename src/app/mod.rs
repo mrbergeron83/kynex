@@ -21,6 +21,7 @@
 //! | `control_workspaces.rs` | its `workspace` commands: list, show, make, remove |
 //! | `control_panes.rs`  | its terminal / agent pane commands: read, run, prompt, wait |
 //! | `control_cards.rs`  | the card you answer before a `knx` request changes something |
+//! | `settings_notify.rs` | Settings > Notifications: delivery and sound per event |
 //! | `control_notify.rs` | its `notify` command: a toast or OS notification |
 //! | `control_pane_layout.rs` | its pane layout commands: move, swap, resize, zoom |
 //! | `control_sessions.rs` | its session commands: new, fork, open, close, rename, archive, pin |
@@ -175,6 +176,7 @@ mod session_tidy;
 mod session_tree;
 mod sessions_panel;
 mod settings;
+mod settings_notify;
 mod setup;
 mod shell_runs;
 pub(crate) mod slash;

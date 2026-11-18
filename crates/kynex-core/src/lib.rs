@@ -46,6 +46,7 @@ pub mod mentions;
 pub mod migrate;
 pub mod model_groups;
 pub mod motion;
+pub mod notify;
 pub mod open;
 pub mod openrouter;
 pub mod palette;

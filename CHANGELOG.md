@@ -5,6 +5,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Settings > General > Notifications: for "a session finishes" and "a session needs you" separately, choose where the note goes (off, a toast, a system notification, or both) (#448).
+- Your own sound for each of those events: pick a sound file (WAV on Windows), or keep the system's, or none; a provider or an agent can have its own (#447).
+
+### Changed
+
+- Notifications settings are now per event; your old on/off notification and sound choices carry over.
+
 ### Fixed
 
 - A `knx` wait (`--wait`, `pane wait`, `session wait`) is dropped as soon as its client goes away (Ctrl+C), instead of staying in Kynex until what it waited for ended.

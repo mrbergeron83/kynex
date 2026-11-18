@@ -39,7 +39,7 @@ impl KynexApp {
             return Err(format!("no pane {pane} in the shown workspace"));
         }
         let body = body.unwrap_or_default();
-        if !self.window_active && self.saved.notify {
+        if !self.window_active && self.saved.notifications.any_on() {
             let tag = match (key, pane) {
                 (Some(key), _) => tag(key),
                 (None, Some(pane)) => format!("pane-{pane}"),
