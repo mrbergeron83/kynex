@@ -163,6 +163,7 @@ impl KynexApp {
         self.focus_input(window, cx);
         cx.spawn(async move |this, cx| {
             let root = project.clone();
+            let branch = name.clone();
             let made = cx
                 .background_spawn(async move {
                     let _t = kynex_core::trace::span("new workspace: default branch + git worktree add (background)");
@@ -176,6 +177,7 @@ impl KynexApp {
                 let typed = this.workspace_ui.creating.take();
                 match made {
                     Ok(path) => {
+                        this.bind_made(&project, &path, &branch, cx);
                         this.refresh_worktrees([&project], cx);
                         this.select_workspace(&path, cx);
                     }

@@ -179,6 +179,9 @@ pub struct Workspaces {
     pub history: BTreeMap<String, History>,
     /// Workspaces removed through Kynex, whose sessions stay in sight (see `removed`).
     pub removed: Vec<crate::removed::Removed>,
+    /// The branch each workspace is bound to, keyed like `sessions` (see `binding`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub branches: BTreeMap<String, String>,
 }
 
 /// The `history` map, less the entries that don't parse.
@@ -339,6 +342,7 @@ impl Workspaces {
         self.sessions.remove(&normalize(path));
         self.layouts.remove(&normalize(path));
         self.history.remove(&normalize(path));
+        self.unbind(path);
         self.order.retain(|p| normalize(p) != normalize(path));
         self.folders.retain(|p| normalize(p) != normalize(path));
         if self.selected.as_deref().is_some_and(|s| normalize(s) == normalize(path)) {

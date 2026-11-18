@@ -43,6 +43,9 @@ pub enum Action {
     /// "Continue in Chat": moves an OpenRouter session whose model takes no
     /// tool calls to Chat, and sends its last message again there.
     ContinueInChat(Key),
+    /// "Keep here": a drifted workspace is bound to the branch it's on now. The number
+    /// names what the app kept for it.
+    RebindWorkspace(u64),
 }
 
 impl Action {
@@ -51,6 +54,7 @@ impl Action {
             Action::GoToSession(_) => "Go to session",
             Action::ViewUpdate => "View",
             Action::ContinueInChat(_) => "Continue in Chat",
+            Action::RebindWorkspace(_) => "Keep here",
         }
     }
 }

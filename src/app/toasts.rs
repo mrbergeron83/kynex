@@ -72,6 +72,7 @@ impl KynexApp {
             Action::GoToSession(key) => self.go_to_session(key, window, cx),
             Action::ViewUpdate => self.open_about(cx),
             Action::ContinueInChat(key) => self.continue_in_chat(key, cx),
+            Action::RebindWorkspace(id) => self.rebind_workspace(id, cx),
         }
         cx.notify();
     }

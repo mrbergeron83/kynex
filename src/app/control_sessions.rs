@@ -95,6 +95,7 @@ impl KynexApp {
         let branch = workspace::branch_for(&about, stamp);
         cx.spawn(async move |this, cx| {
             let root = project.clone();
+            let name = branch.clone();
             let made = cx
                 .background_spawn(async move {
                     let base = git::default_branch(&root);
@@ -103,6 +104,7 @@ impl KynexApp {
                 .await;
             this.update(cx, |this, cx| {
                 let answer = made.and_then(|path| {
+                    this.bind_made(&project, &path, &name, cx);
                     this.refresh_worktrees([&project], cx);
                     this.approvals.record_made(Made::Workspace(path.clone()), caller);
                     // A workspace never shown has no panes. With a prompt the session works

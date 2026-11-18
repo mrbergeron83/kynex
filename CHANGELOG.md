@@ -7,6 +7,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- A workspace stays bound to its branch: when a session switches the branch of the folder it runs in, the workspace row's branch turns amber and a note offers to keep the new branch there. Claude is told to make a worktree for issue or release work instead.
 - Claude's todo list shows above the composer while Claude works, with the item in hand marked. When the turn is over it folds to one line, and goes away once everything is done.
 - `/fork` (or `/branch`) copies a session into a pane beside it. Sending to the copy continues the conversation as a new session (`--fork-session`); the original stays as it was.
 - Steer a running turn: Alt+Enter, or Steer on the queue, sends the queued messages and the draft into the turn without stopping it, and Claude reads them at its next step. Ctrl+Enter still stops the turn first.

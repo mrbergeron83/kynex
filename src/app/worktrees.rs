@@ -151,7 +151,12 @@ impl KynexApp {
         }
         let root = path.to_path_buf();
         let entity = cx.new(|cx| Worktrees::new(root, cx));
-        cx.observe(&entity, |_, _, cx| cx.notify()).detach();
+        let project = path.to_path_buf();
+        cx.observe(&entity, move |this, _, cx| {
+            this.worktrees_changed(&project, cx);
+            cx.notify();
+        })
+        .detach();
         self.worktrees.insert(path.to_path_buf(), entity.clone());
         entity
     }
