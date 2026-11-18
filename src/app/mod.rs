@@ -222,7 +222,7 @@ use kynex_core::session::{self, Kind, Session};
 pub use control::OPEN_AT_START;
 pub use custom_commands::bind_command_keys;
 use drafts::Draft;
-pub use keys::{SHELL_KEYS, SendPrefix, ToggleGit, ToggleTerminal, bind_keys, prefix_key};
+pub use keys::{CopyMode, SHELL_KEYS, SendPrefix, ToggleGit, ToggleTerminal, bind_keys, prefix_key};
 use menus::OpenMenu;
 use palette::PaletteView;
 use scratch_modal::ScratchModal;

@@ -7,10 +7,12 @@
 //! | `mod.rs`     | `TerminalPanel`: tabs, running a command in the right one |
 //! | `view.rs`    | `TerminalView`: one shell, keyboard, mouse, clipboard     |
 //! | `element.rs` | drawing the grid on the GPU, sizing it, colours          |
+//! | `search.rs`  | find in the scrollback (bar) and copy mode (keys, badge)  |
 //!
 //! The terminal itself (PTY, parser, shells) is `kynex_core::terminal`.
 
 mod element;
+mod search;
 mod view;
 
 use std::path::PathBuf;

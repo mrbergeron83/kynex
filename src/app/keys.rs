@@ -87,7 +87,8 @@ actions!(
         UndoLayout,
         RedoLayout,
         ReopenPane,
-        LayoutSnapshots
+        LayoutSnapshots,
+        CopyMode
     ]
 );
 
@@ -243,6 +244,8 @@ const PREFIXED: &[(&str, &str)] = &[
     ("redo_layout", "prefix shift-u"),
     ("reopen_pane", "prefix shift-r"),
     ("layout_snapshots", "prefix s"),
+    // A terminal's copy mode (`prefix v` splits, `prefix [` is the previous project).
+    ("copy_mode", "prefix y"),
 ];
 
 /// Keys that scroll the transcript when nothing focused (the message box, a
@@ -316,6 +319,7 @@ fn prefixed_binding(name: &str, keys: &'static str) -> Option<KeyBinding> {
         "undo_layout" => KeyBinding::new(keys, UndoLayout, c),
         "redo_layout" => KeyBinding::new(keys, RedoLayout, c),
         "reopen_pane" => KeyBinding::new(keys, ReopenPane, c),
+        "copy_mode" => KeyBinding::new(keys, CopyMode, c),
         "layout_snapshots" => KeyBinding::new(keys, LayoutSnapshots, c),
         _ => {
             let (what, rest) = name.split_once('_')?;
