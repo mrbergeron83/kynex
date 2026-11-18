@@ -227,7 +227,7 @@ pub enum Request {
 }
 
 /// Where `pane move` puts a pane. A tab is numbered from 1, as the tab strip shows it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneTarget {
     Dir(Direction),
