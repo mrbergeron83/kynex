@@ -21,7 +21,7 @@ use crate::queue::Queue;
 use crate::session_log::{LoggedImage, Span};
 use crate::tasks::{self, Tasks};
 
-pub use crate::removed::continue_in;
+pub use crate::removed::{continue_in, drop_moved, move_to};
 
 mod composer;
 mod launch;
@@ -325,6 +325,9 @@ pub struct Session {
     pub mode: project::Mode,
     /// Messages written while Claude works; the next goes when a turn ends.
     pub queue: Queue,
+    /// The queue stays put when a turn ends: the session is about to move to another
+    /// folder, where it goes instead.
+    pub hold_queue: bool,
     /// Reopened from a past conversation ([`Self::resume`]), not started here.
     reopened: bool,
     /// `session_id` names a conversation the CLI has a log of: reopened, or
@@ -548,6 +551,7 @@ impl Session {
             context: ContextUse::default(),
             mode,
             queue: Queue::default(),
+            hold_queue: false,
             reopened: false,
             conversation: false,
             tasks: Tasks::default(),
@@ -1801,7 +1805,9 @@ impl Session {
                 self.busy = false;
                 self.finished = true;
                 self.late_steer = std::mem::take(&mut self.steered);
-                if let Some(next) = self.queue.take_all() {
+                if !self.hold_queue
+                    && let Some(next) = self.queue.take_all()
+                {
                     self.send(next.text, next.attachments);
                 }
             }

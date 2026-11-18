@@ -55,6 +55,7 @@
 //! | `workspaces.rs`     | workspaces: listing, selecting, their folders        |
 //! | `workspace_list.rs` | a workspace's row in the tree: lamp, fold, menu      |
 //! | `workspace_binding.rs` | a workspace bound to its branch: binding, drift warning |
+//! | `session_move.rs`   | a session that makes a worktree moves into it        |
 //! | `workspace_new.rs`  | making and removing workspaces, folding worktree tabs |
 //! | `removed_workspaces.rs` | the "Removed workspaces" section: their sessions, Forget, Continue in |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, in chat            |
@@ -172,6 +173,7 @@ mod rules_view;
 mod scratch_modal;
 mod session_groups;
 mod session_header;
+mod session_move;
 mod session_rows;
 mod session_select;
 mod session_tidy;
@@ -268,6 +270,8 @@ pub struct KynexApp {
     workspace_ui: workspace_new::WorkspaceUi,
     /// Which drifted workspaces were warned about (`workspace_binding.rs`).
     binding: workspace_binding::Binding,
+    /// Sessions that made a worktree, and their moves into it (`session_move.rs`).
+    moves: session_move::Moves,
     /// The "Removed workspaces" section: what is unfolded, and what a right-click asked.
     removed_ui: removed_workspaces::RemovedUi,
     /// Each open project's colour settings, read once.
@@ -678,6 +682,7 @@ impl KynexApp {
             workspaces: HashMap::new(),
             workspace_ui: Default::default(),
             binding: Default::default(),
+            moves: Default::default(),
             removed_ui: Default::default(),
             terminals: Vec::new(),
             term_panes: HashMap::new(),
@@ -822,6 +827,8 @@ impl KynexApp {
         let mut openrouter_turn_ended = false;
         // Sessions whose turn just ended, for the answers going back to who started them.
         let mut turn_ends = Vec::new();
+        // Sessions that just added a git worktree, and text naming it.
+        let mut added = Vec::new();
         for s in self.all_sessions_mut() {
             // Before `seen`: history isn't news (no toasts for old tasks).
             if let Some(n) = s.take_history() {
@@ -847,8 +854,14 @@ impl KynexApp {
             }
             openrouter_turn_ended |= was_busy && !s.busy && s.provider().provider().is_openrouter();
             for item in s.items.get(seen..).into_iter().flatten() {
-                if let session::Item::Task(n) = item {
-                    ended.push((s.uid, n.clone()));
+                match item {
+                    session::Item::Task(n) => ended.push((s.uid, n.clone())),
+                    session::Item::ToolResult { id, is_error: false, .. } => {
+                        if let Some(text) = session_move::adds_worktree(s, id) {
+                            added.push((s.uid, text));
+                        }
+                    }
+                    _ => {}
                 }
             }
             if let Some(init) = s.take_init() {
@@ -896,6 +909,10 @@ impl KynexApp {
             self.turn_ended(key);
         }
         self.refresh_worktrees(&touched, cx);
+        for (key, text) in added {
+            self.worktree_added(key, text, cx);
+        }
+        self.advance_moves(cx);
         self.toast_new_tasks(ended);
         if called && let Some(handle) = cx.windows().first().copied() {
             cx.defer(move |cx| {

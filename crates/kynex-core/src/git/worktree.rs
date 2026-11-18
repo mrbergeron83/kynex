@@ -196,15 +196,59 @@ pub fn worktree_in<'a>(text: &str, worktrees: &'a [Worktree]) -> Option<&'a Work
 pub fn works_in(name: &str, input: &str) -> bool {
     match name {
         "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => true,
-        "Bash" | "PowerShell" => {
-            let command = serde_json::from_str::<serde_json::Value>(input)
-                .ok()
-                .and_then(|v| v.get("command").and_then(|c| c.as_str()).map(str::to_string))
-                .unwrap_or_else(|| input.to_string());
-            !only_reads(&command)
-        }
+        "Bash" | "PowerShell" => !only_reads(&shell_command(input)),
         _ => false,
     }
+}
+
+/// A shell tool call's command: `input`'s `command`, or `input` itself when it isn't JSON.
+fn shell_command(input: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(input)
+        .ok()
+        .and_then(|v| v.get("command").and_then(|c| c.as_str()).map(str::to_string))
+        .unwrap_or_else(|| input.to_string())
+}
+
+/// When tool call `name` with `input` runs `git worktree add`: text naming the folder it
+/// adds, for [`worktree_in`] once git lists it (the path argument, `/`-led so a bare
+/// folder name matches too). Only `git` run as a command counts, not the words in an
+/// `echo` or a message; a path in a variable isn't known, so that's `None` too.
+pub fn adds_worktree(name: &str, input: &str) -> Option<String> {
+    if !matches!(name, "Bash" | "PowerShell") {
+        return None;
+    }
+    let command = shell_command(input);
+    command.split(['\n', ';', '|', '&']).find_map(|part| {
+        let words: Vec<&str> = part.split_whitespace().map(|w| w.trim_matches(['"', '\'', '(', ')'])).collect();
+        let first = words.first()?;
+        if !first.eq_ignore_ascii_case("git") && !first.eq_ignore_ascii_case("git.exe") {
+            return None;
+        }
+        // Past `git`, its options (`-C <dir>`, `-c <k=v>`) and `worktree add`.
+        let mut rest = words[1..].iter();
+        loop {
+            match rest.next()? {
+                &"worktree" => break,
+                w if w.eq_ignore_ascii_case("-c") => _ = rest.next(),
+                w if w.starts_with('-') => {}
+                // Another subcommand.
+                _ => return None,
+            }
+        }
+        if rest.next() != Some(&"add") {
+            return None;
+        }
+        // The first word that isn't an option (or an option's value) is the path.
+        while let Some(w) = rest.next() {
+            match *w {
+                "-b" | "-B" | "--reason" => _ = rest.next(),
+                w if w.starts_with('-') => {}
+                w if w.starts_with('$') || w.starts_with('%') => return None,
+                w => return Some(format!("/{w}")),
+            }
+        }
+        None
+    })
 }
 
 /// Whether every part of shell `command` (split on `&&`, `||`, `;`, `|` and lines) is a
@@ -420,6 +464,31 @@ mod tests {
         assert!(!works_in("Grep", r#"{"path":"C:\\wt"}"#));
         // A command that isn't JSON is read as it is.
         assert!(!works_in("Bash", "cd ../wt && git status"));
+    }
+
+    #[test]
+    fn tells_a_worktree_add_and_the_folder_it_makes() {
+        let wt = |path: &str, main| Worktree { path: PathBuf::from(path), main, ..Default::default() };
+        let list = [wt("C:/trsb/OTTO", true), wt("C:/trsb/OTTO-165", false), wt("C:/trsb/OTTO-2", false)];
+        let made = |name: &str, c: &str| {
+            let input = serde_json::json!({ "command": c }).to_string();
+            adds_worktree(name, &input).and_then(|t| worktree_in(&t, &list)).map(|w| w.path.clone())
+        };
+        let otto = Some(PathBuf::from("C:/trsb/OTTO-165"));
+        assert_eq!(made("Bash", "git fetch origin dev && git worktree add -b feat/165 ../OTTO-165 origin/dev"), otto);
+        assert_eq!(made("PowerShell", r"git -C C:\trsb\OTTO worktree add C:\trsb\OTTO-165 -b feat/165"), otto);
+        assert_eq!(made("Bash", "git worktree add --detach OTTO-165"), otto);
+        // Another worktree visited first doesn't count: the one added does.
+        assert_eq!(made("Bash", "cd ../OTTO-2 && git worktree add ../OTTO-165"), otto);
+        // A path in a variable isn't known: no guessing from other worktrees named nearby.
+        assert_eq!(made("Bash", "cd ../OTTO-2 && git worktree add $WT"), None);
+        // Words that only mention it.
+        assert_eq!(made("Bash", "echo git worktree add ../OTTO-165"), None);
+        assert_eq!(made("Bash", "git commit -m \"git worktree add ../OTTO-165\""), None);
+        // Not adding one.
+        assert_eq!(adds_worktree("Bash", r#"{"command":"git worktree list"}"#), None);
+        assert_eq!(adds_worktree("Bash", r#"{"command":"git status && cd ../OTTO-165"}"#), None);
+        assert_eq!(adds_worktree("Read", r#"{"command":"git worktree add x"}"#), None);
     }
 
     #[test]

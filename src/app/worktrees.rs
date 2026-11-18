@@ -154,6 +154,7 @@ impl KynexApp {
         let project = path.to_path_buf();
         cx.observe(&entity, move |this, _, cx| {
             this.worktrees_changed(&project, cx);
+            this.check_added(&project, cx);
             cx.notify();
         })
         .detach();
