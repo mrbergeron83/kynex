@@ -112,14 +112,42 @@ pub fn continue_in(from: &Path, id: &str, to: &Path) -> Result<(), String> {
     let dir = session::transcripts_dir(to)
         .or_else(|| Some(session::projects_dir()?.join(session::transcripts_name(to))))
         .ok_or_else(|| "Couldn't find the transcripts folder".to_string())?;
-    copy_session(&src, &dir)
+    copy_session(&src, &dir, false)
 }
 
-/// Copies the log `src` (`<id>.jsonl`) and its sibling folder `<id>/` into `dir`.
-fn copy_session(src: &Path, dir: &Path) -> Result<(), String> {
+/// [`continue_in`] for a session moving to `to` for good: a log `to` has already is
+/// replaced (an earlier try's copy may be behind). The original stays until the caller
+/// deletes it, once the old process is gone. Blocking: file copies.
+pub fn move_to(from: &Path, id: &str, to: &Path) -> Result<(), String> {
+    let src = session::find_transcript(from, id).ok_or_else(|| "Couldn't find the session's log".to_string())?;
+    let dir = session::transcripts_dir(to)
+        .or_else(|| Some(session::projects_dir()?.join(session::transcripts_name(to))))
+        .ok_or_else(|| "Couldn't find the transcripts folder".to_string())?;
+    copy_session(&src, &dir, true)
+}
+
+/// After [`move_to`]: deletes session `id`'s log (and its folder) from `from`'s own
+/// transcripts folder only, never one found elsewhere (that may be the copy), and only
+/// when the copy is there in `to`'s, a folder of its own. Blocking.
+pub fn drop_moved(from: &Path, id: &str, to: &Path) -> Result<(), String> {
+    let dir = session::transcripts_dir(from).ok_or("no transcripts folder")?;
+    let file = format!("{id}.jsonl");
+    let copied = session::transcripts_dir(to).filter(|d| *d != dir).is_some_and(|d| d.join(&file).is_file());
+    if !copied {
+        return Err("the moved log isn't in its new folder; the old one stays".into());
+    }
+    let log = dir.join(file);
+    std::fs::remove_file(&log).map_err(|e| format!("couldn't delete {}: {e}", log.display()))?;
+    let _ = std::fs::remove_dir_all(dir.join(id));
+    Ok(())
+}
+
+/// Copies the log `src` (`<id>.jsonl`) and its sibling folder `<id>/` into `dir`; a log
+/// already there is kept unless `replace`.
+fn copy_session(src: &Path, dir: &Path, replace: bool) -> Result<(), String> {
     let name = src.file_name().ok_or("bad transcript path")?;
     let dest = dir.join(name);
-    if dest.exists() {
+    if dest == src || (dest.exists() && !replace) {
         return Ok(());
     }
     std::fs::create_dir_all(dir).map_err(|e| format!("Couldn't create {}: {e}", dir.display()))?;
@@ -217,15 +245,20 @@ mod tests {
         std::fs::write(from.join("abc.jsonl"), "log").unwrap();
         std::fs::write(from.join("abc").join("subagents").join("a.jsonl"), "sub").unwrap();
         std::fs::write(from.join("other.jsonl"), "other").unwrap();
-        copy_session(&from.join("abc.jsonl"), &to).unwrap();
+        copy_session(&from.join("abc.jsonl"), &to, false).unwrap();
         assert_eq!(std::fs::read_to_string(to.join("abc.jsonl")).unwrap(), "log");
         assert_eq!(std::fs::read_to_string(to.join("abc").join("subagents").join("a.jsonl")).unwrap(), "sub");
         assert!(!to.join("other.jsonl").exists());
         assert!(from.join("abc.jsonl").exists());
         // A second time, and with a log already there, leaves it alone.
         std::fs::write(to.join("abc.jsonl"), "newer").unwrap();
-        copy_session(&from.join("abc.jsonl"), &to).unwrap();
+        copy_session(&from.join("abc.jsonl"), &to, false).unwrap();
         assert_eq!(std::fs::read_to_string(to.join("abc.jsonl")).unwrap(), "newer");
+        // A move replaces it; copying a log onto itself leaves it whole.
+        copy_session(&from.join("abc.jsonl"), &to, true).unwrap();
+        assert_eq!(std::fs::read_to_string(to.join("abc.jsonl")).unwrap(), "log");
+        copy_session(&from.join("abc.jsonl"), &from, true).unwrap();
+        assert_eq!(std::fs::read_to_string(from.join("abc.jsonl")).unwrap(), "log");
         std::fs::remove_dir_all(&base).ok();
     }
 }
