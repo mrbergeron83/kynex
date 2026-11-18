@@ -598,7 +598,7 @@ impl KynexApp {
             self.toast(Toast::warning("Claude is still working here. Press again to close the tab and stop it."));
             return cx.notify();
         }
-        self.close_project(i);
+        self.close_project(i, cx);
         cx.notify();
     }
 

@@ -38,19 +38,26 @@ impl Kind {
 pub enum Action {
     /// "Go to session": shows that session.
     GoToSession(Key),
+    /// "Go to pane": focuses that pane of the shown workspace.
+    GoToPane(u64),
     /// "View": the About modal, where a new version installs.
     ViewUpdate,
     /// "Continue in Chat": moves an OpenRouter session whose model takes no
     /// tool calls to Chat, and sends its last message again there.
     ContinueInChat(Key),
+    /// "Keep here": a drifted workspace is bound to the branch it's on now. The number
+    /// names what the app kept for it.
+    RebindWorkspace(u64),
 }
 
 impl Action {
     pub fn label(self) -> &'static str {
         match self {
             Action::GoToSession(_) => "Go to session",
+            Action::GoToPane(_) => "Go to pane",
             Action::ViewUpdate => "View",
             Action::ContinueInChat(_) => "Continue in Chat",
+            Action::RebindWorkspace(_) => "Keep here",
         }
     }
 }

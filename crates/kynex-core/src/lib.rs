@@ -6,6 +6,7 @@ pub mod agent_panes;
 pub mod attach;
 pub mod attention;
 pub mod awake;
+pub mod binding;
 pub mod browser;
 pub mod catalog;
 pub mod chat_api;

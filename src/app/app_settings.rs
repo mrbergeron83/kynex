@@ -154,6 +154,31 @@ impl KynexApp {
         .detach();
     }
 
+    /// New worktrees go under `root` (a folder per project), or with `None` the data dir.
+    fn set_worktree_root(&mut self, root: Option<PathBuf>, cx: &mut Context<Self>) {
+        kynex_core::workspace::set_worktree_root(root.clone());
+        self.saved.worktree_root = root;
+        self.save();
+        cx.notify();
+    }
+
+    fn pick_worktree_root(&mut self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Put worktrees here".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(mut paths))) = paths.await
+                && let Some(path) = paths.pop()
+            {
+                this.update(cx, |this, cx| this.set_worktree_root(Some(path), cx)).ok();
+            }
+        })
+        .detach();
+    }
+
     /// Sessions started from now on get this browser.
     fn set_browser(&mut self, pick: Pick, cx: &mut Context<Self>) {
         browser::set(pick);
@@ -291,6 +316,47 @@ impl KynexApp {
                         d.child(
                             outline_button("auto-cli", "Find automatically", cx)
                                 .on_click(cx.listener(|this, _, _, cx| this.set_cli_path(None, cx))),
+                        )
+                    }),
+            );
+
+        let root = self.saved.worktree_root.clone();
+        let shown = root.clone().unwrap_or_else(|| data_dir().join("worktrees"));
+        let worktrees = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(heading(
+                "Worktrees folder",
+                "New worktrees go here, in a folder per project; existing ones stay where they are. A project can pick its own under its Setup settings.",
+                t,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .px_2()
+                    .py_1p5()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(t.border_variant)
+                    .bg(t.editor)
+                    .child(div().font_family(mono()).text_sm().truncate().child(shown.display().to_string()))
+                    .when(root.is_none(), |d| d.child(div().text_xs().text_color(t.text_muted).child("Default"))),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        outline_button("pick-worktrees", "Choose…", cx)
+                            .on_click(cx.listener(|this, _, _, cx| this.pick_worktree_root(cx))),
+                    )
+                    .when(root.is_some(), |d| {
+                        d.child(
+                            outline_button("default-worktrees", "Use default", cx)
+                                .on_click(cx.listener(|this, _, _, cx| this.set_worktree_root(None, cx))),
                         )
                     }),
             );
@@ -477,6 +543,7 @@ impl KynexApp {
             .flex_col()
             .gap_6()
             .child(cli)
+            .child(worktrees)
             .child(shell)
             .child(history)
             .child(browser)

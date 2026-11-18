@@ -366,7 +366,7 @@ mod tests {
         assert_eq!(s.recent, Vec::<String>::new());
         assert_eq!(s.older, ids(&["fix old"]));
         let view = View { groups: &g, show_archived: false, filtering: true };
-        assert!(view.is_open(Section::Group(i), 1) && !view.is_open(Section::Recent, 0));
+        assert!(view.is_open(Section::Group(g.index_of(i).unwrap()), 1) && !view.is_open(Section::Recent, 0));
         // Archived ones stay out of a search unless "Show archived" is on.
         assert_eq!(view.drawn(&s), ids(&["fix grouped", "fix old"]));
         let shown = View { show_archived: true, ..view };

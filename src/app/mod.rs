@@ -21,6 +21,8 @@
 //! | `control_workspaces.rs` | its `workspace` commands: list, show, make, remove |
 //! | `control_panes.rs`  | its terminal / agent pane commands: read, run, prompt, wait |
 //! | `control_cards.rs`  | the card you answer before a `knx` request changes something |
+//! | `control_notify.rs` | its `notify` command: a toast or OS notification |
+//! | `control_pane_layout.rs` | its pane layout commands: move, swap, resize, zoom |
 //! | `control_sessions.rs` | its session commands: new, fork, open, close, rename, archive, pin |
 //! | `lineage.rs`        | which session started which: links, caps, answers sent back |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
@@ -50,6 +52,7 @@
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `workspaces.rs`     | workspaces: listing, selecting, their folders        |
 //! | `workspace_list.rs` | a workspace's row in the tree: lamp, fold, menu      |
+//! | `workspace_binding.rs` | a workspace bound to its branch: binding, drift warning |
 //! | `workspace_new.rs`  | making and removing workspaces, folding worktree tabs |
 //! | `removed_workspaces.rs` | the "Removed workspaces" section: their sessions, Forget, Continue in |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, in chat            |
@@ -113,6 +116,8 @@ mod background;
 mod composer;
 mod control;
 mod control_cards;
+mod control_notify;
+mod control_pane_layout;
 mod control_panes;
 mod control_sessions;
 mod control_workspaces;
@@ -193,6 +198,7 @@ mod transcript;
 mod transcript_rows;
 mod trust;
 mod viewer;
+mod workspace_binding;
 mod workspace_list;
 mod workspace_new;
 mod workspaces;
@@ -256,6 +262,8 @@ pub struct KynexApp {
     /// Each project's saved workspaces (selection, sessions, order), read on first use.
     workspaces: HashMap<PathBuf, kynex_core::workspace::Workspaces>,
     workspace_ui: workspace_new::WorkspaceUi,
+    /// Which drifted workspaces were warned about (`workspace_binding.rs`).
+    binding: workspace_binding::Binding,
     /// The "Removed workspaces" section: what is unfolded, and what a right-click asked.
     removed_ui: removed_workspaces::RemovedUi,
     /// Each open project's colour settings, read once.
@@ -663,6 +671,7 @@ impl KynexApp {
             todos_open: Default::default(),
             workspaces: HashMap::new(),
             workspace_ui: Default::default(),
+            binding: Default::default(),
             removed_ui: Default::default(),
             terminals: Vec::new(),
             term_panes: HashMap::new(),

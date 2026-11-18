@@ -28,8 +28,8 @@ pub enum Menu {
     Tab(usize),
     /// A past session's right-click menu, by its id.
     Session(String),
-    /// A session group's right-click menu: group `i` of the workspace at this folder.
-    Group(PathBuf, usize),
+    /// A session group's right-click menu: this group of the workspace at this folder.
+    Group(PathBuf, kynex_core::groups::GroupId),
     /// The right-click menu for several picked sessions.
     Sessions(Vec<String>),
     /// The sessions panel header's menu: grouping by provider, showing archived, tidying old sessions.
@@ -438,7 +438,7 @@ impl KynexApp {
                         .text_color(t.error)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.menu = None;
-                            this.close_project(i);
+                            this.close_project(i, cx);
                             cx.notify();
                         }))
                         .into_any_element(),

@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use gpui::{Context, Entity, Window};
 use kynex_core::agent_panes::AgentState;
+use kynex_core::control::protocol::Event;
 use kynex_core::layout::PaneId;
 use kynex_core::terminal::marker;
 use kynex_core::tiling::{Content, Tiling};
@@ -344,9 +345,9 @@ impl KynexApp {
     pub(super) fn agent_event(&self, pane: PaneId, id: &str, was: AgentState, now: AgentState) {
         let Some(server) = &self.control else { return };
         match now {
-            AgentState::NeedsYou => server.broadcast("needs_you", json!({ "pane": pane, "agent": id })),
+            AgentState::NeedsYou => server.broadcast(Event::NeedsYou, json!({ "pane": pane, "agent": id })),
             AgentState::Done | AgentState::Idle if was == AgentState::Working => {
-                server.broadcast("turn_end", json!({ "pane": pane, "agent": id, "state": "done" }));
+                server.broadcast(Event::TurnEnd, json!({ "pane": pane, "agent": id, "state": "done" }));
             }
             _ => {}
         }

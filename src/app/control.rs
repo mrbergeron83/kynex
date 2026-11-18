@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use gpui::{Context, Window};
 use kynex_core::control::Request;
 use kynex_core::control::approval;
+use kynex_core::control::protocol::Event;
 use kynex_core::control::server::Call;
 use kynex_core::layout::{Axis, PaneId};
 use kynex_core::live::Key;
@@ -147,7 +148,7 @@ impl KynexApp {
             Request::ProjectRemove { path } => {
                 let i = self.saved.projects.iter().position(|p| same_folder(&p.path, std::path::Path::new(&path)));
                 let i = i.ok_or_else(|| Some(format!("{path} isn't open")))?;
-                self.close_project(i);
+                self.close_project(i, cx);
                 Ok(json!({ "closed": path }))
             }
             Request::PaneList { all } => Ok(self.pane_list(all)),
@@ -186,6 +187,10 @@ impl KynexApp {
                 self.focus_pane(pane, window, cx);
                 Ok(json!({ "pane": pane }))
             }
+            Request::PaneMove { pane, to } => self.control_pane_move(pane, to, window, cx),
+            Request::PaneSwap { pane, other } => self.control_pane_swap(pane, other, window, cx),
+            Request::PaneResize { pane, dir, by } => self.control_pane_resize(pane, dir, by, window, cx),
+            Request::PaneZoom { pane, off } => self.control_pane_zoom(pane, off, window, cx),
             Request::PaneClose { pane } => {
                 let Some(pane) = pane.or_else(|| self.focused_pane()) else {
                     return Err(said("no pane to close"));
@@ -240,6 +245,9 @@ impl KynexApp {
             Request::SessionRename { session, title } => self.control_session_rename(&session, &title).map_err(Some),
             Request::SessionArchive { session } => self.control_session_archive(&session).map_err(Some),
             Request::SessionPin { session, off } => self.control_session_pin(&session, off).map_err(Some),
+            Request::Notify { title, body, pane, session } => {
+                self.control_notify(&title, body, pane, session.as_ref(), cx).map_err(Some)
+            }
             Request::RequestStatus { request } => self.approvals.status(request).map_err(Some),
             Request::RequestWait { request, timeout } => {
                 self.request_wait(request, timeout, reply.clone(), cx);
@@ -334,19 +342,19 @@ impl KynexApp {
         // Opened and closed since the last look, with who started them.
         for s in self.all_sessions().filter(|s| !self.control_seen.contains_key(&s.uid)) {
             let data = json!({ "session": s.uid, "id": s.session_id, "parent": self.parent_key(s.uid) });
-            server.broadcast("session.created", data);
+            server.broadcast(Event::SessionCreated, data);
         }
         for gone in self.control_seen.keys().filter(|k| !now.contains_key(k)) {
             let parent = self.approvals.maker(&kynex_core::control::approval::Made::Session(*gone));
-            server.broadcast("session.closed", json!({ "session": gone, "parent": parent }));
+            server.broadcast(Event::SessionClosed, json!({ "session": gone, "parent": parent }));
         }
         for s in self.all_sessions() {
             let (was_busy, was_waiting) = self.control_seen.get(&s.uid).copied().unwrap_or((false, false));
             if was_busy && !s.busy {
-                server.broadcast("turn_end", json!({ "session": s.uid, "state": turn_state(s)["state"] }));
+                server.broadcast(Event::TurnEnd, json!({ "session": s.uid, "state": turn_state(s)["state"] }));
             }
             if !was_waiting && s.waiting() {
-                server.broadcast("needs_you", json!({ "session": s.uid }));
+                server.broadcast(Event::NeedsYou, json!({ "session": s.uid }));
             }
         }
         self.control_seen = now;
@@ -396,7 +404,7 @@ impl KynexApp {
         self.tiles.get(&cwd)?.focus()
     }
 
-    fn tiles_have(&self, pane: u64) -> bool {
+    pub(super) fn tiles_have(&self, pane: u64) -> bool {
         self.tiling_scope().and_then(|(_, cwd, _)| self.tiles.get(&cwd)).is_some_and(|t| t.has(pane))
     }
 

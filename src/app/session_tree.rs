@@ -71,8 +71,12 @@ impl KynexApp {
                     None => c.path.display().to_string(),
                 };
                 // The branch, when the folder's name doesn't already say it.
+                let drift = project.as_deref().and_then(|p| self.drift_of(p, &c));
                 let branch = if c.folder {
                     Some(if c.path.is_dir() { "folder" } else { "missing" }.to_string())
+                } else if let Some(d) = &drift {
+                    // Drifted: always shown, since the name no longer says it.
+                    Some(d.live.clone())
                 } else {
                     c.branch.clone().filter(|b| *b != c.label)
                 };
@@ -80,6 +84,7 @@ impl KynexApp {
                     path: c.path.clone(),
                     label: c.label.clone(),
                     branch,
+                    drift: drift.map(|d| format!("Bound to {}; now on {}", d.bound, d.live)),
                     tip,
                     selected: n == selected,
                     open: false,
@@ -311,7 +316,11 @@ impl KynexApp {
                         if d.cwd != drop_cwd {
                             return;
                         }
-                        this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.drop_into(id, None)));
+                        this.edit_groups(&drop_cwd, |g| {
+                            d.ids.iter().for_each(|id| {
+                                g.drop_into(id, None);
+                            })
+                        });
                         this.organize.selection.clear();
                         cx.notify();
                     }))

@@ -69,6 +69,7 @@ impl KynexApp {
         };
         cx.spawn(async move |this, cx| {
             let root = project.clone();
+            let name = branch.clone();
             let made = cx
                 .background_spawn(async move {
                     let base = git::default_branch(&root);
@@ -78,6 +79,7 @@ impl KynexApp {
             this.update(cx, |this, cx| {
                 match made {
                     Ok(path) => {
+                        this.bind_made(&project, &path, &name, cx);
                         this.refresh_worktrees([&project], cx);
                         this.approvals.record_made(Made::Workspace(path.clone()), caller);
                         // The project may have been switched meanwhile; the workspace is its own project's.
