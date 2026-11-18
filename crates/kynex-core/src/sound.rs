@@ -71,6 +71,12 @@ pub fn play_file(path: &std::path::Path, fallback: Sound) {
     {
         use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FILENAME, SND_NODEFAULT};
+        // An async play loads the file later and says it worked anyway: check what it can first.
+        let wav = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav"));
+        if !wav || !path.is_file() {
+            play(fallback);
+            return;
+        }
         let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
         // SAFETY: `wide` is NUL-terminated and outlives the call; the sound is a file name, not memory.
         let played =
