@@ -166,6 +166,8 @@ impl KynexApp {
             approvals.finish(id, answer);
             wake();
         });
-        self.dispatch(request, caller, choice == Choice::StartInWorktree, tx, window, cx);
+        // The card's own channel: it stays until the request is done.
+        let gone = kynex_core::control::server::Gone::default();
+        self.dispatch(request, caller, choice == Choice::StartInWorktree, tx, gone, window, cx);
     }
 }

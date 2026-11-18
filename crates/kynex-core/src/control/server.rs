@@ -5,8 +5,10 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Sender, channel};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use interprocess::local_socket::{GenericFilePath, ListenerOptions, Stream, ToFsName, prelude::*};
 use serde_json::{Value, json};
@@ -19,7 +21,26 @@ pub struct Call {
     /// The session it says it comes from (a `knx` run inside one). Not proof: see `agent`.
     pub caller: Option<u64>,
     pub reply: Sender<Result<Value, String>>,
+    /// Set once the client hangs up before its answer (Ctrl+C on `knx … --wait`).
+    pub gone: Gone,
 }
+
+/// Whether a client hung up. The connection's thread sets it; the app drops a wait that has it.
+#[derive(Clone, Debug, Default)]
+pub struct Gone(Arc<AtomicBool>);
+
+impl Gone {
+    pub fn hung_up(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    fn set(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// How often a connection waiting for its answer looks whether the client is still there.
+const PROBE: Duration = Duration::from_millis(250);
 
 type Calls = Arc<Mutex<VecDeque<Call>>>;
 type Subscribers = Arc<Mutex<Vec<Sender<String>>>>;
@@ -176,15 +197,77 @@ fn serve(stream: Stream, calls: Calls, subscribers: Subscribers, wake: Arc<dyn F
             return;
         }
         let (reply, answered) = channel();
+        let gone = Gone::default();
         if let Ok(mut q) = calls.lock() {
-            q.push_back(Call { request, caller, reply });
+            q.push_back(Call { request, caller, reply, gone: gone.clone() });
         }
         wake();
-        let result = answered.recv().unwrap_or_else(|_| Err("Kynex closed".to_string()));
+        // Nobody reads the connection meanwhile, so look now and then whether the client left:
+        // a wait it no longer wants is dropped instead of being held until its turn ends.
+        let result = loop {
+            match answered.recv_timeout(PROBE) {
+                Ok(result) => break result,
+                Err(RecvTimeoutError::Disconnected) => break Err("Kynex closed".to_string()),
+                Err(RecvTimeoutError::Timeout) if hung_up(&stream) => {
+                    gone.set();
+                    wake();
+                    return;
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+        };
         if !write(&answer(&id, result)) {
             return;
         }
     }
+}
+
+/// Whether the client closed its end. Reads nothing, and doesn't block.
+#[cfg(windows)]
+fn hung_up(stream: &Stream) -> bool {
+    use std::os::windows::io::{AsHandle, AsRawHandle};
+    use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+    let Stream::NamedPipe(pipe) = stream;
+    let mut available = 0u32;
+    // SAFETY: a live pipe handle, and no buffer: it only asks how much is waiting. A pipe whose
+    // client is gone fails (`ERROR_BROKEN_PIPE`).
+    let ok = unsafe {
+        PeekNamedPipe(
+            pipe.as_handle().as_raw_handle(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            &mut available,
+            std::ptr::null_mut(),
+        )
+    };
+    ok == 0
+}
+
+/// Whether the client closed its end: a hang-up, or end of stream waiting to be read. Reads
+/// nothing, and doesn't block.
+#[cfg(unix)]
+fn hung_up(stream: &Stream) -> bool {
+    use std::os::fd::{AsFd, AsRawFd};
+    let Stream::UdSocket(socket) = stream;
+    let fd = socket.as_fd().as_raw_fd();
+    let mut p = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+    // SAFETY: one pollfd for a live socket, no wait.
+    if unsafe { libc::poll(&mut p, 1, 0) } <= 0 {
+        return false;
+    }
+    if p.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+        return true;
+    }
+    let mut byte = 0u8;
+    // SAFETY: peeks at most one byte into `byte`; nothing is taken off the socket.
+    let n = unsafe { libc::recv(fd, (&raw mut byte).cast(), 1, libc::MSG_PEEK | libc::MSG_DONTWAIT) };
+    n == 0
+}
+
+#[cfg(not(any(windows, unix)))]
+fn hung_up(_: &Stream) -> bool {
+    false
 }
 
 #[cfg(test)]
@@ -275,6 +358,37 @@ mod tests {
         .unwrap_err();
         assert!(e.contains("didn't answer"), "{e}");
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A client that hangs up while its answer is held back: the call says so.
+    #[test]
+    fn a_client_that_hangs_up_leaves_its_call_gone() {
+        let dir = std::env::temp_dir().join(format!("kynex-control-gone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let server = Server::start_in(&dir, Arc::new(|| {})).unwrap();
+        let addr = std::fs::read_to_string(dir.join("control.addr")).unwrap();
+        let mut raw =
+            interprocess::local_socket::Stream::connect(PathBuf::from(addr).to_fs_name::<GenericFilePath>().unwrap())
+                .unwrap();
+        let line = super::super::protocol::request_line_from(1, &Request::PaneWait { pane: 1, timeout: None }, None);
+        raw.write_all(format!("{line}\n").as_bytes()).unwrap();
+        let call = loop {
+            if let Some(c) = server.take().pop() {
+                break c;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert!(!call.gone.hung_up(), "still there");
+        std::thread::sleep(PROBE * 2);
+        assert!(!call.gone.hung_up(), "still there after a look");
+        drop(raw);
+        let started = std::time::Instant::now();
+        while !call.gone.hung_up() {
+            assert!(started.elapsed() < Duration::from_secs(5), "the hang-up was never seen");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        drop(server);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

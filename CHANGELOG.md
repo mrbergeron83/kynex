@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A `knx` wait (`--wait`, `pane wait`, `session wait`) is dropped as soon as its client goes away (Ctrl+C), instead of staying in Kynex until what it waited for ended.
+- A session's cost carries over when it's closed and reopened, instead of starting again from $0.
+
 ## [0.0.32] - 2026-11-17
 
 ### Added

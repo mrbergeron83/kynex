@@ -15,6 +15,7 @@ pub mod column;
 pub mod commands;
 pub mod composer;
 pub mod control;
+pub mod costs;
 pub mod dates;
 pub mod delegate;
 pub mod edit_lines;
