@@ -27,6 +27,7 @@
 //! | `control_sessions.rs` | its session commands: new, fork, open, close, rename, archive, pin |
 //! | `lineage.rs`        | which session started which: links, caps, answers sent back |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
+//! | `layouts_named.rs`  | named layouts: save, apply, export, import (the layouts menu) |
 //! | `layout_history.rs` | undo / redo of pane changes, reopening a pane, older layouts |
 //! | `toolbar.rs`        | path, panes' buttons (timeline, Git), open-in buttons |
 //! | `sessions_panel.rs` | the sessions tree's header, each workspace's list read |
@@ -145,6 +146,7 @@ mod keys;
 mod layout;
 mod layout_history;
 mod layouts;
+mod layouts_named;
 mod leaving;
 mod lineage;
 pub(crate) mod mentions;
@@ -331,6 +333,8 @@ pub struct KynexApp {
     tile_projects: HashMap<PathBuf, PathBuf>,
     /// The workspace whose panes were on screen last: the one you go to takes its shape.
     tiled_last: Option<PathBuf>,
+    /// The name being typed for "Save layout as…", in the layouts menu.
+    layout_name: Option<Entity<TextInput>>,
     /// The pane tab being renamed, and the field its name is typed in.
     pane_tab_rename: Option<(usize, Entity<TextInput>)>,
     /// Resize mode (`prefix r`): h / j / k / l and the arrows grow the focused pane.
@@ -706,6 +710,7 @@ impl KynexApp {
             tiles: HashMap::new(),
             tile_projects: HashMap::new(),
             tiled_last: None,
+            layout_name: None,
             pane_tab_rename: None,
             resize_mode: None,
             menu_pick: 0,

@@ -9,6 +9,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - Settings > General > Notifications: for "a session finishes" and "a session needs you" separately, choose where the note goes (off, a toast, a system notification, or both) (#448).
 - Your own sound for each of those events: pick a sound file (WAV on Windows), or keep the system's, or none; a provider or an agent can have its own (#447).
+- Named layouts: the layouts menu saves the shown workspace's panes under a name ("Save layout as…"), applies a saved one to any workspace or project (new sessions in its session slots, fresh shells in its terminals; undoable), and exports or imports a layout as a JSON file to share.
 
 ### Changed
 

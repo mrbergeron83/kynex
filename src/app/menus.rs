@@ -107,6 +107,7 @@ impl KynexApp {
 
     /// Opens `which` at `at`, or closes it if it's already open.
     pub(super) fn open_menu(&mut self, which: Menu, at: Point<Pixels>, anchor: Anchor, cx: &mut Context<Self>) {
+        self.layout_name = None;
         self.menu = if self.menu.as_ref().is_some_and(|m| m.which == which) {
             None
         } else {
@@ -486,6 +487,7 @@ impl KynexApp {
                             .into_any_element(),
                     );
                 }
+                items.extend(self.named_layout_items(cx));
             }
             Menu::Projects => {
                 for (i, p) in self.saved.projects.iter().enumerate() {

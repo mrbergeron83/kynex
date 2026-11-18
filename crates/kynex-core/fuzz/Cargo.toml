@@ -190,3 +190,10 @@ path = "fuzz_targets/session_notice.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "named_layout"
+path = "fuzz_targets/named_layout.rs"
+test = false
+doc = false
+bench = false

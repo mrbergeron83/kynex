@@ -208,6 +208,10 @@ impl KynexApp {
     /// ↑ / ↓ (or k / j) and Enter in the workspace and project pickers; Esc closes any menu.
     fn picker_key(&mut self, ev: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(which) = self.open_picker_menu() else { return false };
+        // Typing a layout's name isn't picking a row.
+        if self.layout_name.is_some() {
+            return false;
+        }
         let k = &ev.keystroke;
         let m = k.modifiers;
         if m.control || m.alt || m.platform || m.function {
