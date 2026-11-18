@@ -1,24 +1,33 @@
-//! One changed file as a whole: every line of it, the changes tinted, with buttons (and
-//! keys) to jump to the previous / next change. A file partly staged can show all its
-//! changes, the staged ones or the unstaged ones. Shown in a modal over the window.
+//! One changed file as a whole, read-only, in a modal over the window. Text shows every
+//! line with the changes tinted, buttons (and keys) to jump between changes, and a caret
+//! and selection to copy from (`file_text.rs`). Images show before / after, PDFs their
+//! pages, other binaries a placeholder (`file_media.rs`). A file partly staged can show
+//! all its changes, the staged ones or the unstaged ones.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::ui::px;
 use gpui::{
-    AnyElement, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent, ListHorizontalSizingBehavior,
-    ScrollStrategy, SharedString, UniformListScrollHandle, Window, div, prelude::*, uniform_list,
+    AnyElement, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent, RenderImage, ScrollStrategy,
+    SharedString, UniformListScrollHandle, Window, div, prelude::*,
 };
+use kynex_core::file_view::caret::Caret;
+use kynex_core::file_view::{self, Loaded, Side};
 use kynex_core::git::{self, DiffSide, FileDiff, Staged};
 
-use crate::git::diff_view::{DiffState, chip, counts, render_row, split_path};
+use super::file_media::{PdfPages, Prepared, Shown, prepare};
+use super::file_text::TextMenu;
+use crate::git::diff_view::{DiffState, chip, counts, split_path};
 use crate::theme::theme;
 use crate::ui::wash::row_wash;
-use crate::ui::{Icon, Tooltip, icon_button, scrollbar, spinner};
+use crate::ui::{Icon, Tooltip, icon_button, spinner};
 
 /// What the view asks of the app.
 pub enum FileDiffEvent {
     Close,
+    /// Open this picture in the image viewer; its own size in pixels.
+    ViewImage(Arc<RenderImage>, (u32, u32)),
 }
 
 impl EventEmitter<FileDiffEvent> for FileDiffView {}
@@ -26,41 +35,70 @@ impl EventEmitter<FileDiffEvent> for FileDiffView {}
 /// Rows kept above a change when jumping to it.
 const CONTEXT_ABOVE: usize = 3;
 
+/// What the body shows.
+pub(super) enum Body {
+    Loading,
+    Failed(String),
+    /// The diff's rows, in `state`.
+    Text,
+    Pictures {
+        before: Shown,
+        after: Shown,
+    },
+    Pdf(PdfPages),
+    Binary {
+        size: u64,
+    },
+    TooLarge {
+        size: u64,
+    },
+}
+
 pub struct FileDiffView {
-    root: PathBuf,
-    path: String,
+    pub(super) root: PathBuf,
+    pub(super) path: String,
     untracked: bool,
     /// How much of the file is staged: partly, and the sides can be shown apart.
     staged: Staged,
     side: DiffSide,
-    state: DiffState,
-    /// The file's flags and counts; its lines live in `state`.
+    pub(super) state: DiffState,
+    /// The file's flags and counts, for text; its lines live in `state`.
     meta: Option<FileDiff>,
-    loading: bool,
-    error: Option<String>,
+    pub(super) body: Body,
     /// Where each change starts, as row indices.
     starts: Vec<usize>,
     current: usize,
-    scroll: UniformListScrollHandle,
-    focus: FocusHandle,
+    pub(super) scroll: UniformListScrollHandle,
+    pub(super) caret: Caret,
+    /// A drag-selection is under way.
+    pub(super) dragging: bool,
+    pub(super) menu: Option<TextMenu>,
+    /// The PDF's zoom, 1 being the pane's width.
+    pub(super) pdf_zoom: f32,
+    pub(super) focus: FocusHandle,
     focused: bool,
 }
 
 impl FileDiffView {
     pub fn new(root: PathBuf, path: String, untracked: bool, staged: Staged, cx: &mut Context<Self>) -> Self {
+        // Pictures go back to the GPU's atlas when the modal closes.
+        cx.on_release(|this, cx| this.release_images(cx)).detach();
         let mut view = Self {
             root,
             path,
             untracked,
             staged,
             side: DiffSide::All,
-            state: DiffState::loading(),
+            state: DiffState::default(),
             meta: None,
-            loading: true,
-            error: None,
+            body: Body::Loading,
             starts: Vec::new(),
             current: 0,
             scroll: UniformListScrollHandle::new(),
+            caret: Caret::default(),
+            dragging: false,
+            menu: None,
+            pdf_zoom: 1.,
             focus: cx.focus_handle(),
             focused: false,
         };
@@ -68,42 +106,83 @@ impl FileDiffView {
         view
     }
 
-    /// Reads the side of the file's changes picked, and opens on its first change.
+    fn set_body(&mut self, body: Body, cx: &mut Context<Self>) {
+        self.release_images(cx);
+        self.body = body;
+    }
+
+    fn release_images(&mut self, cx: &mut gpui::App) {
+        let images: Vec<Arc<RenderImage>> = match &mut self.body {
+            Body::Pictures { before, after } => [before, after].into_iter().filter_map(Shown::image).collect(),
+            Body::Pdf(pages) => pages.take_images(),
+            _ => Vec::new(),
+        };
+        for image in images {
+            cx.drop_image(image, None);
+        }
+    }
+
+    /// Reads the side of the file picked, and opens on its first change.
     fn load(&mut self, cx: &mut Context<Self>) {
         let (root, p, untracked, side) = (self.root.clone(), self.path.clone(), self.untracked, self.side);
-        self.loading = true;
-        self.error = None;
+        self.set_body(Body::Loading, cx);
+        self.menu = None;
         cx.spawn(async move |this, cx| {
-            let diff = cx.background_spawn(async move { git::whole_file_diff_side(&root, &p, untracked, side) }).await;
+            let loaded =
+                cx.background_spawn(async move { file_view::load(&root, &p, untracked, side).map(prepare) }).await;
             this.update(cx, |this, cx| {
                 // Another side was picked meanwhile.
                 if this.side != side {
                     return;
                 }
-                this.loading = false;
                 this.starts.clear();
                 this.current = 0;
-                match diff {
-                    Ok(mut d) => {
-                        // A hunk's header is a row before its lines.
-                        let mut row = 0;
-                        for h in &d.hunks {
-                            row += 1;
-                            this.starts.extend(git::change_starts(&h.lines).into_iter().map(|i| row + i));
-                            row += h.lines.len();
-                        }
-                        this.state = DiffState::new(std::slice::from_ref(&d), false);
-                        d.hunks.clear();
-                        this.meta = Some(d);
-                        this.goto(0);
+                this.meta = None;
+                this.state = DiffState::default();
+                let body = match loaded {
+                    Err(e) => Body::Failed(e),
+                    Ok(Prepared::Pictures(before, after)) => Body::Pictures { before, after },
+                    Ok(Prepared::Other(Loaded::Text(d))) => {
+                        this.show_text(d);
+                        Body::Text
                     }
-                    Err(e) => this.error = Some(e),
-                }
+                    Ok(Prepared::Other(Loaded::Pdf(Side::Ready(bytes)))) => {
+                        let pages = PdfPages::start(bytes, cx);
+                        this.set_body(Body::Pdf(pages), cx);
+                        cx.notify();
+                        return;
+                    }
+                    Ok(Prepared::Other(Loaded::Pdf(Side::TooLarge(size)))) => Body::TooLarge { size },
+                    Ok(Prepared::Other(Loaded::Pdf(Side::Failed(e)))) => Body::Failed(e),
+                    Ok(Prepared::Other(Loaded::Pdf(Side::Missing))) => Body::Failed("The file isn't there".into()),
+                    // Pictures come prepared; the arm is only for completeness.
+                    Ok(Prepared::Other(Loaded::Pictures { before, after })) => {
+                        Body::Pictures { before: before.into(), after: after.into() }
+                    }
+                    Ok(Prepared::Other(Loaded::Binary { size })) => Body::Binary { size },
+                    Ok(Prepared::Other(Loaded::TooLarge { size })) => Body::TooLarge { size },
+                };
+                this.set_body(body, cx);
                 cx.notify();
             })
             .ok();
         })
         .detach();
+    }
+
+    fn show_text(&mut self, mut d: FileDiff) {
+        // A hunk's header is a row before its lines.
+        let mut row = 0;
+        for h in &d.hunks {
+            row += 1;
+            self.starts.extend(git::change_starts(&h.lines).into_iter().map(|i| row + i));
+            row += h.lines.len();
+        }
+        self.state = DiffState::new(std::slice::from_ref(&d), false);
+        d.hunks.clear();
+        self.meta = Some(d);
+        self.caret = Caret::start(&super::file_text::RowLines(&self.state.rows()));
+        self.goto(0);
     }
 
     fn show_side(&mut self, side: DiffSide, cx: &mut Context<Self>) {
@@ -150,10 +229,12 @@ impl FileDiffView {
                 .into_any_element(),
         )
     }
+
     fn goto(&mut self, n: usize) {
         if let Some(&row) = self.starts.get(n) {
             self.current = n;
             self.scroll.scroll_to_item(row.saturating_sub(CONTEXT_ABOVE), ScrollStrategy::Top);
+            self.caret = Caret::at(kynex_core::file_view::caret::Pos::new(row, 0));
         }
     }
 
@@ -166,40 +247,59 @@ impl FileDiffView {
         cx.notify();
     }
 
-    fn key_down(&mut self, ev: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let k = &ev.keystroke;
         let m = &k.modifiers;
+        if k.key == "escape" && self.menu.take().is_some() {
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
         let forward = match k.key.as_str() {
-            "f7" if !m.control && !m.alt => !m.shift,
-            "down" if m.alt => true,
-            "up" if m.alt => false,
-            "n" | "j" if !m.control && !m.alt && !m.platform => true,
-            "p" | "k" if !m.control && !m.alt && !m.platform => false,
-            _ => return,
+            "f7" if !m.control && !m.alt => Some(!m.shift),
+            "down" if m.alt && !cfg!(target_os = "macos") => Some(true),
+            "up" if m.alt && !cfg!(target_os = "macos") => Some(false),
+            "n" | "j" if !m.control && !m.alt && !m.platform => Some(true),
+            "p" | "k" if !m.control && !m.alt && !m.platform => Some(false),
+            _ => None,
         };
-        self.step(forward, cx);
-        cx.stop_propagation();
+        if let Some(forward) = forward {
+            if matches!(self.body, Body::Text) {
+                self.step(forward, cx);
+            }
+            cx.stop_propagation();
+            return;
+        }
+        let handled = match self.body {
+            Body::Text => self.text_key(ev, window, cx),
+            Body::Pdf(_) => self.pdf_key(ev, cx),
+            _ => false,
+        };
+        if handled {
+            cx.stop_propagation();
+        }
     }
 
     fn header(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let (dir, name) = split_path(&self.path);
-        let status = self.meta.as_ref().map(|d| {
-            if d.new_file {
-                ("Added", t.success)
-            } else if d.deleted {
-                ("Deleted", t.error)
-            } else if d.old_path.is_some() {
-                ("Renamed", t.info)
-            } else {
-                ("Modified", t.warning)
-            }
-        });
+        let status = match (&self.meta, &self.body) {
+            (Some(d), _) if d.new_file => Some(("Added", t.success)),
+            (Some(d), _) if d.deleted => Some(("Deleted", t.error)),
+            (Some(d), _) if d.old_path.is_some() => Some(("Renamed", t.info)),
+            (Some(_), _) => Some(("Modified", t.warning)),
+            (None, Body::Pictures { before: Shown::Missing, .. }) => Some(("Added", t.success)),
+            (None, Body::Pictures { after: Shown::Missing, .. }) => Some(("Deleted", t.error)),
+            (None, Body::Pictures { .. }) => Some(("Modified", t.warning)),
+            _ => None,
+        };
+        let text = matches!(self.body, Body::Text);
         let (added, removed) = self.meta.as_ref().map_or((0, 0), |d| (d.added, d.removed));
         let sides = self.sides(cx);
         let total = self.starts.len();
         let counter: SharedString =
             if total == 0 { "No changes".into() } else { format!("{} of {total}", self.current + 1).into() };
+        let pdf = self.pdf_controls(cx);
         div()
             .flex()
             .flex_none()
@@ -214,18 +314,21 @@ impl FileDiffView {
             .when_some(status, |d, (label, color)| d.child(chip(label, color, &t)))
             .child(div().flex_1())
             .children(sides)
-            .child(counts(added, removed, &t))
-            .child(div().flex_none().text_xs().text_color(t.text_muted).child(counter))
-            .child(
-                icon_button("file-diff-prev", Icon::ArrowUp, cx)
-                    .tooltip(Tooltip::with_meta("Previous change", "P · K · Shift+F7"))
-                    .on_click(cx.listener(|this, _, _, cx| this.step(false, cx))),
-            )
-            .child(
-                icon_button("file-diff-next", Icon::ArrowDown, cx)
-                    .tooltip(Tooltip::with_meta("Next change", "N · J · F7"))
-                    .on_click(cx.listener(|this, _, _, cx| this.step(true, cx))),
-            )
+            .children(pdf)
+            .when(text, |d| {
+                d.child(counts(added, removed, &t))
+                    .child(div().flex_none().text_xs().text_color(t.text_muted).child(counter))
+                    .child(
+                        icon_button("file-diff-prev", Icon::ArrowUp, cx)
+                            .tooltip(Tooltip::with_meta("Previous change", "P · K · Shift+F7"))
+                            .on_click(cx.listener(|this, _, _, cx| this.step(false, cx))),
+                    )
+                    .child(
+                        icon_button("file-diff-next", Icon::ArrowDown, cx)
+                            .tooltip(Tooltip::with_meta("Next change", "N · J · F7"))
+                            .on_click(cx.listener(|this, _, _, cx| this.step(true, cx))),
+                    )
+            })
             .child(
                 icon_button("file-diff-close", Icon::Close, cx)
                     .tooltip(Tooltip::with_meta("Close", "Esc"))
@@ -233,6 +336,11 @@ impl FileDiffView {
             )
             .into_any_element()
     }
+}
+
+/// A message in the middle of the body.
+pub(super) fn note(text: impl Into<SharedString>, color: gpui::Hsla) -> gpui::Div {
+    div().flex_1().flex().items_center().justify_center().p_4().text_sm().text_color(color).child(text.into())
 }
 
 impl Focusable for FileDiffView {
@@ -249,57 +357,23 @@ impl Render for FileDiffView {
         }
         let t = theme(cx).clone();
         let header = self.header(cx);
-        let note = |text: SharedString, color| {
-            div()
-                .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .p_4()
-                .text_sm()
-                .text_color(color)
-                .child(text)
-                .into_any_element()
-        };
-        let rows = self.state.rows();
-        let binary = self.meta.as_ref().is_some_and(|d| d.binary);
-        let body = if let Some(e) = &self.error {
-            note(e.clone().into(), t.error)
-        } else if self.loading {
-            div()
+        let body = match &self.body {
+            Body::Failed(e) => note(e.clone(), t.error).into_any_element(),
+            Body::Loading => div()
                 .flex_1()
                 .flex()
                 .items_center()
                 .justify_center()
                 .child(spinner("file-diff-loading", t.text_placeholder, px(16.)))
-                .into_any_element()
-        } else if binary {
-            note("Binary file".into(), t.text_placeholder)
-        } else if rows.is_empty() {
-            note("Empty file".into(), t.text_placeholder)
-        } else {
-            let t2 = t.clone();
-            let scroll = self.scroll.clone();
-            let list = uniform_list("file-diff-rows", rows.len(), move |range, _, _| {
-                // The gutter stays put by moving back as far as the list moved sideways.
-                let scrolled = -f32::from(scroll.0.borrow().base_handle.offset().x);
-                range.map(|i| render_row(&rows[i], scrolled, &t2)).collect()
-            })
-            .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-            .with_width_from_item(Some(self.state.widest()))
-            .track_scroll(&self.scroll)
-            .flex_1();
-            div()
-                .relative()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_h_0()
-                .child(list)
-                .child(scrollbar::vertical("file-diff-bar", self.scroll.clone()))
-                .child(scrollbar::scrollbar("file-diff-hbar", self.scroll.clone(), gpui::Axis::Horizontal))
-                .into_any_element()
+                .into_any_element(),
+            Body::Text if self.state.rows().is_empty() => note("Empty file", t.text_placeholder).into_any_element(),
+            Body::Text => self.render_text(window, cx),
+            Body::Pictures { .. } => self.render_pictures(cx),
+            Body::Pdf(_) => self.render_pdf(cx),
+            Body::Binary { size } => self.render_binary("Binary file", *size, cx),
+            Body::TooLarge { size } => self.render_binary("Too large to show", *size, cx),
         };
+        let menu = self.render_text_menu(cx);
         div()
             .size_full()
             .flex()
@@ -308,5 +382,6 @@ impl Render for FileDiffView {
             .on_key_down(cx.listener(Self::key_down))
             .child(header)
             .child(body)
+            .children(menu)
     }
 }

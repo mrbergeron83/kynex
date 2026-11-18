@@ -10,6 +10,8 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::PathBuf;
 
+use kynex_core::file_view::caret::word_at;
+
 use gpui::{
     App, Bounds, CursorStyle, DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox,
     HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
@@ -443,25 +445,6 @@ fn paint_band(
 
 fn px_eps() -> Pixels {
     gpui::px(0.5)
-}
-
-/// The word (or run of punctuation, or of spaces) around byte `ix`.
-fn word_at(text: &str, ix: usize) -> (usize, usize) {
-    fn class(c: char) -> u8 {
-        if c.is_alphanumeric() || c == '_' {
-            0
-        } else if c.is_whitespace() {
-            1
-        } else {
-            2
-        }
-    }
-    let ix = (0..=ix.min(text.len())).rev().find(|i| text.is_char_boundary(*i)).unwrap_or(0);
-    let Some(c) = text[ix..].chars().next().or_else(|| text[..ix].chars().next_back()) else { return (ix, ix) };
-    let k = class(c);
-    let start = text[..ix].char_indices().rev().take_while(|(_, c)| class(*c) == k).last().map_or(ix, |(i, _)| i);
-    let end = text[ix..].char_indices().find(|(_, c)| class(*c) != k).map_or(text.len(), |(i, _)| ix + i);
-    (start, end.max(start))
 }
 
 #[cfg(test)]

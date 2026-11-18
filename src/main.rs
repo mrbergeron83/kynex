@@ -26,6 +26,10 @@ fn main() {
     if let Some(code) = kynex_core::chat_api::main_if_asked() {
         std::process::exit(code);
     }
+    // Started by the Git pane's file viewer to draw a PDF's pages, away from the app.
+    if let Some(code) = kynex_core::file_view::pdf::child_main() {
+        std::process::exit(code);
+    }
     // `knx context | pane | session | events …`: ask the running app and print what it says.
     // `knx <folder>`: the running app opens it; with none, this one starts on it.
     let args: Vec<String> = std::env::args().skip(1).collect();

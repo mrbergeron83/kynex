@@ -18,9 +18,11 @@ use super::{GitView, Selection};
 use crate::theme::{Palette, mono, theme};
 use crate::ui::{Icon, Tooltip, code, icon, outline_button, scrollbar, spinner};
 
-const ROW_HEIGHT: f32 = 20.;
+pub(crate) const ROW_HEIGHT: f32 = 20.;
 /// Two line-number columns and the +/- sign.
-const GUTTER: f32 = 104.;
+pub(crate) const GUTTER: f32 = 104.;
+/// The code's font size, in pixels.
+pub(crate) const TEXT_SIZE: f32 = 12.5;
 
 #[derive(Clone)]
 pub(crate) enum Row {
@@ -326,7 +328,7 @@ pub(crate) fn render_row(row: &Row, scrolled: f32, t: &Palette) -> AnyElement {
         .min_w_full()
         .whitespace_nowrap()
         .font_family(mono())
-        .text_size(px(12.5));
+        .text_size(px(TEXT_SIZE));
     match row {
         Row::File { path, old_path, added, removed } => base
             .mt_px()

@@ -15,13 +15,17 @@
 //! | `worktrees.rs`  | the worktree list on top                                 |
 //! | `tree.rs`       | the file tree's rows and their stage boxes               |
 //! | `actions.rs`    | staging, discarding, a row's menu                        |
-//! | `file_modal.rs` | `FileDiffView`: one file's whole diff, change by change  |
+//! | `file_modal.rs` | `FileDiffView`: one changed file, read-only, in a modal     |
+//! | `file_text.rs`  | its text: caret, selection, copy, right-click menu       |
+//! | `file_media.rs` | its pictures before / after, PDF pages, binary placeholder |
 //! | `detail_modal.rs` | `DetailView`: a commit picked in History, in a modal |
 
 mod actions;
 mod bar;
 pub mod detail_modal;
+mod file_media;
 pub mod file_modal;
+mod file_text;
 mod tree;
 mod worktrees;
 

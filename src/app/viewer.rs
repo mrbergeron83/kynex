@@ -21,7 +21,7 @@ use kynex_core::toasts::Toast;
 use super::KynexApp;
 use crate::theme::theme;
 use crate::ui::Tooltip;
-use crate::ui::image_viewer::{ImageViewer, preview};
+use crate::ui::image_viewer::{ImageViewer, preview, render_image};
 use crate::ui::motion::{self, fade};
 
 impl KynexApp {
@@ -32,8 +32,28 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// A decoded picture (the Git pane's file viewer), `size` its own size in pixels.
+    pub(super) fn open_rendered(
+        &mut self,
+        image: Arc<RenderImage>,
+        size: (u32, u32),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let viewer = cx.new(|cx| ImageViewer::rendered(image, size, window, cx));
+        cx.subscribe_in(&viewer, window, |this, _, _: &DismissEvent, window, cx| this.close_image(window, cx)).detach();
+        self.viewer = Some(viewer);
+        cx.notify();
+    }
+
     pub(super) fn close_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.viewer.take().is_some() {
+            // Back to the modal it was opened from, else the composer.
+            if let Some(super::git_file_modal::GitDiffModal::File(file)) = &self.git_file {
+                file.read(cx).focus_handle(cx).focus(window, cx);
+                cx.notify();
+                return;
+            }
             self.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
             cx.notify();
         }
@@ -193,14 +213,6 @@ impl Default for LoggedImages {
     fn default() -> Self {
         Self { cache: Lru::new(THUMBNAILS_CAP), loading: HashSet::new(), failed: HashSet::new() }
     }
-}
-
-/// An RGBA picture as gpui draws it (BGRA).
-fn render_image(mut rgba: image::RgbaImage) -> Arc<RenderImage> {
-    for pixel in rgba.as_chunks_mut::<4>().0 {
-        pixel.swap(0, 2);
-    }
-    Arc::new(RenderImage::new(vec![image::Frame::new(rgba)]))
 }
 
 thread_local! {

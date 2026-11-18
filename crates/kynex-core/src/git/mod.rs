@@ -5,6 +5,7 @@
 //! Output is parsed from git's machine formats (`--porcelain=v2 -z`, custom
 //! `--format`s with separator bytes), never from human-readable text.
 
+mod blob;
 pub(crate) mod branch;
 pub mod cleanup;
 pub(crate) mod diff;
@@ -23,6 +24,7 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+pub use blob::{Blob, Rev, blob};
 pub use branch::{
     Branch, branches, create_branch, create_branch_at, default_branch, delete_branch, delete_remote_branch,
     publish_branch, rename_branch, switch_branch,

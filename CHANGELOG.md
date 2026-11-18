@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The Git pane's file viewer is a read-only viewer you can read and copy from: a caret moved with the arrows, Home / End, Page Up / Down and Ctrl+Home / End (Shift to select), mouse selection (drag, double-click a word, triple-click a line), Ctrl+A, Ctrl+C and right-click → Copy, copying the text without the +/- signs. Images show before and after (click to zoom), SVGs as static pictures, PDFs as pages with zoom, and other binaries as a placeholder with Open / Show in folder. Nothing in a file is ever run, big files get a placeholder, and PDFs are drawn in a separate process so a bad one can't take Kynex down.
+
 ### Fixed
 
 - Deleting a session or removing a workspace no longer hides the other workspaces for a moment or freezes the window, and a deleted session no longer flashes back in the list.

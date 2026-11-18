@@ -178,6 +178,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "file_view"
+path = "fuzz_targets/file_view.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "grok_acp"
 path = "fuzz_targets/grok_acp.rs"
 test = false

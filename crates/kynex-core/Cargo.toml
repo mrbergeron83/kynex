@@ -25,6 +25,10 @@ sysinfo.workspace = true
 # The OS keychain, for the OpenRouter key (secrets.rs); one store per OS below.
 keyring-core = "1"
 interprocess = { version = "2.4.8", default-features = false }
+# PDF pages, drawn in a child process (file_view::pdf): a bad file can't take Kynex down.
+hayro = "0.9"
+# SVG previews (file_view::media); the same as gpui's, with the same features.
+resvg = { version = "0.46", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = "1"
