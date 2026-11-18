@@ -13,7 +13,7 @@ use gpui::{Context, Window};
 use kynex_core::control::Request;
 use kynex_core::control::approval;
 use kynex_core::control::protocol::Event;
-use kynex_core::control::server::Call;
+use kynex_core::control::server::{Call, Gone};
 use kynex_core::layout::{Axis, PaneId};
 use kynex_core::live::Key;
 use kynex_core::session::{Item, Session};
@@ -34,6 +34,8 @@ pub(super) const START_WITHIN: Duration = Duration::from_secs(60);
 pub(super) struct Wait {
     pub(super) target: Target,
     reply: Sender<Result<Value, String>>,
+    /// The client hung up: the wait is dropped at the next look.
+    gone: Gone,
     /// It has been seen working: only then does "not working" mean the turn ended.
     pub(super) started: bool,
     pub(super) since: Instant,
@@ -73,24 +75,30 @@ impl KynexApp {
     /// a card first (`control_cards.rs`).
     pub(super) fn serve_control(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let calls = self.control.as_ref().map(|c| c.take()).unwrap_or_default();
-        for Call { request, reply, caller } in calls {
+        for Call { request, reply, caller, gone } in calls {
+            if gone.hung_up() {
+                continue;
+            }
             if approval::needs_card(&request) {
                 self.ask_card(request, caller, reply, cx);
             } else {
-                self.dispatch(request, caller, false, reply, window, cx);
+                self.dispatch(request, caller, false, reply, gone, window, cx);
             }
         }
         cx.notify();
     }
 
     /// Does `request` from session `caller`; `reply` gets the answer, now or later.
-    /// `worktree`: the card's "Start in a new worktree" was picked.
+    /// `worktree`: the card's "Start in a new worktree" was picked. `gone`: the client hung up,
+    /// so a wait it asked for is dropped.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn dispatch(
         &mut self,
         request: Request,
         caller: Option<Key>,
         worktree: bool,
         reply: Sender<Answer>,
+        gone: Gone,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -105,7 +113,7 @@ impl KynexApp {
             }
         }
         if let Some(wait) = self.control_wait_for.take() {
-            self.control_waits.push(Wait { reply, ..wait });
+            self.control_waits.push(Wait { reply, gone, ..wait });
         }
     }
 
@@ -266,7 +274,7 @@ impl KynexApp {
         let deadline = timeout.map(|s| (now + Duration::from_secs(s), s));
         // `serve_control` puts the client's reply with it.
         let (reply, _) = std::sync::mpsc::channel();
-        self.control_wait_for = Some(Wait { target, reply, started, since: now, deadline });
+        self.control_wait_for = Some(Wait { target, reply, gone: Gone::default(), started, since: now, deadline });
         if pane {
             // Nothing else rings for panes: they are looked at every so often.
             self.watch_pane_waits(cx);
@@ -294,6 +302,10 @@ impl KynexApp {
         }
         let waits = std::mem::take(&mut self.control_waits);
         for mut w in waits {
+            // Nobody to answer: Ctrl+C on `knx … --wait`.
+            if w.gone.hung_up() {
+                continue;
+            }
             if let Some((at, secs)) = w.deadline
                 && Instant::now() >= at
             {

@@ -655,6 +655,9 @@ impl Session {
     /// `wake` rings as they come in, for [`Self::take_history`].
     pub fn resume(kind: Kind, cwd: PathBuf, id: String, wake: Wake) -> Self {
         let mut s = Self::new(kind, cwd);
+        // What it cost before it was closed: the CLI's counter starts over (#341).
+        s.carried_cost = crate::costs::load_in(&crate::costs::dir(), &id);
+        s.total_cost = s.carried_cost;
         s.session_id = Some(id);
         s.reopened = true;
         s.conversation = true;
@@ -1781,6 +1784,10 @@ impl Session {
                 let cost = v["total_cost_usd"].as_f64().unwrap_or(0.0);
                 self.run_cost = cost.max(self.run_cost);
                 self.total_cost = self.carried_cost + self.run_cost;
+                // Kept for when it's reopened. Only for a process that really ran (not tests).
+                if let Some(id) = self.session_id.clone().filter(|_| self.runs > 0 && self.total_cost > 0.0) {
+                    crate::costs::save(id, self.total_cost);
+                }
                 self.spent.add_turn(&v);
                 self.settle_thoughts();
                 let (tools, files) = self.turn_recap();

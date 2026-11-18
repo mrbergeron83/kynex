@@ -26,6 +26,8 @@ impl KynexApp {
         root
             // Only a terminal does anything with it (see `terminal::view`).
             .on_action(cx.listener(|_, _: &keys::SendPrefix, _, _| {}))
+            // Likewise copy mode: the focused terminal takes it.
+            .on_action(cx.listener(|_, _: &keys::CopyMode, _, _| {}))
             .on_action(cx.listener(|this, _: &keys::SplitRight, w, cx| this.split_pane(Axis::Row, w, cx)))
             .on_action(cx.listener(|this, _: &keys::SplitDown, w, cx| this.split_pane(Axis::Column, w, cx)))
             .on_action(cx.listener(|this, a: &FocusPane, w, cx| this.focus_pane_toward(a.0, w, cx)))
@@ -208,6 +210,10 @@ impl KynexApp {
     /// ↑ / ↓ (or k / j) and Enter in the workspace and project pickers; Esc closes any menu.
     fn picker_key(&mut self, ev: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(which) = self.open_picker_menu() else { return false };
+        // Typing a layout's name isn't picking a row.
+        if self.layout_name.is_some() {
+            return false;
+        }
         let k = &ev.keystroke;
         let m = k.modifiers;
         if m.control || m.alt || m.platform || m.function {

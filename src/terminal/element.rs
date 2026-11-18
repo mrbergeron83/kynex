@@ -223,6 +223,8 @@ pub fn palette(t: &Theme) -> Palette {
         cursor: rgb(t.accent),
         // The theme's selection is translucent; flatten it onto the background.
         selection: background.mix(rgb(t.selection), t.selection.a.max(0.35)),
+        find: background.mix(rgb(t.warning), 0.3),
+        find_current: background.mix(rgb(t.warning), 0.6),
     }
 }
 

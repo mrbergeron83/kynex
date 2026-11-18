@@ -9,8 +9,9 @@ use std::time::Duration;
 
 use gpui::{AnyElement, Context, MouseButton, SystemNotification, Window, div, prelude::*};
 use kynex_core::agent_panes::{self, AgentRule, AgentState, Tracker};
-use kynex_core::attention::{self, Why};
+use kynex_core::attention::Why;
 use kynex_core::layout::{Direction, PaneId};
+use kynex_core::notify::{Event, Route};
 use kynex_core::terminal::{ShellKind, ShellSpec};
 use kynex_core::tiling::{TermPane, Tool};
 use kynex_core::toasts::Toast;
@@ -226,27 +227,27 @@ impl KynexApp {
             AgentState::Done => Why::Finished,
             _ => return,
         };
-        if !self.saved.notify {
-            return;
+        let event = Event::from(why);
+        let rule = self.saved.notifications.resolve(event, Some(name));
+        // The caller left out what's in front of you.
+        match rule.delivery.route(self.window_active, false) {
+            Route::Nothing => return,
+            Route::Os => {
+                cx.show_system_notification(SystemNotification {
+                    tag: format!("agent-{pane}").into(),
+                    title: name.to_string().into(),
+                    body: why.body().into(),
+                    actions: Vec::new(),
+                });
+            }
+            Route::Toast => {
+                let folder = ws.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let toast = if why == Why::Finished { Toast::success("") } else { Toast::warning("") };
+                let toast = self.toast(toast.detail(format!("{folder} · {}", why.body())));
+                toast.title = name.to_string();
+            }
         }
-        let folder = ws.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        if !self.window_active {
-            cx.show_system_notification(SystemNotification {
-                tag: format!("agent-{pane}").into(),
-                title: name.to_string().into(),
-                body: why.body().into(),
-                actions: Vec::new(),
-            });
-        } else {
-            let toast = if why == Why::Finished { Toast::success("") } else { Toast::warning("") };
-            let toast = self.toast(toast.detail(format!("{folder} · {}", why.body())));
-            toast.title = name.to_string();
-        }
-        if self.saved.sounds
-            && let Some(sound) = attention::loudest([why])
-        {
-            kynex_core::sound::play(sound);
-        }
+        rule.sound.play(event);
     }
 
     /// An agent pane's body: a slim bar with its lamp and name over the terminal.

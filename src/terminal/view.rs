@@ -22,8 +22,15 @@ const CONTEXT: &str = "Terminal";
 #[action(namespace = terminal, no_json)]
 pub struct SendKey(pub &'static str);
 
+/// Opens the find bar over the terminal's scrollback.
+#[derive(Clone, PartialEq, Debug, gpui::Action)]
+#[action(namespace = terminal, no_json)]
+pub struct OpenFind;
+
 pub fn bind_keys(cx: &mut App) {
     let c = Some(CONTEXT);
+    // Ctrl+F stays the shell's (readline's forward-char), so Windows and Linux use Ctrl+Shift+F.
+    cx.bind_keys([KeyBinding::new(if cfg!(target_os = "macos") { "cmd-f" } else { "ctrl-shift-f" }, OpenFind, c)]);
     let keys = ["escape", "shift-tab", "ctrl-o", "ctrl-c", "ctrl-v", "ctrl-shift-c", "ctrl-shift-v"];
     // The workspace's Cmd+C copies conversation text; in a shell it copies the selection.
     let mac: &[&'static str] = if cfg!(target_os = "macos") { &["cmd-c", "cmd-v"] } else { &[] };
@@ -39,11 +46,11 @@ pub enum TerminalEvent {
 impl EventEmitter<TerminalEvent> for TerminalView {}
 
 pub struct TerminalView {
-    terminal: Option<Terminal>,
+    pub(super) terminal: Option<Terminal>,
     error: Option<String>,
     pub shell: ShellSpec,
     cwd: PathBuf,
-    focus: FocusHandle,
+    pub(super) focus: FocusHandle,
     /// Where the grid was last drawn and its cell size, to map the mouse to cells.
     pub(super) layout: Option<(Point<Pixels>, PxSize<Pixels>)>,
     /// The cursor's (line, column) in the last drawn frame.
@@ -62,6 +69,8 @@ pub struct TerminalView {
     quiet: bool,
     /// Counts starts, so a restart's shell wins over an older one still starting.
     starts: u64,
+    /// The find bar, while it's open (`search.rs`).
+    pub(super) find: Option<super::search::FindBar>,
 }
 
 impl TerminalView {
@@ -82,6 +91,7 @@ impl TerminalView {
             pending: Vec::new(),
             quiet: true,
             starts: 0,
+            find: None,
         };
         view.start(cx);
         view
@@ -293,8 +303,15 @@ impl TerminalView {
         }
     }
 
-    fn send_key(&mut self, action: &SendKey, _: &mut Window, cx: &mut Context<Self>) {
+    fn send_key(&mut self, action: &SendKey, window: &mut Window, cx: &mut Context<Self>) {
         const MAC: bool = cfg!(target_os = "macos");
+        // Copy mode takes every key the shell would have had.
+        if self.in_copy_mode() {
+            if let Ok(ks) = Keystroke::parse(action.0) {
+                self.copy_key(&ks, window, cx);
+            }
+            return;
+        }
         match action.0 {
             // Like Terminal.app: Cmd+C / Cmd+V, and Ctrl+C / Ctrl+V stay the shell's.
             "cmd-c" => {
@@ -347,8 +364,16 @@ impl TerminalView {
         }
     }
 
-    fn key_down(&mut self, ev: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.swallow = None;
+        if self.in_copy_mode() {
+            // Keys with the platform key are the app's own; the rest are copy mode's.
+            if !ev.keystroke.modifiers.platform {
+                self.copy_key(&ev.keystroke, window, cx);
+                cx.stop_propagation();
+            }
+            return;
+        }
         // Dead keys and IME composition come through the text input path instead.
         if ev.prefer_character_input {
             return;
@@ -466,7 +491,7 @@ impl EntityInputHandler for TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.swallow.take().as_deref() == Some(text) {
+        if self.swallow.take().as_deref() == Some(text) || self.in_copy_mode() {
             return;
         }
         if let Some(t) = &self.terminal {
@@ -525,6 +550,8 @@ impl Render for TerminalView {
             .cursor(MouseCursor::IBeam)
             .on_action(cx.listener(Self::send_key))
             .on_action(cx.listener(Self::send_prefix))
+            .on_action(cx.listener(Self::open_find))
+            .on_action(cx.listener(Self::copy_mode_action))
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::right_click))
@@ -532,6 +559,8 @@ impl Render for TerminalView {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_scroll(cx.listener(Self::scroll))
             .child(TerminalElement::new(cx.entity(), self.focus.clone(), focused))
+            .when(self.in_copy_mode(), |d| d.child(self.render_copy_badge(cx)))
+            .children(self.render_find(cx))
             .when_some(self.error.clone(), |d, e| {
                 d.child(div().absolute().top_3().left_3().right_3().text_sm().text_color(t.error).child(e))
             })

@@ -7,6 +7,7 @@
 use gpui::{Context, SystemNotification, Window};
 use kynex_core::attention::{self, Why};
 use kynex_core::live::Key;
+use kynex_core::notify::{self, Event, Route};
 use kynex_core::toasts::{Action, Toast};
 
 use super::KynexApp;
@@ -56,7 +57,7 @@ impl KynexApp {
             .filter_map(|s| Some((s.uid, Why::of(s)?)))
             .collect();
         let mut heard = Vec::new();
-        if self.saved.notify {
+        if self.saved.notifications.any_on() {
             let focused = self.focused_key();
             let visible: Vec<Key> = self
                 .tiling_scope()
@@ -67,34 +68,38 @@ impl KynexApp {
                 if attention::news(self.wants.get(&key).copied(), Some(why)).is_none() {
                     continue;
                 }
+                let event = Event::from(why);
+                let provider = self.session_by_key(key).map(|s| notify::provider_name(s.provider()));
+                let rule = self.saved.notifications.resolve(event, provider);
+                let on_screen = attention::on_screen(key, focused, &visible);
                 let title = self.session_title(key);
-                if !self.window_active {
-                    cx.show_system_notification(SystemNotification {
-                        tag: tag(key).into(),
-                        title: title.unwrap_or_else(|| "Kynex".into()).into(),
-                        body: why.body().into(),
-                        actions: Vec::new(),
-                    });
-                    heard.push(why);
-                } else if !attention::on_screen(key, focused, &visible) {
-                    let project =
-                        self.code.iter().find(|(_, l)| l.sessions.iter().any(|s| s.uid == key)).map(|(p, _)| p);
-                    let detail = match project.and_then(|p| p.file_name()) {
-                        Some(name) => format!("{} · {}", name.to_string_lossy(), why.body()),
-                        None => why.body().to_string(),
-                    };
-                    let toast = if why == Why::Finished { Toast::success("") } else { Toast::warning("") };
-                    let toast = self.toast(toast.detail(detail).session(key).action(Action::GoToSession(key)));
-                    toast.title = title.unwrap_or_else(|| "Another session".into());
-                    heard.push(why);
+                match rule.delivery.route(self.window_active, on_screen) {
+                    Route::Nothing => continue,
+                    Route::Os => {
+                        cx.show_system_notification(SystemNotification {
+                            tag: tag(key).into(),
+                            title: title.unwrap_or_else(|| "Kynex".into()).into(),
+                            body: why.body().into(),
+                            actions: Vec::new(),
+                        });
+                    }
+                    Route::Toast => {
+                        let project =
+                            self.code.iter().find(|(_, l)| l.sessions.iter().any(|s| s.uid == key)).map(|(p, _)| p);
+                        let detail = match project.and_then(|p| p.file_name()) {
+                            Some(name) => format!("{} · {}", name.to_string_lossy(), why.body()),
+                            None => why.body().to_string(),
+                        };
+                        let toast = if why == Why::Finished { Toast::success("") } else { Toast::warning("") };
+                        let toast = self.toast(toast.detail(detail).session(key).action(Action::GoToSession(key)));
+                        toast.title = title.unwrap_or_else(|| "Another session".into());
+                    }
                 }
+                heard.push((event, rule.sound));
             }
         }
-        if self.saved.notify
-            && self.saved.sounds
-            && let Some(sound) = attention::loudest(heard)
-        {
-            kynex_core::sound::play(sound);
+        if let Some((event, sound)) = notify::loudest(heard) {
+            sound.play(event);
         }
         for key in self.wants.keys().filter(|k| !now.iter().any(|(n, _)| n == *k)) {
             cx.dismiss_system_notification(&tag(*key));

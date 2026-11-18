@@ -228,6 +228,17 @@ pub fn theme_file(text: &str) {
     let _ = crate::themes::parse("x", text);
 }
 
+/// A shared layout file ([`crate::named_layouts`]): parsed, and when it holds together,
+/// applied and restored the way a workspace takes it.
+pub fn named_layout(text: &str) {
+    if let Ok(named) = crate::named_layouts::parse(text) {
+        let _ = named.summary();
+        let saved = crate::named_layouts::apply(&named);
+        let mut next = 0;
+        let _ = crate::tiling::Tiling::restore(&saved, &mut next, None, |_| Some(1));
+    }
+}
+
 pub fn user_commands(text: &str) {
     let mut all = crate::user_commands::parse(text).unwrap_or_default();
     let own = all.clone();
