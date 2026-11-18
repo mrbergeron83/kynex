@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.32] - 2026-11-17
+
 ### Added
 
 - `knx notify <title> [body…] [--pane <id> | --session <s>]` shows a toast in Kynex, or an OS notification while it's in the background; clicking it goes to that pane or session. It needs no OK.
@@ -999,7 +1001,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.31...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.32...HEAD
+[0.0.32]: https://github.com/mrbergeron83/kynex/compare/v0.0.31...v0.0.32
 [0.0.31]: https://github.com/mrbergeron83/kynex/compare/v0.0.30...v0.0.31
 [0.0.30]: https://github.com/mrbergeron83/kynex/compare/v0.0.29...v0.0.30
 [0.0.29]: https://github.com/mrbergeron83/kynex/compare/v0.0.28...v0.0.29
