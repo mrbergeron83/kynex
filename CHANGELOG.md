@@ -5,13 +5,18 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.0.33] - 2026-11-18
+## [0.0.34] - 2026-11-19
 
 ### Added
 
 - File links in a session (paths, and `file://` links agents write) open in Kynex's file viewer at the linked line, with a button to open them in your editor.
 - Antigravity as a provider: Google's `agy` agent with its tools, on your OpenRouter key, so Gemini works without a Google subscription (Settings → Providers).
 - Antigravity sessions follow the project's permission rules: read-only commands (`Get-ChildItem`, `git status`…) run without asking, and a prompt can allow a command for the session or always in the project.
+
+## [0.0.33] - 2026-11-18
+
+### Added
+
 - The Git pane's file viewer is a read-only viewer you can read and copy from: a caret moved with the arrows, Home / End, Page Up / Down and Ctrl+Home / End (Shift to select), mouse selection (drag, double-click a word, triple-click a line), Ctrl+A, Ctrl+C and right-click → Copy, copying the text without the +/- signs. Images show before and after (click to zoom), SVGs as static pictures, PDFs as pages with zoom, and other binaries as a placeholder with Open / Show in folder. Nothing in a file is ever run, big files get a placeholder, and PDFs are drawn in a separate process so a bad one can't take Kynex down.
 - A session that creates a git worktree (`git worktree add`) moves into it when that turn ends: it resumes with the worktree as its folder (name, pin and model kept), listed under that workspace; messages queued meanwhile go to it there.
 - Settings > General > Notifications: for "a session finishes" and "a session needs you" separately, choose where the note goes (off, a toast, a system notification, or both) (#448).
@@ -1025,7 +1030,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.33...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.34...HEAD
+[0.0.34]: https://github.com/mrbergeron83/kynex/compare/v0.0.33...v0.0.34
 [0.0.33]: https://github.com/mrbergeron83/kynex/compare/v0.0.32...v0.0.33
 [0.0.32]: https://github.com/mrbergeron83/kynex/compare/v0.0.31...v0.0.32
 [0.0.31]: https://github.com/mrbergeron83/kynex/compare/v0.0.30...v0.0.31
