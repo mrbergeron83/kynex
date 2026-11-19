@@ -5,10 +5,6 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Changed
-
-- The browser sessions use runs as one shared Playwright server instead of one per session, about 130 MB less memory for each open session. Each session still gets its own browser window.
-
 ## [0.0.34] - 2026-11-19
 
 ### Added
@@ -16,6 +12,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - File links in a session (paths, and `file://` links agents write) open in Kynex's file viewer at the linked line, with a button to open them in your editor.
 - Antigravity as a provider: Google's `agy` agent with its tools, on your OpenRouter key, so Gemini works without a Google subscription (Settings → Providers).
 - Antigravity sessions follow the project's permission rules: read-only commands (`Get-ChildItem`, `git status`…) run without asking, and a prompt can allow a command for the session or always in the project.
+
+### Changed
+
+- The browser sessions use runs as one shared Playwright server instead of one per session, about 130 MB less memory for each open session. Each session still gets its own browser window.
 
 ## [0.0.33] - 2026-11-18
 
