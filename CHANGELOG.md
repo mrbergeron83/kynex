@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.33] - 2026-11-18
+
 ### Added
 
 - File links in a session (paths, and `file://` links agents write) open in Kynex's file viewer at the linked line, with a button to open them in your editor.
@@ -1023,7 +1025,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.32...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.33...HEAD
+[0.0.33]: https://github.com/mrbergeron83/kynex/compare/v0.0.32...v0.0.33
 [0.0.32]: https://github.com/mrbergeron83/kynex/compare/v0.0.31...v0.0.32
 [0.0.31]: https://github.com/mrbergeron83/kynex/compare/v0.0.30...v0.0.31
 [0.0.30]: https://github.com/mrbergeron83/kynex/compare/v0.0.29...v0.0.30
