@@ -83,6 +83,7 @@ impl KynexApp {
                     }
                 }
                 this.edit_groups(&path, |g| purged.deleted.iter().for_each(|id| g.forget(id)));
+                purged.deleted.iter().for_each(|id| this.unlink_session(id));
                 this.removed_ui.sessions.remove(&path);
                 this.removed_ui.unfolded.remove(&path);
                 if let Some(live) = this.code.get_mut(&project) {

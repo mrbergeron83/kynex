@@ -7,6 +7,7 @@
 //!     claude.json         how sessions start: permission mode, effort, extra directories
 //!     sessions.json       how the sessions panel is organised: groups, archive
 //!     appearance.json     the project's colour
+//!     worktrees.json      where new worktrees go, if not the app-wide folder
 //! ```
 //!
 //! Each section is its own file, read and written on its own, so a new kind of
@@ -414,6 +415,28 @@ impl Appearance {
             Colour::Off => None,
             Colour::Named(name) => COLOURS.iter().copied().find(|c| c == name),
         }
+    }
+}
+
+/// Where a project's new worktrees go, when not the app-wide setting.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorktreeSettings {
+    /// The folder new worktrees are made in (`~/` and paths relative to the project work);
+    /// `None` follows the app setting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root: Option<PathBuf>,
+}
+
+impl WorktreeSettings {
+    const FILE: &str = "worktrees.json";
+
+    pub fn load(project: &Path) -> Self {
+        load(project, Self::FILE)
+    }
+
+    pub fn save(&self, project: &Path) -> Result<(), String> {
+        save(project, Self::FILE, self)
     }
 }
 

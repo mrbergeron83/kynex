@@ -313,7 +313,8 @@ impl KynexApp {
     /// Gives `s` the provider and model it starts on: see [`Self::start_launch`],
     /// and the model pinned to it, else its folder's for that provider.
     pub(super) fn start_session(&mut self, s: &mut Session) {
-        let id = s.session_id.clone().filter(|_| !s.is_new());
+        // A fork runs on its original's provider.
+        let id = s.session_id.clone().or_else(|| s.forked_from().map(str::to_string)).filter(|_| !s.is_new());
         let settings = s.settings_folder().to_path_buf();
         let (launch, models) = self.start_parts(&s.cwd, &settings, id.as_deref());
         apply_start(s, launch, &models);

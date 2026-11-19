@@ -15,7 +15,7 @@ use super::KynexApp;
 use super::state::Active;
 use crate::theme::theme;
 use crate::ui::input::{InputEvent, TextInput};
-use crate::ui::{Icon, Tooltip, icon_button, name_field, outline_button, primary_button, px, spinner};
+use crate::ui::{Icon, Tooltip, icon_button, menu_item, name_field, outline_button, primary_button, px, spinner};
 
 /// What's open in the workspaces section besides its rows.
 #[derive(Default)]
@@ -46,6 +46,33 @@ struct Removal {
 }
 
 impl KynexApp {
+    /// The header's "Add workspace" menu: a worktree on a branch (in a git repository), or a
+    /// folder (anywhere).
+    pub(super) fn add_workspace_menu_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(project) = self.workspace_project() else { return Vec::new() };
+        let repo = !self.worktrees(&project, cx).read(cx).list.is_empty();
+        let mut items = Vec::new();
+        if repo {
+            items.push(
+                menu_item("add-workspace-branch", "New worktree on a branch…", false, cx)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.menu = None;
+                        this.open_new_workspace(window, cx);
+                    }))
+                    .into_any_element(),
+            );
+        }
+        items.push(
+            menu_item("add-workspace-folder", "Add a folder…", false, cx)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.menu = None;
+                    this.add_folder_workspace(cx);
+                }))
+                .into_any_element(),
+        );
+        items
+    }
+
     /// Opens the "New workspace" field, with the branches that could be checked out.
     pub(super) fn open_new_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(project) = self.workspace_project() else { return };
@@ -136,6 +163,7 @@ impl KynexApp {
         self.focus_input(window, cx);
         cx.spawn(async move |this, cx| {
             let root = project.clone();
+            let branch = name.clone();
             let made = cx
                 .background_spawn(async move {
                     let _t = kynex_core::trace::span("new workspace: default branch + git worktree add (background)");
@@ -149,6 +177,7 @@ impl KynexApp {
                 let typed = this.workspace_ui.creating.take();
                 match made {
                     Ok(path) => {
+                        this.bind_made(&project, &path, &branch, cx);
                         this.refresh_worktrees([&project], cx);
                         this.select_workspace(&path, cx);
                     }
@@ -571,7 +600,7 @@ impl KynexApp {
                         if changed && let Err(e) = workspaces.save(&project) {
                             this.toast(Toast::error(e));
                         }
-                        this.close_project(i);
+                        this.close_project(i, cx);
                     }
                 }
                 cx.notify();

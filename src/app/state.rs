@@ -86,6 +86,8 @@ pub struct Saved {
     pub window: Option<WindowState>,
     /// The `claude` to run instead of the one found on PATH (App settings).
     pub cli_path: Option<PathBuf>,
+    /// Where new worktrees go unless a project says otherwise; `None` is under the data dir.
+    pub worktree_root: Option<PathBuf>,
     /// The shell new terminals open; `None` is the OS's.
     pub shell: Option<ShellKind>,
     /// The browser Claude sessions get (`kynex_core::browser`), or none.
@@ -110,11 +112,8 @@ pub struct Saved {
     /// Project sessions hand routine work to a Haiku subagent unless their
     /// project says otherwise (`kynex_core::delegate`). On unless turned off.
     pub delegate: bool,
-    /// An OS notification when a session finishes or needs you while Kynex
-    /// is in the background. Off unless turned on.
-    pub notify: bool,
-    /// A sound with those notes and toasts. Off unless turned on, and only with `notify`.
-    pub sounds: bool,
+    /// Where each note goes and its sound (`kynex_core::notify`). Off unless turned on.
+    pub notifications: kynex_core::notify::Rules,
     /// Kynex's shortcuts from an older `install.ps1` got its app ID (Windows; once).
     pub shortcuts_stamped: bool,
     /// The version whose icon the shell was last told to show (Windows; once per version, as
@@ -175,6 +174,7 @@ impl Default for Saved {
             sessions_width: 260.,
             window: None,
             cli_path: None,
+            worktree_root: None,
             shell: None,
             browser: Default::default(),
             skipped_cli_version: None,
@@ -186,8 +186,7 @@ impl Default for Saved {
             drafts: HashMap::new(),
             name_past_sessions: false,
             delegate: true,
-            notify: false,
-            sounds: false,
+            notifications: Default::default(),
             allow_bypass: false,
             shortcuts_stamped: false,
             icons_shown_for: None,

@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use crate::ui::px;
 use gpui::{Anchor, AnyElement, Context, Focusable, MouseButton, Window, div, prelude::*};
@@ -24,7 +25,8 @@ use crate::ui::{Icon, Tooltip, icon_button, scrollbar, section_label};
 pub struct SessionList {
     /// What it was read for.
     pub(super) read: ListRead,
-    pub items: Vec<SessionInfo>,
+    /// Shared, so the tree can hold it while it draws without a copy.
+    pub items: Rc<Vec<SessionInfo>>,
     /// The repository's default branch: sessions on another one say theirs.
     pub(super) default_branch: Option<String>,
     /// Something it shows changed (a rename, a setting): read it again.
@@ -54,7 +56,7 @@ impl KynexApp {
     /// would bring them back for a moment.
     pub(super) fn relist_sessions(&mut self, gone: &[String]) {
         for l in self.sessions.values_mut() {
-            l.items.retain(|i| !gone.contains(&i.id));
+            Rc::make_mut(&mut l.items).retain(|i| !gone.contains(&i.id));
         }
     }
 
@@ -101,7 +103,7 @@ impl KynexApp {
                     }
                 }
                 let cwd = read.cwd.clone();
-                this.sessions.insert(cwd, SessionList { read, items, default_branch, stale: false });
+                this.sessions.insert(cwd, SessionList { read, items: Rc::new(items), default_branch, stale: false });
                 cx.notify();
             })
             .ok();
@@ -137,7 +139,12 @@ impl KynexApp {
                 .await;
             this.update(cx, |this, cx| {
                 let read = ListRead { cwd: dir.clone(), current: None, live: Vec::new() };
-                this.sessions.entry(dir).or_insert(SessionList { read, items, default_branch, stale: true });
+                this.sessions.entry(dir).or_insert(SessionList {
+                    read,
+                    items: Rc::new(items),
+                    default_branch,
+                    stale: true,
+                });
                 f(this, cx);
             })
             .ok();
@@ -236,9 +243,8 @@ impl KynexApp {
             tree.order.iter().filter(|(p, _)| *p == pick_cwd).map(|(_, id)| id.clone()).collect();
         self.sync_picks(&pick_cwd, &in_pick_folder);
         let picking = self.organize.selection.on;
-        // A project with workspaces to add: new worktrees in a git repository, folders anywhere.
+        // A project, whose workspaces are rows in the tree (chat has none).
         let project = self.workspace_project().filter(|_| kind == Kind::Code);
-        let repo = project.as_ref().is_some_and(|p| !self.worktrees(p, cx).read(cx).list.is_empty());
 
         // In a pane, the header is the handle that drags it.
         let header = div()
@@ -268,27 +274,24 @@ impl KynexApp {
                     }))
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle_picking(cwd.clone(), cx)))
             })
-            .when(project.is_some(), |d| {
-                d.child(
-                    icon_button("add-workspace-folder", Icon::FolderPlus, cx)
-                        .tooltip(Tooltip::text("Add a folder as a workspace: scripts, notes"))
-                        .on_click(cx.listener(|this, _, _, cx| this.add_folder_workspace(cx))),
-                )
+            // The header adds workspaces; a session is made on its workspace's row. Chat has
+            // no workspace rows, so its "New session" stays here.
+            .map(|d| match project.is_some() {
+                true => d.child(
+                    icon_button("add-workspace", Icon::FolderPlus, cx)
+                        .tooltip(Tooltip::text("Add workspace"))
+                        .on_click(cx.listener(|this, ev: &gpui::ClickEvent, _, cx| {
+                            this.open_menu(Menu::AddWorkspace, ev.position(), Anchor::TopLeft, cx)
+                        })),
+                ),
+                false => d.child(
+                    icon_button("new-session", Icon::Plus, cx)
+                        .when(fresh, |b| b.opacity(0.4))
+                        .when(fresh, |b| b.tooltip(Tooltip::text("Already a new session")))
+                        .when(!fresh, |b| b.tooltip(Tooltip::for_action("New session", NewSession, "")))
+                        .on_click(cx.listener(|this, _, window, cx| this.new_session(window, cx))),
+                ),
             })
-            .when(repo, |d| {
-                d.child(
-                    icon_button("new-workspace", Icon::GitBranch, cx)
-                        .tooltip(Tooltip::text("New workspace: a worktree on a branch"))
-                        .on_click(cx.listener(|this, _, window, cx| this.open_new_workspace(window, cx))),
-                )
-            })
-            .child(
-                icon_button("new-session", Icon::Plus, cx)
-                    .when(fresh, |b| b.opacity(0.4))
-                    .when(fresh, |b| b.tooltip(Tooltip::text("Already a new session")))
-                    .when(!fresh, |b| b.tooltip(Tooltip::for_action("New session", NewSession, "")))
-                    .on_click(cx.listener(|this, _, window, cx| this.new_session(window, cx))),
-            )
             .child(
                 icon_button("sessions-more", Icon::ChevronDown, cx)
                     .tooltip(Tooltip::text("Sessions options"))

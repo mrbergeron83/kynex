@@ -8,9 +8,47 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ### Added
 
 - The Git pane's file viewer is a read-only viewer you can read and copy from: a caret moved with the arrows, Home / End, Page Up / Down and Ctrl+Home / End (Shift to select), mouse selection (drag, double-click a word, triple-click a line), Ctrl+A, Ctrl+C and right-click → Copy, copying the text without the +/- signs. Images show before and after (click to zoom), SVGs as static pictures, PDFs as pages with zoom, and other binaries as a placeholder with Open / Show in folder. Nothing in a file is ever run, big files get a placeholder, and PDFs are drawn in a separate process so a bad one can't take Kynex down.
+- A session that creates a git worktree (`git worktree add`) moves into it when that turn ends: it resumes with the worktree as its folder (name, pin and model kept), listed under that workspace; messages queued meanwhile go to it there.
+- Settings > General > Notifications: for "a session finishes" and "a session needs you" separately, choose where the note goes (off, a toast, a system notification, or both) (#448).
+- Your own sound for each of those events: pick a sound file (WAV on Windows), or keep the system's, or none; a provider or an agent can have its own (#447).
+- Named layouts: the layouts menu saves the shown workspace's panes under a name ("Save layout as…"), applies a saved one to any workspace or project (new sessions in its session slots, fresh shells in its terminals; undoable), and exports or imports a layout as a JSON file to share.
+- Find in a terminal's scrollback: Ctrl+Shift+F (Cmd+F on macOS) opens a bar over the terminal that tints every match, with "3 of 12", Enter / Shift+Enter to step through them (wrapping round) and Esc to close.
+- Copy mode in terminals (`prefix y`, Ctrl+B then Y): a cursor you move over the scrollback with `h j k l`, `w b e`, `0 ^ $`, `g` / `G`, Ctrl+U / Ctrl+D, select with `v` (cells) or `V` (lines), and copy with `y` or Enter. `/` opens the find bar, `n` / `N` step through its matches, Esc leaves; a COPY badge shows while it's on.
+
+### Changed
+
+- Notifications settings are now per event; your old on/off notification and sound choices carry over.
 
 ### Fixed
 
+- A `knx` wait (`--wait`, `pane wait`, `session wait`) is dropped as soon as its client goes away (Ctrl+C), instead of staying in Kynex until what it waited for ended.
+- A session's cost carries over when it's closed and reopened, instead of starting again from $0.
+
+## [0.0.32] - 2026-11-17
+
+### Added
+
+- `knx notify <title> [body…] [--pane <id> | --session <s>]` shows a toast in Kynex, or an OS notification while it's in the background; clicking it goes to that pane or session. It needs no OK.
+- `knx api schema` prints the control protocol's requests, answers and events as JSON, generated from the protocol's own types, so scripts and agents can read it without Kynex running.
+- `knx pane move <id> left|right|up|down|new-tab|tab <n>`, `swap`, `resize <id> <dir> [--by <px>]` and `zoom <id> [--off]` rearrange the shown workspace's panes the way the keyboard and mouse do, without asking for your OK.
+- Choose where new worktrees go: a folder for all projects in Settings → General, or one per project under its Setup settings. The default is unchanged, and existing worktrees stay where they are.
+- A workspace stays bound to its branch: when a session switches the branch of the folder it runs in, the workspace row's branch turns amber and a note offers to keep the new branch there. Claude is told to make a worktree for issue or release work instead.
+- Claude's todo list shows above the composer while Claude works, with the item in hand marked. When the turn is over it folds to one line, and goes away once everything is done.
+- `/fork` (or `/branch`) copies a session into a pane beside it. Sending to the copy continues the conversation as a new session (`--fork-session`); the original stays as it was.
+- Steer a running turn: Alt+Enter, or Steer on the queue, sends the queued messages and the draft into the turn without stopping it, and Claude reads them at its next step. Ctrl+Enter still stops the turn first.
+- `knx session new | fork | open | close | rename | archive | pin` and `knx workspace create <branch> --session [--prompt …]` let a session (or a script) start and arrange sessions. A session can be named by its number or by its session id.
+- Sessions started or forked by another session, or with `/fork`, are its children: the sessions tree nests them under it (a parent folds them away, and its lamp shows theirs), the session header links to the parent and counts the children, and the Agents pane nests running ones. Deleting a parent moves its children up a level; archiving it archives them too. The links survive a restart.
+- A session started at another session's request sends its answer back to it when its turn ends, shown there as a notice, as does the outcome of a `knx` request that answered `pending`. `knx session new --why <reason>` says in the child's first message why it was started, and `knx events` adds `session.created` and `session.closed`.
+
+### Changed
+
+- The sessions panel always shows a project's workspaces as rows, even when there's only one, and its sessions sit under them. New sessions are made with the `+` on a workspace's row (Ctrl+N still makes one in the shown workspace); the header's single "Add workspace" button makes a worktree on a branch or adds a folder.
+- Every `knx` request that changes something (making or removing projects, workspaces and sessions, splitting or closing panes, running a command, sending a message) now waits for your OK on a card in Kynex, whoever asks, since a session's shell can run `knx` without a permission prompt. Not answered within 30 seconds, it says `pending` with a request id for `knx request wait`.
+- Less work on every redraw: the sessions tree, the session header and the strips over the composer no longer rescan a session's history or the saved sessions each frame. With animations set to Reduced, the transcript jumps to a new reply instead of gliding and the scrollbar hides without fading.
+
+### Fixed
+
+- The sessions list and Ctrl+K no longer start with a "New session" row for every empty session a pane keeps ready; a session gets its row once something is sent to it.
 - Deleting a session or removing a workspace no longer hides the other workspaces for a moment or freezes the window, and a deleted session no longer flashes back in the list.
 
 ## [0.0.31] - 2026-11-16
@@ -982,7 +1020,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.31...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.32...HEAD
+[0.0.32]: https://github.com/mrbergeron83/kynex/compare/v0.0.31...v0.0.32
 [0.0.31]: https://github.com/mrbergeron83/kynex/compare/v0.0.30...v0.0.31
 [0.0.30]: https://github.com/mrbergeron83/kynex/compare/v0.0.29...v0.0.30
 [0.0.29]: https://github.com/mrbergeron83/kynex/compare/v0.0.28...v0.0.29

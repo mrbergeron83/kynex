@@ -8,7 +8,6 @@ edition = "2024"
 alacritty_terminal = "0.26"
 async-channel = "2"
 base64 = "0.23.1"
-chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 dirs = "7.0.0"
 gpui = { package = "gpui-pre", version = "=0.3.10" }
 # gpui-pre 0.3.10 only gives macOS a text system (and therefore any text at
@@ -20,9 +19,12 @@ image = "0.25.10"
 # Reading git state in-process (worktrees, status, ahead/behind): no `git` process to start. Writes stay on the CLI.
 gix = { version = "0.90", default-features = false, features = ["status", "revision", "sha1"] }
 # Watching a session's scratch folder for the file explorer (ReadDirectoryChangesW, inotify, FSEvents).
+jiff = "0.2.42"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 kynex-core = { path = "crates/kynex-core" }
 pulldown-cmark = { version = "0.13", default-features = false }
+# The control protocol's JSON schema (`knx api schema`); already in the tree through gpui.
+schemars = "1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 sha2 = "0.11"
@@ -37,7 +39,7 @@ too_many_arguments = "allow"
 # The app: everything gpui. Logic without UI lives in crates/kynex-core.
 [package]
 name = "kynex"
-version = "0.0.31"
+version = "0.0.32"
 edition.workspace = true
 license = "GPL-3.0-or-later"
 publish = false

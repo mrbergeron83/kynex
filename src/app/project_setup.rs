@@ -6,6 +6,7 @@
 use gpui::{AnyElement, Context, FontWeight, SharedString, div, prelude::*};
 use kynex_core::rules::{self, Kind};
 use kynex_core::starters;
+use kynex_core::workspace;
 
 use super::KynexApp;
 use super::settings::{SettingsView, heading};
@@ -145,6 +146,53 @@ impl KynexApp {
             });
         }
 
+        // Where new worktrees go: the project's own folder, else the app setting.
+        let own = view.worktrees.root.clone();
+        // From the view and the app setting, not the file: this runs every frame.
+        let in_effect =
+            workspace::worktrees_dir_with(&view.path, own.as_deref(), workspace::worktree_root().as_deref());
+        let app_note = match workspace::worktree_root() {
+            Some(_) => "App setting",
+            None => "App setting (default)",
+        };
+        let shown = match &own {
+            Some(p) => p.display().to_string(),
+            None => format!("{app_note}: {}", in_effect.display()),
+        };
+        let worktrees = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(heading(
+                "Worktrees folder",
+                "New worktrees go here; existing ones stay where they are. A relative path starts from the project, and ~/ is your home.",
+                t,
+            ))
+            .child(
+                div()
+                    .px_2()
+                    .py_1p5()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(t.border_variant)
+                    .bg(t.editor)
+                    .child(div().font_family(mono()).text_sm().truncate().child(shown)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        outline_button("pick-worktrees", "Choose…", cx)
+                            .on_click(cx.listener(|this, _, _, cx| this.pick_worktree_dir(cx))),
+                    )
+                    .when(own.is_some(), |d| {
+                        d.child(outline_button("app-worktrees", "Use app setting", cx).on_click(cx.listener(
+                            |this, _, _, cx| this.edit_settings(cx, |v| v.worktrees.root = None),
+                        )))
+                    }),
+            );
+
         div()
             .flex()
             .flex_col()
@@ -157,6 +205,7 @@ impl KynexApp {
                 ))
                 .child(list),
             )
+            .child(worktrees)
             .child(
                 div()
                     .flex()

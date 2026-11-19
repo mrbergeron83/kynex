@@ -88,6 +88,8 @@ impl KynexApp {
             self.save();
         }
         self.edit_groups(cwd, |g| g.forget(id));
+        // What it started moves up a level.
+        self.unlink_session(id);
     }
 
     /// Deletes every picked session but those still working, off the UI thread.
@@ -127,16 +129,13 @@ impl KynexApp {
     /// Archives the picked sessions, or unarchives them if they all are.
     fn archive_picked(&mut self, cwd: &Path, cx: &mut Context<Self>) {
         let ids = std::mem::take(&mut self.organize.selection.ids);
-        self.edit_groups(cwd, |g| {
-            let all = ids.iter().all(|id| g.is_archived(id));
-            for id in &ids {
-                if all {
-                    g.unarchive(id);
-                } else {
-                    g.archive(id);
-                }
-            }
-        });
+        let all = ids.iter().all(|id| self.groups_for(cwd).is_archived(id));
+        if all {
+            self.unarchive_nest(cwd, &ids);
+        } else {
+            // Each with the sessions it started.
+            self.archive_nest(cwd, &ids);
+        }
         self.stop_picking();
         cx.notify();
     }

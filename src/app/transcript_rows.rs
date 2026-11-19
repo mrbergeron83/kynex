@@ -9,7 +9,7 @@ use gpui::{AnyElement, App, Context, FontWeight, ScrollEvent, Window, div, prelu
 use kynex_core::live::Key;
 use kynex_core::session::{Item, Kind, PermState};
 use kynex_core::transcript::Row;
-use kynex_core::{commands, fmt, links};
+use kynex_core::{commands, fmt, lineage, links};
 
 use super::KynexApp;
 use super::transcript::ROW_PADDING;
@@ -88,6 +88,11 @@ impl KynexApp {
         });
 
         match item {
+            // Answers from sessions it started, sent as its message: drawn as notices.
+            Item::User { text, .. } if text.contains(lineage::NOTICE_OPEN) => {
+                let text = text.clone();
+                self.render_session_notices(ix, &text, cx)
+            }
             Item::User { text, images } => div()
                 .flex()
                 .flex_col()

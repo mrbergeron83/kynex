@@ -28,12 +28,14 @@ pub enum Menu {
     Tab(usize),
     /// A past session's right-click menu, by its id.
     Session(String),
-    /// A session group's right-click menu: group `i` of the workspace at this folder.
-    Group(PathBuf, usize),
+    /// A session group's right-click menu: this group of the workspace at this folder.
+    Group(PathBuf, kynex_core::groups::GroupId),
     /// The right-click menu for several picked sessions.
     Sessions(Vec<String>),
     /// The sessions panel header's menu: grouping by provider, showing archived, tidying old sessions.
     SessionsPanel,
+    /// The sessions panel header's "Add workspace": a worktree on a branch, or a folder.
+    AddWorkspace,
     /// A workspace's right-click menu, by its folder.
     Workspace(PathBuf),
     /// A pane's right-click menu.
@@ -105,6 +107,7 @@ impl KynexApp {
 
     /// Opens `which` at `at`, or closes it if it's already open.
     pub(super) fn open_menu(&mut self, which: Menu, at: Point<Pixels>, anchor: Anchor, cx: &mut Context<Self>) {
+        self.layout_name = None;
         self.menu = if self.menu.as_ref().is_some_and(|m| m.which == which) {
             None
         } else {
@@ -436,7 +439,7 @@ impl KynexApp {
                         .text_color(t.error)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.menu = None;
-                            this.close_project(i);
+                            this.close_project(i, cx);
                             cx.notify();
                         }))
                         .into_any_element(),
@@ -446,6 +449,7 @@ impl KynexApp {
             Menu::Group(cwd, i) => items = self.group_menu_items(&cwd.clone(), *i, cx),
             Menu::Sessions(ids) => items = self.sessions_menu_items(ids, cx),
             Menu::SessionsPanel => items = self.sessions_panel_menu_items(cx),
+            Menu::AddWorkspace => items = self.add_workspace_menu_items(cx),
             Menu::Pane(pane) => items = self.pane_menu_items(*pane, cx),
             Menu::PaneTab(tab) => items = self.pane_tab_menu_items(*tab, cx),
             Menu::Running(who) => items = self.running_menu_items(*who, cx),
@@ -483,6 +487,7 @@ impl KynexApp {
                             .into_any_element(),
                     );
                 }
+                items.extend(self.named_layout_items(cx));
             }
             Menu::Projects => {
                 for (i, p) in self.saved.projects.iter().enumerate() {

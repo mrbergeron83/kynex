@@ -2,6 +2,7 @@
 //! the selection and cursor applied. Built under the terminal lock, drawn
 //! without it.
 
+use super::search::FindState;
 use alacritty_terminal::Term;
 use alacritty_terminal::event::EventListener;
 use alacritty_terminal::grid::Dimensions;
@@ -38,6 +39,9 @@ pub struct Palette {
     pub background: Rgb,
     pub cursor: Rgb,
     pub selection: Rgb,
+    /// Matches of a find, and the current one.
+    pub find: Rgb,
+    pub find_current: Rgb,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -168,13 +172,23 @@ pub(super) fn linked_text<T: EventListener>(term: &Term<T>, uri: &str) -> Option
     found.then_some(out)
 }
 
-pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette) -> Snapshot {
+pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette, find: Option<&FindState>) -> Snapshot {
     let content = term.renderable_content();
     let offset = content.display_offset as i32;
     let columns = term.grid().columns();
     let lines = term.grid().screen_lines();
     let mut rows: Vec<Row> = vec![Row::default(); lines];
     let selection = content.selection;
+    // Matches by screen row: (first column, end column, is the current one).
+    let mut tints: Vec<Vec<(usize, usize, bool)>> = vec![Vec::new(); lines];
+    if let Some(f) = find {
+        for (i, m) in f.matches.iter().enumerate() {
+            let row = m.line + offset;
+            if row >= 0 && (row as usize) < lines {
+                tints[row as usize].push((m.start, m.end, i == f.current));
+            }
+        }
+    }
     for indexed in content.display_iter {
         let cell = indexed.cell;
         if cell.flags.contains(Flags::WIDE_CHAR_SPACER) || cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER) {
@@ -192,6 +206,10 @@ pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette) -> S
         }
         if cell.flags.contains(Flags::HIDDEN) {
             fg = bg;
+        }
+        let col = indexed.point.column.0;
+        if let Some(&(.., current)) = tints[line].iter().find(|&&(s, e, _)| s <= col && col < e) {
+            bg = if current { palette.find_current } else { palette.find };
         }
         if selection.is_some_and(|s| s.contains(indexed.point)) {
             bg = palette.selection;
@@ -227,9 +245,13 @@ pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette) -> S
             row.runs.push(Run { len: added, ..run });
         }
     }
-    let show_cursor = content.mode.contains(TermMode::SHOW_CURSOR) && content.display_offset == 0;
+    // Copy mode shows its own cursor, wherever in the scrollback it is.
+    let copy_mode = content.mode.contains(TermMode::VI);
+    let cursor_row = content.cursor.point.line.0 + offset;
+    let show_cursor = copy_mode && cursor_row >= 0 && (cursor_row as usize) < lines
+        || content.mode.contains(TermMode::SHOW_CURSOR) && content.display_offset == 0;
     let cursor = (show_cursor && content.cursor.shape != CursorShape::Hidden).then(|| Cursor {
-        line: (content.cursor.point.line.0 + offset).max(0) as usize,
+        line: cursor_row.max(0) as usize,
         column: content.cursor.point.column.0,
         style: match content.cursor.shape {
             CursorShape::Beam => CursorStyle::Beam,
@@ -334,6 +356,8 @@ pub(crate) mod tests {
             background: Rgb::hex(0x1e1e1e),
             cursor: Rgb::hex(0xffffff),
             selection: Rgb::hex(0x264f78),
+            find: Rgb::hex(0x5a4a1e),
+            find_current: Rgb::hex(0x8a6a1e),
         }
     }
 
@@ -346,7 +370,7 @@ pub(crate) mod tests {
 
     #[test]
     fn plain_text_is_one_run() {
-        let s = snapshot(&term(b"hello"), &palette());
+        let s = snapshot(&term(b"hello"), &palette(), None);
         assert_eq!(s.rows.len(), 4);
         assert!(s.rows[0].text.starts_with("hello"));
         assert_eq!(s.rows[0].runs.len(), 1);
@@ -357,7 +381,7 @@ pub(crate) mod tests {
 
     #[test]
     fn colours_split_runs() {
-        let s = snapshot(&term(b"a\x1b[31;1mb\x1b[0m\x1b[48;2;1;2;3mc\x1b[38;5;196md"), &palette());
+        let s = snapshot(&term(b"a\x1b[31;1mb\x1b[0m\x1b[48;2;1;2;3mc\x1b[38;5;196md"), &palette(), None);
         let runs = &s.rows[0].runs;
         assert_eq!(runs[0].fg, Rgb::hex(0xcccccc));
         assert_eq!((runs[1].fg, runs[1].bold, runs[1].column), (Rgb::hex(0xcd3131), true, 1));
@@ -369,7 +393,7 @@ pub(crate) mod tests {
 
     #[test]
     fn wide_characters_take_two_cells() {
-        let s = snapshot(&term("a日b".as_bytes()), &palette());
+        let s = snapshot(&term("a日b".as_bytes()), &palette(), None);
         let runs = &s.rows[0].runs;
         assert_eq!((runs[1].column, runs[1].cells), (1, 2));
         assert_eq!(runs[2].column, 3);
@@ -381,7 +405,7 @@ pub(crate) mod tests {
         let mut sel = Selection::new(SelectionType::Simple, Point::new(Line(0), Column(0)), Side::Left);
         sel.update(Point::new(Line(0), Column(5)), Side::Right);
         t.selection = Some(sel);
-        let s = snapshot(&t, &palette());
+        let s = snapshot(&t, &palette(), None);
         assert_eq!(s.rows[0].runs[0].bg, Some(palette().selection));
         assert_eq!(s.rows[0].runs[0].cells, 6);
         assert_eq!(t.selection_to_string().as_deref(), Some("select"));

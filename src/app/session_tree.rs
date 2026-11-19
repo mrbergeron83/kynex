@@ -1,13 +1,16 @@
 //! The sidebar's tree: each workspace of the project a row that folds (`workspace_list.rs`),
 //! and under it its sessions in sections: Pinned, Recent, the groups, Older, Archived. The
-//! rules for what goes where are `kynex_core::tree`; this draws them. A project with one
-//! workspace, and chat, draw no workspace row: just the sessions.
+//! rules for what goes where are `kynex_core::tree`; this draws them. A project always has
+//! its workspace rows, even with just the one, as new sessions are made from them; chat
+//! draws none: just the sessions.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::SystemTime;
 
 use gpui::{AnyElement, Context, div, prelude::*};
+use kynex_core::lineage::Placed;
 use kynex_core::session::{Kind, SessionInfo};
 use kynex_core::tree::{self, Branch, Section, View};
 use kynex_core::workspace;
@@ -48,15 +51,15 @@ struct Place {
 }
 
 impl KynexApp {
-    /// The workspaces to draw: the project's, in their steady order; in chat, or a project
-    /// that has just the one, its folder without a row.
+    /// The workspaces to draw: the project's, in their steady order; in chat, its folder
+    /// without a row.
     fn places(&mut self, ctx: &TreeCtx, cx: &mut Context<Self>) -> Vec<Place> {
         let project = self.workspace_project().filter(|_| ctx.kind == Kind::Code);
         let list = match &project {
             Some(p) => self.workspaces_of(p, cx),
             None => Vec::new(),
         };
-        if list.len() < 2 {
+        if list.is_empty() {
             return vec![Place { path: ctx.cwd.clone(), row: None, selected: true }];
         }
         let selected = list.iter().position(|(c, _)| c.at(&ctx.cwd)).unwrap_or(0);
@@ -68,8 +71,12 @@ impl KynexApp {
                     None => c.path.display().to_string(),
                 };
                 // The branch, when the folder's name doesn't already say it.
+                let drift = project.as_deref().and_then(|p| self.drift_of(p, &c));
                 let branch = if c.folder {
                     Some(if c.path.is_dir() { "folder" } else { "missing" }.to_string())
+                } else if let Some(d) = &drift {
+                    // Drifted: always shown, since the name no longer says it.
+                    Some(d.live.clone())
                 } else {
                     c.branch.clone().filter(|b| *b != c.label)
                 };
@@ -77,6 +84,7 @@ impl KynexApp {
                     path: c.path.clone(),
                     label: c.label.clone(),
                     branch,
+                    drift: drift.map(|d| format!("Bound to {}; now on {}", d.bound, d.live)),
                     tip,
                     selected: n == selected,
                     open: false,
@@ -116,12 +124,15 @@ impl KynexApp {
         let t = theme(cx).clone();
         let filtering = !ctx.query.is_empty();
         let path = place.path.clone();
-        // The sessions open there: in chat every one, in a project those in its folder.
+        // The sessions open there: in chat every one, in a project those in its folder. An
+        // empty one (nothing sent, nothing to reopen) gets no row: its pane shows it, and
+        // every workspace keeps one ready, so the list would always start with one.
         let open: Vec<OpenSession> = self
             .live_mut()
             .map(|l| {
                 l.sessions
                     .iter()
+                    .filter(|s| !s.is_new())
                     .filter(|s| ctx.kind == Kind::Chat || workspace::same_folder(&s.cwd, &path))
                     .map(OpenSession::of)
                     .collect()
@@ -136,7 +147,7 @@ impl KynexApp {
         if wanted {
             loading = self.want_list(&path, if here { ctx.current.clone() } else { None }, &open, cx);
         }
-        let items: Vec<SessionInfo> = self.sessions.get(&path).map(|l| l.items.clone()).unwrap_or_default();
+        let items: Rc<Vec<SessionInfo>> = self.sessions.get(&path).map(|l| l.items.clone()).unwrap_or_default();
         if here {
             self.name_sessions(&items, cx);
         }
@@ -160,7 +171,7 @@ impl KynexApp {
         }
         // Grouped by provider, when picked and there's more than one: Recent's listed
         // sessions under a header each, after the new ones.
-        let by_provider = (self.saved.sessions_by_provider && !filtering)
+        let mut by_provider = (self.saved.sessions_by_provider && !filtering)
             .then(|| {
                 let listed_recent: Vec<String> =
                     sections.recent.iter().filter(|k| index.contains_key(*k)).cloned().collect();
@@ -170,6 +181,30 @@ impl KynexApp {
         if let Some(split) = &by_provider {
             let new: Vec<String> = sections.recent.iter().filter(|k| !index.contains_key(*k)).cloned().collect();
             sections.recent = new.into_iter().chain(split.iter().flat_map(|(_, ids)| ids.iter().cloned())).collect();
+        }
+        // Sessions another one started, right under it (not while filtering: a folded parent
+        // would hide what matches).
+        let mut nest: HashMap<String, Placed> = HashMap::new();
+        if ctx.kind == Kind::Code
+            && !filtering
+            && let Some(project) = self.workspace_project()
+        {
+            let lineage = self.lineage_for(&project);
+            let mut arrange = |keys: &mut Vec<String>| nest.extend(lineage.arrange(keys));
+            arrange(&mut sections.pinned);
+            sections.groups.iter_mut().for_each(&mut arrange);
+            arrange(&mut sections.older);
+            arrange(&mut sections.archived);
+            match &mut by_provider {
+                Some(split) => {
+                    split.iter_mut().for_each(|(_, ids)| arrange(ids));
+                    let new: Vec<String> =
+                        sections.recent.iter().filter(|k| !index.contains_key(*k)).cloned().collect();
+                    sections.recent =
+                        new.into_iter().chain(split.iter().flat_map(|(_, ids)| ids.iter().cloned())).collect();
+                }
+                None => arrange(&mut sections.recent),
+            }
         }
         let view = View { groups: &groups, show_archived: self.saved.sessions_show_archived, filtering };
         let is_open =
@@ -215,6 +250,7 @@ impl KynexApp {
             picked_ids: self.organize.selection.ids.clone(),
             default_branch,
             open: &open,
+            nest: &nest,
             t: t.clone(),
         };
         let take = |this: &mut Self, keys: &[String], cx: &mut Context<Self>| -> Vec<AnyElement> {
@@ -280,7 +316,11 @@ impl KynexApp {
                         if d.cwd != drop_cwd {
                             return;
                         }
-                        this.edit_groups(&drop_cwd, |g| d.ids.iter().for_each(|id| g.drop_into(id, None)));
+                        this.edit_groups(&drop_cwd, |g| {
+                            d.ids.iter().for_each(|id| {
+                                g.drop_into(id, None);
+                            })
+                        });
                         this.organize.selection.clear();
                         cx.notify();
                     }))

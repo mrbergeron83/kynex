@@ -87,6 +87,7 @@ fn main() {
         theme::set_fonts(&saved.ui_font, &saved.code_font);
         ui::motion::apply(saved.motion, cx);
         kynex_core::cli::set_program(saved.cli_path.clone());
+        kynex_core::workspace::set_worktree_root(saved.worktree_root.clone());
         kynex_core::delegate::set_default(saved.delegate);
         kynex_core::browser::set(saved.browser);
         kynex_core::terminal::ShellKind::set_default(saved.shell);

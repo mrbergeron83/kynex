@@ -64,8 +64,10 @@ fn patience(request: &Request) -> Option<Duration> {
         | Request::SessionPrompt { wait: true, .. }
         | Request::PaneWait { .. }
         | Request::PaneRun { wait: true, .. }
-        | Request::PanePrompt { wait: true, .. } => None,
-        Request::WorkspaceCreate { .. } | Request::WorkspaceRemove { .. } => Some(Duration::from_secs(300)),
+        | Request::PanePrompt { wait: true, .. }
+        | Request::RequestWait { .. } => None,
+        // The card's short wait, then git or a session's start.
+        r if super::approval::needs_card(r) => Some(super::approval::SHORT_WAIT + Duration::from_secs(300)),
         _ => Some(Duration::from_secs(15)),
     }
 }
@@ -146,6 +148,11 @@ fn send(
 /// prints the answers, one JSON line each. The exit code: 0, or 1 with the reason on stderr
 /// (also when the app answered with an error).
 pub fn run(args: &[String]) -> i32 {
+    // The one command that isn't a request: the protocol's schema, static, no app needed.
+    if super::args::wants_schema(args) {
+        println!("{}", serde_json::to_string_pretty(&super::schema::schema()).unwrap_or_default());
+        return 0;
+    }
     let request = match super::args::parse(args) {
         Ok(r) => r,
         Err(e) => {

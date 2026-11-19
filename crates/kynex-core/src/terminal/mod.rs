@@ -8,6 +8,7 @@
 pub mod hooks;
 mod keys;
 pub mod marker;
+mod search;
 mod shell;
 mod snapshot;
 
@@ -29,6 +30,7 @@ use alacritty_terminal::tty;
 
 pub use keys::{Key, key_bytes, paste_bytes};
 use marker::Mark;
+pub use search::{CopyMotion, Match};
 pub use shell::{ShellKind, ShellSpec, elevated, resolve as resolve_shell, which};
 pub use snapshot::{Cursor, CursorStyle, Palette, Rgb, Row, Run, Snapshot};
 
@@ -138,6 +140,8 @@ pub struct Terminal {
     term: Arc<FairMutex<Term<Listener>>>,
     pty: EventLoopSender,
     shared: Arc<Shared>,
+    /// The matches of the last find, tinted in snapshots.
+    find: Mutex<Option<search::FindState>>,
     size: Size,
     pub shell: ShellSpec,
     pub cwd: PathBuf,
@@ -198,7 +202,7 @@ impl Terminal {
             let _ = handle.join();
             wake_on_output();
         });
-        Ok(Self { term, pty: sender, shared, size, shell, cwd: cwd.to_path_buf() })
+        Ok(Self { term, pty: sender, shared, find: Mutex::new(None), size, shell, cwd: cwd.to_path_buf() })
     }
 
     /// Sends raw bytes to the shell, as if typed. Jumps back to the bottom.
@@ -296,7 +300,73 @@ impl Terminal {
     }
 
     pub fn snapshot(&self, palette: &Palette) -> Snapshot {
-        snapshot::snapshot(&self.term.lock(), palette)
+        snapshot::snapshot(&self.term.lock(), palette, self.find.lock().unwrap().as_ref())
+    }
+
+    /// Searches the scrollback and screen for `query` (ignoring case), tints the matches and
+    /// makes the newest one current, scrolled into view. Returns how many there are. Matches
+    /// are of the text as it is now: search again once more output has come.
+    pub fn find(&self, query: &str) -> usize {
+        let mut term = self.term.lock();
+        let matches = search::find(&term, query);
+        let count = matches.len();
+        let current = count.saturating_sub(1);
+        if let Some(m) = matches.get(current) {
+            search::reveal(&mut term, m);
+        }
+        *self.find.lock().unwrap() = (count > 0).then_some(search::FindState { matches, current });
+        count
+    }
+
+    /// Makes the next (or previous) match current, wrapping around, and scrolls to it.
+    /// Returns its 1-based position and how many there are; `None` with no matches.
+    pub fn find_step(&self, forward: bool) -> Option<(usize, usize)> {
+        let mut term = self.term.lock();
+        let mut guard = self.find.lock().unwrap();
+        let state = guard.as_mut()?;
+        let n = state.matches.len();
+        state.current = if forward { (state.current + 1) % n } else { (state.current + n - 1) % n };
+        search::reveal(&mut term, &state.matches[state.current]);
+        Some((state.current + 1, n))
+    }
+
+    /// Drops the find's tint.
+    pub fn find_clear(&self) {
+        *self.find.lock().unwrap() = None;
+    }
+
+    /// The matches of the last find.
+    pub fn find_matches(&self) -> Vec<Match> {
+        self.find.lock().unwrap().as_ref().map(|f| f.matches.clone()).unwrap_or_default()
+    }
+
+    /// In copy mode: keys move a cursor over the scrollback instead of going to the shell.
+    pub fn copy_mode(&self) -> bool {
+        search::copy_mode(&self.term.lock())
+    }
+
+    /// Enters copy mode, or leaves it (dropping the selection).
+    pub fn toggle_copy_mode(&self) {
+        search::toggle_copy_mode(&mut self.term.lock());
+    }
+
+    pub fn copy_motion(&self, motion: CopyMotion) {
+        search::copy_motion(&mut self.term.lock(), motion);
+    }
+
+    /// Starts a selection at the copy-mode cursor (cell, word or line), or ends it.
+    pub fn copy_select(&self, by: SelectBy) {
+        search::copy_select(&mut self.term.lock(), by);
+    }
+
+    /// Leaves copy mode, returning what was selected, if anything.
+    pub fn copy_yank(&self) -> Option<String> {
+        let mut term = self.term.lock();
+        let text = term.selection_to_string().filter(|s| !s.is_empty());
+        if search::copy_mode(&term) {
+            search::toggle_copy_mode(&mut term);
+        }
+        text
     }
 
     /// The title the shell set, if any.

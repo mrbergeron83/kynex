@@ -35,7 +35,8 @@ pub enum Axis {
 }
 
 /// A way to look or move: for focus, swap and resize.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum Direction {
     Left,
     Right,

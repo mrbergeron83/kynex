@@ -212,7 +212,7 @@ impl KynexApp {
                     .on_mouse_down(
                         MouseButton::Middle,
                         cx.listener(move |this, _, _, cx| {
-                            this.close_project(pos - PROJECTS_AT);
+                            this.close_project(pos - PROJECTS_AT, cx);
                             cx.notify();
                         }),
                     )

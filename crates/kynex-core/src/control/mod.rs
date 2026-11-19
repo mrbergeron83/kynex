@@ -4,6 +4,8 @@
 //!
 //! - [`protocol`]: the requests, the response lines, and the parser for what arrives (fuzzed).
 //! - [`args`]: command-line words into a request.
+//! - [`schema`]: the protocol as JSON Schema (`knx api schema`), generated from its types.
+//! - [`approval`]: the card you answer before a request that changes something is done.
 //! - [`server`] / [`client`]: the two ends of the socket.
 //!
 //! Who may connect: the socket's address is in `control.addr` in the data dir, and on Unix
@@ -11,9 +13,11 @@
 //! for each run, so only a process that can read the user's data dir finds it.
 
 pub mod agent;
+pub mod approval;
 pub mod args;
 pub mod client;
 pub mod protocol;
+pub mod schema;
 pub mod server;
 
 pub use protocol::Request;

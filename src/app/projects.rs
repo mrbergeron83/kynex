@@ -169,10 +169,11 @@ impl KynexApp {
     /// new one its provider.
     pub(super) fn start_model(&mut self, s: &mut Session) {
         let cwd = s.cwd.clone();
-        if let Some(id) = &s.session_id
+        // A fork starts on what its original was pinned to.
+        if let Some(id) = s.session_id.clone().or_else(|| s.forked_from().map(str::to_string))
             && s.own_model.is_none()
         {
-            s.own_model = self.groups_for(&cwd).model_of(id).map(str::to_string);
+            s.own_model = self.groups_for(&cwd).model_of(&id).map(str::to_string);
         }
         self.start_session(s);
     }
@@ -290,8 +291,13 @@ impl KynexApp {
         self.save();
     }
 
-    pub(super) fn close_project(&mut self, i: usize) {
+    pub(super) fn close_project(&mut self, i: usize, cx: &mut Context<Self>) {
         let p = self.saved.projects.remove(i);
+        let known: Vec<PathBuf> = self
+            .worktrees
+            .get(&p.path)
+            .map(|w| w.read(cx).list.iter().map(|w| w.path.clone()).collect())
+            .unwrap_or_default();
         let sessions: Vec<_> = self.code.remove(&p.path).into_iter().flat_map(|l| l.sessions).collect();
         let cwds: Vec<PathBuf> = sessions.iter().map(|s| s.cwd.clone()).collect();
         let closed: Vec<Key> = sessions.iter().map(|s| s.uid).collect();
@@ -300,7 +306,7 @@ impl KynexApp {
         self.drop_project_tiles(&p.path);
         self.worktrees.remove(&p.path);
         // Its Git views and terminals, in every workspace's folder (dropping a panel ends its shells).
-        self.drop_workspace_views(&p.path, &cwds);
+        self.drop_workspace_views(&p.path, &cwds, &known);
         self.saved.active = match self.saved.active {
             Active::Project(a) if a > i => Active::Project(a - 1),
             Active::Project(a) if a == i && i > 0 => Active::Project(i - 1),

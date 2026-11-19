@@ -252,6 +252,17 @@ pub fn theme_file(text: &str) {
     let _ = crate::themes::parse("x", text);
 }
 
+/// A shared layout file ([`crate::named_layouts`]): parsed, and when it holds together,
+/// applied and restored the way a workspace takes it.
+pub fn named_layout(text: &str) {
+    if let Ok(named) = crate::named_layouts::parse(text) {
+        let _ = named.summary();
+        let saved = crate::named_layouts::apply(&named);
+        let mut next = 0;
+        let _ = crate::tiling::Tiling::restore(&saved, &mut next, None, |_| Some(1));
+    }
+}
+
 pub fn user_commands(text: &str) {
     let mut all = crate::user_commands::parse(text).unwrap_or_default();
     let own = all.clone();
@@ -380,6 +391,20 @@ pub fn highlight(text: &str) {
             check(line, ranges);
         }
     }
+}
+
+/// Messages from other sessions (`<session-notification>`), as the transcript takes them out
+/// of a message from a session's log. What a notice written back says reads back the same.
+pub fn session_notice(text: &str) {
+    use crate::lineage::{Notice, notice, parse_notice, split_notices};
+    let (found, _) = split_notices(text);
+    let _ = parse_notice(text);
+    for n in found {
+        let back = parse_notice(&notice(&n)).expect("a notice reads back");
+        assert_eq!(back.from, n.from.replace(['"', '<', '>', '\n'], " "));
+    }
+    let n = Notice { from: "x".into(), title: text.into(), text: text.into() };
+    assert!(parse_notice(&notice(&n)).is_some());
 }
 
 #[cfg(test)]

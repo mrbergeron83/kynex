@@ -20,7 +20,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-use crate::groups::SessionGroups;
+use crate::groups::{Place, SessionGroups};
 
 /// How long a session used last stays in Recent.
 pub const RECENT_FOR: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -136,23 +136,24 @@ pub fn sections(
     by_time.sort_by_key(|s| std::cmp::Reverse(s.1));
     let cutoff = now.checked_sub(RECENT_FOR).unwrap_or(SystemTime::UNIX_EPOCH);
     let mut out = Sections { groups: vec![Vec::new(); groups.groups.len()], ..Sections::default() };
-    out.recent.extend(fresh.iter().filter(|f| !listed.iter().any(|(id, _)| id == *f)).cloned());
+    let listed_ids: std::collections::HashSet<&str> = listed.iter().map(|(id, _)| id.as_str()).collect();
+    out.recent.extend(fresh.iter().filter(|f| !listed_ids.contains(f.as_str())).cloned());
+    let places = groups.places();
     // Loose sessions (not pinned, grouped or archived), newest first.
     let mut loose = 0;
     for (id, used) in by_time {
-        if groups.is_archived(id) {
-            out.archived.push(id.clone());
-        } else if groups.is_pinned(id) {
-            out.pinned.push(id.clone());
-        } else if let Some(g) = groups.group_of(id) {
-            out.groups[g].push(id.clone());
-        } else {
-            let recent = loose < RECENT_AT_LEAST || *used >= cutoff || open.contains(id);
-            loose += 1;
-            if recent { &mut out.recent } else { &mut out.older }.push(id.clone());
+        match places.of(id) {
+            Some(Place::Archived) => out.archived.push(id.clone()),
+            Some(Place::Pinned(_)) => out.pinned.push(id.clone()),
+            Some(Place::Group(g)) => out.groups[g].push(id.clone()),
+            None => {
+                let recent = loose < RECENT_AT_LEAST || *used >= cutoff || open.contains(id);
+                loose += 1;
+                if recent { &mut out.recent } else { &mut out.older }.push(id.clone());
+            }
         }
     }
-    out.pinned.sort_by_key(|id| groups.pinned.iter().position(|p| p == id));
+    out.pinned.sort_by_key(|id| places.pin_order(id));
     out
 }
 
@@ -365,7 +366,7 @@ mod tests {
         assert_eq!(s.recent, Vec::<String>::new());
         assert_eq!(s.older, ids(&["fix old"]));
         let view = View { groups: &g, show_archived: false, filtering: true };
-        assert!(view.is_open(Section::Group(i), 1) && !view.is_open(Section::Recent, 0));
+        assert!(view.is_open(Section::Group(g.index_of(i).unwrap()), 1) && !view.is_open(Section::Recent, 0));
         // Archived ones stay out of a search unless "Show archived" is on.
         assert_eq!(view.drawn(&s), ids(&["fix grouped", "fix old"]));
         let shown = View { show_archived: true, ..view };

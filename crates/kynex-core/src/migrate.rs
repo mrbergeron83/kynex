@@ -8,10 +8,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 /// The format this build writes.
-pub const CURRENT: u32 = 2;
+pub const CURRENT: u32 = 3;
 
 /// `MIGRATIONS[i]` turns a file at version `i` into version `i + 1`.
-const MIGRATIONS: &[fn(&mut Map<String, Value>)] = &[v0_to_v1, v1_to_v2];
+const MIGRATIONS: &[fn(&mut Map<String, Value>)] = &[v0_to_v1, v1_to_v2, v2_to_v3];
 
 const _: () = assert!(MIGRATIONS.len() == CURRENT as usize);
 
@@ -41,6 +41,22 @@ fn v1_to_v2(map: &mut Map<String, Value>) {
             claude.remove(key);
         }
     }
+}
+
+/// `notify` and `sounds` become per-event rules (#448, #447): on meant a note for both events
+/// (an OS notification in the background, a toast in front: `Both`), and `sounds` the default sound.
+fn v2_to_v3(map: &mut Map<String, Value>) {
+    let notify = map.remove("notify");
+    let sounds = map.remove("sounds");
+    if (notify.is_none() && sounds.is_none()) || map.contains_key("notifications") {
+        return;
+    }
+    let on = notify == Some(Value::Bool(true));
+    let rule = serde_json::json!({
+        "delivery": if on { "Both" } else { "Off" },
+        "sound": if sounds == Some(Value::Bool(true)) { "Default" } else { "None" },
+    });
+    map.insert("notifications".into(), serde_json::json!({ "finished": rule, "needs_you": rule }));
 }
 
 pub enum Loaded {
@@ -131,9 +147,9 @@ mod tests {
 
     #[test]
     fn current_file_is_left_as_it_is() {
-        let text = r#"{"version": 2, "zoom": 1.0}"#;
+        let text = r#"{"version": 3, "zoom": 1.0}"#;
         let Loaded::Ok(v) = migrate(text) else { panic!("expected Ok") };
-        assert_eq!(v, serde_json::json!({"version": 2, "zoom": 1.0}));
+        assert_eq!(v, serde_json::json!({"version": 3, "zoom": 1.0}));
     }
 
     fn migrated(text: &str) -> Value {
@@ -168,10 +184,24 @@ mod tests {
                 "chief_workers": {}, "chief_spent": {}, "chief_working": [],
                 "claude": {"model": "m", "worker_model": "haiku", "careful": true}}"#,
         );
-        assert_eq!(v, serde_json::json!({"version": 2, "zoom": 1.0, "claude": {"model": "m"}}));
+        assert_eq!(v, serde_json::json!({"version": 3, "zoom": 1.0, "claude": {"model": "m"}}));
         // A project's settings file keeps them at the top level.
         let v = migrated(r#"{"version": 1, "model": "m", "worker_model": "haiku", "careful": true}"#);
-        assert_eq!(v, serde_json::json!({"version": 2, "model": "m"}));
+        assert_eq!(v, serde_json::json!({"version": 3, "model": "m"}));
+    }
+
+    #[test]
+    fn notify_and_sounds_become_rules() {
+        let v = migrated(r#"{"version": 2, "notify": true, "sounds": true, "zoom": 1.0}"#);
+        let both = serde_json::json!({"delivery": "Both", "sound": "Default"});
+        assert_eq!(v["notifications"], serde_json::json!({"finished": both, "needs_you": both}));
+        assert!(v.get("notify").is_none() && v.get("sounds").is_none());
+        let v = migrated(r#"{"version": 2, "notify": true, "sounds": false}"#);
+        assert_eq!(v["notifications"]["needs_you"], serde_json::json!({"delivery": "Both", "sound": "None"}));
+        let v = migrated(r#"{"version": 2, "notify": false, "sounds": true}"#);
+        assert_eq!(v["notifications"]["finished"], serde_json::json!({"delivery": "Off", "sound": "Default"}));
+        // Nothing saved, nothing added.
+        assert!(migrated(r#"{"version": 2}"#).get("notifications").is_none());
     }
 
     #[test]

@@ -147,6 +147,9 @@ struct State {
     hovered: bool,
     /// While the thumb is held: where along it it was grabbed.
     grab: Option<f32>,
+    /// A redraw when the hold after a scroll ends, so the bar can start fading
+    /// without drawing every frame meanwhile; and the scroll it's for.
+    wake: Option<(Instant, gpui::Task<()>)>,
 }
 
 /// Where the track and thumb sit in `bounds`.
@@ -270,10 +273,17 @@ impl Element for Scrollbar {
             } else {
                 match since {
                     Some(d) if d < HOLD => {
-                        window.request_animation_frame();
+                        let moved = s.moved;
+                        if s.wake.as_ref().map(|(at, _)| *at) != moved {
+                            let task = window.spawn(cx, async move |cx| {
+                                cx.background_executor().timer(HOLD - d).await;
+                                cx.update(|window, _| window.refresh()).ok();
+                            });
+                            s.wake = moved.map(|at| (at, task));
+                        }
                         0.5
                     }
-                    Some(d) if d < HOLD + FADE && !cx.reduce_motion() => {
+                    Some(d) if d < HOLD + FADE && !cx.reduce_motion() && !super::motion::reduced() => {
                         window.request_animation_frame();
                         0.5 * (1. - (d - HOLD).as_secs_f32() / FADE.as_secs_f32())
                     }

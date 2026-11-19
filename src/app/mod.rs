@@ -20,7 +20,14 @@
 //! | `control.rs`        | the control socket: `knx project / workspace / pane / session / events` |
 //! | `control_workspaces.rs` | its `workspace` commands: list, show, make, remove |
 //! | `control_panes.rs`  | its terminal / agent pane commands: read, run, prompt, wait |
+//! | `control_cards.rs`  | the card you answer before a `knx` request changes something |
+//! | `settings_notify.rs` | Settings > Notifications: delivery and sound per event |
+//! | `control_notify.rs` | its `notify` command: a toast or OS notification |
+//! | `control_pane_layout.rs` | its pane layout commands: move, swap, resize, zoom |
+//! | `control_sessions.rs` | its session commands: new, fork, open, close, rename, archive, pin |
+//! | `lineage.rs`        | which session started which: links, caps, answers sent back |
 //! | `layouts.rs`        | saving each workspace's panes and bringing them back |
+//! | `layouts_named.rs`  | named layouts: save, apply, export, import (the layouts menu) |
 //! | `layout_history.rs` | undo / redo of pane changes, reopening a pane, older layouts |
 //! | `toolbar.rs`        | path, panes' buttons (timeline, Git), open-in buttons |
 //! | `sessions_panel.rs` | the sessions tree's header, each workspace's list read |
@@ -37,6 +44,7 @@
 //! | `agent_panes.rs`    | other agent CLIs in panes, their state off the screen |
 //! | `agents_pane.rs`    | the Agents pane: what runs or wants you, every project |
 //! | `tasks.rs`          | background tasks: running strip, ended rows          |
+//! | `todos.rs`          | Claude's todo list over the composer                 |
 //! | `toasts.rs`         | the toast stack: task endings, updates, errors       |
 //! | `titles.rs`         | naming sessions Claude Code didn't name              |
 //! | `transcript.rs`     | the conversation list, its scrolling and follow-the-tail |
@@ -46,6 +54,8 @@
 //! | `worktrees.rs`      | the project's worktrees, and which one Claude is in  |
 //! | `workspaces.rs`     | workspaces: listing, selecting, their folders        |
 //! | `workspace_list.rs` | a workspace's row in the tree: lamp, fold, menu      |
+//! | `workspace_binding.rs` | a workspace bound to its branch: binding, drift warning |
+//! | `session_move.rs`   | a session that makes a worktree moves into it        |
 //! | `workspace_new.rs`  | making and removing workspaces, folding worktree tabs |
 //! | `removed_workspaces.rs` | the "Removed workspaces" section: their sessions, Forget, Continue in |
 //! | `git_modal.rs`      | a worktree's Git view in a modal, in chat            |
@@ -108,7 +118,11 @@ mod attention;
 mod background;
 mod composer;
 mod control;
+mod control_cards;
+mod control_notify;
+mod control_pane_layout;
 mod control_panes;
+mod control_sessions;
 mod control_workspaces;
 mod custom_commands;
 mod custom_themes;
@@ -133,7 +147,9 @@ mod keys;
 mod layout;
 mod layout_history;
 mod layouts;
+mod layouts_named;
 mod leaving;
+mod lineage;
 pub(crate) mod mentions;
 mod menus;
 mod models;
@@ -157,12 +173,14 @@ mod rules_view;
 mod scratch_modal;
 mod session_groups;
 mod session_header;
+mod session_move;
 mod session_rows;
 mod session_select;
 mod session_tidy;
 mod session_tree;
 mod sessions_panel;
 mod settings;
+mod settings_notify;
 mod setup;
 mod shell_runs;
 pub(crate) mod slash;
@@ -178,6 +196,7 @@ pub(crate) mod timeline;
 mod title_bar;
 mod titles;
 mod toasts;
+mod todos;
 mod tool_panes;
 mod tool_rows;
 mod toolbar;
@@ -185,6 +204,7 @@ mod transcript;
 mod transcript_rows;
 mod trust;
 mod viewer;
+mod workspace_binding;
 mod workspace_list;
 mod workspace_new;
 mod workspaces;
@@ -204,7 +224,7 @@ use kynex_core::session::{self, Kind, Session};
 pub use control::OPEN_AT_START;
 pub use custom_commands::bind_command_keys;
 use drafts::Draft;
-pub use keys::{SHELL_KEYS, SendPrefix, ToggleGit, ToggleTerminal, bind_keys, prefix_key};
+pub use keys::{CopyMode, SHELL_KEYS, SendPrefix, ToggleGit, ToggleTerminal, bind_keys, prefix_key};
 use menus::OpenMenu;
 use palette::PaletteView;
 use scratch_modal::ScratchModal;
@@ -241,9 +261,17 @@ pub struct KynexApp {
     want_git_pane: Option<(PathBuf, std::time::Instant)>,
     /// Each open project's git worktrees, kept fresh in the background.
     worktrees: HashMap<PathBuf, Entity<Worktrees>>,
+    /// Which worktree each session is working in, as last worked out (`worktrees.rs`).
+    working: HashMap<Key, worktrees::Working>,
+    /// Sessions whose todo list is opened again after its turn ended (`todos.rs`).
+    todos_open: std::collections::HashSet<Key>,
     /// Each project's saved workspaces (selection, sessions, order), read on first use.
     workspaces: HashMap<PathBuf, kynex_core::workspace::Workspaces>,
     workspace_ui: workspace_new::WorkspaceUi,
+    /// Which drifted workspaces were warned about (`workspace_binding.rs`).
+    binding: workspace_binding::Binding,
+    /// Sessions that made a worktree, and their moves into it (`session_move.rs`).
+    moves: session_move::Moves,
     /// The "Removed workspaces" section: what is unfolded, and what a right-click asked.
     removed_ui: removed_workspaces::RemovedUi,
     /// Each open project's colour settings, read once.
@@ -309,6 +337,8 @@ pub struct KynexApp {
     tile_projects: HashMap<PathBuf, PathBuf>,
     /// The workspace whose panes were on screen last: the one you go to takes its shape.
     tiled_last: Option<PathBuf>,
+    /// The name being typed for "Save layout as…", in the layouts menu.
+    layout_name: Option<Entity<TextInput>>,
     /// The pane tab being renamed, and the field its name is typed in.
     pane_tab_rename: Option<(usize, Entity<TextInput>)>,
     /// Resize mode (`prefix r`): h / j / k / l and the arrows grow the focused pane.
@@ -410,6 +440,16 @@ pub struct KynexApp {
     control_seen: control::Seen,
     /// The last marker a `knx pane run --wait` command was typed with.
     control_marker: u64,
+    /// Requests that wait for your OK on a card, and those answered lately (`control_cards.rs`).
+    approvals: kynex_core::control::approval::Approvals,
+    /// The last token a `knx request wait` was given.
+    approval_token: u64,
+    /// Titles asked for sessions with no CLI id yet, given once they have one.
+    pending_titles: Vec<(kynex_core::live::Key, String)>,
+    /// Each project's parent links (`lineage.rs`), read the first time they're needed.
+    lineage: HashMap<PathBuf, kynex_core::lineage::Lineage>,
+    /// Parent links whose child has no CLI id yet.
+    pending_parents: Vec<lineage::PendingParent>,
     /// The loop looking at waits on panes is running.
     pane_wait_watch: bool,
     /// Themes read from the data dir's `themes/` folder, the files that couldn't be used, and the watch on it.
@@ -637,8 +677,12 @@ impl KynexApp {
             git_panes: HashMap::new(),
             want_git_pane: None,
             worktrees: HashMap::new(),
+            working: HashMap::new(),
+            todos_open: Default::default(),
             workspaces: HashMap::new(),
             workspace_ui: Default::default(),
+            binding: Default::default(),
+            moves: Default::default(),
             removed_ui: Default::default(),
             terminals: Vec::new(),
             term_panes: HashMap::new(),
@@ -671,6 +715,7 @@ impl KynexApp {
             tiles: HashMap::new(),
             tile_projects: HashMap::new(),
             tiled_last: None,
+            layout_name: None,
             pane_tab_rename: None,
             resize_mode: None,
             menu_pick: 0,
@@ -727,6 +772,11 @@ impl KynexApp {
             control_wait_for: None,
             control_seen: HashMap::new(),
             control_marker: 0,
+            approvals: Default::default(),
+            approval_token: 0,
+            pending_titles: Vec::new(),
+            lineage: HashMap::new(),
+            pending_parents: Vec::new(),
             pane_wait_watch: false,
             custom_themes: Vec::new(),
             theme_errors: Vec::new(),
@@ -775,6 +825,10 @@ impl KynexApp {
         // Sessions whose history came in from their log, and how many items went in front.
         let mut histories = Vec::new();
         let mut openrouter_turn_ended = false;
+        // Sessions whose turn just ended, for the answers going back to who started them.
+        let mut turn_ends = Vec::new();
+        // Sessions that just added a git worktree, and text naming it.
+        let mut added = Vec::new();
         for s in self.all_sessions_mut() {
             // Before `seen`: history isn't news (no toasts for old tasks).
             if let Some(n) = s.take_history() {
@@ -792,10 +846,22 @@ impl KynexApp {
                 touched.insert(s.cwd.clone());
             }
             shown_ended |= was_busy && !s.busy && Some(s.uid) == shown;
+            // Every turn's end, also one whose queued messages went out at once (still busy).
+            for (i, item) in s.items.iter().enumerate().skip(seen) {
+                if matches!(item, session::Item::Result { .. }) {
+                    turn_ends.push((s.uid, i));
+                }
+            }
             openrouter_turn_ended |= was_busy && !s.busy && s.provider().provider().is_openrouter();
             for item in s.items.get(seen..).into_iter().flatten() {
-                if let session::Item::Task(n) = item {
-                    ended.push((s.uid, n.clone()));
+                match item {
+                    session::Item::Task(n) => ended.push((s.uid, n.clone())),
+                    session::Item::ToolResult { id, is_error: false, .. } => {
+                        if let Some(text) = session_move::adds_worktree(s, id) {
+                            added.push((s.uid, text));
+                        }
+                    }
+                    _ => {}
                 }
             }
             if let Some(init) = s.take_init() {
@@ -843,6 +909,10 @@ impl KynexApp {
             self.turn_ended(key);
         }
         self.refresh_worktrees(&touched, cx);
+        for (key, text) in added {
+            self.worktree_added(key, text, cx);
+        }
+        self.advance_moves(cx);
         self.toast_new_tasks(ended);
         if called && let Some(handle) = cx.windows().first().copied() {
             cx.defer(move |cx| {
@@ -860,6 +930,7 @@ impl KynexApp {
         self.sync_session_ids();
         self.save_layouts(cx);
         self.finish_control_waits(cx);
+        self.report_back(&turn_ends);
         self.control_events();
         self.sync_attention(cx);
         self.sync_awake();

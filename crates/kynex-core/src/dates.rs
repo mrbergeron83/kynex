@@ -6,10 +6,10 @@
 
 use std::time::SystemTime;
 
-use chrono::{DateTime, Datelike, Local, NaiveDate};
+use jiff::civil::Date;
 
 /// A calendar day.
-pub type Day = NaiveDate;
+pub type Day = Date;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Bucket {
@@ -24,22 +24,23 @@ pub enum Bucket {
 
 impl Bucket {
     /// Where a session last active on `day` goes, seen on `today`.
-    pub fn of(day: NaiveDate, today: NaiveDate) -> Self {
-        match (today - day).num_days() {
+    pub fn of(day: Day, today: Day) -> Self {
+        match day.until(today).map_or(0, |span| span.get_days()) {
             // A clock that ran ahead still counts as today.
             ..=0 => Bucket::Today,
             1 => Bucket::Yesterday,
             2..=7 => Bucket::Week,
             8..=30 => Bucket::Month,
             _ => {
-                let months = (today.year() - day.year()) * 12 + today.month() as i32 - day.month() as i32;
-                if months < 12 { Bucket::MonthOf(day.year(), day.month()) } else { Bucket::Year(day.year()) }
+                let (year, month) = (i32::from(day.year()), day.month() as u32);
+                let months = (i32::from(today.year()) - year) * 12 + i32::from(today.month()) - month as i32;
+                if months < 12 { Bucket::MonthOf(year, month) } else { Bucket::Year(year) }
             }
         }
     }
 
     /// Its header: "Today", "October", "December 2025", "2024".
-    pub fn label(self, today: NaiveDate) -> String {
+    pub fn label(self, today: Day) -> String {
         match self {
             Bucket::Today => "Today".into(),
             Bucket::Yesterday => "Yesterday".into(),
@@ -47,7 +48,7 @@ impl Bucket {
             Bucket::Month => "Previous 30 days".into(),
             Bucket::MonthOf(year, month) => {
                 let name = MONTHS[(month as usize).clamp(1, 12) - 1];
-                if year == today.year() { name.into() } else { format!("{name} {year}") }
+                if year == i32::from(today.year()) { name.into() } else { format!("{name} {year}") }
             }
             Bucket::Year(year) => year.to_string(),
         }
@@ -88,19 +89,23 @@ const MONTHS: [&str; 12] = [
 ];
 
 /// The local calendar day of a file time.
-pub fn local_day(t: SystemTime) -> NaiveDate {
-    DateTime::<Local>::from(t).date_naive()
+pub fn local_day(t: SystemTime) -> Day {
+    match jiff::Timestamp::try_from(t) {
+        Ok(ts) => ts.to_zoned(jiff::tz::TimeZone::system()).date(),
+        // Out of range (a file time far off): count it as today.
+        Err(_) => today(),
+    }
 }
 
 /// Today, locally.
-pub fn today() -> NaiveDate {
-    Local::now().date_naive()
+pub fn today() -> Day {
+    jiff::Zoned::now().date()
 }
 
 /// `items` (newest first, each with the day it was last active) under their
 /// headers, in order; empty buckets don't appear. One bucket only means no
 /// headers are needed: then it's `None`.
-pub fn sections<T: Clone>(items: &[(T, NaiveDate)], today: NaiveDate) -> Option<Vec<(Bucket, Vec<T>)>> {
+pub fn sections<T: Clone>(items: &[(T, Day)], today: Day) -> Option<Vec<(Bucket, Vec<T>)>> {
     let mut out: Vec<(Bucket, Vec<T>)> = Vec::new();
     for (item, day) in items {
         let bucket = Bucket::of(*day, today);
@@ -115,7 +120,7 @@ pub fn sections<T: Clone>(items: &[(T, NaiveDate)], today: NaiveDate) -> Option<
 /// [`sections`] for a list that falls on a single day's bucket: that one
 /// section, for when other sections sit beside it and it needs its header too.
 /// `None` when the items span several buckets (use [`sections`]) or none.
-pub fn lone_section<T: Clone>(items: &[(T, NaiveDate)], today: NaiveDate) -> Option<Vec<(Bucket, Vec<T>)>> {
+pub fn lone_section<T: Clone>(items: &[(T, Day)], today: Day) -> Option<Vec<(Bucket, Vec<T>)>> {
     let bucket = Bucket::of(items.first()?.1, today);
     items
         .iter()
@@ -137,8 +142,8 @@ mod tests {
         assert!(lone_section::<&str>(&[], today).is_none());
     }
 
-    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    fn d(y: i16, m: i8, day: i8) -> Day {
+        Date::new(y, m, day).unwrap()
     }
 
     #[test]

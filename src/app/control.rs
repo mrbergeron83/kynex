@@ -1,7 +1,8 @@
-//! The control socket (`kynex_core::control`): answering what `knx context | pane | session`
-//! and scripts ask of the running app, and the events they can listen to. A prompt sent this
-//! way is an ordinary message to the session, so it runs under the session's permission mode
-//! and a permission prompt is still answered in the app.
+//! The control socket (`kynex_core::control`): answering what `knx project | workspace | pane |
+//! session | request` and scripts ask of the running app, and the events they can listen to.
+//! What changes something waits for your OK on a card first (`control_cards.rs`). A prompt
+//! sent this way is an ordinary message to the session, so it runs under the session's
+//! permission mode and a permission prompt is still answered in the app.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -10,7 +11,9 @@ use std::time::{Duration, Instant};
 
 use gpui::{Context, Window};
 use kynex_core::control::Request;
-use kynex_core::control::server::Call;
+use kynex_core::control::approval;
+use kynex_core::control::protocol::Event;
+use kynex_core::control::server::{Call, Gone};
 use kynex_core::layout::{Axis, PaneId};
 use kynex_core::live::Key;
 use kynex_core::session::{Item, Session};
@@ -18,6 +21,7 @@ use kynex_core::workspace::same_folder;
 use serde_json::{Value, json};
 
 use super::KynexApp;
+use super::control_sessions::NewSession;
 use super::state::Active;
 
 /// A folder given on the command line (`knx <folder>`) when no running app took it: opened at start.
@@ -30,6 +34,8 @@ pub(super) const START_WITHIN: Duration = Duration::from_secs(60);
 pub(super) struct Wait {
     pub(super) target: Target,
     reply: Sender<Result<Value, String>>,
+    /// The client hung up: the wait is dropped at the next look.
+    gone: Gone,
     /// It has been seen working: only then does "not working" mean the turn ended.
     pub(super) started: bool,
     pub(super) since: Instant,
@@ -65,31 +71,58 @@ pub(super) type Seen = HashMap<Key, (bool, bool)>;
 pub(super) type Answer = Result<Value, String>;
 
 impl KynexApp {
-    /// Answers every request that came in on the socket.
+    /// Answers every request that came in on the socket; one that changes something puts up
+    /// a card first (`control_cards.rs`).
     pub(super) fn serve_control(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let calls = self.control.as_ref().map(|c| c.take()).unwrap_or_default();
-        for Call { request, reply, .. } in calls {
-            match self.control_request(request, &reply, window, cx) {
-                // The answer comes when the turn ends.
-                Err(None) => {}
-                Ok(v) => {
-                    let _ = reply.send(Ok(v));
-                }
-                Err(Some(e)) => {
-                    let _ = reply.send(Err(e));
-                }
+        for Call { request, reply, caller, gone } in calls {
+            if gone.hung_up() {
+                continue;
             }
-            if let Some(wait) = self.control_wait_for.take() {
-                self.control_waits.push(Wait { reply, ..wait });
+            if approval::needs_card(&request) {
+                self.ask_card(request, caller, reply, cx);
+            } else {
+                self.dispatch(request, caller, false, reply, gone, window, cx);
             }
         }
         cx.notify();
     }
 
-    /// `Err(None)`: the answer is held back (see `control_wait_for`).
+    /// Does `request` from session `caller`; `reply` gets the answer, now or later.
+    /// `worktree`: the card's "Start in a new worktree" was picked. `gone`: the client hung up,
+    /// so a wait it asked for is dropped.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn dispatch(
+        &mut self,
+        request: Request,
+        caller: Option<Key>,
+        worktree: bool,
+        reply: Sender<Answer>,
+        gone: Gone,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.control_request(request, caller, worktree, &reply, window, cx) {
+            // The answer comes when the turn ends.
+            Err(None) => {}
+            Ok(v) => {
+                let _ = reply.send(Ok(v));
+            }
+            Err(Some(e)) => {
+                let _ = reply.send(Err(e));
+            }
+        }
+        if let Some(wait) = self.control_wait_for.take() {
+            self.control_waits.push(Wait { reply, gone, ..wait });
+        }
+    }
+
+    /// `Err(None)`: the answer is held back (see `control_wait_for`), or comes on `reply`.
     fn control_request(
         &mut self,
         request: Request,
+        caller: Option<Key>,
+        worktree: bool,
         reply: &Sender<Answer>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -110,8 +143,9 @@ impl KynexApp {
                 window.activate_window();
                 Ok(json!({ "opened": target }))
             }
-            Request::WorkspaceCreate { branch } => {
-                self.create_workspace_for(branch, reply.clone(), cx);
+            Request::WorkspaceCreate { branch, session, prompt, why } => {
+                let start = session.then_some((prompt, why));
+                self.create_workspace_for(branch, start, caller, reply.clone(), cx);
                 Err(None)
             }
             Request::WorkspaceRemove { path, force } => {
@@ -122,7 +156,7 @@ impl KynexApp {
             Request::ProjectRemove { path } => {
                 let i = self.saved.projects.iter().position(|p| same_folder(&p.path, std::path::Path::new(&path)));
                 let i = i.ok_or_else(|| Some(format!("{path} isn't open")))?;
-                self.close_project(i);
+                self.close_project(i, cx);
                 Ok(json!({ "closed": path }))
             }
             Request::PaneList { all } => Ok(self.pane_list(all)),
@@ -161,6 +195,10 @@ impl KynexApp {
                 self.focus_pane(pane, window, cx);
                 Ok(json!({ "pane": pane }))
             }
+            Request::PaneMove { pane, to } => self.control_pane_move(pane, to, window, cx),
+            Request::PaneSwap { pane, other } => self.control_pane_swap(pane, other, window, cx),
+            Request::PaneResize { pane, dir, by } => self.control_pane_resize(pane, dir, by, window, cx),
+            Request::PaneZoom { pane, off } => self.control_pane_zoom(pane, off, window, cx),
             Request::PaneClose { pane } => {
                 let Some(pane) = pane.or_else(|| self.focused_pane()) else {
                     return Err(said("no pane to close"));
@@ -173,26 +211,54 @@ impl KynexApp {
             }
             Request::SessionList => Ok(self.session_list()),
             Request::SessionRead { session } => {
-                let s = self.session_by_key(session).ok_or_else(|| Some(no_session(session)))?;
+                let key = self.resolve_session(&session).map_err(Some)?;
+                let s = self.session_by_key(key).ok_or_else(|| Some(no_session(key)))?;
                 Ok(json!({ "text": last_said(s), "busy": s.busy, "waiting": s.waiting() }))
             }
             Request::SessionPrompt { session, text, wait, timeout } => {
-                let s = self.all_sessions_mut().find(|s| s.uid == session).ok_or_else(|| Some(no_session(session)))?;
+                let key = self.resolve_session(&session).map_err(Some)?;
+                let s = self.session_for(key).ok_or_else(|| Some(no_session(key)))?;
                 s.send(text, Vec::new());
                 // Working at once, or the message waits (the log is loading): then the next poll sees it start.
                 let started = s.busy;
                 if wait {
-                    self.hold(Target::Session(session), started, timeout, cx);
+                    self.hold(Target::Session(key), started, timeout, cx);
                     return Err(None);
                 }
                 Ok(json!({ "sent": true }))
             }
             Request::SessionWait { session, timeout } => {
-                let s = self.session_by_key(session).ok_or_else(|| Some(no_session(session)))?;
+                let key = self.resolve_session(&session).map_err(Some)?;
+                let s = self.session_by_key(key).ok_or_else(|| Some(no_session(key)))?;
                 if !s.busy {
                     return Ok(turn_state(s));
                 }
-                self.hold(Target::Session(session), true, timeout, cx);
+                self.hold(Target::Session(key), true, timeout, cx);
+                Err(None)
+            }
+            Request::SessionNew { workspace, prompt, title, pane, why } => {
+                let new = NewSession { workspace, prompt, title, place: pane.unwrap_or_default(), why };
+                self.control_session_new(new, caller, worktree, reply.clone(), window, cx).map_err(Some)?;
+                Err(None)
+            }
+            Request::SessionFork { session, at, pane } => {
+                self.control_session_fork(&session, at, pane.unwrap_or_default(), caller, reply.clone(), window, cx)
+                    .map_err(Some)?;
+                Err(None)
+            }
+            Request::SessionOpen { session, pane } => {
+                self.control_session_open(session, pane.unwrap_or_default(), caller, window, cx).map_err(Some)
+            }
+            Request::SessionClose { session } => self.control_session_close(&session, window, cx).map_err(Some),
+            Request::SessionRename { session, title } => self.control_session_rename(&session, &title).map_err(Some),
+            Request::SessionArchive { session } => self.control_session_archive(&session).map_err(Some),
+            Request::SessionPin { session, off } => self.control_session_pin(&session, off).map_err(Some),
+            Request::Notify { title, body, pane, session } => {
+                self.control_notify(&title, body, pane, session.as_ref(), cx).map_err(Some)
+            }
+            Request::RequestStatus { request } => self.approvals.status(request).map_err(Some),
+            Request::RequestWait { request, timeout } => {
+                self.request_wait(request, timeout, reply.clone(), cx);
                 Err(None)
             }
             // Handled by the socket itself.
@@ -208,7 +274,7 @@ impl KynexApp {
         let deadline = timeout.map(|s| (now + Duration::from_secs(s), s));
         // `serve_control` puts the client's reply with it.
         let (reply, _) = std::sync::mpsc::channel();
-        self.control_wait_for = Some(Wait { target, reply, started, since: now, deadline });
+        self.control_wait_for = Some(Wait { target, reply, gone: Gone::default(), started, since: now, deadline });
         if pane {
             // Nothing else rings for panes: they are looked at every so often.
             self.watch_pane_waits(cx);
@@ -228,11 +294,18 @@ impl KynexApp {
     /// Answers the waits whose turn ended, whose session needs you, whose session went away
     /// or never started. Called after every poll of the sessions.
     pub(super) fn finish_control_waits(&mut self, cx: &mut Context<Self>) {
+        self.drop_closed_cards();
+        self.give_pending_titles();
+        self.give_pending_parents();
         if self.control_waits.is_empty() {
             return;
         }
         let waits = std::mem::take(&mut self.control_waits);
         for mut w in waits {
+            // Nobody to answer: Ctrl+C on `knx … --wait`.
+            if w.gone.hung_up() {
+                continue;
+            }
             if let Some((at, secs)) = w.deadline
                 && Instant::now() >= at
             {
@@ -278,13 +351,22 @@ impl KynexApp {
     pub(super) fn control_events(&mut self) {
         let Some(server) = &self.control else { return };
         let now: Seen = self.all_sessions().map(|s| (s.uid, (s.busy, s.waiting()))).collect();
+        // Opened and closed since the last look, with who started them.
+        for s in self.all_sessions().filter(|s| !self.control_seen.contains_key(&s.uid)) {
+            let data = json!({ "session": s.uid, "id": s.session_id, "parent": self.parent_key(s.uid) });
+            server.broadcast(Event::SessionCreated, data);
+        }
+        for gone in self.control_seen.keys().filter(|k| !now.contains_key(k)) {
+            let parent = self.approvals.maker(&kynex_core::control::approval::Made::Session(*gone));
+            server.broadcast(Event::SessionClosed, json!({ "session": gone, "parent": parent }));
+        }
         for s in self.all_sessions() {
             let (was_busy, was_waiting) = self.control_seen.get(&s.uid).copied().unwrap_or((false, false));
             if was_busy && !s.busy {
-                server.broadcast("turn_end", json!({ "session": s.uid, "state": turn_state(s)["state"] }));
+                server.broadcast(Event::TurnEnd, json!({ "session": s.uid, "state": turn_state(s)["state"] }));
             }
             if !was_waiting && s.waiting() {
-                server.broadcast("needs_you", json!({ "session": s.uid }));
+                server.broadcast(Event::NeedsYou, json!({ "session": s.uid }));
             }
         }
         self.control_seen = now;
@@ -334,7 +416,7 @@ impl KynexApp {
         self.tiles.get(&cwd)?.focus()
     }
 
-    fn tiles_have(&self, pane: u64) -> bool {
+    pub(super) fn tiles_have(&self, pane: u64) -> bool {
         self.tiling_scope().and_then(|(_, cwd, _)| self.tiles.get(&cwd)).is_some_and(|t| t.has(pane))
     }
 

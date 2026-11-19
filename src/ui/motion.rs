@@ -231,6 +231,13 @@ fn set_level(level: Level, cx: &mut App) {
     cx.refresh_windows();
 }
 
+/// Whether animations are "reduced": what moves on its own for a while (the
+/// transcript trailing a reply, a scrollbar fading) jumps to where it ends
+/// instead, like with them off; a CPU-drawn window can't spare those frames.
+pub fn reduced() -> bool {
+    LOOP_FPS.load(Ordering::Relaxed) != 0
+}
+
 /// [`Level::loop_fps`] as bits, 0 for uncapped. A static rather than an `App`
 /// global so [`looping`] needs no context, like gpui's own animations.
 static LOOP_FPS: AtomicU32 = AtomicU32::new(0);
