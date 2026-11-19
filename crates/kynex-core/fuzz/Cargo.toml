@@ -204,3 +204,10 @@ path = "fuzz_targets/named_layout.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "read_only"
+path = "fuzz_targets/read_only.rs"
+test = false
+doc = false
+bench = false

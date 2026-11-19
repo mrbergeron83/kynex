@@ -956,7 +956,8 @@ impl Session {
             };
             let mut acp = crate::acp::Acp::new(self.cwd.clone(), &model, self.mode, resume.as_deref())
                 .for_agent(agent)
-                .with_effort(&effort);
+                .with_effort(&effort)
+                .with_rules(&project::Permissions::load(self.settings_folder()));
             for line in acp.start() {
                 self.write_line(&line);
             }
@@ -1281,8 +1282,9 @@ impl Session {
     /// A process that isn't running reads them when it starts.
     pub fn apply_settings(&mut self, perms: &project::Permissions, claude: &project::ClaudeSettings) {
         let claude = &claude.for_provider(self.provider.provider());
-        // Grok takes its effort live; its rules are its own.
+        // An ACP agent takes its effort live; Antigravity's prompts follow the project's rules.
         if let Some(acp) = self.acp.as_mut() {
+            acp.set_rules(perms);
             for line in acp.set_effort(&claude.effort) {
                 self.write_line(&line);
             }

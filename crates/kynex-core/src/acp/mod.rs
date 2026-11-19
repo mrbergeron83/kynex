@@ -95,6 +95,11 @@ pub struct Acp {
     total_cost: f64,
     /// The reasoning effort to set once the session is open; empty is the model's own.
     effort: String,
+    /// The project's allow and deny rules (Kynex's Permissions), and those allowed
+    /// for this session: Antigravity's prompts offer no "always", so Kynex keeps
+    /// them and answers for them ([`Self::ask`]).
+    rules: Vec<crate::rules::Rule>,
+    session_rules: Vec<String>,
 }
 
 /// A JSON-RPC request.
@@ -133,7 +138,20 @@ impl Acp {
             models: Default::default(),
             total_cost: 0.0,
             effort: String::new(),
+            rules: Vec::new(),
+            session_rules: Vec::new(),
         }
+    }
+
+    /// With the project's permission rules ([`Self::set_rules`]).
+    pub fn with_rules(mut self, perms: &crate::project::Permissions) -> Self {
+        self.set_rules(perms);
+        self
+    }
+
+    /// Takes the project's permission rules, after a change to them.
+    pub fn set_rules(&mut self, perms: &crate::project::Permissions) {
+        self.rules = crate::rules::kynex_rules(perms);
     }
 
     /// For `agent` rather than Grok.
@@ -304,6 +322,12 @@ impl Acp {
                     return Vec::new();
                 };
                 let answer = &response["response"];
+                // "This session" or "always in this project": kept here, for the next asks.
+                for rule in crate::project::suggested_rules(&answer["updatedPermissions"]) {
+                    if !self.session_rules.contains(&rule) {
+                        self.session_rules.push(rule);
+                    }
+                }
                 let (kinds, stop): (&[&str], bool) = match answer["behavior"].as_str() {
                     Some("allow") if answer["updatedPermissions"].as_array().is_some_and(|u| !u.is_empty()) => {
                         (&["allow_always", "allow_once"], false)
@@ -564,10 +588,20 @@ impl Acp {
         if self.mode == Mode::Bypass || (kind == "edit" && matches!(self.mode, Mode::AcceptEdits | Mode::Auto)) {
             return vec![Out::Write(choose(v["id"].clone(), &options, &["allow_once", "allow_always"]))];
         }
+        let (name, input) = tool(call);
+        // Antigravity: the project's rules and this session's decide first, then a
+        // command that only reads goes, as Claude Code's would. Grok keeps its own.
+        let mut suggestions = Value::Null;
+        if self.agent == Agent::Antigravity {
+            match self.decide(&name, &input) {
+                Some(true) => return vec![Out::Write(choose(v["id"].clone(), &options, &["allow_once"]))],
+                Some(false) => return vec![Out::Write(choose(v["id"].clone(), &options, &["reject_once"]))],
+                None => suggestions = suggestion(&name, &input),
+            }
+        }
         let request_id = format!("acp-{}", v["id"]);
         self.asks.insert(request_id.clone(), (v["id"].clone(), options));
         let mut out = self.close();
-        let (name, input) = tool(call);
         out.push(Out::Handle(json!({
             "type": "control_request",
             "request_id": request_id,
@@ -576,10 +610,70 @@ impl Acp {
                 "tool_name": name,
                 "input": input,
                 "description": call["title"].as_str().unwrap_or(""),
+                "permission_suggestions": suggestions,
             },
         })));
         out
     }
+
+    /// What the rules say about a call: allow, deny, or `None` to ask.
+    fn decide(&self, name: &str, input: &Value) -> Option<bool> {
+        use crate::rules::{Kind, Rule, Source};
+        let session =
+            self.session_rules.iter().map(|t| Rule { kind: Kind::Allow, text: t.clone(), source: Source::Kynex });
+        let rules: Vec<Rule> = self.rules.iter().cloned().chain(session).collect();
+        if name == "Bash" {
+            let command = input["command"].as_str().unwrap_or("").trim();
+            if command.is_empty() {
+                return None;
+            }
+            return match crate::rules::test(&rules, command).decision {
+                Some(Kind::Deny) => Some(false),
+                Some(Kind::Allow) => Some(true),
+                Some(Kind::Ask) => None,
+                None => crate::read_only::is_read_only(command).then_some(true),
+            };
+        }
+        // Other tools: a rule naming the tool alone, like `Write`.
+        let named = |kind: Kind| rules.iter().any(|r| r.kind == kind && r.text.trim() == name);
+        if named(Kind::Deny) {
+            Some(false)
+        } else if named(Kind::Allow) {
+            Some(true)
+        } else {
+            None
+        }
+    }
+}
+
+/// The rule the prompt offers to keep for a call, as Claude's `permission_suggestions`:
+/// a command's program (with its subcommand for tools that have them, like
+/// `git log`) as `Bash(git log:*)`, any other tool by its name.
+fn suggestion(name: &str, input: &Value) -> Value {
+    let (tool, content) = if name == "Bash" {
+        let command = input["command"].as_str().unwrap_or("");
+        let words: Vec<&str> = command.split_whitespace().collect();
+        let Some(first) = words.first() else { return Value::Null };
+        // A chained or redirected command gets no rule: one for its first program would say too much.
+        if command.contains(['|', ';', '&', '>', '`', '\n']) || command.contains("$(") {
+            return Value::Null;
+        }
+        let with_sub = ["git", "npm", "pnpm", "yarn", "cargo", "dotnet", "gh", "go", "docker", "kubectl"];
+        let prefix = match words.get(1) {
+            Some(sub) if with_sub.contains(&first.to_ascii_lowercase().as_str()) && !sub.starts_with('-') => {
+                format!("{first} {sub}")
+            }
+            _ => first.to_string(),
+        };
+        ("Bash", Some(format!("{prefix}:*")))
+    } else {
+        (name, None)
+    };
+    let mut rule = json!({ "toolName": tool });
+    if let Some(c) = content {
+        rule["ruleContent"] = json!(c);
+    }
+    json!([{ "type": "addRules", "rules": [rule], "behavior": "allow", "destination": "session" }])
 }
 
 /// The answer to permission request `rpc`: the first of `options` whose kind is
@@ -1036,5 +1130,43 @@ mod tests {
     /// The id of the `session/prompt` in flight.
     fn new_prompt_id(a: &Acp) -> u64 {
         a.prompt.map(|(id, _)| id).unwrap()
+    }
+
+    /// Antigravity's prompt: rules decide first, reads go, and "always" is kept here.
+    #[test]
+    fn antigravity_asks_follow_the_rules_and_keep_always() {
+        let perms = crate::project::Permissions {
+            allow: vec!["Bash(cargo test:*)".into()],
+            deny: vec!["Bash(git push:*)".into()],
+        };
+        let mut a =
+            Acp::new(PathBuf::from("C:/work"), "", Mode::Manual, None).for_agent(Agent::Antigravity).with_rules(&perms);
+        let ask = |id: u64, cmd: &str| {
+            json!({ "jsonrpc": "2.0", "id": id.to_string(), "method": "session/request_permission", "params": {
+                "toolCall": { "toolCallId": format!("c{id}"), "name": "run_command", "kind": "execute",
+                    "rawInput": { "CommandLine": cmd } },
+                "options": [{ "optionId": "allow", "kind": "allow_once" }, { "optionId": "deny", "kind": "reject_once" }] } })
+        };
+        let picked = |out: &[Out]| writes(out).first().map(|w| w["result"]["outcome"]["optionId"].clone());
+        // A read goes, an allow rule goes, a deny rule is refused: no prompt.
+        assert_eq!(
+            picked(&a.incoming(ask(1, "Get-ChildItem -Recurse | Select-Object -First 5"))),
+            Some(json!("allow"))
+        );
+        assert_eq!(picked(&a.incoming(ask(2, "cargo test -p core"))), Some(json!("allow")));
+        assert_eq!(picked(&a.incoming(ask(3, "git push origin main"))), Some(json!("deny")));
+        // Anything else asks, offering to keep its program's rule.
+        let out = a.incoming(ask(4, "npm run build"));
+        let req = handles(&out).into_iter().find(|h| h["type"] == "control_request").unwrap().clone();
+        let rules = crate::project::suggested_rules(&req["request"]["permission_suggestions"]);
+        assert_eq!(rules, ["Bash(npm run:*)"]);
+        // Allowed for the session: the next one like it doesn't ask.
+        let answer = json!({ "type": "control_response", "response": { "request_id": req["request_id"],
+            "response": { "behavior": "allow", "updatedPermissions": req["request"]["permission_suggestions"] } } });
+        assert_eq!(a.outgoing(answer)[0]["result"]["outcome"]["optionId"], "allow");
+        assert_eq!(picked(&a.incoming(ask(5, "npm run lint"))), Some(json!("allow")));
+        // Grok keeps its own prompts.
+        let mut g = Acp::new(PathBuf::from("C:/work"), "", Mode::Manual, None).with_rules(&perms);
+        assert!(writes(&g.incoming(ask(6, "Get-ChildItem"))).is_empty());
     }
 }

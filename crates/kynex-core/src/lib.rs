@@ -63,6 +63,7 @@ pub mod provider;
 pub mod pulse;
 pub mod questions;
 pub mod queue;
+pub mod read_only;
 pub mod removed;
 pub mod resources;
 pub mod rewind;

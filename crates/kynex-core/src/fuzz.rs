@@ -62,6 +62,12 @@ fn acp_through(agent: crate::acp::Agent, text: &str) {
     let _ = crate::transcript::rows(&s.items);
 }
 
+/// A command an agent wants to run, as Kynex judges whether it only reads.
+pub fn read_only(text: &str) {
+    let _ = crate::read_only::is_read_only(text);
+    let _ = crate::rules::split_command(text);
+}
+
 /// The CLI's stream-json output, one event per line, as a live session reads it.
 pub fn stream_json(text: &str) {
     let mut s = Session::new(Kind::Chat, PathBuf::new());
