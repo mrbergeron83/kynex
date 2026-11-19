@@ -174,12 +174,19 @@ pub fn whole_file_diff_side(root: &Path, path: &str, untracked: bool, side: Diff
         return Ok(d);
     }
     let bytes = std::fs::read(root.join(path)).map_err(|e| format!("Couldn't read {path}: {e}"))?;
+    Ok(plain_file_diff(path, &bytes))
+}
+
+/// A file with no changes as a diff: every line context, in one hunk (none when it's
+/// empty), or `binary` when it has a NUL byte. For the viewer, on a file git has no
+/// changes for or doesn't track.
+pub fn plain_file_diff(path: &str, bytes: &[u8]) -> FileDiff {
     let mut d = FileDiff { path: path.to_string(), ..Default::default() };
     if bytes.contains(&0) {
         d.binary = true;
-        return Ok(d);
+        return d;
     }
-    let lines: Vec<DiffLine> = String::from_utf8_lossy(&bytes)
+    let lines: Vec<DiffLine> = String::from_utf8_lossy(bytes)
         .lines()
         .enumerate()
         .map(|(i, l)| DiffLine {
@@ -192,7 +199,7 @@ pub fn whole_file_diff_side(root: &Path, path: &str, untracked: bool, side: Diff
     if !lines.is_empty() {
         d.hunks.push(Hunk { header: format!("@@ -1,{0} +1,{0} @@", lines.len()), lines });
     }
-    Ok(d)
+    d
 }
 
 /// The indices in `lines` where a change starts: the first of each run of added or

@@ -15,7 +15,6 @@ use kynex_core::{fmt, links, mcp, why};
 
 use super::KynexApp;
 use super::transcript_rows::{code_box, diff_box, disclosure_row};
-use crate::file_links;
 use crate::prompt;
 use crate::theme::mono;
 use crate::theme::theme;
@@ -210,7 +209,7 @@ impl KynexApp {
             this.remeasure_row(key, row);
             cx.notify();
         });
-        // Calls on a file (Read, Edit, Write…) open it in the editor, on hover.
+        // Calls on a file (Read, Edit, Write…) open it in the file viewer, on hover.
         let open_file = parsed
             .as_ref()
             .and_then(|v| v["file_path"].as_str().or(v["notebook_path"].as_str()))
@@ -219,10 +218,10 @@ impl KynexApp {
                 let tip = path.display().to_string();
                 div().flex_none().invisible().group_hover("tool-head", |s| s.visible()).child(
                     icon_button(("tool-open", ix), Icon::Code, cx)
-                        .tooltip(Tooltip::with_meta("Open in editor", tip))
-                        .on_click(move |_, _, cx| {
+                        .tooltip(Tooltip::with_meta("Open file", tip))
+                        .on_click(move |_, window, cx| {
                             cx.stop_propagation();
-                            file_links::open(path.clone(), None, None, cx);
+                            crate::ui::selectable::open_in_viewer(path.clone(), None, window, cx);
                         }),
                 )
             });

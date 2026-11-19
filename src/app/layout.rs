@@ -168,6 +168,9 @@ impl KynexApp {
     /// `root` with the window's shortcuts: each action to the method that runs it.
     pub(super) fn with_actions(&self, root: Stateful<gpui::Div>, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
         let root = root
+            .on_action(
+                cx.listener(|this, a: &keys::OpenFileLink, w, cx| this.open_file_view(a.path.clone(), a.line, w, cx)),
+            )
             .on_action(cx.listener(Self::toggle_palette))
             .on_action(cx.listener(Self::open_find))
             .on_action(cx.listener(Self::open_project))

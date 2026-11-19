@@ -145,7 +145,7 @@ mod grok_setup;
 mod handoff;
 pub(crate) mod history;
 mod input_modes;
-mod keys;
+pub(crate) mod keys;
 mod layout;
 mod layout_history;
 mod layouts;

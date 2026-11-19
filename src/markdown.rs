@@ -272,7 +272,12 @@ impl Builder<'_> {
                 style.color = Some(self.p.accent);
                 style.underline =
                     Some(UnderlineStyle { thickness: gpui::px(1.), color: Some(self.p.accent), wavy: false });
-                links.push((span.range.clone(), Link::Url(url.clone())));
+                // `file://` links (agents write them) open in the file viewer.
+                let link = match kynex_core::links::file_url(url) {
+                    Some(f) => Link::File { path: f.path.into(), line: f.line },
+                    None => Link::Url(url.clone()),
+                };
+                links.push((span.range.clone(), link));
             }
             highlights.push((span.range.clone(), style));
         }
