@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- The browser sessions use runs as one shared Playwright server instead of one per session, about 130 MB less memory for each open session. Each session still gets its own browser window.
+
 ## [0.0.34] - 2026-11-19
 
 ### Added
