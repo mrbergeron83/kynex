@@ -113,7 +113,7 @@ impl KynexApp {
         });
         cx.subscribe_in(&pane, window, |this, _, ev: &GitPaneEvent, window, cx| match ev {
             GitPaneEvent::OpenFile { root, path, untracked, staged } => {
-                this.open_git_file_diff(root.clone(), path.clone(), *untracked, *staged, cx)
+                this.open_git_file_diff(root.clone(), path.clone(), *untracked, *staged, window, cx)
             }
             GitPaneEvent::OpenDetail(view) => {
                 let title = view.read(cx).detail_title();
@@ -188,14 +188,20 @@ impl KynexApp {
 
     /// A file link in the transcript (or the scratch files): its diff. In a project's panes,
     /// the file's whole diff in a modal; in chat, the Git modal on it.
-    pub(super) fn open_file_changes(&mut self, cwd: PathBuf, file: PathBuf, cx: &mut Context<Self>) {
+    pub(super) fn open_file_changes(
+        &mut self,
+        cwd: PathBuf,
+        file: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.tiling_scope().is_none() {
             return self.open_git_file(cwd, file, cx);
         }
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let at = cwd.clone();
             let status = cx.background_spawn(async move { git::status(&at) }).await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 let found = status.as_ref().ok().and_then(|s| git::find_file(s, &file)).cloned();
                 match found {
                     Some(f) => {
@@ -205,7 +211,7 @@ impl KynexApp {
                             (Some(_), None) => Staged::All,
                             _ => Staged::No,
                         };
-                        this.open_git_file_diff(cwd.clone(), f.path, untracked, staged, cx);
+                        this.open_git_file_diff(cwd.clone(), f.path, untracked, staged, window, cx);
                     }
                     None => {
                         let name =

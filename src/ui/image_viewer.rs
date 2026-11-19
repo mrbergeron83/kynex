@@ -6,9 +6,9 @@
 use std::sync::Arc;
 
 use gpui::{
-    App, Context, CursorStyle, DismissEvent, EventEmitter, FocusHandle, Focusable, Image, ImageFormat, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, Point, ScrollEvent, Size, Window, div, img,
-    prelude::*, px,
+    App, Context, CursorStyle, DismissEvent, EventEmitter, FocusHandle, Focusable, Image, ImageFormat, ImageSource,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ObjectFit, Pixels, Point, RenderImage, ScrollEvent,
+    Size, Window, div, img, prelude::*, px,
 };
 use kynex_core::session::Preview;
 use kynex_core::zoom::{STEP, Zoom};
@@ -29,8 +29,16 @@ pub fn preview(media_type: &str, bytes: Vec<u8>) -> Option<Preview> {
     Some(Arc::new(Image::from_bytes(format, bytes)))
 }
 
+/// An RGBA picture as gpui draws it (BGRA).
+pub fn render_image(mut rgba: image::RgbaImage) -> Arc<RenderImage> {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+    }
+    Arc::new(RenderImage::new(vec![image::Frame::new(rgba)]))
+}
+
 pub struct ImageViewer {
-    image: Arc<Image>,
+    image: ImageSource,
     /// `None` if the image's size can't be read: then it's only fitted.
     zoom: Option<Zoom>,
     /// Where the pointer was, while the picture is being dragged.
@@ -54,10 +62,20 @@ fn area(viewport: Size<Pixels>) -> (f32, f32) {
 
 impl ImageViewer {
     pub fn new(image: Arc<Image>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let size = kynex_core::attach::dimensions(&image.bytes);
+        Self::with_source(ImageSource::Image(image), size, window, cx)
+    }
+
+    /// A picture decoded already; `size` is its own size in pixels (it may be drawn
+    /// from a smaller copy), so 1:1 means one of its pixels to one on screen.
+    pub fn rendered(image: Arc<RenderImage>, size: (u32, u32), window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::with_source(ImageSource::Render(image), Some(size), window, cx)
+    }
+
+    fn with_source(image: ImageSource, size: Option<(u32, u32)>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // 100 % is one image pixel to one screen pixel.
         let scale = window.scale_factor();
-        let zoom = kynex_core::attach::dimensions(&image.bytes)
-            .map(|(w, h)| Zoom::new((w as f32 / scale, h as f32 / scale), area(window.viewport_size())));
+        let zoom = size.map(|(w, h)| Zoom::new((w as f32 / scale, h as f32 / scale), area(window.viewport_size())));
         let focus = cx.focus_handle();
         focus.focus(window, cx);
         Self { image, zoom, drag: None, focus }

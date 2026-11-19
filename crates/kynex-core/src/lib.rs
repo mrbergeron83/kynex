@@ -21,6 +21,7 @@ pub mod delegate;
 pub mod edit_lines;
 pub mod env_path;
 pub mod extensions;
+pub mod file_view;
 pub mod files;
 pub mod find;
 pub mod fmt;

@@ -167,6 +167,30 @@ pub fn git_worktree(text: &str) {
     let _ = git::worktree::parse_left_right(text);
 }
 
+/// Files the Git pane's viewer previews: images, SVGs, PDF pages read back from the
+/// renderer process, and the caret moved over the bytes as lines.
+pub fn file_view(bytes: &[u8]) {
+    use crate::file_view::{Kind, caret, media, pdf};
+    let _ = Kind::of("x", bytes);
+    let _ = media::decode_image(bytes);
+    media::fuzz_svg(bytes);
+    let _ = pdf::read_frames(&mut &bytes[..], |_| true);
+    let text = String::from_utf8_lossy(bytes);
+    let lines: Vec<Option<&str>> = text.split('\n').map(|l| (!l.starts_with('@')).then_some(l)).collect();
+    let mut c = caret::Caret::start(lines.as_slice());
+    for (i, b) in bytes.iter().take(64).enumerate() {
+        use caret::Move::*;
+        let m =
+            [Left, Right, WordLeft, WordRight, Up, Down, PageUp(3), PageDown(3), LineStart, LineEnd, DocStart, DocEnd]
+                [usize::from(*b) % 12];
+        c.move_by(lines.as_slice(), m, i % 2 == 0);
+        if b % 7 == 0 {
+            c.drag_to(lines.as_slice(), caret::Pos::new(usize::from(*b), i));
+        }
+    }
+    let _ = caret::selected_text(lines.as_slice(), &c);
+}
+
 /// Claude's replies, as markdown.
 pub fn markdown(text: &str) {
     let _ = markdown::parse(text);
@@ -409,6 +433,7 @@ mod tests {
             file_links(t);
             highlight(t);
             openrouter(t);
+            file_view(t.as_bytes());
         }
         claude_config(
             r#"{"mcpServers":{"a":{"command":"x","args":[1]}},"projects":{"/work/app":{}},"plugins":{"p":[{}]}}"#,
