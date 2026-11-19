@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.33] - 2026-11-18
+
 ### Added
 
 - The Git pane's file viewer is a read-only viewer you can read and copy from: a caret moved with the arrows, Home / End, Page Up / Down and Ctrl+Home / End (Shift to select), mouse selection (drag, double-click a word, triple-click a line), Ctrl+A, Ctrl+C and right-click → Copy, copying the text without the +/- signs. Images show before and after (click to zoom), SVGs as static pictures, PDFs as pages with zoom, and other binaries as a placeholder with Open / Show in folder. Nothing in a file is ever run, big files get a placeholder, and PDFs are drawn in a separate process so a bad one can't take Kynex down.
@@ -1020,7 +1022,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.32...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.33...HEAD
+[0.0.33]: https://github.com/mrbergeron83/kynex/compare/v0.0.32...v0.0.33
 [0.0.32]: https://github.com/mrbergeron83/kynex/compare/v0.0.31...v0.0.32
 [0.0.31]: https://github.com/mrbergeron83/kynex/compare/v0.0.30...v0.0.31
 [0.0.30]: https://github.com/mrbergeron83/kynex/compare/v0.0.29...v0.0.30
