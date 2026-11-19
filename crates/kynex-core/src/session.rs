@@ -425,8 +425,8 @@ pub struct Session {
     /// The last turn ended with a steer written into it, which the CLI may not have
     /// read in time: if it starts a turn of its own for it, that turn is busy too.
     late_steer: bool,
-    /// A Grok process's protocol state ([`crate::grok::acp`]): what it writes and reads goes through it.
-    acp: Option<crate::grok::acp::Acp>,
+    /// An ACP agent's protocol state ([`crate::acp`], Grok or Antigravity): what it writes and reads goes through it.
+    acp: Option<crate::acp::Acp>,
     /// Counts processes started, so [`Self::poll`] drops what an old one sent
     /// once a new one has taken its place (a Grok turn starting from the last one's result).
     runs: u64,
@@ -913,7 +913,7 @@ impl Session {
     /// Until it's up, [`Self::pulse`] says it's starting and what's written to
     /// it waits; [`Self::poll`] takes it in, or reports why it didn't start.
     fn spawn(&mut self) {
-        let grok = self.provider.provider() == crate::provider::Provider::Grok;
+        let grok = self.provider.provider().is_acp();
         self.bypass_on_start();
         let (tx, rx) = channel();
         let spec = launch::Spec {
@@ -940,15 +940,23 @@ impl Session {
         self.ready = false;
         self.talked = false;
         if grok {
-            // Grok: its agent over ACP, continuing the conversation if there is one.
+            // Grok or Antigravity: its agent over ACP, continuing the conversation if there is one.
             let model = self.provider.with_model(&self.model).model().unwrap_or("").to_string();
             let resume = self.resume_id().map(str::to_string);
-            let effort = match self.kind {
-                Kind::Code => project::ClaudeSettings::load(self.settings_folder()).effort,
-                Kind::Chat => String::new(),
+            let agent = match self.provider.provider() {
+                crate::provider::Provider::Antigravity => crate::acp::Agent::Antigravity,
+                _ => crate::acp::Agent::Grok,
             };
-            let mut acp =
-                crate::grok::acp::Acp::new(self.cwd.clone(), &model, self.mode, resume.as_deref()).with_effort(&effort);
+            // Antigravity offers no effort over ACP.
+            let effort = match self.kind {
+                Kind::Code if agent == crate::acp::Agent::Grok => {
+                    project::ClaudeSettings::load(self.settings_folder()).effort
+                }
+                _ => String::new(),
+            };
+            let mut acp = crate::acp::Acp::new(self.cwd.clone(), &model, self.mode, resume.as_deref())
+                .for_agent(agent)
+                .with_effort(&effort);
             for line in acp.start() {
                 self.write_line(&line);
             }
@@ -1027,8 +1035,9 @@ impl Session {
         true
     }
 
-    /// Grok's models with their effort levels, when its process reported a new list; once.
-    pub fn take_grok_models(&mut self) -> Option<Vec<ModelInfo>> {
+    /// An ACP agent's models (Grok's with their effort levels), when its process
+    /// reported a new list; once.
+    pub fn take_acp_models(&mut self) -> Option<Vec<ModelInfo>> {
         self.acp.as_mut()?.take_models()
     }
 
@@ -1053,9 +1062,9 @@ impl Session {
         self.write_line(&msg);
     }
 
-    /// Acts on what [`crate::grok::acp::Acp::incoming`] made of a line from Grok.
-    fn take_acp(&mut self, outs: Vec<crate::grok::acp::Out>) {
-        use crate::grok::acp::Out;
+    /// Acts on what [`crate::acp::Acp::incoming`] made of a line from the agent.
+    fn take_acp(&mut self, outs: Vec<crate::acp::Out>) {
+        use crate::acp::Out;
         for out in outs {
             match out {
                 Out::Handle(v) => self.handle(v),
@@ -1093,8 +1102,8 @@ impl Session {
     /// [`Self::send`], saying whether the user typed `ultrathink` in it themselves
     /// (see [`crate::composer::thinking::Ultrathink::typed`]).
     pub fn send_with(&mut self, text: String, attachments: Vec<Attachment>, ultrathink_typed: bool) {
-        // Grok takes no message mid-turn (`claude` does): it waits for the turn to end.
-        let grok_busy = self.busy && self.provider.provider() == crate::provider::Provider::Grok;
+        // An ACP agent takes no message mid-turn (`claude` does): it waits for the turn to end.
+        let grok_busy = self.busy && self.provider.provider().is_acp();
         if self.loading() || grok_busy {
             self.queue.push(text, attachments);
             return;
@@ -1222,9 +1231,9 @@ impl Session {
     }
 
     /// Whether a message can go into the turn in progress without stopping it:
-    /// `claude` reads one written mid-turn at its next step (Grok can't).
+    /// `claude` reads one written mid-turn at its next step (ACP agents can't).
     pub fn can_steer(&self) -> bool {
-        self.busy && self.is_running() && !self.loading() && self.provider.provider() != crate::provider::Provider::Grok
+        self.busy && self.is_running() && !self.loading() && !self.provider.provider().is_acp()
     }
 
     /// Sends a message into the turn in progress, which takes it in at its next
@@ -1538,7 +1547,11 @@ impl Session {
         }
         if exited || lost {
             self.settle_thoughts();
-            let who = if self.provider.provider() == crate::provider::Provider::Grok { "grok" } else { "claude" };
+            let who = match self.provider.provider() {
+                crate::provider::Provider::Grok => "grok",
+                crate::provider::Provider::Antigravity => "agy",
+                _ => "claude",
+            };
             if lost {
                 self.items.push(Item::Error(format!("lost connection to {who} process")));
             } else if self.busy {
@@ -1563,10 +1576,10 @@ impl Session {
             self.session_id = Some(id.to_string());
         }
         // `system` init and status messages report the mode, e.g. after a plan is approved.
-        // Not `grok`'s: it reports `auto` as `default`, and the mode is Kynex's to pass each turn.
+        // Not an ACP agent's: Grok reports `auto` as `default`, and the mode is Kynex's to pass each turn.
         if let Some(mode) = v["permissionMode"].as_str().and_then(project::Mode::from_cli)
             && self.is_running()
-            && self.provider.provider() != crate::provider::Provider::Grok
+            && !self.provider.provider().is_acp()
         {
             self.mode = mode;
         }
@@ -2065,9 +2078,12 @@ pub(crate) fn find_transcript(cwd: &Path, id: &str) -> Option<PathBuf> {
 }
 
 /// Whether session `id` of `cwd` can still be reopened: Claude Code's log for it is
-/// there, or Grok has a record of it. Blocks on a few file system lookups.
+/// there, or Grok or Antigravity has a record of it. Blocks on a few file system lookups.
 pub fn session_exists(cwd: &Path, id: &str) -> bool {
-    !id.is_empty() && (find_transcript(cwd, id).is_some() || crate::grok::log::session_dir(cwd, id).is_some())
+    !id.is_empty()
+        && (find_transcript(cwd, id).is_some()
+            || crate::grok::log::session_dir(cwd, id).is_some()
+            || crate::antigravity::conversation_file(id).is_some())
 }
 
 /// A user-role log entry the CLI wrote itself, like the `<task-notification>`
@@ -2245,10 +2261,16 @@ pub fn gone_sessions(cwd: &Path, groups: &crate::groups::SessionGroups) -> Optio
         }
     }
     let grok_readable = crate::grok::log::readable();
+    let agy_readable = crate::antigravity::readable();
     let exists = |id: &str| {
         transcripts.contains(id)
-            || (groups.provider_of(id) == crate::provider::Provider::Grok
-                && (!grok_readable || crate::grok::log::session_dir(cwd, id).is_some()))
+            || match groups.provider_of(id) {
+                crate::provider::Provider::Grok => !grok_readable || crate::grok::log::session_dir(cwd, id).is_some(),
+                crate::provider::Provider::Antigravity => {
+                    !agy_readable || crate::antigravity::conversation_file(id).is_some()
+                }
+                _ => false,
+            }
     };
     Some(groups.saved_ids().into_iter().filter(|id| !exists(id)).map(str::to_string).collect())
 }
@@ -2418,8 +2440,9 @@ pub(crate) fn first_message(line: &str) -> Option<String> {
 /// Deletes a session's transcript, and the folder Claude Code keeps beside it if there is one.
 pub fn delete_session(cwd: &Path, id: &str) -> Result<(), String> {
     let Some(path) = find_transcript(cwd, id) else {
-        // A Grok session: Grok's own folder for it.
-        return crate::grok::log::delete(cwd, id)?.then_some(()).ok_or_else(|| "transcript not found".into());
+        // A Grok or Antigravity session: the agent's own record of it.
+        let deleted = crate::grok::log::delete(cwd, id)? || crate::antigravity::delete(id)?;
+        return deleted.then_some(()).ok_or_else(|| "transcript not found".into());
     };
     std::fs::remove_file(&path).map_err(|e| format!("couldn't delete {}: {e}", path.display()))?;
     let _ = std::fs::remove_dir_all(path.with_extension(""));
@@ -3600,6 +3623,56 @@ mod tests {
         assert!(note.contains("kynex"), "{note}");
         assert!(reply.unwrap_or_default().to_lowercase().contains("second"));
         assert!(id.is_some_and(|id| crate::grok::log::session_dir(&root, &id).is_some()), "Grok keeps the session");
+    }
+
+    /// Antigravity on OpenRouter, end to end: Gemini runs agy's shell after asking,
+    /// one process holds both turns, and the meter and the record follow.
+    /// Run with `cargo test -- --ignored antigravity_session` with `OPENROUTER_API_KEY` set.
+    #[test]
+    #[ignore = "needs the agy CLI and an OpenRouter key; uses a little credit"]
+    fn an_antigravity_session_runs_on_openrouter_and_asks_before_a_command() {
+        let key = std::env::var("OPENROUTER_API_KEY").expect("OPENROUTER_API_KEY");
+        let root = std::env::temp_dir().join(format!("kynex-agy-live-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut s = Session::new(Kind::Code, root.clone());
+        let model = crate::provider::DEFAULT_ANTIGRAVITY_MODEL.to_string();
+        s.set_provider(crate::provider::Launch::Antigravity { key, model: model.clone() }).unwrap();
+        s.model = model;
+        s.mode = project::Mode::Manual;
+        let mut asked = 0;
+        let mut turn = |s: &mut Session, text: &str| {
+            s.send(text.into(), Vec::new());
+            let start = Instant::now();
+            while s.busy && start.elapsed() < Duration::from_secs(180) {
+                s.poll();
+                if let Some(i) =
+                    s.items.iter().position(|i| matches!(i, Item::Permission { state: PermState::Pending, .. }))
+                {
+                    asked += 1;
+                    s.answer_permission(i, Answer::Once);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            assert!(!s.busy, "the turn didn't end");
+        };
+        turn(&mut s, "Run the shell command `echo kynex-ran` with your command tool, then reply only DONE.");
+        let pid = s.child.as_ref().map(std::process::Child::id).expect("still running between turns");
+        turn(&mut s, "Reply with only the word: second");
+        let reply = s.items.iter().rev().find_map(|i| if let Item::Assistant(t) = i { Some(t.clone()) } else { None });
+        let errors: Vec<_> =
+            s.items.iter().filter_map(|i| if let Item::Error(e) = i { Some(e.clone()) } else { None }).collect();
+        assert_eq!(s.child.as_ref().map(std::process::Child::id), Some(pid), "one process for both turns");
+        assert!(s.context.tokens > 0 && s.context.window.is_some_and(|w| w > s.context.tokens));
+        assert!(s.spent.output > 0);
+        let id = s.session_id.clone();
+        drop(s);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(asked >= 1, "Ask first should ask before the command");
+        assert!(reply.unwrap_or_default().to_lowercase().contains("second"));
+        let id = id.expect("a session id");
+        assert!(crate::antigravity::conversation_file(&id).is_some(), "agy keeps the conversation");
+        let _ = crate::antigravity::delete(&id);
     }
 
     /// A project session starts in Auto (no prompt for a harmless mkdir), then a

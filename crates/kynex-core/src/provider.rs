@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 pub const OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api";
 /// The model OpenRouter sessions use unless the user picks another.
 pub const DEFAULT_OPENROUTER_MODEL: &str = "qwen/qwen3-coder";
+/// The model Antigravity sessions use unless the user picks another: an
+/// OpenRouter model id, as Antigravity's gateway lists them.
+pub const DEFAULT_ANTIGRAVITY_MODEL: &str = "google/gemini-4-hydrogen";
 /// The output cap OpenRouter sessions get unless the user picks another. With
 /// no cap the CLI asks for 65,536 tokens, which OpenRouter refuses (402) when
 /// the credits don't cover that much.
@@ -55,12 +58,26 @@ pub enum Provider {
     /// xAI's Grok through the installed `grok` CLI ([`crate::grok`]). Grok Build
     /// owns the tools and the login. The `claude` process is not involved.
     Grok,
+    /// Google's Antigravity agent through the installed `agy` CLI
+    /// ([`crate::antigravity`]), on the OpenRouter key instead of a Google
+    /// login: Gemini (or any OpenRouter model) with Antigravity's tools.
+    Antigravity,
 }
 
 impl Provider {
     /// Every provider, in the order pickers list them.
-    pub const ALL: [Provider; 4] =
-        [Provider::Anthropic, Provider::OpenRouter, Provider::OpenRouterChat, Provider::Grok];
+    pub const ALL: [Provider; 5] =
+        [Provider::Anthropic, Provider::OpenRouter, Provider::OpenRouterChat, Provider::Grok, Provider::Antigravity];
+
+    /// Whether its sessions are an agent CLI over ACP ([`crate::acp`]) rather than `claude`.
+    pub fn is_acp(self) -> bool {
+        matches!(self, Provider::Grok | Provider::Antigravity)
+    }
+
+    /// Whether it runs on the OpenRouter key saved in Kynex.
+    pub fn uses_openrouter_key(self) -> bool {
+        matches!(self, Provider::OpenRouter | Provider::OpenRouterChat | Provider::Antigravity)
+    }
 
     /// Whether its models take effort levels: Claude's `--effort`, Grok's
     /// reasoning effort. OpenRouter's mostly don't, so OpenRouter sessions get
@@ -110,7 +127,7 @@ impl Provider {
             // `grok agent` logs on stderr, errors of its own included (an MCP server
             // that needs signing in), and says what matters over ACP. Only a
             // failure to start (a bad argument, a crash) is shown.
-            Provider::Grok => !(line.starts_with("error:") || line.contains("panicked")),
+            Provider::Grok | Provider::Antigravity => !(line.starts_with("error:") || line.contains("panicked")),
             _ => false,
         };
         !line.is_empty() && !noise
@@ -122,6 +139,7 @@ impl Provider {
             Provider::OpenRouter => "OpenRouter",
             Provider::OpenRouterChat => "OpenRouter chat",
             Provider::Grok => "Grok",
+            Provider::Antigravity => "Antigravity",
         }
     }
 
@@ -132,6 +150,7 @@ impl Provider {
             Provider::OpenRouter => "Your models, with your OpenRouter key: work, or just chat",
             Provider::OpenRouterChat => "Any of your OpenRouter models, chat only: no tools, no files",
             Provider::Grok => "Grok Build in this folder, with its own login",
+            Provider::Antigravity => "Google's Antigravity agent, on your OpenRouter key (Gemini and more)",
         }
     }
 }
@@ -172,6 +191,12 @@ pub enum Launch {
     Grok {
         model: String,
     },
+    /// The installed `agy` CLI on OpenRouter's key. The model is an OpenRouter
+    /// model id; empty is [`DEFAULT_ANTIGRAVITY_MODEL`].
+    Antigravity {
+        key: String,
+        model: String,
+    },
 }
 
 /// Never prints the key.
@@ -186,6 +211,9 @@ impl std::fmt::Debug for Launch {
                 f.debug_struct("OpenRouterChat").field("key", &"<hidden>").field("settings", settings).finish()
             }
             Launch::Grok { model } => f.debug_struct("Grok").field("model", model).finish(),
+            Launch::Antigravity { model, .. } => {
+                f.debug_struct("Antigravity").field("key", &"<hidden>").field("model", model).finish()
+            }
         }
     }
 }
@@ -208,6 +236,15 @@ impl Launch {
         Ok(Launch::OpenRouter { key, settings })
     }
 
+    /// Antigravity on `model` with the OpenRouter key saved in `keychain`.
+    /// Blocks on the keychain.
+    pub fn antigravity(model: &str, keychain: &crate::secrets::Keychain) -> Result<Launch, String> {
+        let key = keychain
+            .get(crate::secrets::Secret::OpenRouterKey)?
+            .ok_or("Antigravity runs on your OpenRouter key, and none is saved. Add one in Settings → Providers.")?;
+        Ok(Launch::Antigravity { key, model: model.trim().to_string() })
+    }
+
     /// This provider for a session on `model`: OpenRouter's main and background
     /// models all become it, so a switch reaches every call; empty keeps its
     /// own. Anthropic is unchanged (its model goes as `--model`).
@@ -222,6 +259,9 @@ impl Launch {
                 Launch::OpenRouterChat { key: key.clone(), settings: settings(s) }
             }
             Launch::Grok { .. } if !model.is_empty() => Launch::Grok { model: model.to_string() },
+            Launch::Antigravity { key, .. } if !model.is_empty() => {
+                Launch::Antigravity { key: key.clone(), model: model.to_string() }
+            }
             _ => self.clone(),
         }
     }
@@ -234,6 +274,9 @@ impl Launch {
                 Some(settings.model.as_str()).filter(|m| !m.trim().is_empty())
             }
             Launch::Grok { model, .. } => Some(model.as_str()).filter(|m| !m.trim().is_empty()),
+            Launch::Antigravity { model, .. } => {
+                Some(model.as_str()).filter(|m| !m.trim().is_empty()).or(Some(DEFAULT_ANTIGRAVITY_MODEL))
+            }
         }
     }
 
@@ -243,6 +286,7 @@ impl Launch {
             Launch::OpenRouter { .. } => Provider::OpenRouter,
             Launch::OpenRouterChat { .. } => Provider::OpenRouterChat,
             Launch::Grok { .. } => Provider::Grok,
+            Launch::Antigravity { .. } => Provider::Antigravity,
         }
     }
 
@@ -291,8 +335,11 @@ impl Launch {
                 set.push((MAX_OUTPUT_TOKENS, cap.to_string()));
                 (set, NOT_FOR_OPENROUTER.to_vec())
             }
-            // The chat harness and `grok` take their own login. Nothing of it goes in the environment.
-            Launch::OpenRouterChat { .. } | Launch::Grok { .. } => (Vec::new(), Vec::new()),
+            // The chat harness, `grok` and `agy` take their own login (`agy`'s goes on its
+            // command, `antigravity::command`). Nothing of it goes in `claude`'s environment.
+            Launch::OpenRouterChat { .. } | Launch::Grok { .. } | Launch::Antigravity { .. } => {
+                (Vec::new(), Vec::new())
+            }
         };
         let remove = inherited
             .into_iter()

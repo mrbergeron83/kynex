@@ -38,8 +38,9 @@ impl KynexApp {
             self.toast(Toast::warning("Nothing to fork yet: send a message first."));
             return;
         };
-        if s.provider().provider() == kynex_core::provider::Provider::Grok {
-            self.toast(Toast::warning("Grok sessions can't be forked."));
+        if s.provider().provider().is_acp() {
+            let label = s.provider().provider().label();
+            self.toast(Toast::warning(format!("{label} sessions can't be forked.")));
             return;
         }
         let (kind, cwd) = (s.kind, s.cwd.clone());

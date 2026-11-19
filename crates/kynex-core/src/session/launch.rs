@@ -141,6 +141,10 @@ fn command(spec: &mut Spec, started: &mut Started) -> Result<(Command, &'static 
     if spec.provider.provider() == Provider::Grok {
         return Ok((crate::grok::command(&spec.cwd), "`grok`"));
     }
+    // Antigravity: the same, on the OpenRouter key.
+    if let Launch::Antigravity { key, .. } = &spec.provider {
+        return Ok((crate::antigravity::command(&spec.cwd, key), "`agy`"));
+    }
     // OpenRouter chat: Kynex's own harness in the CLI's place, same protocol.
     if let Launch::OpenRouterChat { key, settings } = spec.provider.with_model(&spec.model) {
         let at = spec.resume_at.take();

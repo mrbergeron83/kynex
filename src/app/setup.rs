@@ -137,6 +137,7 @@ impl KynexApp {
                 .background_spawn(async {
                     // Looked up once and kept; renders ask for them, so here, off the UI thread, first.
                     kynex_core::grok::installed();
+                    kynex_core::antigravity::installed();
                     kynex_core::terminal::elevated();
                     cli::status()
                 })

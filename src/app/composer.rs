@@ -290,6 +290,11 @@ impl KynexApp {
         if self.saved.grok && kynex_core::grok::installed() {
             models::fetch_grok_models(cx);
         }
+        if self.active_provider() == kynex_core::provider::Provider::Antigravity
+            && let Some(key) = self.openrouter_key.clone()
+        {
+            models::fetch_antigravity_models(key, cx);
+        }
         // Who answers: a picker on a new session when both are set up, else
         // a label (a session keeps its provider once it starts).
         let provider = self.active_provider();
@@ -303,7 +308,7 @@ impl KynexApp {
         let work_ok = self.saved.openrouter.takes_tools(&self.folder_openrouter_model(&self.active_dir()));
         let work_mode = on_openrouter.then(|| self.render_work_toggle(chat_only, fresh, work_ok, cx));
         let can_switch = fresh && self.providers_available().len() > 1;
-        let show_provider = can_switch || on_openrouter || provider == kynex_core::provider::Provider::Grok;
+        let show_provider = can_switch || on_openrouter || provider.is_acp();
         let model_label = self.active_model_name();
         // A session with a model of its own marks the chip with a message bubble.
         let own_model = self.session_model().is_some();

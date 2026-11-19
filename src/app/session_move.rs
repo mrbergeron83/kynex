@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 use gpui::{AppContext, Context};
 use kynex_core::git;
 use kynex_core::live::Key;
-use kynex_core::provider::Provider;
 use kynex_core::session::{self, Item, Kind, Session};
 use kynex_core::toasts::Toast;
 use kynex_core::workspace::same_folder;
@@ -95,7 +94,7 @@ impl KynexApp {
     fn begin_move(&mut self, key: Key, w: git::Worktree) {
         let Some(s) = self.session_for(key) else { return };
         let movable = s.kind == Kind::Code
-            && s.provider().provider() != Provider::Grok
+            && !s.provider().provider().is_acp()
             && s.session_id.is_some()
             && !same_folder(&s.cwd, &w.path);
         if !movable {

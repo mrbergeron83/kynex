@@ -7,6 +7,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Antigravity as a provider: Google's `agy` agent with its tools, on your OpenRouter key, so Gemini works without a Google subscription (Settings → Providers).
 - The Git pane's file viewer is a read-only viewer you can read and copy from: a caret moved with the arrows, Home / End, Page Up / Down and Ctrl+Home / End (Shift to select), mouse selection (drag, double-click a word, triple-click a line), Ctrl+A, Ctrl+C and right-click → Copy, copying the text without the +/- signs. Images show before and after (click to zoom), SVGs as static pictures, PDFs as pages with zoom, and other binaries as a placeholder with Open / Show in folder. Nothing in a file is ever run, big files get a placeholder, and PDFs are drawn in a separate process so a bad one can't take Kynex down.
 - A session that creates a git worktree (`git worktree add`) moves into it when that turn ends: it resumes with the worktree as its folder (name, pin and model kept), listed under that workspace; messages queued meanwhile go to it there.
 - Settings > General > Notifications: for "a session finishes" and "a session needs you" separately, choose where the note goes (off, a toast, a system notification, or both) (#448).

@@ -207,7 +207,7 @@ impl Rules {
 }
 
 /// The names a session's provider goes by in [`Rules::overrides`].
-pub const PROVIDERS: [&str; 3] = ["Claude Code", "OpenRouter", "Grok"];
+pub const PROVIDERS: [&str; 4] = ["Claude Code", "OpenRouter", "Grok", "Antigravity"];
 
 /// The name of `launch` among [`PROVIDERS`].
 pub fn provider_name(launch: &crate::provider::Launch) -> &'static str {
@@ -216,6 +216,7 @@ pub fn provider_name(launch: &crate::provider::Launch) -> &'static str {
         Launch::Anthropic => PROVIDERS[0],
         Launch::OpenRouter { .. } | Launch::OpenRouterChat { .. } => PROVIDERS[1],
         Launch::Grok { .. } => PROVIDERS[2],
+        Launch::Antigravity { .. } => PROVIDERS[3],
     }
 }
 

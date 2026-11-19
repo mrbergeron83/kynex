@@ -34,6 +34,8 @@ pub(super) struct OpenSession {
     pub openrouter: bool,
     /// It runs on Grok.
     pub grok: bool,
+    /// It runs on Antigravity.
+    pub antigravity: bool,
 }
 
 impl OpenSession {
@@ -50,6 +52,7 @@ impl OpenSession {
             busy: s.busy,
             openrouter: s.provider().provider().is_openrouter(),
             grok: s.provider().provider() == kynex_core::provider::Provider::Grok,
+            antigravity: s.provider().provider() == kynex_core::provider::Provider::Antigravity,
             waiting: s.waiting(),
             finished: s.finished,
         }
@@ -224,6 +227,9 @@ impl KynexApp {
                 r.child(provider_mark(("open-provider", uid as usize), "OR", "Runs on OpenRouter", t))
             })
             .when(o.grok, |r| r.child(provider_mark(("open-grok", uid as usize), "Grok", "Runs on Grok", t)))
+            .when(o.antigravity, |r| {
+                r.child(provider_mark(("open-antigravity", uid as usize), "AG", "Runs on Antigravity", t))
+            })
             .children(news_lamp(("open-status", uid as usize), o.lamp(), cx))
             .when(closable, |r| {
                 r.child(
@@ -361,6 +367,9 @@ impl KynexApp {
             })
             .when(provider == kynex_core::provider::Provider::Grok, |r| {
                 r.child(provider_mark(("session-grok", n), "Grok", "Runs on Grok", t))
+            })
+            .when(provider == kynex_core::provider::Provider::Antigravity, |r| {
+                r.child(provider_mark(("session-antigravity", n), "AG", "Runs on Antigravity", t))
             })
             .group("session-row")
             .tooltip(Tooltip::with_meta(

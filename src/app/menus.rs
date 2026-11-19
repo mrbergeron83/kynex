@@ -265,6 +265,8 @@ impl KynexApp {
                     items.extend(self.openrouter_model_items(cx));
                 } else if self.active_provider() == kynex_core::provider::Provider::Grok {
                     items.extend(self.grok_model_items(cx));
+                } else if self.active_provider() == kynex_core::provider::Provider::Antigravity {
+                    items.extend(self.antigravity_model_items(cx));
                 } else {
                     items.extend(self.model_items(cx));
                 }

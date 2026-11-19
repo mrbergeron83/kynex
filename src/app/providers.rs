@@ -39,6 +39,8 @@ pub struct ProvidersView {
     overrides: Option<String>,
     /// Grok: opted in or not, installed, signed in (`grok_setup.rs`).
     pub(super) grok: super::grok_setup::GrokView,
+    /// Antigravity: opted in or not, installed (`antigravity_setup.rs`).
+    pub(super) antigravity: super::antigravity_setup::AntigravityView,
 }
 
 #[derive(Clone)]
@@ -94,8 +96,12 @@ impl KynexApp {
         if self.saved.grok {
             self.load_grok_status(cx);
         }
+        if self.saved.antigravity {
+            self.load_antigravity_status(cx);
+        }
         ProvidersView {
             grok: Default::default(),
+            antigravity: Default::default(),
             account: None,
             key: KeyState::Loading,
             replacing: false,
@@ -393,6 +399,7 @@ impl KynexApp {
             .child(self.render_output_cap(p, t, cx))
             .child(self.render_my_models(p, t, cx))
             .child(self.render_grok(t, cx))
+            .child(self.render_antigravity(t, cx))
     }
 
     fn render_anthropic(&self, p: &ProvidersView, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {

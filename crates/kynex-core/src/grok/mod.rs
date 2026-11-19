@@ -7,10 +7,9 @@
 //! session's own messages back into it. [`log`] reads Grok's record of a
 //! session for the sessions list and a reopened transcript.
 
-pub mod acp;
+pub use crate::acp;
 pub mod log;
 pub mod setup;
-mod usage;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -128,7 +127,7 @@ pub fn list_models(cwd: &Path) -> Result<Vec<crate::session::ModelInfo>, String>
 
 /// The models in a `session/new` result.
 fn models_of(opened: &serde_json::Value) -> Vec<crate::session::ModelInfo> {
-    let mut models = usage::Models::default();
+    let mut models = crate::acp::usage::Models::default();
     models.read(&opened["models"]);
     models.list
 }

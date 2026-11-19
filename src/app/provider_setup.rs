@@ -215,6 +215,10 @@ impl KynexApp {
         if self.saved.grok && kynex_core::grok::installed() {
             all.push(Provider::Grok);
         }
+        // Opt-in too, and it runs on the OpenRouter key.
+        if self.saved.antigravity && kynex_core::antigravity::installed() && self.openrouter_key.is_some() {
+            all.push(Provider::Antigravity);
+        }
         all
     }
 
@@ -231,6 +235,9 @@ impl KynexApp {
                 .clone()
                 .map(|key| Launch::OpenRouterChat { key, settings: self.saved.openrouter.settings(None) }),
             Provider::Grok => Some(Launch::Grok { model: String::new() }),
+            Provider::Antigravity => {
+                self.openrouter_key.clone().map(|key| Launch::Antigravity { key, model: String::new() })
+            }
         }
     }
 
@@ -284,11 +291,15 @@ impl KynexApp {
             Provider::OpenRouterChat => self.folder_openrouter_chat_model(dir),
             // Empty is no `--model`: the installed `grok` picks.
             Provider::Grok => self.claude_settings(dir).grok_model,
+            Provider::Antigravity => {
+                let m = self.claude_settings(dir).antigravity_model;
+                if m.is_empty() { kynex_core::provider::DEFAULT_ANTIGRAVITY_MODEL.to_string() } else { m }
+            }
         }
     }
 
     /// The models `dir`'s sessions start on, one per provider in [`Provider::ALL`]'s order.
-    fn folder_models(&self, dir: &Path) -> [String; 4] {
+    fn folder_models(&self, dir: &Path) -> [String; 5] {
         Provider::ALL.map(|p| self.folder_model_on(dir, p))
     }
 
@@ -322,7 +333,7 @@ impl KynexApp {
 
     /// What [`apply_start`] needs for a session in `cwd` (reopened if `id`) that runs
     /// under the settings of `settings` (its own folder, or its project's).
-    pub(super) fn start_parts(&mut self, cwd: &Path, settings: &Path, id: Option<&str>) -> (Launch, [String; 4]) {
+    pub(super) fn start_parts(&mut self, cwd: &Path, settings: &Path, id: Option<&str>) -> (Launch, [String; 5]) {
         let models = self.folder_models(settings);
         (self.start_launch(cwd, settings, id), models)
     }
@@ -361,6 +372,7 @@ impl KynexApp {
             Setup::Checking => self.saved.setup_checked,
             Setup::Ready => true,
             Setup::LoggedOut { .. } => {
+                // Antigravity needs the OpenRouter key, so the key alone covers it.
                 self.openrouter_key.is_some() || (self.saved.grok && kynex_core::grok::installed())
             }
             _ => false,
@@ -454,7 +466,7 @@ impl KynexApp {
 
 /// Puts `s` on `launch` (restoring it if reopened) and its pinned model, else
 /// `models` (one per provider, in [`Provider::ALL`]'s order) for the provider it ends up on.
-pub(super) fn apply_start(s: &mut Session, launch: Launch, models: &[String; 4]) {
+pub(super) fn apply_start(s: &mut Session, launch: Launch, models: &[String; 5]) {
     let _ = if s.is_new() { s.set_provider(launch) } else { s.restore_provider(launch) };
     let at = Provider::ALL.iter().position(|p| *p == s.provider().provider()).unwrap_or(0);
     s.model = s.own_model.clone().unwrap_or_else(|| models[at].clone());
