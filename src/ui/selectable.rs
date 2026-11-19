@@ -112,17 +112,21 @@ pub enum Link {
     File {
         path: PathBuf,
         line: Option<u32>,
-        col: Option<u32>,
     },
 }
 
 impl Link {
-    fn follow(&self, cx: &mut App) {
+    fn follow(&self, window: &mut gpui::Window, cx: &mut App) {
         match self {
             Link::Url(url) => cx.open_url(url),
-            Link::File { path, line, col } => crate::file_links::open(path.clone(), *line, *col, cx),
+            Link::File { path, line, .. } => open_in_viewer(path.clone(), *line, window, cx),
         }
     }
+}
+
+/// Asks the app to show a file in its viewer (`app::keys::OpenFileLink`).
+pub fn open_in_viewer(path: PathBuf, line: Option<u32>, window: &mut gpui::Window, cx: &mut App) {
+    window.dispatch_action(Box::new(crate::app::keys::OpenFileLink { path, line }), cx);
 }
 
 /// One selectable block of styled text. Links in it open on a plain click.
@@ -370,7 +374,7 @@ impl Element for Selectable {
                     && let Ok(ix) = layout.index_for_position(e.position)
                     && let Some((_, link)) = links.iter().find(|(r, _)| r.contains(&ix))
                 {
-                    link.follow(cx);
+                    link.follow(window, cx);
                 }
             }
         });

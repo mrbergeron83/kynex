@@ -102,6 +102,14 @@ pub struct FocusPane(pub Direction);
 #[action(namespace = kynex, no_json)]
 pub struct SwapPane(pub Direction);
 
+/// Open a file linked in a session's text in the file viewer (`line` is 1-based).
+#[derive(Clone, PartialEq, Debug, gpui::Action)]
+#[action(namespace = kynex, no_json)]
+pub struct OpenFileLink {
+    pub path: std::path::PathBuf,
+    pub line: Option<u32>,
+}
+
 /// Run the custom command of this name (`kynex_core::user_commands`).
 #[derive(Clone, PartialEq, Debug, gpui::Action)]
 #[action(namespace = kynex, no_json)]

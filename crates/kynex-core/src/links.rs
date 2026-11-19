@@ -192,9 +192,88 @@ fn known_ext(name: &str) -> bool {
         && EXTENSIONS.split_whitespace().any(|e| e.eq_ignore_ascii_case(ext))
 }
 
+/// The file a `file://` URL in a link points at, with the line (and column) in its
+/// `#L12` / `#L12C5` fragment or a `:12[:5]` suffix: `file:///C:/x/a.rs#L3` is
+/// `C:\x\a.rs` at line 3 on Windows. `None` for anything else, or a file on another host.
+pub fn file_url(url: &str) -> Option<FileRef> {
+    let rest = url.strip_prefix("file://").or_else(|| url.strip_prefix("FILE://"))?;
+    // `file:///path` or `file://localhost/path`; another host isn't this machine's.
+    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+    if !rest.starts_with('/') {
+        return None;
+    }
+    let (path, fragment) = rest.split_once('#').unwrap_or((rest, ""));
+    let path = path.split('?').next().unwrap_or(path);
+    let mut path = percent_decode(path)?;
+    // `/C:/x` is `C:/x`.
+    if path.len() >= 3 && path.as_bytes()[2] == b':' && path.as_bytes()[1].is_ascii_alphabetic() {
+        path.remove(0);
+    }
+    let (mut line, mut col) = (None, None);
+    if let Some(l) = fragment.strip_prefix('L') {
+        let (l, c) = l.split_once('C').unwrap_or((l, ""));
+        line = l.split('-').next().and_then(|n| n.parse().ok());
+        col = c.parse().ok();
+    } else if let Some((p, l, c)) = line_suffix(&path) {
+        (line, col) = (Some(l), c);
+        path = p;
+    }
+    if cfg!(windows) {
+        path = path.replace('/', "\\");
+    }
+    Some(FileRef { range: 0..url.len(), path, line, col })
+}
+
+/// `path:12` or `path:12:5`, split; `None` when there's no line number on the end.
+fn line_suffix(path: &str) -> Option<(String, u32, Option<u32>)> {
+    let (head, last) = path.rsplit_once(':')?;
+    let last: u32 = last.parse().ok()?;
+    match head.rsplit_once(':') {
+        Some((p, l)) if l.parse::<u32>().is_ok() => Some((p.to_string(), l.parse().ok()?, Some(last))),
+        _ => Some((head.to_string(), last, None)),
+    }
+}
+
+/// `%20` and the like decoded, as UTF-8; `None` when they don't make text.
+fn percent_decode(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = bytes.get(i + 1..i + 3).filter(|h| h.iter().all(u8::is_ascii_hexdigit))?;
+            out.push(u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_urls_become_paths_with_lines() {
+        let sep = |p: &str| if cfg!(windows) { p.replace('/', "\\") } else { p.to_string() };
+        let r = file_url("file:///C:/Users/me/repo/hello.txt").unwrap();
+        assert_eq!((r.path, r.line), (sep("C:/Users/me/repo/hello.txt"), None));
+        let r = file_url("file:///C:/work/src/main.rs#L12").unwrap();
+        assert_eq!((r.path, r.line, r.col), (sep("C:/work/src/main.rs"), Some(12), None));
+        let r = file_url("file:///home/me/a%20b.rs#L3C7").unwrap();
+        assert_eq!((r.path, r.line, r.col), (sep("/home/me/a b.rs"), Some(3), Some(7)));
+        let r = file_url("file:///c%3A/Users/me/x.rs:40:2").unwrap();
+        assert_eq!((r.path, r.line, r.col), (sep("c:/Users/me/x.rs"), Some(40), Some(2)));
+        let r = file_url("file://localhost/etc/hosts").unwrap();
+        assert_eq!(r.path, sep("/etc/hosts"));
+        assert!(file_url("file://server/share/x").is_none());
+        assert!(file_url("https://example.com/a.rs").is_none());
+        assert!(file_url("file:///bad%ZZ").is_none());
+        assert!(file_url("file:///trail%2").is_none());
+    }
 
     fn paths(text: &str) -> Vec<(String, Option<u32>, Option<u32>)> {
         find(text).into_iter().map(|r| (r.path, r.line, r.col)).collect()

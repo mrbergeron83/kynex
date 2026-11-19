@@ -266,6 +266,10 @@ pub struct ClaudeSettings {
     /// The model its new Grok sessions start on; empty is Grok's default.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub grok_model: String,
+    /// The OpenRouter model its new Antigravity sessions start on; empty is
+    /// [`crate::provider::DEFAULT_ANTIGRAVITY_MODEL`].
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub antigravity_model: String,
     /// Thinking turned off for this project's sessions (the composer's switch).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub thinking_off: bool,

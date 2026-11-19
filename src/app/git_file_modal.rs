@@ -42,6 +42,24 @@ impl KynexApp {
         cx.notify();
     }
 
+    /// Any file on disk in the same read-only viewer, at `line` when given.
+    pub(super) fn open_file_view(
+        &mut self,
+        path: PathBuf,
+        line: Option<u32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = cx.new(|cx| FileDiffView::open_file(path, line, cx));
+        cx.subscribe_in(&view, window, |this, _, ev: &FileDiffEvent, window, cx| match ev {
+            FileDiffEvent::Close => this.close_git_file_modal(cx),
+            FileDiffEvent::ViewImage(image, size) => this.open_rendered(image.clone(), *size, window, cx),
+        })
+        .detach();
+        self.git_file = Some(GitDiffModal::File(view));
+        cx.notify();
+    }
+
     /// What `git` has picked (a commit), with its diff.
     pub(super) fn open_git_detail(&mut self, git: Entity<GitView>, title: &'static str, cx: &mut Context<Self>) {
         let view = cx.new(|cx| DetailView::new(git, title, cx));

@@ -92,6 +92,7 @@
 //! | `agents_settings.rs` | its Agents: delegating, Kynex's subagents to edit       |
 //! | `providers.rs`      | Settings → Providers: Anthropic sign-in, OpenRouter key, cap, My models |
 //! | `grok_setup.rs`     | Settings → Providers → Grok: opt in, install, sign in / out |
+//! | `antigravity_setup.rs` | Settings → Providers → Antigravity: opt in, install (runs on the OpenRouter key) |
 //! | `setup.rs`          | CLI install / sign-in screen and update strip        |
 //! | `provider_setup.rs` | OpenRouter key on launch, new sessions' provider, OpenRouter on the setup screen |
 //! | `app_update.rs`     | Kynex updating itself: checks, the update toast      |
@@ -111,6 +112,7 @@ mod about;
 mod agent_panes;
 mod agents_pane;
 mod agents_settings;
+mod antigravity_setup;
 mod app_settings;
 mod app_update;
 mod appearance;
@@ -143,7 +145,7 @@ mod grok_setup;
 mod handoff;
 pub(crate) mod history;
 mod input_modes;
-mod keys;
+pub(crate) mod keys;
 mod layout;
 mod layout_history;
 mod layouts;
@@ -867,8 +869,8 @@ impl KynexApp {
             if let Some(init) = s.take_init() {
                 reports.push((s.cwd.clone(), init, s.provider().provider()));
             }
-            if let Some(list) = s.take_grok_models() {
-                grok_lists.push(list);
+            if let Some(list) = s.take_acp_models() {
+                grok_lists.push((s.provider().provider(), list));
             }
             if let Some(model) = s.take_no_tools() {
                 without_tools.push((s.uid, model));
@@ -895,8 +897,12 @@ impl KynexApp {
         for (key, model) in without_tools {
             self.model_without_tools(key, &model);
         }
-        for list in grok_lists {
-            models::grok_reported(list, cx);
+        for (provider, list) in grok_lists {
+            if provider == kynex_core::provider::Provider::Antigravity {
+                models::antigravity_reported(list, cx);
+            } else {
+                models::grok_reported(list, cx);
+            }
         }
         for (cwd, init, provider) in reports {
             self.commands_reported(cwd, init.commands, cx);

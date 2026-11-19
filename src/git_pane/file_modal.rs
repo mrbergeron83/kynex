@@ -77,10 +77,31 @@ pub struct FileDiffView {
     pub(super) pdf_zoom: f32,
     pub(super) focus: FocusHandle,
     focused: bool,
+    /// A file read from disk as it is, not a change: no sides, counts or change steps.
+    plain: bool,
+    /// The line a plain file opens on.
+    line: Option<u32>,
 }
 
 impl FileDiffView {
+    /// Any file on disk, read-only, opening at `line` when given.
+    pub fn open_file(path: PathBuf, line: Option<u32>, cx: &mut Context<Self>) -> Self {
+        Self::build(PathBuf::new(), path.display().to_string().replace('\\', "/"), false, Staged::No, true, line, cx)
+    }
+
     pub fn new(root: PathBuf, path: String, untracked: bool, staged: Staged, cx: &mut Context<Self>) -> Self {
+        Self::build(root, path, untracked, staged, false, None, cx)
+    }
+
+    fn build(
+        root: PathBuf,
+        path: String,
+        untracked: bool,
+        staged: Staged,
+        plain: bool,
+        line: Option<u32>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // Pictures go back to the GPU's atlas when the modal closes.
         cx.on_release(|this, cx| this.release_images(cx)).detach();
         let mut view = Self {
@@ -101,6 +122,8 @@ impl FileDiffView {
             pdf_zoom: 1.,
             focus: cx.focus_handle(),
             focused: false,
+            plain,
+            line,
         };
         view.load(cx);
         view
@@ -127,9 +150,17 @@ impl FileDiffView {
         let (root, p, untracked, side) = (self.root.clone(), self.path.clone(), self.untracked, self.side);
         self.set_body(Body::Loading, cx);
         self.menu = None;
+        let plain = self.plain;
         cx.spawn(async move |this, cx| {
-            let loaded =
-                cx.background_spawn(async move { file_view::load(&root, &p, untracked, side).map(prepare) }).await;
+            let loaded = cx
+                .background_spawn(async move {
+                    if plain {
+                        file_view::load_file(&root.join(&p)).map(prepare)
+                    } else {
+                        file_view::load(&root, &p, untracked, side).map(prepare)
+                    }
+                })
+                .await;
             this.update(cx, |this, cx| {
                 // Another side was picked meanwhile.
                 if this.side != side {
@@ -173,8 +204,12 @@ impl FileDiffView {
     fn show_text(&mut self, mut d: FileDiff) {
         // A hunk's header is a row before its lines.
         let mut row = 0;
+        if self.plain {
+            // Just the lines: no hunk header row.
+            d.hunks.iter_mut().for_each(|h| h.header.clear());
+        }
         for h in &d.hunks {
-            row += 1;
+            row += usize::from(!self.plain);
             self.starts.extend(git::change_starts(&h.lines).into_iter().map(|i| row + i));
             row += h.lines.len();
         }
@@ -182,7 +217,14 @@ impl FileDiffView {
         d.hunks.clear();
         self.meta = Some(d);
         self.caret = Caret::start(&super::file_text::RowLines(&self.state.rows()));
-        self.goto(0);
+        if self.plain {
+            let last = self.state.rows().len().saturating_sub(1);
+            let row = (self.line.unwrap_or(1).max(1) as usize - 1).min(last);
+            self.scroll.scroll_to_item(row.saturating_sub(CONTEXT_ABOVE), ScrollStrategy::Top);
+            self.caret = Caret::at(kynex_core::file_view::caret::Pos::new(row, 0));
+        } else {
+            self.goto(0);
+        }
     }
 
     fn show_side(&mut self, side: DiffSide, cx: &mut Context<Self>) {
@@ -195,7 +237,7 @@ impl FileDiffView {
 
     /// All / Staged / Unstaged, for a file with changes on both sides.
     fn sides(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.staged != Staged::Partly {
+        if self.plain || self.staged != Staged::Partly {
             return None;
         }
         let t = theme(cx).clone();
@@ -295,6 +337,7 @@ impl FileDiffView {
         };
         let text = matches!(self.body, Body::Text);
         let (added, removed) = self.meta.as_ref().map_or((0, 0), |d| (d.added, d.removed));
+        let status = status.filter(|_| !self.plain);
         let sides = self.sides(cx);
         let total = self.starts.len();
         let counter: SharedString =
@@ -315,7 +358,7 @@ impl FileDiffView {
             .child(div().flex_1())
             .children(sides)
             .children(pdf)
-            .when(text, |d| {
+            .when(text && !self.plain, |d| {
                 d.child(counts(added, removed, &t))
                     .child(div().flex_none().text_xs().text_color(t.text_muted).child(counter))
                     .child(
@@ -328,6 +371,14 @@ impl FileDiffView {
                             .tooltip(Tooltip::with_meta("Next change", "N · J · F7"))
                             .on_click(cx.listener(|this, _, _, cx| this.step(true, cx))),
                     )
+            })
+            .when(self.plain, |d| {
+                let (path, line) = (self.root.join(&self.path), self.line);
+                d.child(
+                    icon_button("file-diff-editor", Icon::Code, cx)
+                        .tooltip(Tooltip::text("Open in editor"))
+                        .on_click(move |_, _, cx| crate::file_links::open(path.clone(), line, None, cx)),
+                )
             })
             .child(
                 icon_button("file-diff-close", Icon::Close, cx)

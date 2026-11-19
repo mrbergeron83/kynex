@@ -83,6 +83,12 @@ pub fn fetch_models(cx: &mut Context<KynexApp>) {
                 {
                     known.get_or_insert(grok);
                 }
+                let agy = kynex_core::antigravity::saved_models();
+                if !agy.is_empty()
+                    && let Ok(mut known) = ANTIGRAVITY_MODEL_LIST.lock()
+                {
+                    known.get_or_insert(agy);
+                }
                 let saved = session::saved_models();
                 if saved.is_empty() { session::list_models() } else { Ok(saved) }
             })
@@ -292,6 +298,69 @@ pub fn fetch_grok_models(cx: &mut Context<KynexApp>) {
     .detach();
 }
 
+/// Antigravity's models (OpenRouter ids), as `agy models` last said (saved across restarts).
+static ANTIGRAVITY_MODEL_LIST: Mutex<Option<Vec<ModelInfo>>> = Mutex::new(None);
+static ANTIGRAVITY_FETCHING: AtomicBool = AtomicBool::new(false);
+/// Why the last ask for Antigravity's list failed, for the picker.
+static ANTIGRAVITY_FETCH_ERROR: Mutex<Option<String>> = Mutex::new(None);
+/// When Antigravity's list was last asked for, so a failure retries a minute on.
+static ANTIGRAVITY_ASKED: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+fn antigravity_known() -> Vec<ModelInfo> {
+    ANTIGRAVITY_MODEL_LIST.lock().ok().and_then(|l| l.clone()).unwrap_or_default()
+}
+
+/// An Antigravity model list came: kept for the picker, and saved.
+pub fn antigravity_reported(list: Vec<ModelInfo>, cx: &mut Context<KynexApp>) {
+    if list.is_empty() || antigravity_known() == list {
+        return;
+    }
+    if let Ok(mut known) = ANTIGRAVITY_MODEL_LIST.lock() {
+        *known = Some(list.clone());
+    }
+    cx.background_spawn(async move {
+        if let Err(e) = kynex_core::antigravity::save_models(&list) {
+            eprintln!("kynex: {e}");
+        }
+    })
+    .detach();
+}
+
+/// Asks `agy` for its models, on the OpenRouter `key`, when none are known. Call as
+/// often as you like; it runs once, and again a minute after a failure.
+pub fn fetch_antigravity_models(key: String, cx: &mut Context<KynexApp>) {
+    if !antigravity_known().is_empty() || ANTIGRAVITY_FETCHING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let too_soon = ANTIGRAVITY_ASKED
+        .lock()
+        .ok()
+        .is_some_and(|a| a.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(60)));
+    if too_soon {
+        ANTIGRAVITY_FETCHING.store(false, Ordering::SeqCst);
+        return;
+    }
+    if let Ok(mut a) = ANTIGRAVITY_ASKED.lock() {
+        *a = Some(std::time::Instant::now());
+    }
+    cx.spawn(async move |this, cx| {
+        let result = cx.background_spawn(async move { kynex_core::antigravity::list_models(&key) }).await;
+        if let Ok(mut error) = ANTIGRAVITY_FETCH_ERROR.lock() {
+            *error = result.as_ref().err().cloned();
+        }
+        ANTIGRAVITY_FETCHING.store(false, Ordering::SeqCst);
+        this.update(cx, |_, cx| {
+            match result {
+                Ok(list) => antigravity_reported(list, cx),
+                Err(e) => eprintln!("kynex: couldn't list Antigravity's models: {e}"),
+            }
+            cx.notify();
+        })
+        .ok();
+    })
+    .detach();
+}
+
 impl KynexApp {
     /// The model menu on Grok: its default, then the models Grok offers (once a
     /// Grok session has said), or the id this folder already uses until then.
@@ -359,6 +428,73 @@ impl KynexApp {
                                 d.child(div().text_xs().text_color(t.text_muted).child(description))
                             }),
                     )
+                    .when(selected, |d| d.child(icon(Icon::Check, t.text_muted)))
+                    .on_click(pick(id, cx))
+                    .into_any_element()
+            })
+            .collect();
+        items.extend(status);
+        items
+    }
+
+    /// The model menu on Antigravity: OpenRouter's models (Google's first), or the
+    /// id this folder already uses until the list is in.
+    pub(super) fn antigravity_model_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let t = theme(cx).clone();
+        let mut current = self.active_model();
+        if current.is_empty() {
+            current = kynex_core::provider::DEFAULT_ANTIGRAVITY_MODEL.to_string();
+        }
+        let mut ids: Vec<String> = antigravity_known().into_iter().map(|m| m.value).collect();
+        // Stable: Google's first, each group in the order `agy` gave.
+        ids.sort_by_key(|id| !id.starts_with("google/"));
+        if !ids.contains(&current) {
+            ids.insert(0, current.clone());
+        }
+        let status = if !antigravity_known().is_empty() {
+            None
+        } else if ANTIGRAVITY_FETCHING.load(Ordering::SeqCst) {
+            Some(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(t.text_muted)
+                    .child(spinner("antigravity-models-loading", t.text_muted, px(12.)))
+                    .child("Loading Antigravity's models…")
+                    .into_any_element(),
+            )
+        } else {
+            ANTIGRAVITY_FETCH_ERROR.lock().ok().and_then(|e| e.clone()).map(|e| {
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .text_color(t.text_muted)
+                    .child(format!("Couldn't list Antigravity's models: {e}"))
+                    .into_any_element()
+            })
+        };
+        let mut items: Vec<AnyElement> = ids
+            .into_iter()
+            .enumerate()
+            .map(|(n, id)| {
+                let selected = id == current;
+                div()
+                    .id(("antigravity-pick", n))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(t.hover))
+                    .when(selected, |d| d.bg(t.active))
+                    .child(div().flex_1().min_w_0().text_sm().text_color(t.text).child(id.clone()))
                     .when(selected, |d| d.child(icon(Icon::Check, t.text_muted)))
                     .on_click(pick(id, cx))
                     .into_any_element()

@@ -83,7 +83,10 @@ impl DiffState {
             }
             let lang = Lang::from_path(&f.path);
             for h in &f.hunks {
-                rows.push(Row::Hunk(h.header.clone().into()));
+                // A hunk without a header (a plain file) has no row for it.
+                if !h.header.is_empty() {
+                    rows.push(Row::Hunk(h.header.clone().into()));
+                }
                 // Tabs would render as nothing.
                 let texts: Vec<String> = h.lines.iter().map(|l| l.text.replace('\t', "    ")).collect();
                 let mut tokens = lang

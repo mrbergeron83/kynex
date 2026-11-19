@@ -13,7 +13,6 @@ use kynex_core::git;
 use kynex_core::layout::{Direction, PaneId};
 use kynex_core::lineage;
 use kynex_core::live::Key;
-use kynex_core::provider::Provider;
 use kynex_core::rewind::{self, Point};
 use kynex_core::session::{Kind, Session};
 use kynex_core::workspace::{self, same_folder};
@@ -231,8 +230,8 @@ impl KynexApp {
         let key = self.resolve_session(r)?;
         let project = self.project_of(key).ok_or("only a project's sessions can be forked")?;
         let s = self.session_by_key(key).ok_or_else(|| format!("no open session {r}"))?;
-        if s.provider().provider() == Provider::Grok {
-            return Err("Grok sessions can't be forked".into());
+        if s.provider().provider().is_acp() {
+            return Err(format!("{} sessions can't be forked", s.provider().provider().label()));
         }
         let id = s
             .session_id

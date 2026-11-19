@@ -1,15 +1,19 @@
-//! The Agent Client Protocol (ACP) as `grok agent stdio` speaks it, turned
-//! into the stream-json a session already handles, and back.
+//! The Agent Client Protocol (ACP) as the agent CLIs Kynex drives speak it
+//! (`grok agent stdio`, `agy acp`), turned into the stream-json a session
+//! already handles, and back.
 //!
 //! The session talks to it as it talks to `claude`: [`Acp::outgoing`] takes the
 //! messages it would write (a user message, a permission answer, an interrupt,
 //! a mode switch) and gives the JSON-RPC lines to write instead;
-//! [`Acp::incoming`] takes a line from `grok` and gives stream-json events to
+//! [`Acp::incoming`] takes a line from the agent and gives stream-json events to
 //! handle, errors to show, and lines to write back (answers Kynex gives itself).
 //!
 //! One process holds one conversation: `initialize`, then `session/new` (or
 //! `session/load` to continue one) when the first message goes, then a
-//! `session/prompt` per message. Grok's own extras (`_x.ai/…`) are left out.
+//! `session/prompt` per message. Each agent's extras differ ([`Agent`]):
+//! Grok's `_x.ai/…` notifications, Antigravity's placeholder model ids.
+
+pub(crate) mod usage;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -18,6 +22,26 @@ use std::time::Instant;
 use serde_json::{Value, json};
 
 use crate::project::Mode;
+
+/// Which agent is on the other end: where their ACP dialects differ.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Agent {
+    /// Grok Build (`grok agent stdio`): `_meta` modes, `_x.ai/…` usage and models.
+    #[default]
+    Grok,
+    /// Antigravity (`agy acp`): plain ACP, `usage_update`, models named by id.
+    Antigravity,
+}
+
+impl Agent {
+    /// Its name in messages: "Grok couldn't start a session".
+    pub fn label(self) -> &'static str {
+        match self {
+            Agent::Grok => "Grok",
+            Agent::Antigravity => "Antigravity",
+        }
+    }
+}
 
 /// What [`Acp::incoming`] makes of a line.
 #[derive(Debug, PartialEq)]
@@ -38,11 +62,12 @@ enum Block {
     Thinking,
 }
 
-/// One `grok agent stdio` conversation.
+/// One agent conversation over ACP.
 #[derive(Debug)]
 pub struct Acp {
+    agent: Agent,
     cwd: PathBuf,
-    /// The model to switch to once the session is open; empty is Grok's default.
+    /// The model to switch to once the session is open; empty is the agent's default.
     model: String,
     mode: Mode,
     /// The conversation to continue, if any.
@@ -64,12 +89,17 @@ pub struct Acp {
     asks: HashMap<String, (Value, Vec<Value>)>,
     /// Tool calls whose result has gone out.
     done: HashSet<String>,
-    /// The models Grok offers, the one in use and their context windows.
-    models: super::usage::Models,
+    /// The models the agent offers, the one in use and their context windows.
+    models: usage::Models,
     /// What the session's turns have cost so far, in USD.
     total_cost: f64,
     /// The reasoning effort to set once the session is open; empty is the model's own.
     effort: String,
+    /// The project's allow and deny rules (Kynex's Permissions), and those allowed
+    /// for this session: Antigravity's prompts offer no "always", so Kynex keeps
+    /// them and answers for them ([`Self::ask`]).
+    rules: Vec<crate::rules::Rule>,
+    session_rules: Vec<String>,
 }
 
 /// A JSON-RPC request.
@@ -89,6 +119,7 @@ fn stream(event: Value) -> Out {
 impl Acp {
     pub fn new(cwd: PathBuf, model: &str, mode: Mode, resume: Option<&str>) -> Self {
         Self {
+            agent: Agent::Grok,
             cwd,
             model: model.trim().to_string(),
             mode,
@@ -107,7 +138,26 @@ impl Acp {
             models: Default::default(),
             total_cost: 0.0,
             effort: String::new(),
+            rules: Vec::new(),
+            session_rules: Vec::new(),
         }
+    }
+
+    /// With the project's permission rules ([`Self::set_rules`]).
+    pub fn with_rules(mut self, perms: &crate::project::Permissions) -> Self {
+        self.set_rules(perms);
+        self
+    }
+
+    /// Takes the project's permission rules, after a change to them.
+    pub fn set_rules(&mut self, perms: &crate::project::Permissions) {
+        self.rules = crate::rules::kynex_rules(perms);
+    }
+
+    /// For `agent` rather than Grok.
+    pub fn for_agent(mut self, agent: Agent) -> Self {
+        self.agent = agent;
+        self
     }
 
     /// With a reasoning effort (`low`, `high`…) to set on the session; empty is the model's own.
@@ -116,7 +166,7 @@ impl Acp {
         self
     }
 
-    /// Grok's models, when the list came or changed since last taken, for the model picker.
+    /// The agent's models, when the list came or changed since last taken, for the model picker.
     pub fn take_models(&mut self) -> Option<Vec<crate::session::ModelInfo>> {
         std::mem::take(&mut self.models.fresh).then(|| self.models.list.clone())
     }
@@ -127,7 +177,8 @@ impl Acp {
         let Some(sid) = self.session.clone().filter(|_| !self.model.is_empty()) else { return Vec::new() };
         self.models.current = self.model.clone();
         let id = self.id();
-        let mut lines = vec![request(id, "session/set_model", json!({ "sessionId": sid, "modelId": self.model }))];
+        let params = json!({ "sessionId": sid, "modelId": self.models.wire_id(&self.model) });
+        let mut lines = vec![request(id, "session/set_model", params)];
         // A model starts on its own effort: the chosen one goes again.
         lines.extend(self.effort_lines());
         lines
@@ -169,7 +220,7 @@ impl Acp {
     }
 
     /// The first line to write: `initialize`. Kynex reads and writes no files
-    /// for Grok and runs no terminals for it; Grok does both itself.
+    /// for the agent and runs no terminals for it; the agent does both itself.
     pub fn start(&mut self) -> Vec<Value> {
         let id = self.id();
         self.init = Some(id);
@@ -188,27 +239,36 @@ impl Acp {
         }
         let id = self.id();
         self.opening = Some(id);
-        // Asking is the default; `yoloMode` (approve everything) stays off, and `autoMode` is Grok's auto.
-        let meta = json!({ "yoloMode": false, "autoMode": self.mode == Mode::Auto });
-        let cwd = self.cwd.to_string_lossy();
+        let mut params = json!({ "cwd": self.cwd.to_string_lossy(), "mcpServers": [] });
+        if self.agent == Agent::Grok {
+            // Asking is the default; `yoloMode` (approve everything) stays off, and `autoMode` is Grok's auto.
+            params["_meta"] = json!({ "yoloMode": false, "autoMode": self.mode == Mode::Auto });
+        }
         match &self.resume {
             Some(sid) => {
                 self.loading = true;
-                let params = json!({ "sessionId": sid, "cwd": cwd, "mcpServers": [], "_meta": meta });
+                params["sessionId"] = json!(sid);
                 vec![request(id, "session/load", params)]
             }
-            None => vec![request(id, "session/new", json!({ "cwd": cwd, "mcpServers": [], "_meta": meta }))],
+            None => vec![request(id, "session/new", params)],
         }
     }
 
     /// The lines that put an open session in `self.mode`.
     fn mode_lines(&mut self) -> Vec<Value> {
         let Some(sid) = self.session.clone() else { return Vec::new() };
-        let word = match () {
-            _ if self.mode == Mode::Auto => "auto",
-            _ => "ask",
-        };
         let id = self.id();
+        if self.agent == Agent::Antigravity {
+            // Its modes: `default` asks, `accept-edits` doesn't for edits, `plan` plans. Bypass
+            // and Auto answer the rest of the asks here ([`Self::ask`]).
+            let mode = match self.mode {
+                Mode::Plan => "plan",
+                Mode::AcceptEdits | Mode::Auto | Mode::Bypass => "accept-edits",
+                Mode::Manual => "default",
+            };
+            return vec![request(id, "session/set_mode", json!({ "sessionId": sid, "modeId": mode }))];
+        }
+        let word = if self.mode == Mode::Auto { "auto" } else { "ask" };
         vec![
             notification(
                 "_x.ai/yolo_mode_changed",
@@ -262,6 +322,12 @@ impl Acp {
                     return Vec::new();
                 };
                 let answer = &response["response"];
+                // "This session" or "always in this project": kept here, for the next asks.
+                for rule in crate::project::suggested_rules(&answer["updatedPermissions"]) {
+                    if !self.session_rules.contains(&rule) {
+                        self.session_rules.push(rule);
+                    }
+                }
                 let (kinds, stop): (&[&str], bool) = match answer["behavior"].as_str() {
                     Some("allow") if answer["updatedPermissions"].as_array().is_some_and(|u| !u.is_empty()) => {
                         (&["allow_always", "allow_once"], false)
@@ -326,7 +392,7 @@ impl Acp {
             Some("_x.ai/session_notification")
                 if !self.loading && v["params"]["update"]["sessionUpdate"] == "response_completed" =>
             {
-                let Some(usage) = super::usage::context(&self.models.current, &v["params"]["update"]["usage"]) else {
+                let Some(usage) = usage::context(&self.models.current, &v["params"]["update"]["usage"]) else {
                     return Vec::new();
                 };
                 // A text block streaming ends with its call; close it first so the text settles once.
@@ -348,7 +414,7 @@ impl Acp {
         if id.is_some() && id == self.init {
             self.init = None;
             if let Some(e) = error {
-                return vec![Out::Error(format!("Grok didn't start: {e}"))];
+                return vec![Out::Error(format!("{} didn't start: {e}", self.agent.label()))];
             }
             self.initialized = true;
             // Continuing a conversation: open it now, it takes a moment to load.
@@ -364,10 +430,13 @@ impl Acp {
             if let Some(e) = error {
                 if self.resume.take().is_some() {
                     // The conversation is gone on Grok's side: start a new one rather than fail.
-                    out.push(Out::Error(format!("Couldn't continue the Grok session ({e}); starting a new one.")));
+                    out.push(Out::Error(format!(
+                        "Couldn't continue the {} session ({e}); starting a new one.",
+                        self.agent.label()
+                    )));
                     out.extend(self.open().into_iter().map(Out::Write));
                 } else {
-                    out.push(Out::Error(format!("Grok couldn't start a session: {e}")));
+                    out.push(Out::Error(format!("{} couldn't start a session: {e}", self.agent.label())));
                     self.pending.clear();
                     out.push(Out::Handle(json!({ "type": "result", "is_error": true, "duration_ms": 0 })));
                 }
@@ -375,7 +444,10 @@ impl Acp {
             }
             let sid = v["result"]["sessionId"].as_str().map(str::to_string).or_else(|| self.resume.clone());
             self.session = sid.clone();
-            self.models.read(&v["result"]["models"]);
+            match self.agent {
+                Agent::Grok => self.models.read(&v["result"]["models"]),
+                Agent::Antigravity => self.models.read_named(&v["result"]["models"]),
+            }
             if !self.model.is_empty() {
                 self.models.current = self.model.clone();
             }
@@ -385,7 +457,7 @@ impl Acp {
             out.extend(self.mode_lines().into_iter().map(Out::Write));
             if !self.model.is_empty() {
                 let id = self.id();
-                let params = json!({ "sessionId": sid, "modelId": self.model });
+                let params = json!({ "sessionId": sid, "modelId": self.models.wire_id(&self.model) });
                 out.push(Out::Write(request(id, "session/set_model", params)));
             }
             if !self.effort.is_empty() {
@@ -410,13 +482,17 @@ impl Acp {
             let mut out = self.close();
             let stop = v["result"]["stopReason"].as_str().unwrap_or("");
             if let Some(e) = &error {
-                out.push(Out::Error(format!("Grok: {e}")));
+                out.push(Out::Error(format!("{}: {e}", self.agent.label())));
             } else if stop == "refusal" {
-                out.push(Out::Error("Grok refused this request.".into()));
+                out.push(Out::Error(format!("{} refused this request.", self.agent.label())));
             } else if matches!(stop, "max_tokens" | "max_turn_requests") {
-                out.push(Out::Error(format!("Grok stopped early ({}).", stop.replace('_', " "))));
+                out.push(Out::Error(format!("{} stopped early ({}).", self.agent.label(), stop.replace('_', " "))));
             }
-            let mut result = super::usage::turn(&v["result"]["_meta"]["usage"], &self.models, &mut self.total_cost);
+            let mut result = match self.agent {
+                Agent::Grok => usage::turn(&v["result"]["_meta"]["usage"], &self.models, &mut self.total_cost, true),
+                // Antigravity counts cached tokens apart from its input, and sends no cost.
+                Agent::Antigravity => usage::turn(&v["result"]["usage"], &self.models, &mut self.total_cost, false),
+            };
             result.insert("type".into(), json!("result"));
             result.insert("duration_ms".into(), json!(at.elapsed().as_millis() as u64));
             result.insert("is_error".into(), json!(error.is_some() || stop == "refusal"));
@@ -467,6 +543,22 @@ impl Acp {
                 out
             }
             "tool_call_update" => self.result(u),
+            // Antigravity: the context in use and the window, after each model call.
+            "usage_update" if self.agent == Agent::Antigravity => {
+                let (Some(used), Some(size)) = (u["used"].as_u64(), u["size"].as_u64()) else { return Vec::new() };
+                self.models.set_window(size);
+                if used == 0 {
+                    return Vec::new();
+                }
+                let mut out = self.close();
+                out.push(Out::Handle(usage::context_used(&self.models.current, used)));
+                out
+            }
+            // Antigravity: the model in use, after a switch.
+            "config_option_update" if self.agent == Agent::Antigravity => {
+                self.models.read_config(&u["configOptions"]);
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }
@@ -496,10 +588,20 @@ impl Acp {
         if self.mode == Mode::Bypass || (kind == "edit" && matches!(self.mode, Mode::AcceptEdits | Mode::Auto)) {
             return vec![Out::Write(choose(v["id"].clone(), &options, &["allow_once", "allow_always"]))];
         }
+        let (name, input) = tool(call);
+        // Antigravity: the project's rules and this session's decide first, then a
+        // command that only reads goes, as Claude Code's would. Grok keeps its own.
+        let mut suggestions = Value::Null;
+        if self.agent == Agent::Antigravity {
+            match self.decide(&name, &input) {
+                Some(true) => return vec![Out::Write(choose(v["id"].clone(), &options, &["allow_once"]))],
+                Some(false) => return vec![Out::Write(choose(v["id"].clone(), &options, &["reject_once"]))],
+                None => suggestions = suggestion(&name, &input),
+            }
+        }
         let request_id = format!("acp-{}", v["id"]);
         self.asks.insert(request_id.clone(), (v["id"].clone(), options));
         let mut out = self.close();
-        let (name, input) = tool(call);
         out.push(Out::Handle(json!({
             "type": "control_request",
             "request_id": request_id,
@@ -508,10 +610,70 @@ impl Acp {
                 "tool_name": name,
                 "input": input,
                 "description": call["title"].as_str().unwrap_or(""),
+                "permission_suggestions": suggestions,
             },
         })));
         out
     }
+
+    /// What the rules say about a call: allow, deny, or `None` to ask.
+    fn decide(&self, name: &str, input: &Value) -> Option<bool> {
+        use crate::rules::{Kind, Rule, Source};
+        let session =
+            self.session_rules.iter().map(|t| Rule { kind: Kind::Allow, text: t.clone(), source: Source::Kynex });
+        let rules: Vec<Rule> = self.rules.iter().cloned().chain(session).collect();
+        if name == "Bash" {
+            let command = input["command"].as_str().unwrap_or("").trim();
+            if command.is_empty() {
+                return None;
+            }
+            return match crate::rules::test(&rules, command).decision {
+                Some(Kind::Deny) => Some(false),
+                Some(Kind::Allow) => Some(true),
+                Some(Kind::Ask) => None,
+                None => crate::read_only::is_read_only(command).then_some(true),
+            };
+        }
+        // Other tools: a rule naming the tool alone, like `Write`.
+        let named = |kind: Kind| rules.iter().any(|r| r.kind == kind && r.text.trim() == name);
+        if named(Kind::Deny) {
+            Some(false)
+        } else if named(Kind::Allow) {
+            Some(true)
+        } else {
+            None
+        }
+    }
+}
+
+/// The rule the prompt offers to keep for a call, as Claude's `permission_suggestions`:
+/// a command's program (with its subcommand for tools that have them, like
+/// `git log`) as `Bash(git log:*)`, any other tool by its name.
+fn suggestion(name: &str, input: &Value) -> Value {
+    let (tool, content) = if name == "Bash" {
+        let command = input["command"].as_str().unwrap_or("");
+        let words: Vec<&str> = command.split_whitespace().collect();
+        let Some(first) = words.first() else { return Value::Null };
+        // A chained or redirected command gets no rule: one for its first program would say too much.
+        if command.contains(['|', ';', '&', '>', '`', '\n']) || command.contains("$(") {
+            return Value::Null;
+        }
+        let with_sub = ["git", "npm", "pnpm", "yarn", "cargo", "dotnet", "gh", "go", "docker", "kubectl"];
+        let prefix = match words.get(1) {
+            Some(sub) if with_sub.contains(&first.to_ascii_lowercase().as_str()) && !sub.starts_with('-') => {
+                format!("{first} {sub}")
+            }
+            _ => first.to_string(),
+        };
+        ("Bash", Some(format!("{prefix}:*")))
+    } else {
+        (name, None)
+    };
+    let mut rule = json!({ "toolName": tool });
+    if let Some(c) = content {
+        rule["ruleContent"] = json!(c);
+    }
+    json!([{ "type": "addRules", "rules": [rule], "behavior": "allow", "destination": "session" }])
 }
 
 /// The answer to permission request `rpc`: the first of `options` whose kind is
@@ -529,10 +691,15 @@ fn choose(rpc: Value, options: &[Value], kinds: &[&str]) -> Value {
     json!({ "jsonrpc": "2.0", "id": rpc, "result": { "outcome": outcome } })
 }
 
-/// A tool call as the transcript names it: Grok's shell, edit and read tools
-/// under Claude's names, so they draw the same (a command, a diff, a path).
+/// A tool call as the transcript names it: the agents' shell, edit, write and
+/// read tools under Claude's names and argument names, so they draw the same
+/// (a command, a diff, a path). Grok names its tool in `_meta`, Antigravity in `name`.
 fn tool(call: &Value) -> (String, Value) {
-    let grok = call["_meta"]["x.ai/tool"]["name"].as_str().or(call["title"].as_str()).unwrap_or("tool");
+    let agent_name = call["_meta"]["x.ai/tool"]["name"]
+        .as_str()
+        .or(call["name"].as_str())
+        .or(call["title"].as_str())
+        .unwrap_or("tool");
     let mut input = match &call["rawInput"] {
         Value::Object(m) => Value::Object(m.clone()),
         Value::Null => json!({}),
@@ -541,16 +708,29 @@ fn tool(call: &Value) -> (String, Value) {
     if let Some(m) = input.as_object_mut() {
         m.remove("variant");
     }
-    let name = match grok {
+    // Renames the first of `from` found to `to`.
+    let rename = |input: &mut Value, from: &[&str], to: &str| {
+        if let Some(m) = input.as_object_mut()
+            && let Some(v) = from.iter().find_map(|k| m.remove(*k))
+        {
+            m.insert(to.into(), v);
+        }
+    };
+    let name = match agent_name {
         "run_terminal_command" | "run_terminal_cmd" => "Bash",
+        "run_command" => {
+            rename(&mut input, &["CommandLine"], "command");
+            "Bash"
+        }
         "search_replace" => "Edit",
-        "read_file" => {
-            if let Some(m) = input.as_object_mut()
-                && let Some(path) = m.remove("target_file")
-            {
-                m.insert("file_path".into(), path);
-            }
+        "read_file" | "view_file" => {
+            rename(&mut input, &["target_file", "Path", "AbsolutePath"], "file_path");
             "Read"
+        }
+        "write_file" | "write_to_file" => {
+            rename(&mut input, &["Path", "TargetFile"], "file_path");
+            rename(&mut input, &["Content", "CodeContent"], "content");
+            "Write"
         }
         other => other,
     };
@@ -890,5 +1070,103 @@ mod tests {
         let blocks = prompt_blocks(&content);
         assert_eq!(blocks[0], json!({ "type": "image", "mimeType": "image/png", "data": "AAAA" }));
         assert_eq!(blocks[1]["text"], "what is this");
+    }
+
+    /// What `agy acp` sent in a real session on OpenRouter (agy 1.5.12), trimmed.
+    #[test]
+    fn antigravity_speaks_plain_acp_with_named_models() {
+        let mut a = Acp::new(PathBuf::from("C:/work"), "google/gemini-4-carbon", Mode::AcceptEdits, None)
+            .for_agent(Agent::Antigravity);
+        let init = a.start();
+        a.incoming(json!({ "jsonrpc": "2.0", "id": init[0]["id"], "result": {} }));
+        let new = a.outgoing(user("hi"));
+        assert_eq!(new[0]["method"], "session/new");
+        assert!(new[0]["params"].get("_meta").is_none(), "no Grok extras");
+        let out = a.incoming(json!({ "jsonrpc": "2.0", "id": new[0]["id"], "result": { "sessionId": "s1",
+            "models": { "availableModels": [
+                { "modelId": "MODEL_PLACEHOLDER_M364", "name": "google/gemini-4-hydrogen" },
+                { "modelId": "MODEL_PLACEHOLDER_M365", "name": "google/gemini-4-carbon" }] } } }));
+        let w = writes(&out);
+        assert!(!w.iter().any(|w| w["method"].as_str().is_some_and(|m| m.starts_with("_x.ai"))));
+        let mode = w.iter().find(|w| w["method"] == "session/set_mode").unwrap();
+        assert_eq!(mode["params"]["modeId"], "accept-edits");
+        // The model goes by its placeholder id on the wire, and by its name in the picker.
+        let model = w.iter().find(|w| w["method"] == "session/set_model").unwrap();
+        assert_eq!(model["params"]["modelId"], "MODEL_PLACEHOLDER_M365");
+        assert!(w.iter().any(|w| w["method"] == "session/prompt"));
+        assert_eq!(a.take_models().unwrap()[0].value, "google/gemini-4-hydrogen");
+        assert_eq!(a.set_model("google/gemini-4-hydrogen")[0]["params"]["modelId"], "MODEL_PLACEHOLDER_M364");
+
+        // Its shell tool reads as Bash, with the command where Claude's goes.
+        let call = json!({ "sessionUpdate": "tool_call", "toolCallId": "c1", "name": "run_command",
+            "status": "in_progress", "kind": "execute", "title": "echo done",
+            "rawInput": { "CommandLine": "echo done", "WaitMsBeforeAsync": 5000 } });
+        let out = a.incoming(update(call));
+        let used = handles(&out)[0]["message"]["content"][0].clone();
+        assert_eq!((used["name"].as_str(), used["input"]["command"].as_str()), (Some("Bash"), Some("echo done")));
+        // A write reads as Write.
+        let call = json!({ "sessionUpdate": "tool_call", "toolCallId": "c2", "name": "write_file",
+            "status": "in_progress", "kind": "edit", "rawInput": { "Content": "hi", "Path": "C:/work/a.txt" } });
+        let out = a.incoming(update(call));
+        let used = handles(&out)[0]["message"]["content"][0].clone();
+        assert_eq!(used["name"], "Write");
+        assert_eq!(
+            (used["input"]["file_path"].as_str(), used["input"]["content"].as_str()),
+            (Some("C:/work/a.txt"), Some("hi"))
+        );
+
+        // The context meter moves on `usage_update`, and the turn's tokens come on its result.
+        let out = a.incoming(update(json!({ "sessionUpdate": "usage_update", "used": 8904, "size": 200000 })));
+        assert_eq!(handles(&out)[0]["message"]["usage"]["input_tokens"], 8904);
+        let prompt = new_prompt_id(&a);
+        let out = a.incoming(json!({ "jsonrpc": "2.0", "id": prompt, "result": { "stopReason": "end_turn",
+            "usage": { "inputTokens": 13320, "outputTokens": 243, "cachedReadTokens": 13785 } } }));
+        let result = handles(&out).into_iter().find(|h| h["type"] == "result").unwrap().clone();
+        let u = &result["model_usage_since_last_result"]["google/gemini-4-hydrogen"];
+        assert_eq!(u["inputTokens"], 13320);
+        assert_eq!(result["modelUsage"]["google/gemini-4-hydrogen"]["contextWindow"], 200000);
+    }
+
+    /// The id of the `session/prompt` in flight.
+    fn new_prompt_id(a: &Acp) -> u64 {
+        a.prompt.map(|(id, _)| id).unwrap()
+    }
+
+    /// Antigravity's prompt: rules decide first, reads go, and "always" is kept here.
+    #[test]
+    fn antigravity_asks_follow_the_rules_and_keep_always() {
+        let perms = crate::project::Permissions {
+            allow: vec!["Bash(cargo test:*)".into()],
+            deny: vec!["Bash(git push:*)".into()],
+        };
+        let mut a =
+            Acp::new(PathBuf::from("C:/work"), "", Mode::Manual, None).for_agent(Agent::Antigravity).with_rules(&perms);
+        let ask = |id: u64, cmd: &str| {
+            json!({ "jsonrpc": "2.0", "id": id.to_string(), "method": "session/request_permission", "params": {
+                "toolCall": { "toolCallId": format!("c{id}"), "name": "run_command", "kind": "execute",
+                    "rawInput": { "CommandLine": cmd } },
+                "options": [{ "optionId": "allow", "kind": "allow_once" }, { "optionId": "deny", "kind": "reject_once" }] } })
+        };
+        let picked = |out: &[Out]| writes(out).first().map(|w| w["result"]["outcome"]["optionId"].clone());
+        // A read goes, an allow rule goes, a deny rule is refused: no prompt.
+        assert_eq!(
+            picked(&a.incoming(ask(1, "Get-ChildItem -Recurse | Select-Object -First 5"))),
+            Some(json!("allow"))
+        );
+        assert_eq!(picked(&a.incoming(ask(2, "cargo test -p core"))), Some(json!("allow")));
+        assert_eq!(picked(&a.incoming(ask(3, "git push origin main"))), Some(json!("deny")));
+        // Anything else asks, offering to keep its program's rule.
+        let out = a.incoming(ask(4, "npm run build"));
+        let req = handles(&out).into_iter().find(|h| h["type"] == "control_request").unwrap().clone();
+        let rules = crate::project::suggested_rules(&req["request"]["permission_suggestions"]);
+        assert_eq!(rules, ["Bash(npm run:*)"]);
+        // Allowed for the session: the next one like it doesn't ask.
+        let answer = json!({ "type": "control_response", "response": { "request_id": req["request_id"],
+            "response": { "behavior": "allow", "updatedPermissions": req["request"]["permission_suggestions"] } } });
+        assert_eq!(a.outgoing(answer)[0]["result"]["outcome"]["optionId"], "allow");
+        assert_eq!(picked(&a.incoming(ask(5, "npm run lint"))), Some(json!("allow")));
+        // Grok keeps its own prompts.
+        let mut g = Acp::new(PathBuf::from("C:/work"), "", Mode::Manual, None).with_rules(&perms);
+        assert!(writes(&g.incoming(ask(6, "Get-ChildItem"))).is_empty());
     }
 }

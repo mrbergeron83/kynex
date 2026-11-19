@@ -160,6 +160,10 @@ impl KynexApp {
             }
             kynex_core::provider::Provider::Grok if m.is_empty() => super::models::GROK_DEFAULT_LABEL.into(),
             kynex_core::provider::Provider::Grok => super::models::grok_model(&m).map_or(m, |g| g.name),
+            kynex_core::provider::Provider::Antigravity if m.is_empty() => {
+                kynex_core::provider::DEFAULT_ANTIGRAVITY_MODEL.into()
+            }
+            kynex_core::provider::Provider::Antigravity => m,
             kynex_core::provider::Provider::Anthropic => super::models::model_label(&m),
         }
     }
@@ -187,6 +191,8 @@ impl KynexApp {
             self.set_project_openrouter_model(self.active_dir(), id, cx);
         } else if self.active_provider() == kynex_core::provider::Provider::Grok {
             self.set_project_grok_model(self.active_dir(), id, cx);
+        } else if self.active_provider() == kynex_core::provider::Provider::Antigravity {
+            self.set_project_antigravity_model(self.active_dir(), id, cx);
         } else {
             self.set_project_model(self.active_dir(), id, cx);
         }
@@ -251,6 +257,23 @@ impl KynexApp {
         let mut claude = self.claude_settings(&path);
         if claude.grok_model != model {
             claude.grok_model = model.clone();
+            if let Err(e) = claude.save(&path) {
+                self.toast(Toast::error(e));
+            }
+            self.claude_settings.insert(path, claude);
+        }
+        if let Some(s) = self.session_mut().filter(|s| s.own_model.is_none()) {
+            s.use_model(model);
+        }
+        cx.notify();
+    }
+
+    /// Sets the model a folder's new Antigravity sessions start on.
+    pub(super) fn set_project_antigravity_model(&mut self, path: PathBuf, model: String, cx: &mut Context<Self>) {
+        let path = self.settings_dir(&path);
+        let mut claude = self.claude_settings(&path);
+        if claude.antigravity_model != model {
+            claude.antigravity_model = model.clone();
             if let Err(e) = claude.save(&path) {
                 self.toast(Toast::error(e));
             }

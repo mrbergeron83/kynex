@@ -220,6 +220,49 @@ pub fn load(root: &Path, path: &str, untracked: bool, side: DiffSide) -> Result<
     }
 }
 
+/// Reads any file on disk for the viewer, as it is, outside git: text with every line
+/// context, images and SVGs as an "after" alone, PDFs, binaries. For a file linked
+/// from a session's text. SVGs are drawn in a child process, as in [`load`]. Blocking.
+pub fn load_file(file: &Path) -> Result<Loaded, String> {
+    use std::io::Read;
+    let shown = file.display().to_string();
+    let meta = std::fs::metadata(file).map_err(|e| format!("Couldn't open {shown}: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("{shown} isn't a file"));
+    }
+    let size = meta.len();
+    let mut head = Vec::new();
+    let f = std::fs::File::open(file).map_err(|e| format!("Couldn't open {shown}: {e}"))?;
+    let _ = f.take(8192).read_to_end(&mut head);
+    let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let kind = Kind::of(&name, &head);
+    let read = || -> Side<Vec<u8>> {
+        if size > kind.limit() {
+            return Side::TooLarge(size);
+        }
+        match std::fs::read(file) {
+            Ok(b) => Side::Ready(b),
+            Err(e) => Side::Failed(format!("Couldn't read {shown}: {e}")),
+        }
+    };
+    match kind {
+        Kind::Image => Ok(Loaded::Pictures { before: Side::Missing, after: read().map(|b| decode_caught(&b)) }),
+        Kind::Svg => Ok(Loaded::Pictures { before: Side::Missing, after: read().map(svg_in_child) }),
+        Kind::Pdf => Ok(Loaded::Pdf(read())),
+        Kind::Binary => Ok(Loaded::Binary { size }),
+        Kind::Text if size > MAX_TEXT => Ok(Loaded::TooLarge { size }),
+        Kind::Text => match read() {
+            Side::Ready(bytes) => {
+                let d = git::plain_file_diff(&name, &bytes);
+                Ok(if d.binary { Loaded::Binary { size } } else { Loaded::Text(d) })
+            }
+            Side::TooLarge(size) => Ok(Loaded::TooLarge { size }),
+            Side::Failed(e) => Err(e),
+            Side::Missing => Err(format!("{shown} isn't there")),
+        },
+    }
+}
+
 /// Opening this file with its default app could run it: a program, a script, a shortcut.
 /// The viewer offers only "Show in folder" for these.
 pub fn could_run(path: &str) -> bool {
@@ -306,6 +349,25 @@ pub fn size_label(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn any_file_on_disk_loads_as_it_is() {
+        let dir = std::env::temp_dir().join(format!("kynex-load-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let text = dir.join("note.txt");
+        std::fs::write(&text, "one\ntwo\n").unwrap();
+        let Ok(Loaded::Text(d)) = load_file(&text) else { panic!("text") };
+        let lines = &d.hunks[0].lines;
+        assert_eq!(lines.len(), 2);
+        assert!(lines.iter().all(|l| l.kind == git::LineKind::Context), "no change tints");
+        assert_eq!((d.added, d.removed), (0, 0));
+        let bin = dir.join("blob.dat");
+        std::fs::write(&bin, [0u8, 1, 2]).unwrap();
+        assert!(matches!(load_file(&bin), Ok(Loaded::Binary { size: 3 })));
+        assert!(load_file(&dir.join("missing.txt")).is_err());
+        assert!(load_file(&dir).is_err(), "a folder isn't a file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn kinds_by_name_then_content() {

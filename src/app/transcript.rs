@@ -180,7 +180,8 @@ impl KynexApp {
     pub(super) fn render_empty_thread(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let on_openrouter = self.active_provider().is_openrouter();
-        let on_grok = self.active_provider() == kynex_core::provider::Provider::Grok;
+        let on_grok = self.active_provider().is_acp();
+        let agent = self.active_provider().label();
         let chat_only = self.active_provider() == kynex_core::provider::Provider::OpenRouterChat;
         let msg = match self.saved.active {
             _ if chat_only => format!(
@@ -196,7 +197,7 @@ impl KynexApp {
                 format!("Ask Claude Code to work on this project, on {} through OpenRouter.", self.active_model_name())
             }
             Active::Project(_) if on_grok => {
-                format!("Ask Grok to work on this project, on {}.", self.active_model_name())
+                format!("Ask {agent} to work on this project, on {}.", self.active_model_name())
             }
             Active::Project(_) => "Ask Claude Code to work on this project.".to_string(),
         };
@@ -349,6 +350,7 @@ impl KynexApp {
         let label = self.session_by_key(key).and_then(|s| {
             let who = match s.provider().provider() {
                 kynex_core::provider::Provider::Grok => "Grok",
+                kynex_core::provider::Provider::Antigravity => "Antigravity",
                 _ => "Claude",
             };
             s.pulse().map(|p| p.label(who))

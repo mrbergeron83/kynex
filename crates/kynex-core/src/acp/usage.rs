@@ -1,10 +1,12 @@
-//! What Grok reports about tokens and cost, in the shapes a session reads
-//! from `claude`: the context in use after each model call, and each turn's
-//! tokens and cost on its `result`.
+//! What an ACP agent reports about models, tokens and cost, in the shapes a
+//! session reads from `claude`: the context in use after each model call, and
+//! each turn's tokens and cost on its `result`.
 //!
 //! Grok counts cached tokens inside its input (`inputTokens` includes
 //! `cachedReadTokens`); Claude's input leaves them out, so they're taken out
-//! here. Cost comes in USD ticks, 1e10 to the dollar.
+//! here. Its cost comes in USD ticks, 1e10 to the dollar. Antigravity counts
+//! them apart already, sends no cost, and names its models by placeholder ids
+//! (`MODEL_PLACEHOLDER_M364`) whose name is the real one (`google/gemini-4-hydrogen`).
 
 use std::collections::HashMap;
 
@@ -24,6 +26,8 @@ pub(crate) struct Models {
     pub list: Vec<crate::session::ModelInfo>,
     /// The list changed since it was last taken.
     pub fresh: bool,
+    /// Antigravity: each model's name (what Kynex calls it) -> the id it goes by on the wire.
+    wire: HashMap<String, String>,
 }
 
 impl Models {
@@ -56,6 +60,56 @@ impl Models {
         }
     }
 
+    /// Takes in Antigravity's model list (`session/new`'s `models`): named by
+    /// their real names, which stay the same from run to run, unlike the ids.
+    pub fn read_named(&mut self, models: &Value) {
+        let Some(available) = models["availableModels"].as_array() else { return };
+        let mut list = Vec::new();
+        for m in available {
+            let Some(id) = m["modelId"].as_str() else { continue };
+            let name = m["name"].as_str().filter(|n| !n.is_empty()).unwrap_or(id);
+            self.wire.insert(name.to_string(), id.to_string());
+            list.push(crate::session::ModelInfo {
+                value: name.to_string(),
+                name: name.to_string(),
+                description: m["description"].as_str().unwrap_or("").to_string(),
+                efforts: Vec::new(),
+            });
+        }
+        if let Some(id) = models["currentModelId"].as_str() {
+            self.current = self.name_of(id);
+        }
+        if !list.is_empty() && list != self.list {
+            self.list = list;
+            self.fresh = true;
+        }
+    }
+
+    /// Takes in Antigravity's `configOptions`: the model in use.
+    pub fn read_config(&mut self, options: &Value) {
+        let model = options.as_array().into_iter().flatten().find(|o| o["id"] == "model");
+        if let Some(id) = model.and_then(|o| o["currentValue"].as_str()) {
+            self.current = self.name_of(id);
+        }
+    }
+
+    /// The name of the model with wire id `id`, or `id` itself.
+    fn name_of(&self, id: &str) -> String {
+        self.wire.iter().find(|(_, w)| *w == id).map_or_else(|| id.to_string(), |(n, _)| n.clone())
+    }
+
+    /// The id `model` (a name, or an id) goes by on the wire.
+    pub fn wire_id(&self, model: &str) -> String {
+        self.wire.get(model).cloned().unwrap_or_else(|| model.to_string())
+    }
+
+    /// The current model's context window, as the agent reported it.
+    pub fn set_window(&mut self, size: u64) {
+        if size > 0 {
+            self.windows.insert(self.current.clone(), size);
+        }
+    }
+
     /// The effort the current model starts on, as Grok says.
     pub fn default_effort(&self) -> Option<&str> {
         self.default_efforts.get(&self.current).map(String::as_str)
@@ -82,17 +136,27 @@ pub(crate) fn context(model: &str, usage: &Value) -> Option<Value> {
     } } }))
 }
 
-/// A turn's usage (`session/prompt`'s `_meta.usage`) as the `result` fields
-/// `claude` sends: the turn's tokens and cost per model, the session's running
-/// cost (added to `total`), and the model's context window.
-pub(crate) fn turn(usage: &Value, models: &Models, total: &mut f64) -> Map<String, Value> {
+/// Antigravity's context in use (`usage_update`'s `used`) as the empty assistant
+/// message that carries it, all of it as input.
+pub(crate) fn context_used(model: &str, used: u64) -> Value {
+    json!({ "type": "assistant", "message": { "model": model, "content": [], "usage": {
+        "input_tokens": used, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0, "output_tokens": 0,
+    } } })
+}
+
+/// A turn's usage (Grok's `session/prompt` `_meta.usage`, Antigravity's
+/// `usage`) as the `result` fields `claude` sends: the turn's tokens and cost
+/// per model, the session's running cost (added to `total`), and the model's
+/// context window. `cached_in_input`: the input count includes cache reads (Grok).
+pub(crate) fn turn(usage: &Value, models: &Models, total: &mut f64, cached_in_input: bool) -> Map<String, Value> {
     let entry = |u: &Value| {
         let n = |k: &str| u[k].as_u64().unwrap_or(0);
         let cached = n("cachedReadTokens");
+        let input = if cached_in_input { n("inputTokens").saturating_sub(cached) } else { n("inputTokens") };
         let cost = u["costUsdTicks"].as_i64().filter(|t| *t > 0).map_or(0.0, |t| t as f64 / TICKS_PER_USD);
         (
             json!({
-                "inputTokens": n("inputTokens").saturating_sub(cached),
+                "inputTokens": input,
                 "outputTokens": n("outputTokens"),
                 "cacheReadInputTokens": cached,
                 "cacheCreationInputTokens": n("cacheCreationTokens"),
@@ -191,7 +255,7 @@ mod tests {
             "costUsdTicks": 622960000, "modelUsage": { "grok-4.7-build": {
                 "inputTokens": 62282, "outputTokens": 342, "cachedReadTokens": 42880, "costUsdTicks": 622960000 } } });
         let mut total = 0.01;
-        let out = turn(&usage, &models(), &mut total);
+        let out = turn(&usage, &models(), &mut total, true);
         let m = &out["model_usage_since_last_result"]["grok-4.7-build"];
         assert_eq!(m["inputTokens"], 19402);
         assert_eq!(m["cacheReadInputTokens"], 42880);
@@ -210,10 +274,38 @@ mod tests {
     fn a_turn_without_a_model_breakdown_or_cost_still_counts() {
         let usage = json!({ "inputTokens": 100, "outputTokens": 5, "costUsdTicks": 0 });
         let mut total = 0.0;
-        let out = turn(&usage, &models(), &mut total);
+        let out = turn(&usage, &models(), &mut total, true);
         assert_eq!(out["model_usage_since_last_result"]["grok-4.7"]["inputTokens"], 100);
         assert_eq!(total, 0.0);
-        let none = turn(&Value::Null, &Models::default(), &mut total);
+        let none = turn(&Value::Null, &Models::default(), &mut total, true);
         assert!(none.get("model_usage_since_last_result").is_none() && none.get("modelUsage").is_none());
+    }
+
+    #[test]
+    fn antigravity_models_go_by_name_and_their_ids_on_the_wire() {
+        let mut m = Models::default();
+        m.read_named(&json!({ "availableModels": [
+            { "modelId": "MODEL_PLACEHOLDER_M364", "name": "google/gemini-4-hydrogen" },
+            { "modelId": "MODEL_PLACEHOLDER_M365", "name": "google/gemini-4-carbon" },
+        ] }));
+        let names: Vec<_> = m.list.iter().map(|i| i.value.as_str()).collect();
+        assert_eq!(names, ["google/gemini-4-hydrogen", "google/gemini-4-carbon"]);
+        assert_eq!(m.wire_id("google/gemini-4-carbon"), "MODEL_PLACEHOLDER_M365");
+        assert_eq!(m.wire_id("unknown/model"), "unknown/model");
+        m.read_config(&json!([{ "id": "model", "currentValue": "MODEL_PLACEHOLDER_M364" }]));
+        assert_eq!(m.current, "google/gemini-4-hydrogen");
+        m.set_window(200_000);
+        assert_eq!(m.window(), Some(200_000));
+    }
+
+    #[test]
+    fn antigravity_turns_count_cache_reads_apart_already() {
+        let usage = json!({ "inputTokens": 13320, "outputTokens": 243, "cachedReadTokens": 13785 });
+        let m = Models { current: "google/gemini-4-carbon".into(), ..Default::default() };
+        let mut total = 0.0;
+        let out = turn(&usage, &m, &mut total, false);
+        let u = &out["model_usage_since_last_result"]["google/gemini-4-carbon"];
+        assert_eq!((u["inputTokens"].as_u64(), u["cacheReadInputTokens"].as_u64()), (Some(13320), Some(13785)));
+        assert_eq!(total, 0.0);
     }
 }

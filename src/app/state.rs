@@ -144,6 +144,8 @@ pub struct Saved {
     pub sessions_show_archived: bool,
     /// Grok is offered as a provider (Settings → Providers); off until opted in.
     pub grok: bool,
+    /// Antigravity is offered as a provider (Settings → Providers); off until opted in.
+    pub antigravity: bool,
     /// Bypass permissions joins the composer's mode cycle (`--allow-dangerously-skip-permissions`).
     pub allow_bypass: bool,
     /// A setup check has passed here before, so the next launch shows the
@@ -202,6 +204,7 @@ impl Default for Saved {
             sessions_by_provider: false,
             sessions_show_archived: false,
             grok: false,
+            antigravity: false,
             setup_checked: false,
         }
     }

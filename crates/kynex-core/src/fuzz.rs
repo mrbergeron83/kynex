@@ -23,11 +23,17 @@ pub fn grok_history(text: &str) {
     let _ = crate::transcript::rows(&s.items);
 }
 
-/// What `grok agent stdio` writes (ACP, one JSON-RPC message per line), through
-/// the adapter and into a session, with the session's answers going back.
+/// What an ACP agent writes (`grok agent stdio`, `agy acp`: one JSON-RPC message
+/// per line), through the adapter in each agent's dialect and into a session,
+/// with the session's answers going back.
 pub fn grok_acp(text: &str) {
-    use crate::grok::acp::{Acp, Out};
-    let mut acp = Acp::new(PathBuf::new(), "m", crate::project::Mode::Manual, None);
+    acp_through(crate::acp::Agent::Grok, text);
+    acp_through(crate::acp::Agent::Antigravity, text);
+}
+
+fn acp_through(agent: crate::acp::Agent, text: &str) {
+    use crate::acp::{Acp, Out};
+    let mut acp = Acp::new(PathBuf::new(), "m", crate::project::Mode::Manual, None).for_agent(agent);
     let _ = acp.start();
     let _ = acp.outgoing(serde_json::json!({ "type": "user", "message": { "content": "hi" } }));
     let mut s = Session::new(Kind::Code, PathBuf::new());
@@ -54,6 +60,12 @@ pub fn grok_acp(text: &str) {
         }
     }
     let _ = crate::transcript::rows(&s.items);
+}
+
+/// A command an agent wants to run, as Kynex judges whether it only reads.
+pub fn read_only(text: &str) {
+    let _ = crate::read_only::is_read_only(text);
+    let _ = crate::rules::split_command(text);
 }
 
 /// The CLI's stream-json output, one event per line, as a live session reads it.

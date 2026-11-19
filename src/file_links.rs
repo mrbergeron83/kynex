@@ -42,7 +42,7 @@ pub fn find(cwd: &Path, text: &str, cx: &App) -> Vec<(Range<usize>, Link)> {
     for r in found {
         let path = links::resolve(cwd, &r.path);
         match known.get(&path) {
-            Some(Known::File) => out.push((r.range, Link::File { path, line: r.line, col: r.col })),
+            Some(Known::File) => out.push((r.range, Link::File { path, line: r.line })),
             Some(Known::Checking) => {}
             Some(Known::Missing(at)) if at.elapsed() < RECHECK => {}
             _ => {

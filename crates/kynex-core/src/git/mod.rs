@@ -31,7 +31,7 @@ pub use branch::{
 };
 pub use diff::{
     DiffLine, DiffSide, FileDiff, Hunk, LineKind, change_starts, commit_diff, compare_diff, diff_stat, file_diff,
-    file_stats, whole_file_diff, whole_file_diff_side,
+    file_stats, plain_file_diff, whole_file_diff, whole_file_diff_side,
 };
 pub use log::{Commit, CommitDetail, HISTORY_PAGE, Ref, RefKind, commit_detail, log, more_history};
 pub use ops::{Sync, commit, discard, last_message, stage, stage_all, sync, unstage, unstage_all};
