@@ -340,20 +340,23 @@ impl KynexApp {
 
     /// Re-picks the provider and model of every open session that hasn't
     /// started, after a sign-in, sign-out, key change or a project's pick.
+    /// Reopened ones that haven't sent anything go back to the provider they
+    /// ran on: at startup they get theirs before the OpenRouter key has loaded,
+    /// and fall back to Anthropic until it has (#512).
     pub(super) fn refresh_new_sessions(&mut self) {
         let fresh: Vec<_> = self
             .code
             .values()
             .chain([&self.chat])
             .flat_map(|live| live.sessions.iter())
-            .filter(|s| s.is_new())
+            .filter(|s| s.is_new() || s.awaits_restore())
             .map(|s| {
-                let models = self.folder_models(s.settings_folder());
-                let launch = self.launch_in(self.new_session_provider(s.settings_folder()));
-                (s.uid, launch, models)
+                let id = s.session_id.clone().or_else(|| s.forked_from().map(str::to_string)).filter(|_| !s.is_new());
+                (s.uid, s.cwd.clone(), s.settings_folder().to_path_buf(), id)
             })
             .collect();
-        for (uid, launch, models) in fresh {
+        for (uid, cwd, settings, id) in fresh {
+            let (launch, models) = self.start_parts(&cwd, &settings, id.as_deref());
             if let Some(s) = self.find_session_mut(uid) {
                 apply_start(s, launch, &models);
             }

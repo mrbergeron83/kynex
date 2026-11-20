@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Sessions that ran on OpenRouter or Antigravity reopen on it after an update or restart, instead of falling back to Anthropic for good.
+
 ## [0.0.34] - 2026-11-19
 
 ### Added
