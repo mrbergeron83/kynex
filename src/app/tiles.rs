@@ -1,174 +1,52 @@
-//! The split panes of a workspace: each workspace (a folder) has a [`Tiling`], its tabs of
-//! panes and the session in each. The focused pane's [`SessionPane`] is `self.pane`, so
-//! everything that talks to "the composer" keeps working; the others are parked in
-//! `self.parked` and swapped in to be drawn or focused.
-//!
-//! A tiling follows the sessions: whichever session the window talks to
-//! ([`Live::current`]) is in the focused pane, so opening one from the sessions panel
-//! replaces that pane, and picking one that's on show focuses its pane.
+//! The split panes of a workspace: each workspace (a folder) has a [`Tiling`] of
+//! panes holding `agent_cli` terminals and tool panes (Sessions tree, Agents, Git, Terminal).
 
 use std::path::PathBuf;
 
-use gpui::{
-    AnyElement, ClickEvent, Context, DragMoveEvent, Entity, Focusable, MouseButton, Window, canvas, div, prelude::*,
-};
+use gpui::{AnyElement, ClickEvent, Context, DragMoveEvent, MouseButton, Window, canvas, div, prelude::*};
 use kynex_core::layout::{Axis, DIVIDER, Divider, PaneId, Rect};
-use kynex_core::live::Key;
-use kynex_core::session::Session;
 use kynex_core::tile_style::TileStyle;
-use kynex_core::tiling::{Content, Tiling};
+use kynex_core::tiling::{AgentCliPane, Content, Tiling};
 
 use super::KynexApp;
-use super::pane_tabs::DraggedPane;
 use super::session_groups::DraggedSession;
-use super::state::Active;
-use crate::pane::SessionPane;
 use crate::theme::theme;
-use crate::ui::input::{InputEvent, TextInput};
-use crate::ui::motion;
+use crate::ui::pane_drag::DraggedPane;
 use crate::ui::px;
-
-/// Panes under this wide aren't usable: the tab shows one at a time instead.
-const MIN_PANE_W: f32 = 360.0;
-/// The strip that switches between the panes then.
-const STRIP_H: f32 = 28.0;
 
 /// Room for a split when the area hasn't been measured yet.
 const UNMEASURED: Rect = Rect { x: 0.0, y: 0.0, w: 4000.0, h: 4000.0 };
 
 impl KynexApp {
-    /// A message box for pane `id`: sending, pasting and focusing it act on that pane.
-    pub(super) fn new_composer(id: PaneId, window: &mut Window, cx: &mut Context<Self>) -> Entity<TextInput> {
-        let composer = cx.new(|cx| TextInput::new(cx).multiline().fold_pastes());
-        cx.subscribe_in(&composer, window, move |this, _, ev, window, cx| match ev {
-            InputEvent::Submit => {
-                this.focus_pane(id, window, cx);
-                this.send(window, cx);
-            }
-            InputEvent::PasteImages(images) => {
-                this.focus_pane(id, window, cx);
-                for i in images {
-                    this.attach_bytes(&i.bytes, cx);
-                }
-            }
-            InputEvent::Changed => {
-                if this.pane_id == id {
-                    this.warm_shown();
-                    this.composer_changed(cx);
-                }
-            }
-            InputEvent::PasteFolded(text) => {
-                this.focus_pane(id, window, cx);
-                this.fold_paste(text.clone(), cx);
-            }
-            InputEvent::MarkClicked(range) => {
-                if this.pane_id == id {
-                    this.expand_chip(range.clone(), cx);
-                }
-            }
-        })
-        .detach();
-        // Focusing the message box means a message is coming: that pane is the one, and
-        // Claude starts now.
-        let focus = composer.read(cx).focus_handle(cx);
-        cx.on_focus(&focus, window, move |this, window, cx| {
-            this.focus_pane(id, window, cx);
-            this.warm_shown();
-        })
-        .detach();
-        composer
+    /// The active project's selected workspace: `(project folder, workspace folder)`.
+    pub(super) fn tiling_scope(&self) -> Option<(PathBuf, PathBuf)> {
+        let project = self.active_project()?.path.clone();
+        let cwd = self.workspace_cwd().unwrap_or_else(|| project.clone());
+        Some((project, cwd))
     }
 
-    /// The code project's workspace you're in: (project folder, workspace folder, shown session).
-    /// `None` in chat, which stays a single pane.
-    pub(super) fn tiling_scope(&self) -> Option<(PathBuf, PathBuf, Key)> {
-        let Active::Project(i) = self.saved.active else { return None };
-        let p = self.saved.projects.get(i)?;
-        let s = self.code.get(&p.path)?.current()?;
-        Some((p.path.clone(), s.cwd.clone(), s.uid))
-    }
-
-    /// The workspace's tiling: a project always draws its panes as tiles, one
-    /// pane included.
     fn tiled(&self) -> Option<&Tiling> {
-        let (_, cwd, _) = self.tiling_scope()?;
+        let (_, cwd) = self.tiling_scope()?;
         self.tiles.get(&cwd)
     }
 
-    /// Runs `f` with pane `id`'s state as `self.pane`.
-    pub(super) fn with_pane<R>(&mut self, id: PaneId, f: impl FnOnce(&mut Self) -> R) -> R {
-        if id == self.pane_id {
-            return f(self);
-        }
-        let Some(other) = self.parked.remove(&id) else { return f(self) };
-        let mine = std::mem::replace(&mut self.pane, other);
-        let out = f(self);
-        let other = std::mem::replace(&mut self.pane, mine);
-        self.parked.insert(id, other);
-        out
-    }
-
-    /// Makes `id`'s state `self.pane`, parking the one that was. If the keyboard was in the
-    /// old message box, it goes to the new one.
-    pub(super) fn swap_to(&mut self, id: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        if id == self.pane_id {
-            return;
-        }
-        let next = match self.parked.remove(&id) {
-            Some(p) => p,
-            None => SessionPane::new(Self::new_composer(id, window, cx)),
-        };
-        let had_keys = self.pane.composer.read(cx).is_focused(window);
-        let old = std::mem::replace(&mut self.pane, next);
-        self.parked.insert(self.pane_id, old);
-        self.pane_id = id;
-        if had_keys {
-            self.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
-        }
-    }
-
-    /// Focuses pane `id` of the workspace you're in, and the session in it.
+    /// Focuses pane `id` of the workspace you're in, and moves keyboard focus into it.
     pub(super) fn focus_pane(&mut self, id: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        // The pane whose state is up may not be the focused one: a tool (a terminal) took the
-        // focus and left the session state where it was, so clicking that session pane still counts.
-        let focused =
-            self.tiling_scope().and_then(|(_, cwd, _)| self.tiles.get(&cwd)).is_some_and(|t| t.focus() == Some(id));
-        if id == self.pane_id && focused {
-            return;
-        }
-        let Some((project, cwd, _)) = self.tiling_scope() else { return };
+        let Some((_, cwd)) = self.tiling_scope() else { return };
         let Some(t) = self.tiles.get_mut(&cwd) else { return };
         if !t.focus_pane(id) {
             return;
         }
-        // A tool takes the keys; the session state up stays the last session pane's.
-        if t.is_tool(id) {
-            if let Some(p) = t.session_focus() {
-                self.swap_to(p, window, cx);
-            }
-            cx.notify();
-            return;
+        if let Some(&agent_id) = self.pane_agents.get(&id) {
+            self.mark_agent_seen(agent_id, cx);
         }
-        if let Some(key) = t.key_of(id)
-            && let Some(live) = self.code.get_mut(&project)
-        {
-            live.focus(key);
-        }
-        self.swap_to(id, window, cx);
+        self.focus_input(window, cx);
         cx.notify();
     }
 
-    /// Lets the focused pane's session be the shown one, after the layout changed it.
+    /// Syncs focus after a layout change (split, close, tab switch).
     pub(super) fn show_focused_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((project, cwd, _)) = self.tiling_scope() else { return };
-        let Some(t) = self.tiles.get(&cwd) else { return };
-        let Some(focus) = t.session_focus() else { return };
-        if let Some(key) = t.key_of(focus)
-            && let Some(live) = self.code.get_mut(&project)
-        {
-            live.focus(key);
-        }
-        self.swap_to(focus, window, cx);
+        self.focus_input(window, cx);
         cx.notify();
     }
 
@@ -183,34 +61,14 @@ impl KynexApp {
         }
     }
 
-    /// A new session for a new pane in `cwd`, under the project's settings.
-    pub(super) fn pane_session(&mut self, kind: kynex_core::session::Kind, cwd: PathBuf) -> Session {
-        let mut s = Session::new(kind, cwd);
-        self.adopt_project_settings(&mut s);
-        self.start_model(&mut s);
-        s.wake = self.wake.clone();
-        s
-    }
-
-    /// Splits the focused pane: a new session in the new pane beside (`Row`) or under it.
+    /// Splits the focused pane: a new pending `agent_cli` pane (showing the provider picker)
+    /// beside (`Row`) or under (`Column`) it.
     pub(super) fn split_pane(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((project, cwd, _)) = self.tiling_scope() else { return };
-        let Some(live) = self.code.get(&project) else { return };
-        if self.tiles.get(&cwd).is_some_and(|t| t.visible().len() >= kynex_core::live::MAX_RUNNING) {
-            self.toast(kynex_core::toasts::Toast::error(format!(
-                "{} panes are up already. Close one to open another.",
-                kynex_core::live::MAX_RUNNING
-            )));
-            cx.notify();
-            return;
-        }
-        let Some(kind) = live.current().map(|s| s.kind) else { return };
+        let Some((_, cwd)) = self.tiling_scope() else { return };
         let id = self.next_pane;
-        let s = self.pane_session(kind, cwd.clone());
-        let key = s.uid;
         let bounds = self.tile_bounds();
         let Some(t) = self.tiles.get_mut(&cwd) else { return };
-        if !t.split(axis, id, key, bounds) {
+        if !t.split_agent(axis, id, AgentCliPane::pending(), bounds) {
             self.toast(kynex_core::toasts::Toast::error(
                 "No room to split here: the panes would get too small.".to_string(),
             ));
@@ -218,67 +76,48 @@ impl KynexApp {
             return;
         }
         self.next_pane += 1;
-        if let Some(live) = self.code.get_mut(&project) {
-            live.sessions.push(s);
-            live.focus(key);
-        }
-        self.swap_to(id, window, cx);
-        self.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
+        self.agent_pickers.insert(id, super::agent_picker::AgentPickerState::default());
+        self.focus_input(window, cx);
+        self.save_layouts(cx);
         cx.notify();
     }
 
-    /// Closes the focused pane; its session stays open until it's idle and not recent.
+    /// Closes the focused pane (the last `agent_cli` pane in a workspace resets to the picker).
     pub(super) fn close_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((_, cwd, key)) = self.tiling_scope() else { return };
-        // A tool pane closes as its own menu would close it.
-        if let Some(focus) = self.tiles.get(&cwd).and_then(Tiling::focus).filter(|f| self.tiles[&cwd].is_tool(*f)) {
-            self.close_pane_id(focus, window, cx);
-            return;
-        }
-        if self.tiles.get_mut(&cwd).and_then(Tiling::close_focused).is_none() {
-            return;
-        }
-        // A session that never got a message goes with its pane.
-        if self.session_by_key(key).is_some_and(Session::is_new) {
-            self.close_open(key);
-        }
-        self.show_focused_pane(window, cx);
-        self.focus_input(window, cx);
+        let Some((_, cwd)) = self.tiling_scope() else { return };
+        let Some(focus) = self.tiles.get(&cwd).and_then(Tiling::focus) else { return };
+        self.close_pane_id(focus, window, cx);
     }
 
     /// Focuses the next (`1`) or previous (`-1`) pane of the tab.
     pub(super) fn step_pane(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(t) = self.tiled() else { return };
         let panes = t.visible_panes();
+        if panes.is_empty() {
+            return;
+        }
         let at = t.focus().and_then(|f| panes.iter().position(|p| *p == f)).unwrap_or(0) as isize;
         let next = panes[(at + by).rem_euclid(panes.len() as isize) as usize];
         self.focus_pane(next, window, cx);
-        self.focus_input(window, cx);
     }
 
-    /// What each frame settles for the panes: the workspace's tiling follows the sessions,
-    /// the sessions on screen are kept open, prompts and drafts are kept for every pane.
+    /// What each frame settles for the panes: ensures the active workspace has a `Tiling`,
+    /// restores saved layouts, seeds the Sessions tree pane, and cleans up closed panes.
     pub(super) fn sync_tiles(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((project, cwd, current)) = self.tiling_scope() else { return };
         if !self.agent_rules_asked {
             self.agent_rules_asked = true;
             self.refresh_agent_rules(cx);
             self.prune_scrollback(cx);
         }
+        let Some((project, cwd)) = self.tiling_scope() else { return };
         if !self.tiles.contains_key(&cwd) {
-            // Once per run: the panes it had last time, else one pane.
-            // The first pane of a workspace takes the state that's up, if no workspace has it.
-            let orphan = !self.tiles.values().any(|t| t.has(self.pane_id));
-            let tiling = match self.restore_tiling(&project, &cwd, current, orphan.then_some(self.pane_id)) {
+            let tiling = match self.restore_tiling(&project, &cwd) {
                 Some(t) => t,
                 None => {
-                    let id = if orphan {
-                        self.pane_id
-                    } else {
-                        self.next_pane += 1;
-                        self.next_pane - 1
-                    };
-                    Tiling::new(id, current)
+                    let id = self.next_pane;
+                    self.next_pane += 1;
+                    self.agent_pickers.insert(id, super::agent_picker::AgentPickerState::default());
+                    Tiling::new(id, AgentCliPane::pending())
                 }
             };
             self.tiles.insert(cwd.clone(), tiling);
@@ -286,78 +125,26 @@ impl KynexApp {
             self.seed_side_panes(&cwd, cx);
             self.note_histories(&cwd);
             self.migrate_terminal_dock(&cwd, window, cx);
-            self.migrate_timeline(&cwd, cx);
-            self.keep_restored_focus(&project, &cwd, current);
         }
-        self.keep_shape(&project, &cwd, cx);
-        // Restoring may have changed which session the window talks to.
-        let Some((_, _, current)) = self.tiling_scope() else { return };
-        let open: Vec<Key> =
-            self.code.get(&project).map(|l| l.sessions.iter().map(|s| s.uid).collect()).unwrap_or_default();
-        let Some(t) = self.tiles.get_mut(&cwd) else { return };
-        t.reconcile(&open, current);
-        let visible = t.visible();
-        let focus = t.session_focus();
-        // Every pane's session stays open: those of the other tabs and workspaces too, which
-        // come back as they were.
-        let held: Vec<Key> = self.tiles.values().flat_map(Tiling::sessions).collect();
-        if let Some(live) = self.code.get_mut(&project) {
-            // A pane that let its session go (closed, or given another) tidies as a switch does.
-            let released = live.visible().iter().any(|k| !held.contains(k));
-            live.set_visible(&held);
-            if released {
-                let closed = live.prune();
-                self.forget(&closed);
-            }
-        }
-        if let Some(focus) = focus {
-            self.swap_to(focus, window, cx);
-        }
-        // The other panes keep their prompts and drafts too.
-        for (id, key) in visible {
-            if id != self.pane_id {
-                self.with_pane(id, |this| {
-                    this.sync_draft(Some(key), cx);
-                    this.sync_prompt(Some(key), window, cx);
-                });
-            }
-        }
-        let live: Vec<PaneId> = self.tiles.values().flat_map(|t| t.panes()).collect();
-        let me = self.pane_id;
-        self.parked.retain(|id, _| *id != me && live.contains(id));
+        self.keep_shape(&cwd);
+        self.drop_gone_agents(cx);
         self.drop_gone_terminals(cx);
     }
 
-    /// Every pane's half-written message, put aside (for quitting).
-    pub(super) fn stash_all_drafts(&mut self, cx: &mut Context<Self>) {
-        let ids: Vec<PaneId> = self.parked.keys().copied().collect();
-        for id in ids {
-            self.with_pane(id, |this| this.stash_draft(cx));
-        }
-        self.stash_draft(cx);
-    }
-
-    /// The area the tiles are laid out in, in the container's own logical pixels: the
-    /// container less half a gap on each side (each tile is inset by half a gap too, which
-    /// makes the margin round the outside a whole gap).
     fn core_bounds(&self, gap: f32) -> Rect {
         let b = self.tile_bounds();
         let half = gap / 2.0;
         Rect::new(half, half, (b.w - gap).max(0.0), (b.h - gap).max(0.0))
     }
 
-    /// The area the panes are laid out in, for moving between, swapping and resizing them.
     pub(super) fn layout_bounds(&self, cx: &Context<Self>) -> Rect {
         self.core_bounds(self.tile_style(cx).gap)
     }
 
-    /// The tiles' look: the theme's, with what Appearance changed.
     fn tile_style(&self, cx: &Context<Self>) -> TileStyle {
         self.saved.tiles.resolve(theme(cx).tile)
     }
 
-    /// A divider is grabbed by its handle: a strip as wide as the gap (at least a few
-    /// pixels) along it.
     fn handle_of(d: &Divider, gap: f32) -> Rect {
         let grow = (gap / 2.0).max(3.0);
         let r = d.rect;
@@ -367,24 +154,20 @@ impl KynexApp {
         }
     }
 
-    /// Starts dragging the dividers `splits` (one, or two where a row and a column meet).
     fn start_tile_drag(&mut self, splits: Vec<Resizing>, cx: &mut Context<Self>) {
         self.tile_drag = Some(splits);
         cx.notify();
     }
 
-    /// The pointer moved with dividers held: they follow it, live, and the panes inside
-    /// keep their proportions (the ratios are fractions).
     pub(super) fn drag_tiles(&mut self, pos: gpui::Point<gpui::Pixels>, cx: &mut Context<Self>) {
         let Some(drag) = self.tile_drag.clone() else { return };
         let Some(area) = self.tile_area.get() else { return };
-        let Some((_, cwd, _)) = self.tiling_scope() else { return };
+        let Some((_, cwd)) = self.tiling_scope() else { return };
         let z = self.saved.zoom;
         let (x, y) = (f32::from(pos.x - area.origin.x) / z, f32::from(pos.y - area.origin.y) / z);
         let bounds = self.core_bounds(self.tile_style(cx).gap);
         let Some(t) = self.tiles.get_mut(&cwd) else { return };
         for Resizing { path, axis } in drag {
-            // Looked up afresh: moving one divider moves the area of those inside it.
             let rects = t.rects(bounds);
             let Some(d) = rects.dividers.iter().find(|d| d.path == path) else { continue };
             let (at, from, len) = match axis {
@@ -399,9 +182,8 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// The divider `path` back to the middle of its split (double-click).
     fn even_out(&mut self, path: &[bool], cx: &mut Context<Self>) {
-        let Some((_, cwd, _)) = self.tiling_scope() else { return };
+        let Some((_, cwd)) = self.tiling_scope() else { return };
         let bounds = self.core_bounds(self.tile_style(cx).gap);
         if let Some(t) = self.tiles.get_mut(&cwd) {
             t.set_ratio(path, 0.5, bounds);
@@ -409,50 +191,19 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// The panes of a project's workspace, one or several: each in a tile (a rounded,
-    /// bordered surface with a gap round it; the focused tile's border is in the project's
-    /// colour and a pixel thicker), with a handle on every divider to drag. With no gap the
-    /// panes are flush, split by 1px dividers. `None` outside a project (chat),
-    /// which `render_code_main` draws as one plain pane.
+    /// Renders all panes of the active workspace as tiles.
     pub(super) fn render_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (_, ws) = self.tiling_scope()?;
         let t = theme(cx).clone();
         let style = self.tile_style(cx);
         let bounds = self.core_bounds(style.gap);
-        let tiling = self.tiled()?;
-        let mut rects = tiling.rects(bounds);
-        // Too narrow for the split: the focused pane alone, under a strip of them all.
-        let narrow = tiling.too_narrow(bounds, MIN_PANE_W);
-        let strip: Vec<(PaneId, Option<Key>, kynex_core::tiling::Content)> = if narrow {
-            rects.panes.iter().filter_map(|(id, _)| Some((*id, tiling.key_of(*id), tiling.content(*id)?))).collect()
-        } else {
-            Vec::new()
-        };
-        if narrow && let Some(only) = tiling.focus().or_else(|| rects.panes.first().map(|(id, _)| *id)) {
-            let r = Rect::new(bounds.x, bounds.y + STRIP_H, bounds.w, (bounds.h - STRIP_H).max(0.0));
-            rects.panes = vec![(only, r)];
-            rects.dividers.clear();
-        }
+        let tiling = self.tiles.get(&ws)?;
+        let rects = tiling.rects(bounds);
         let measured = self.tile_area.get().is_some();
-        let panes: Vec<(PaneId, Option<Key>, Rect)> =
-            rects.panes.iter().map(|(id, r)| (*id, tiling.key_of(*id), *r)).collect();
+        let panes: Vec<(PaneId, Content, Rect)> =
+            rects.panes.iter().filter_map(|(id, r)| Some((*id, tiling.content(*id)?, *r))).collect();
         let focus = tiling.focus();
-        // Zoom and close only mean something with other panes about.
         let several = tiling.visible_panes().len() > 1 || tiling.zoomed().is_some();
-        let strip: Vec<(PaneId, String)> = strip
-            .into_iter()
-            .map(|(id, key, content)| {
-                let label = match (key.and_then(|k| self.session_title(k)), content) {
-                    (Some(title), _) => title,
-                    (None, Content::Session(_)) => "Session".to_string(),
-                    (None, Content::Terminal) => "Terminal".to_string(),
-                    (None, Content::Git) => "Changes".to_string(),
-                    (None, Content::Timeline) => "Timeline".to_string(),
-                    (None, Content::Tree) => "Sessions".to_string(),
-                    (None, Content::Agents) => "Agents".to_string(),
-                };
-                (id, label)
-            })
-            .collect();
         let focus_colour = t.tile_border.active.or_else(|| self.active_colour(&t)).unwrap_or(t.border_focused);
         let area = self.tile_area.clone();
         let probe = canvas(
@@ -468,17 +219,15 @@ impl KynexApp {
         .inset_0();
         let flush = style.gap == 0.0;
         let half = style.gap / 2.0;
-        // The focused tile's border is a pixel thicker; the others make up the pixel as padding.
         let (bw, fw) = if flush { (0, 0) } else { (style.border as u32, (style.border as u32 + 1).min(4)) };
         let radius = if flush { 0.0 } else { style.radius };
         let mut children: Vec<AnyElement> = Vec::new();
         if measured {
-            for (id, key, r) in panes {
+            for (id, content, r) in panes {
                 let focused = Some(id) == focus;
-                let body = match key {
-                    None => {
-                        // A tool: it draws its own header (a terminal's tab strip, the Git
-                        // view's bar, the timeline's title); right-click for the menu.
+                let body = match content {
+                    Content::AgentCli => self.render_agent_cli_pane(id, &ws, several, focused, window, cx),
+                    _ => {
                         let panel = self.render_tool_pane(id, window, cx);
                         div()
                             .size_full()
@@ -489,15 +238,8 @@ impl KynexApp {
                                 }),
                             )
                             .children(panel)
+                            .into_any_element()
                     }
-                    Some(_) => self.with_pane(id, |this| {
-                        div()
-                            .size_full()
-                            .flex()
-                            .flex_col()
-                            .children(this.render_tile_header(id, key, several, cx))
-                            .child(this.render_pane_body(key, focused, window, cx))
-                    }),
                 };
                 let width = if focused { fw } else { bw };
                 let surface = bordered(div().size_full().overflow_hidden().bg(t.editor), width)
@@ -514,17 +256,13 @@ impl KynexApp {
                         .w(px((r.w - style.gap).max(0.0)))
                         .h(px((r.h - style.gap).max(0.0)))
                         .when(!focused && fw > bw, |d| d.p_px())
-                        // The click that focuses a pane comes before what it lands on.
                         .capture_any_mouse_down(cx.listener(move |this, _, window, cx| {
                             this.focus_pane(id, window, cx);
                         }))
-                        // A session row let go here: on an edge it splits, in the middle it opens.
                         .drag_over::<DraggedSession>(|style, _, _, _| style.opacity(0.7))
                         .on_drop(cx.listener(move |this, d: &DraggedSession, window, cx| {
                             this.drop_session_on_pane(d, id, Some(tile), window, cx)
                         }))
-                        // Another pane let go here: on an edge it moves to that side, in the
-                        // middle the two swap. The wash shows where before the drop.
                         .on_drag_move(cx.listener(move |this, ev: &DragMoveEvent<DraggedPane>, _, cx| {
                             this.drag_pane_over(id, tile, ev, cx)
                         }))
@@ -533,15 +271,7 @@ impl KynexApp {
                         }))
                         .child(surface)
                         .children(wash);
-                children.push(if narrow {
-                    // A pane change fades in, as everything else does (and not at all with reduced motion).
-                    motion::fade_in(("narrow-pane", id as usize), tile_el, motion::QUICK).into_any_element()
-                } else {
-                    tile_el.into_any_element()
-                });
-            }
-            if narrow {
-                children.push(self.render_narrow_strip(&strip, focus, cx));
+                children.push(tile_el.into_any_element());
             }
             if flush {
                 for d in &rects.dividers {
@@ -558,7 +288,6 @@ impl KynexApp {
                     );
                 }
             }
-            // Handles: one per divider, and one where a row's meets a column's, which drags both.
             let hits: Vec<Rect> = rects.dividers.iter().map(|d| Self::handle_of(d, style.gap)).collect();
             let splits: Vec<Resizing> =
                 rects.dividers.iter().map(|d| Resizing { path: d.path.clone(), axis: d.axis }).collect();
@@ -611,61 +340,12 @@ impl KynexApp {
     }
 }
 
-impl KynexApp {
-    /// The row of every pane's name when the window is too narrow to show them side by side:
-    /// the focused one is marked, a click shows another.
-    fn render_narrow_strip(
-        &self,
-        panes: &[(PaneId, String)],
-        focus: Option<PaneId>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let t = theme(cx).clone();
-        let tabs = panes.iter().map(|(id, label)| {
-            let id = *id;
-            let on = Some(id) == focus;
-            div()
-                .id(("narrow-tab", id as usize))
-                .flex_1()
-                .min_w_0()
-                .px_2()
-                .h_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .truncate()
-                .text_xs()
-                .cursor_pointer()
-                .border_b_2()
-                .border_color(if on { t.border_focused } else { gpui::transparent_black() })
-                .text_color(if on { t.text } else { t.text_muted })
-                .hover(|s| s.bg(t.hover))
-                .on_click(cx.listener(move |this, _, window, cx| this.focus_pane(id, window, cx)))
-                .child(label.clone())
-        });
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w_full()
-            .h(px(STRIP_H))
-            .flex()
-            .bg(t.panel)
-            .border_b_1()
-            .border_color(t.border)
-            .children(tabs)
-            .into_any_element()
-    }
-}
-
-/// A divider being dragged: which split, and along which axis.
 #[derive(Clone)]
 pub(super) struct Resizing {
     path: Vec<bool>,
     axis: Axis,
 }
 
-/// `d` with its border `w` pixels wide (0 to 4).
 fn bordered(d: gpui::Div, w: u32) -> gpui::Div {
     match w {
         0 => d.border_0(),
@@ -676,7 +356,6 @@ fn bordered(d: gpui::Div, w: u32) -> gpui::Div {
     }
 }
 
-/// Where two rectangles cross, if they do.
 fn overlap(a: Rect, b: Rect) -> Option<Rect> {
     let (x, y) = (a.x.max(b.x), a.y.max(b.y));
     let (r, bottom) = ((a.x + a.w).min(b.x + b.w), (a.y + a.h).min(b.y + b.h));

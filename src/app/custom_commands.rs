@@ -1,7 +1,5 @@
 //! Custom commands (`kynex_core::user_commands`): a key or the palette runs a program in
-//! the selected workspace's folder, with `KYNEX_WORKSPACE_DIR`, `KYNEX_BRANCH` and
-//! `KYNEX_SESSION_ID` set. It shows in a popup over the window that closes when the program
-//! exits, in a terminal pane, or nowhere (only a failure is told).
+//! the selected workspace's folder.
 
 use std::path::{Path, PathBuf};
 
@@ -19,9 +17,6 @@ use crate::terminal::{TerminalEvent, TerminalView};
 use crate::theme::theme;
 use crate::ui::px;
 
-/// Binds the keys of the user's commands and those of the projects in `projects`, as they
-/// are on disk now. A key runs its command in whichever workspace is selected. Blocks on
-/// the files (once, at startup).
 pub fn bind_command_keys(projects: &[PathBuf], cx: &mut App) {
     let mut all = user_commands::load(&user_commands::user_file()).unwrap_or_default();
     for p in projects {
@@ -41,12 +36,10 @@ pub fn bind_command_keys(projects: &[PathBuf], cx: &mut App) {
 }
 
 impl KynexApp {
-    /// The project whose commands apply: the selected one, none in chat.
     fn command_project(&self) -> Option<PathBuf> {
         self.active_project().map(|p| p.path.clone())
     }
 
-    /// Reads the commands again for the palette, in the background.
     pub(super) fn refresh_user_commands(&mut self, cx: &mut Context<Self>) {
         let project = self.command_project();
         cx.spawn(async move |this, cx| {
@@ -63,19 +56,17 @@ impl KynexApp {
         .detach();
     }
 
-    /// A command's key: runs the command of that name.
     pub(super) fn run_command_action(&mut self, a: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         self.run_user_command(a.0.clone(), window, cx);
     }
 
-    /// Runs custom command `name` in the selected workspace, read fresh from the files.
     pub(super) fn run_user_command(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ws) = self.workspace_cwd() else {
             self.toast(Toast::error("Custom commands run in a project's workspace; open one first.".to_string()));
             cx.notify();
             return;
         };
-        let session = self.focused_key().and_then(|k| self.session_by_key(k)).and_then(|s| s.session_id.clone());
+        let session = self.focused_session_id();
         let found = self.resolve_command(name, &ws, session, cx);
         cx.spawn_in(window, async move |this, cx| {
             let found = found.await;
@@ -93,7 +84,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Command `name` and its program, looked up in the background.
     fn resolve_command(
         &self,
         name: String,
@@ -112,7 +102,6 @@ impl KynexApp {
                     .next()
                     .unwrap_or_else(|| format!("There's no command \"{name}\" here.")));
             };
-            // The workspaces list may not be read yet: ask git.
             let branch =
                 branch.or_else(|| kynex_core::git::status(&ws).ok().and_then(|s| s.head.branch().map(str::to_string)));
             let env = user_commands::env(&ws, branch.as_deref(), session.as_deref());
@@ -121,7 +110,6 @@ impl KynexApp {
         })
     }
 
-    /// The branch workspace `ws` is on, as the workspaces list knows it.
     fn branch_of(&self, ws: &Path, cx: &App) -> Option<String> {
         let project = self.command_project()?;
         let w = self.worktrees.get(&project)?;
@@ -142,7 +130,6 @@ impl KynexApp {
                 let view = cx.new(|cx| TerminalView::new(spec, ws, cx));
                 cx.subscribe_in(&view, window, |this, view, _: &TerminalEvent, window, cx| {
                     if this.command_popup.as_ref() == Some(view) && view.read(cx).exited() {
-                        // It didn't start: say why rather than just vanish.
                         if let Some(e) = view.read(cx).error() {
                             this.toast(Toast::error(e.to_string()));
                         }
@@ -161,13 +148,12 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// A terminal pane running the command, on the right of the session pane.
     fn open_command_pane(&mut self, name: String, spec: ShellSpec, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((_, ws, _)) = self.tiling_scope() else {
+        let Some((_, ws)) = self.tiling_scope() else {
             self.toast(Toast::error("A command pane opens in a project.".to_string()));
             return;
         };
-        let Some(target) = self.tiles.get(&ws).and_then(|t| t.session_focus()) else { return };
+        let Some(target) = self.tiles.get(&ws).and_then(|t| t.agent_focus().or_else(|| t.focus())) else { return };
         let id = self.next_pane;
         let bounds = self.layout_bounds(cx);
         let tool = Tool::Terminal(TermPane { command: Some(name), ..TermPane::default() });
@@ -181,10 +167,9 @@ impl KynexApp {
         self.term_panes.insert(id, panel.clone());
         panel.update(cx, |p, cx| p.open_spec(spec, window, cx));
         self.show_focused_pane(window, cx);
+        self.save_layouts(cx);
     }
 
-    /// Command pane `id` from last time, drawn with no program yet: starts command `name`
-    /// in it again, or says why it can't.
     pub(super) fn restart_command_pane(
         &mut self,
         id: PaneId,
@@ -196,7 +181,7 @@ impl KynexApp {
         if !self.command_starting.insert(id) {
             return;
         }
-        let session = self.focused_key().and_then(|k| self.session_by_key(k)).and_then(|s| s.session_id.clone());
+        let session = self.focused_session_id();
         let found = self.resolve_command(name, &ws, session, cx);
         cx.spawn_in(window, async move |this, cx| {
             let found = found.await;
@@ -215,7 +200,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// The popup: the program over the window, closing when it exits.
     pub(super) fn render_command_popup(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let view = self.command_popup.clone()?;
         let t = theme(cx).clone();
@@ -244,13 +228,10 @@ impl KynexApp {
     }
 }
 
-/// Runs `spec` with no window, telling only of a failure.
 fn run_in_background(name: String, spec: ShellSpec, ws: PathBuf, cx: &mut Context<KynexApp>) {
     cx.spawn(async move |this, cx| {
         let failed = cx
             .background_spawn(async move {
-                // A thread of its own as the parent: on Linux the child dies with the thread
-                // that started it, and pool threads come and go.
                 let run = std::thread::spawn(move || {
                     let mut cmd = user_commands::background(&spec, &ws);
                     kynex_core::process::dies_with_parent(&mut cmd);

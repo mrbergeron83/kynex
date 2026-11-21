@@ -1,8 +1,8 @@
 //! The shortcuts list in Settings → Keyboard: names from `keymap.json` in words,
 //! and the search over them.
 
-/// A shortcut's name (`next_pane_tab`) in words ("Next pane tab"). `pane_tab_3`
-/// reads "Show pane tab 3"; the `_arrow` and `_too` variants say so.
+/// A shortcut's name (`split_right`) in words ("Split right"). The `_arrow` and `_too`
+/// variants say so.
 pub fn label(name: &str) -> String {
     let (base, suffix) = if let Some(b) = name.strip_suffix("_arrow") {
         (b, " (arrow)")
@@ -11,10 +11,7 @@ pub fn label(name: &str) -> String {
     } else {
         (name, "")
     };
-    let words = match base.strip_prefix("pane_tab_") {
-        Some(n) if n.parse::<usize>().is_ok() => format!("show pane tab {n}"),
-        _ => base.replace('_', " "),
-    };
+    let words = base.replace('_', " ");
     let mut chars = words.chars();
     let first = chars.next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default();
     format!("{first}{}{suffix}", chars.as_str())
@@ -107,8 +104,7 @@ mod tests {
 
     #[test]
     fn labels_read_as_words() {
-        assert_eq!(label("next_pane_tab"), "Next pane tab");
-        assert_eq!(label("pane_tab_3"), "Show pane tab 3");
+        assert_eq!(label("split_right"), "Split right");
         assert_eq!(label("focus_left_arrow"), "Focus left (arrow)");
         assert_eq!(label("next_session_too"), "Next session (alternate)");
         assert_eq!(label(""), "");

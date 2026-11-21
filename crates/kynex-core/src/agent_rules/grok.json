@@ -1,0 +1,16 @@
+{
+  "id": "grok",
+  "name": "Grok Build",
+  "argv": ["grok"],
+  "working": ["esc to interrupt", "esc to cancel", "ctrl+c to interrupt"],
+  "blocked": [
+    "Allow command?",
+    "Approve tool",
+    "Do you want to",
+    "Allow once",
+    "Always allow",
+    "Allow for this session"
+  ],
+  "resume_after": "grok --resume ",
+  "resume_argv": ["grok", "--resume", "{id}"]
+}

@@ -1,53 +1,38 @@
-//! Making and removing workspaces from the sessions column: the "New workspace" form (a
-//! branch name, new or existing, off the default branch), the confirmation before a
-//! worktree with changes or a running session goes, and folding worktrees that were
-//! open as project tabs into their project.
+//! Making and removing workspaces from the Sessions tree, and folding worktrees that
+//! were open as separate project tabs into their project.
 
 use std::path::{Path, PathBuf};
 
 use gpui::{AnyElement, Context, Entity, Focusable, Window, div, prelude::*};
 use kynex_core::git;
 use kynex_core::removed;
+use kynex_core::sessions;
 use kynex_core::toasts::Toast;
 use kynex_core::workspace;
 
 use super::KynexApp;
-use super::state::Active;
 use crate::theme::theme;
 use crate::ui::input::{InputEvent, TextInput};
-use crate::ui::{Icon, Tooltip, icon_button, menu_item, name_field, outline_button, primary_button, px, spinner};
+use crate::ui::{Icon, Lamp, Tooltip, icon_button, menu_item, name_field, outline_button, primary_button, px, spinner};
 
-/// What's open in the workspaces section besides its rows.
 #[derive(Default)]
 pub(super) struct WorkspaceUi {
-    /// The "New workspace" branch field, while it's open.
     form: Option<Entity<TextInput>>,
-    /// Local branches without a checkout, to pick from while naming one.
     branches: Vec<String>,
-    /// A workspace is being made.
     busy: bool,
-    /// Its branch name and the field it was typed in (kept to come back if it fails): the
-    /// form closes at once and a "Creating…" row stands in while `git` makes the worktree.
     creating: Option<(String, Entity<TextInput>)>,
-    /// A workspace waiting on a yes before it goes.
     removing: Option<Removal>,
 }
 
-/// A removal that waits for confirmation.
 struct Removal {
     path: PathBuf,
     label: String,
-    /// Why it asks: what would be lost. Empty when only its sessions are the question.
     why: Vec<String>,
-    /// How many sessions the folder has (they stay unless `delete_sessions`).
     sessions: usize,
-    /// "Also delete its sessions" is ticked.
     delete_sessions: bool,
 }
 
 impl KynexApp {
-    /// The header's "Add workspace" menu: a worktree on a branch (in a git repository), or a
-    /// folder (anywhere).
     pub(super) fn add_workspace_menu_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let Some(project) = self.workspace_project() else { return Vec::new() };
         let repo = !self.worktrees(&project, cx).read(cx).list.is_empty();
@@ -73,7 +58,6 @@ impl KynexApp {
         items
     }
 
-    /// Opens the "New workspace" field, with the branches that could be checked out.
     pub(super) fn open_new_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(project) = self.workspace_project() else { return };
         let input = cx.new(|cx| TextInput::new(cx).placeholder("Branch, new or existing"));
@@ -106,7 +90,6 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Asks for a folder and adds it as a workspace (scripts, notes: not a checkout), then shows it.
     pub(super) fn add_folder_workspace(&mut self, cx: &mut Context<Self>) {
         let Some(project) = self.workspace_project() else { return };
         let picked = cx.prompt_for_paths(gpui::PathPromptOptions {
@@ -120,7 +103,6 @@ impl KynexApp {
                 && let Some(dir) = paths.into_iter().next()
             {
                 this.update(cx, |this, cx| {
-                    // A checkout of the project is already a workspace: just show it.
                     let checkout = this
                         .worktrees
                         .get(&project)
@@ -128,7 +110,6 @@ impl KynexApp {
                     if !checkout {
                         this.saved_workspaces(&project).add_folder(&project, &dir);
                     }
-                    // (Selecting it saves the list.)
                     this.select_workspace(&dir, cx);
                 })
                 .ok();
@@ -137,9 +118,7 @@ impl KynexApp {
         .detach();
     }
 
-    /// Esc: closes the new-workspace field or the removal question. Returns whether one was open.
     pub(super) fn cancel_new_workspace(&mut self) -> bool {
-        // One being made can't be taken back from here.
         if self.workspace_ui.creating.is_some() {
             return false;
         }
@@ -148,7 +127,6 @@ impl KynexApp {
         open
     }
 
-    /// Enter in the field: makes the workspace and shows it, with a new session focused.
     fn submit_new_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(input) = &self.workspace_ui.form else { return };
         let name = input.read(cx).text().trim().to_string();
@@ -157,22 +135,18 @@ impl KynexApp {
             return;
         }
         self.workspace_ui.busy = true;
-        // The form goes at once; the worktree takes a second or more to check out.
         self.workspace_ui.creating = self.workspace_ui.form.take().map(|input| (name.clone(), input));
-        // Whichever session the new workspace opens with, the composer takes the keys.
         self.focus_input(window, cx);
         cx.spawn(async move |this, cx| {
             let root = project.clone();
             let branch = name.clone();
             let made = cx
                 .background_spawn(async move {
-                    let _t = kynex_core::trace::span("new workspace: default branch + git worktree add (background)");
                     let base = git::default_branch(&root);
                     workspace::create(&root, &name, base.as_deref())
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let _t = kynex_core::trace::span("new workspace: showing it (UI thread)");
                 this.workspace_ui.busy = false;
                 let typed = this.workspace_ui.creating.take();
                 match made {
@@ -182,7 +156,6 @@ impl KynexApp {
                         this.select_workspace(&path, cx);
                     }
                     Err(e) => {
-                        // Back to the field, with the name still in it.
                         this.workspace_ui.form = typed.map(|(_, input)| input);
                         this.toast(Toast::error(e));
                     }
@@ -195,11 +168,8 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Remove on a workspace's menu: asks first when it has changes or a running
-    /// session, otherwise goes at once.
     pub(super) fn remove_workspace(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let Some(project) = self.workspace_project() else { return };
-        // A folder added by hand leaves the list; a worktree is removed from disk.
         let is_folder = self.saved_workspaces(&project).is_folder(&path);
         let worktree = self.worktrees.get(&project).and_then(|w| w.read(cx).at(&path).cloned());
         let mut why = Vec::new();
@@ -212,23 +182,19 @@ impl KynexApp {
             }
             worktree.label().to_string()
         };
-        let running = self.code.get(&project).is_some_and(|l| {
-            l.sessions.iter().any(|s| workspace::same_folder(&s.cwd, &path) && (s.busy || s.waiting()))
-        });
+        let running = self.live_agents_in(&path).iter().any(|(_, _, _, l)| matches!(l, Lamp::Working | Lamp::NeedsYou));
         if running {
-            why.push("a session still working".to_string());
+            why.push("an agent still working".to_string());
         }
-        // The sessions are counted off the UI thread: a folder that has some asks too, so
-        // the user can pick whether they go with it.
         let counted = path.clone();
         cx.spawn(async move |this, cx| {
-            let sessions = cx.background_spawn(async move { kynex_core::session::list_sessions(&counted).len() }).await;
+            let count = cx.background_spawn(async move { sessions::list_sessions(&counted).len() }).await;
             this.update(cx, |this, cx| {
-                if why.is_empty() && sessions == 0 {
+                if why.is_empty() && count == 0 {
                     return this.confirm_remove_workspace(path, false, false, None, cx);
                 }
                 this.workspace_ui = WorkspaceUi {
-                    removing: Some(Removal { path, label, why, sessions, delete_sessions: false }),
+                    removing: Some(Removal { path, label, why, sessions: count, delete_sessions: false }),
                     ..WorkspaceUi::default()
                 };
                 cx.notify();
@@ -238,8 +204,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// A workspace is gone: its sessions go with it (`delete`), or it is remembered as
-    /// removed if it has any, so they stay in sight. Off the UI thread.
     fn note_removed(
         &mut self,
         project: PathBuf,
@@ -257,17 +221,11 @@ impl KynexApp {
                         let purged = removed::delete_sessions(&there);
                         (!purged.errors.is_empty(), purged)
                     } else {
-                        (!kynex_core::session::list_sessions(&there).is_empty(), removed::Purged::default())
+                        (!sessions::list_sessions(&there).is_empty(), removed::Purged::default())
                     }
                 })
                 .await;
             this.update(cx, |this, cx| {
-                for id in &purged.deleted {
-                    this.drafts.remove(id);
-                    if this.saved.drafts.remove(id).is_some() {
-                        this.save();
-                    }
-                }
                 this.edit_groups(&path, |g| purged.deleted.iter().for_each(|id| g.forget(id)));
                 if let Some(e) = purged.errors.first() {
                     this.toast(Toast::error(format!("Couldn't delete {} session(s): {e}", purged.errors.len())));
@@ -283,7 +241,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Closes the workspace's sessions, then `git worktree remove`; the branch stays.
     pub(super) fn confirm_remove_workspace(
         &mut self,
         path: PathBuf,
@@ -300,34 +257,23 @@ impl KynexApp {
             |w| w.label().to_string(),
         );
         let branch = worktree.and_then(|w| w.branch);
-        // Sessions there go first: a process in the folder keeps Windows from removing it.
-        let shown_there =
-            self.code.get(&project).and_then(|l| l.current()).is_some_and(|s| workspace::same_folder(&s.cwd, &path));
-        // If the removal fails, picking the workspace again resumes the session it had.
-        let kept = self.code.get(&project).and_then(|l| {
-            l.sessions
-                .iter()
-                .filter(|s| workspace::same_folder(&s.cwd, &path) && !s.is_new())
-                .rev()
-                .find_map(|s| s.session_id.clone())
-        });
+        let shown_there = self.workspace_cwd().is_some_and(|c| workspace::same_folder(&c, &path));
+
+        // Close all agent CLIs and plain terminals standing in `path` so Windows unlocks the folder.
+        self.drop_tiles_of(&path, cx);
+        self.drop_gone_agents(cx);
+        self.drop_gone_terminals(cx);
+        self.terminals.retain(|(f, _)| !workspace::same_folder(f, &path));
+        self.git_panes.retain(|f, _| !workspace::same_folder(f, &path));
+
         let workspaces =
             self.workspaces.entry(project.clone()).or_insert_with(|| workspace::Workspaces::load(&project));
-        workspaces.remember(&path, kept.as_deref());
         if workspaces.selected.as_deref().is_some_and(|s| workspace::same_folder(s, &path)) {
             workspaces.selected = None;
         }
-        if let Some(live) = self.code.get_mut(&project) {
-            let closed = live.close_where(|s| workspace::same_folder(&s.cwd, &path));
-            self.forget(&closed);
-        }
-        // Its shells and Git view too: a shell standing in the folder blocks removing it.
-        self.terminals.retain(|(f, _)| !workspace::same_folder(f, &path));
-        self.git.retain(|f, _| !workspace::same_folder(f, &path));
         if shown_there {
             self.select_workspace(&project, cx);
         }
-        // A folder added by hand only leaves the list; nothing on disk goes.
         if self.saved_workspaces(&project).is_folder(&path) {
             self.saved_workspaces(&project).remove_folder(&path);
             self.save_workspaces(&project, cx);
@@ -344,7 +290,6 @@ impl KynexApp {
             this.update(cx, |this, cx| {
                 match removed {
                     Ok(()) => {
-                        this.drop_tiles_of(&path);
                         this.workspaces.entry(project.clone()).or_default().forget(&path);
                         this.save_workspaces(&project, cx);
                         if let Some(done) = &done {
@@ -368,7 +313,6 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// The form and the question, under the workspace rows.
     pub(super) fn render_workspace_forms(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let t = theme(cx).clone();
         let mut out = Vec::new();
@@ -522,8 +466,6 @@ impl KynexApp {
         out
     }
 
-    /// Shows `path` as a workspace of the open project it's a worktree of, if there
-    /// is one. Returns whether it did.
     pub(super) fn open_as_workspace(&mut self, path: &Path, cx: &mut Context<Self>) -> bool {
         let owner = self.saved.projects.iter().position(|p| {
             !workspace::same_folder(&p.path, path)
@@ -533,8 +475,8 @@ impl KynexApp {
                     .is_some_and(|w| w.read(cx).list.iter().any(|w| !w.main && workspace::same_folder(&w.path, path)))
         });
         let Some(i) = owner else { return false };
-        if self.saved.active != Active::Project(i) {
-            self.saved.active = Active::Project(i);
+        if self.saved.active_project != Some(i) {
+            self.saved.active_project = Some(i);
             self.menu = None;
             self.save();
         }
@@ -542,11 +484,9 @@ impl KynexApp {
         true
     }
 
-    /// A workspace's "Open in a new tab": the folder as a project tab of its own, which
-    /// stays one (it isn't folded back into its project at startup).
     pub(super) fn open_workspace_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.add_project(path.clone());
-        if let Active::Project(i) = self.saved.active
+        self.add_project(path);
+        if let Some(i) = self.saved.active_project
             && let Some(p) = self.saved.projects.get_mut(i)
         {
             p.own_tab = true;
@@ -555,9 +495,6 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Worktrees opened as project tabs by earlier versions fold into the project
-    /// they belong to, keeping the session each had as that workspace's. Reads
-    /// every project's worktrees off the UI thread.
     pub(super) fn fold_worktree_tabs(&mut self, cx: &mut Context<Self>) {
         let projects: Vec<PathBuf> = self.saved.projects.iter().map(|p| p.path.clone()).collect();
         if projects.len() < 2 {
@@ -569,8 +506,6 @@ impl KynexApp {
                     projects
                         .into_iter()
                         .map(|p| {
-                            // Only a project that is its repository's own tree owns a fold: from
-                            // inside a linked worktree the list names that worktree as well.
                             let list = git::list_worktrees(&p).unwrap_or_default();
                             let is_main = list.iter().any(|w| w.main && workspace::same_folder(&w.path, &p));
                             let others: Vec<PathBuf> =
@@ -581,7 +516,7 @@ impl KynexApp {
                 })
                 .await;
             this.update(cx, |this, cx| {
-                for (project, others) in linked {
+                for (_project, others) in linked {
                     for tab in others {
                         let Some(i) = this
                             .saved
@@ -591,15 +526,6 @@ impl KynexApp {
                         else {
                             continue;
                         };
-                        let session = this.saved.projects[i].session_id.clone();
-                        let workspaces = this
-                            .workspaces
-                            .entry(project.clone())
-                            .or_insert_with(|| workspace::Workspaces::load(&project));
-                        let changed = workspaces.adopt_legacy_session(&tab, session.as_deref());
-                        if changed && let Err(e) = workspaces.save(&project) {
-                            this.toast(Toast::error(e));
-                        }
                         this.close_project(i, cx);
                     }
                 }

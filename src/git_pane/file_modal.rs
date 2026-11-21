@@ -27,6 +27,7 @@ use crate::ui::{Icon, Tooltip, icon_button, spinner};
 pub enum FileDiffEvent {
     Close,
     /// Open this picture in the image viewer; its own size in pixels.
+    #[allow(dead_code)]
     ViewImage(Arc<RenderImage>, (u32, u32)),
 }
 

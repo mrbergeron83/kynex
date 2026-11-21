@@ -610,15 +610,12 @@ mod tests {
     }
 
     fn saved_two_panes() -> SavedLayout {
-        let mut layout = crate::layout::Layout::new("1", 1);
+        let mut layout = crate::layout::Layout::new(1);
         layout.split(1, crate::layout::Axis::Row, 2, crate::layout::Rect::new(0.0, 0.0, 2000.0, 1000.0));
         SavedLayout {
             layout,
-            sessions: BTreeMap::from([(1, "a".to_string())]),
-            tools: None,
-            seeded: false,
-            git_spot: None,
-            git_tab: Default::default(),
+            agents: BTreeMap::from([(1, crate::tiling::AgentCliPane::with_provider("claude", None, Some("a".into())))]),
+            ..Default::default()
         }
     }
 
@@ -645,7 +642,7 @@ mod tests {
         let good = serde_json::to_value(saved_two_panes()).unwrap();
         let broken_shape = serde_json::json!({"layout": 5});
         let mut twice = good.clone();
-        twice["layout"]["tabs"][0]["focus"] = 99.into();
+        twice["layout"]["focus"] = 99.into();
         let json = serde_json::json!({
             "selected": "/work/app",
             "sessions": { "k": "s1" },

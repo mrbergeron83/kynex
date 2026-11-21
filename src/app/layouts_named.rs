@@ -1,8 +1,4 @@
-//! Named layouts, in the layouts menu: keep the shown workspace's panes under a name, apply
-//! one to the shown workspace, export one to a file and import one from a file. The files
-//! are `<data dir>/layouts/<name>.json` (`kynex_core::named_layouts`), so they are shared by
-//! every project; applying one gives every session slot a new session and every terminal a
-//! fresh shell (or its command), and goes through the layout history, so it can be undone.
+//! Named layouts: save, apply, export, and import pane layouts (`kynex_core::named_layouts`).
 
 use gpui::{AnyElement, Context, Focusable, PathPromptOptions, Window, div, prelude::*};
 use kynex_core::named_layouts::{self, NamedLayout};
@@ -14,13 +10,11 @@ use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::{divider, menu_item, px};
 
 impl KynexApp {
-    /// The shown workspace's panes as a named layout.
     fn current_named_layout(&self) -> Option<NamedLayout> {
-        let (_, cwd, _) = self.tiling_scope()?;
-        Some(named_layouts::export(&self.tiles.get(&cwd)?.save(|_| None)))
+        let (_, cwd) = self.tiling_scope()?;
+        Some(named_layouts::export(&self.tiles.get(&cwd)?.save()))
     }
 
-    /// The layouts menu below the older layouts: save, the kept layouts, export and import.
     pub(super) fn named_layout_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let t = theme(cx).clone();
         let mut items: Vec<AnyElement> = vec![div().my_1().child(divider(cx)).into_any_element()];
@@ -68,7 +62,6 @@ impl KynexApp {
         items
     }
 
-    /// "Save layout as…": a name field in the menu, Enter keeps it.
     fn ask_layout_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let input = cx.new(|cx| TextInput::new(cx).placeholder("Name this layout"));
         cx.subscribe(&input, |this, input, ev, cx| {
@@ -102,7 +95,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Gives the shown workspace the layout kept as `name`.
     pub(super) fn apply_named_layout(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
         let task = cx.background_spawn(async move { named_layouts::load_in(&named_layouts::dir(), &name) });
         cx.spawn_in(window, async move |this, cx| {
@@ -119,10 +111,8 @@ impl KynexApp {
         .detach();
     }
 
-    /// Drops the shown workspace's panes and lets `sync_tiles` build `layout`'s, as it
-    /// does after a restart; the history keeps the old ones for undo.
     fn apply_layout(&mut self, layout: &NamedLayout, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((project, cwd, _)) = self.tiling_scope() else { return };
+        let Some((project, cwd)) = self.tiling_scope() else { return };
         self.tiles.remove(&cwd);
         self.saved_workspaces(&project).set_layout(&cwd, Some(named_layouts::apply(layout)));
         self.focus_input(window, cx);
@@ -149,7 +139,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Reads a layout file and keeps it among the named layouts.
     fn import_layout(&mut self, cx: &mut Context<Self>) {
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,

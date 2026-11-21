@@ -57,6 +57,7 @@ pub enum GitPaneEvent {
     /// Open this folder (a worktree, from Branches) as a workspace.
     OpenFolder(PathBuf),
     /// Something was done to this worktree (staged, committed…): other views of it are old.
+    #[allow(dead_code)]
     Changed(PathBuf),
     /// A commit was picked in History: show it, as this view has it, in a modal.
     OpenDetail(Entity<GitView>),

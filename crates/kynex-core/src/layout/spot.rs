@@ -1,9 +1,9 @@
-//! Where a pane sat in its tab, so a pane closed and opened again (the Git pane's toggle)
+//! Where a pane sat in the layout, so a pane closed and opened again (the Git pane's toggle)
 //! comes back to the same place at the same size, and the panes around it get theirs back.
 
 use serde::{Deserialize, Serialize};
 
-use super::{Axis, Direction, EPS, Node, PaneId, Rect, Tab};
+use super::{Axis, Direction, EPS, Node, PaneId, PaneTree, Rect};
 
 /// A pane's place: the split it was one side of, and the panes on the other side.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -66,8 +66,8 @@ impl Node {
     }
 }
 
-impl Tab {
-    /// Where `pane` sits; `None` if it isn't here or is alone in the tab.
+impl PaneTree {
+    /// Where `pane` sits; `None` if it isn't here or is the only pane.
     pub fn spot(&self, pane: PaneId) -> Option<Spot> {
         let (split, after) = self.root.parent_of(pane)?;
         let Node::Split { axis, ratio, a, b } = split else { return None };
@@ -106,8 +106,8 @@ mod tests {
     const BIG: Rect = Rect { x: 0.0, y: 0.0, w: 2000.0, h: 1000.0 };
 
     /// Sessions | (session over terminal) | git.
-    fn tab() -> Tab {
-        let mut t = Tab::new("1", 1);
+    fn tree() -> PaneTree {
+        let mut t = PaneTree::new(1);
         assert!(t.split_with(1, Axis::Row, 2, 0.2, BIG));
         assert!(t.split(2, Axis::Column, 3, BIG));
         assert!(t.split_with(2, Axis::Row, 4, 0.6, BIG));
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn a_pane_closed_and_put_back_leaves_every_size_as_it_was() {
-        let mut t = tab();
+        let mut t = tree();
         let before = t.rects(BIG);
         let spot = t.spot(4).unwrap();
         assert_eq!(spot.side(), Direction::Right);
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn a_pane_beside_a_group_goes_back_beside_the_group() {
-        let mut t = Tab::new("1", 1);
+        let mut t = PaneTree::new(1);
         assert!(t.split(1, Axis::Row, 2, BIG));
         assert!(t.split_with(1, Axis::Row, 3, 0.3, BIG));
         // (1 | 3) | 2: 2 is beside the pair.
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn a_first_side_comes_back_first() {
-        let mut t = Tab::new("1", 1);
+        let mut t = PaneTree::new(1);
         assert!(t.split_with(1, Axis::Column, 2, 0.25, BIG));
         let spot = t.spot(1).unwrap();
         assert_eq!(spot.side(), Direction::Up);
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn panes_no_longer_together_refuse_the_spot() {
-        let mut t = tab();
+        let mut t = tree();
         let spot = Spot { axis: Axis::Row, after: true, share: 0.4, sibling: vec![1, 3] };
         assert!(!t.put_back(9, &spot, BIG));
         assert!(!t.contains(9));
@@ -170,8 +170,8 @@ mod tests {
 
     #[test]
     fn alone_or_absent_has_no_spot() {
-        assert!(Tab::new("1", 1).spot(1).is_none());
-        assert!(tab().spot(42).is_none());
+        assert!(PaneTree::new(1).spot(1).is_none());
+        assert!(tree().spot(42).is_none());
     }
 
     #[test]

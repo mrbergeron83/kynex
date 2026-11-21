@@ -1,0 +1,16 @@
+{
+  "id": "agy",
+  "name": "Antigravity",
+  "argv": ["agy"],
+  "working": ["esc to interrupt", "esc to cancel", "ctrl+c to cancel"],
+  "blocked": [
+    "Allow once",
+    "Always allow",
+    "Allow for this session",
+    "Do you want to",
+    "Run command?",
+    "Waiting for approval"
+  ],
+  "resume_after": "agy --conversation ",
+  "resume_argv": ["agy", "--conversation", "{id}"]
+}

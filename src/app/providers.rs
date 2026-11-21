@@ -1,7 +1,6 @@
-//! Settings → Providers: who answers sessions. Anthropic is the CLI's own
-//! sign-in; OpenRouter is a key in the OS keychain, checked against
-//! OpenRouter, an output cap and My models, the models the menus offer.
-//! Everything saves at once; new sessions use it with no restart.
+//! Settings → Providers: native CLI status (Claude Code, Grok Build, Antigravity) and the
+//! OpenRouter override key (in the OS keychain), output cap, and My models used by
+//! Claude Code (OpenRouter) and Antigravity (OpenRouter).
 
 use crate::ui::px;
 use gpui::{AnyElement, Context, Entity, Focusable, div, prelude::*};
@@ -10,36 +9,31 @@ use kynex_core::openrouter::{self, CatalogModel, OpenRouterConfig};
 use kynex_core::secrets::{Keychain, Secret};
 
 use super::KynexApp;
-use super::settings::{heading, radio};
+use super::app_settings::{heading, radio};
 use crate::theme::{Palette, mono};
 use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::{Icon, Tooltip, icon, icon_button, outline_button, primary_button};
 
 const KEYS_URL: &str = "https://openrouter.ai/settings/keys";
 
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
 /// The Providers section's state, made when Settings opens.
 #[derive(Clone)]
 pub struct ProvidersView {
-    /// Who the CLI is signed in as, once asked.
     account: Option<Result<cli::Account, String>>,
     key: KeyState,
-    /// Typing a new key over a saved one.
     replacing: bool,
     key_input: Entity<TextInput>,
     cap_input: Entity<TextInput>,
-    /// Searches the catalogue, or takes a model ID typed out.
     add_input: Entity<TextInput>,
-    /// OpenRouter's models, fetched the first time a search is typed.
     catalogue: Option<Result<Vec<CatalogModel>, String>>,
-    /// What's underway: "Checking the key…".
     busy: Option<&'static str>,
     error: Option<String>,
-    /// Provider variables in `~/.claude/settings.json`'s env block, which may
-    /// override what Kynex sets, in words; read when Settings opens.
     overrides: Option<String>,
-    /// Grok: opted in or not, installed, signed in (`grok_setup.rs`).
     pub(super) grok: super::grok_setup::GrokView,
-    /// Antigravity: opted in or not, installed (`antigravity_setup.rs`).
     pub(super) antigravity: super::antigravity_setup::AntigravityView,
 }
 
@@ -47,14 +41,11 @@ pub struct ProvidersView {
 enum KeyState {
     Loading,
     Missing,
-    /// Saved; its hint (`sk-or-v1-…3f9a`), never the key.
     Saved(String),
-    /// No keychain to keep it in, and why.
     NoKeychain(String),
 }
 
 impl KynexApp {
-    /// The Providers section's state, and what it shows looked up off the UI thread.
     pub(super) fn new_providers_view(&mut self, cx: &mut Context<Self>) -> ProvidersView {
         let key_input = cx.new(|cx| TextInput::new(cx).mono().masked().placeholder("Paste your OpenRouter key"));
         cx.subscribe(&key_input, |this, _, ev, cx| {
@@ -93,12 +84,8 @@ impl KynexApp {
         self.load_account(cx);
         self.load_openrouter_key(cx);
         self.load_settings_overrides(cx);
-        if self.saved.grok {
-            self.load_grok_status(cx);
-        }
-        if self.saved.antigravity {
-            self.load_antigravity_status(cx);
-        }
+        self.load_grok_status(cx);
+        self.load_antigravity_status(cx);
         ProvidersView {
             grok: Default::default(),
             antigravity: Default::default(),
@@ -169,7 +156,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Fetches OpenRouter's catalogue once per Settings opening.
     fn load_catalogue(&mut self, cx: &mut Context<Self>) {
         let Some(p) = self.providers_mut() else { return };
         if p.catalogue.is_some() {
@@ -192,7 +178,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Runs `job` off the UI thread with `label` showing, then `done` with its result.
     fn providers_job<T: Send + 'static>(
         &mut self,
         label: &'static str,
@@ -221,7 +206,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Saves the typed key in the keychain, then checks it.
     fn save_openrouter_key(&mut self, cx: &mut Context<Self>) {
         let Some(p) = self.providers_mut() else { return };
         let key = p.key_input.read(cx).text().trim().to_string();
@@ -240,8 +224,8 @@ impl KynexApp {
                     let hint = openrouter::key_hint(&key);
                     this.openrouter_key = Some(key);
                     this.saved.openrouter.key_removed = false;
-                    this.refresh_new_sessions();
                     this.openrouter_credit = None;
+                    this.refresh_provider_catalog(cx);
                     this.refresh_openrouter_credit(cx);
                     if let Some(p) = this.providers_mut() {
                         p.key = KeyState::Saved(hint);
@@ -256,7 +240,6 @@ impl KynexApp {
         );
     }
 
-    /// Checks the saved key against the default model.
     fn check_openrouter_key(&mut self, cx: &mut Context<Self>) {
         let model = self.saved.openrouter.default_model().to_string();
         self.providers_job(
@@ -277,7 +260,7 @@ impl KynexApp {
         self.providers_job(
             "Removing the key…",
             || Keychain::os().and_then(|k| k.remove(Secret::OpenRouterKey)),
-            |this, removed, _| match removed {
+            |this, removed, cx| match removed {
                 Ok(()) => {
                     if let Some(p) = this.providers_mut() {
                         p.key = KeyState::Missing;
@@ -287,7 +270,7 @@ impl KynexApp {
                     this.saved.openrouter.key_removed = true;
                     this.openrouter_key = None;
                     this.openrouter_credit = None;
-                    this.refresh_new_sessions();
+                    this.refresh_provider_catalog(cx);
                     this.save();
                 }
                 Err(e) => this.providers_error(e),
@@ -298,7 +281,7 @@ impl KynexApp {
 
     fn record_openrouter_check(&mut self, check: Result<openrouter::KeyInfo, openrouter::Problem>) {
         let model = self.saved.openrouter.default_model().to_string();
-        self.saved.openrouter.record_check(&model, &check, kynex_core::usage::now());
+        self.saved.openrouter.record_check(&model, &check, unix_now());
         self.save();
     }
 
@@ -308,7 +291,6 @@ impl KynexApp {
         }
     }
 
-    /// Changes the OpenRouter settings and saves them, or shows why not.
     fn edit_openrouter(
         &mut self,
         cx: &mut Context<Self>,
@@ -347,8 +329,6 @@ impl KynexApp {
             p.add_input.update(cx, |input, cx| input.set_text("", cx));
             p.catalogue.clone()
         });
-        // Whether it takes tools: from the catalogue it was found in, from the
-        // one still loading once it's in, else asked for now.
         match catalogue.flatten() {
             Some(Ok(models)) if !models.is_empty() => self.learn_tools(&models),
             Some(Ok(_)) => {}
@@ -356,16 +336,12 @@ impl KynexApp {
         }
     }
 
-    /// Signs the CLI out; the setup screen then offers signing in again.
-    fn sign_out(&mut self, cx: &mut Context<Self>) {
+    fn sign_out_claude(&mut self, cx: &mut Context<Self>) {
         self.providers_job(
             "Signing out…",
             cli::logout,
             |this, out, cx| match out {
-                Ok(()) => {
-                    this.load_account(cx);
-                    this.check_setup(cx);
-                }
+                Ok(()) => this.load_account(cx),
                 Err(e) => this.providers_error(e),
             },
             cx,
@@ -410,33 +386,53 @@ impl KynexApp {
         };
         let account = p.account.as_ref().and_then(|a| a.as_ref().ok());
         let can_sign_out = account.is_some_and(|a| a.logged_in && a.other_provider.is_none());
-        let can_sign_in = account.is_some_and(|a| !a.logged_in && a.other_provider.is_none());
+        let update = self.cli_update_control(super::setup::ManagedCli::Claude, t, cx);
         div()
             .flex()
             .flex_col()
             .gap_2()
-            .child(heading("Anthropic", "Claude Code's own sign-in: your Claude plan or Anthropic Console account.", t))
+            .child(heading(
+                "Claude Code",
+                "Runs the native `claude` CLI directly in a terminal pane with its own sign-in and auto-updates.",
+                t,
+            ))
             .child(boxed(t).child(div().text_sm().text_color(color).child(line)))
-            .child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .when(can_sign_in, |d| {
-                        d.child(primary_button("anthropic-sign-in", "Sign in", cx).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.app_settings = None;
-                                this.sign_in(false, cx);
-                            },
-                        )))
-                    })
-                    .when(can_sign_out, |d| {
-                        d.child(
-                            outline_button("anthropic-sign-out", "Sign out", cx)
-                                .tooltip(Tooltip::text("Anthropic sessions stop working until you sign in again"))
-                                .on_click(cx.listener(|this, _, _, cx| this.sign_out(cx))),
-                        )
-                    }),
-            )
+            .when(can_sign_out || update.is_some(), |d| {
+                d.child(div().flex().flex_wrap().items_center().gap_2().children(update).when(can_sign_out, |d| {
+                    d.child(
+                        outline_button("anthropic-sign-out", "Sign out", cx)
+                            .tooltip(Tooltip::text("Run `claude auth logout`"))
+                            .on_click(cx.listener(|this, _, _, cx| this.sign_out_claude(cx))),
+                    )
+                }))
+            })
+    }
+
+    /// Inline update button or progress text for a managed CLI in Settings → Providers.
+    pub(super) fn cli_update_control(
+        &self,
+        cli: super::setup::ManagedCli,
+        t: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let id = cli.id();
+        let cmd = cli.update_cmd();
+        match &self.cli_updates.get(cli).update {
+            cli::UpdateState::Available { latest, .. } => Some(
+                primary_button(
+                    gpui::SharedString::from(format!("provider-update-{id}")),
+                    format!("Update to {latest}"),
+                    cx,
+                )
+                .tooltip(Tooltip::text(format!("Runs `{cmd}`")))
+                .on_click(cx.listener(move |this, _, _, cx| this.update_cli(cli, cx)))
+                .into_any_element(),
+            ),
+            cli::UpdateState::Updating { latest } => Some(
+                div().text_xs().text_color(t.text_muted).child(format!("Updating to {latest}…")).into_any_element(),
+            ),
+            _ => None,
+        }
     }
 
     fn render_openrouter_key(&self, p: &ProvidersView, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
@@ -526,8 +522,8 @@ impl KynexApp {
             .flex_col()
             .gap_2()
             .child(heading(
-                "OpenRouter",
-                "Run sessions on other models through openrouter.ai with your own key. It's kept in the OS keychain, \
+                "OpenRouter (Claude Code & Antigravity override)",
+                "Used when you start Claude Code (OpenRouter) or Antigravity (OpenRouter). Stored in the OS keychain, \
                  never in Kynex's files.",
                 t,
             ))
@@ -544,7 +540,7 @@ impl KynexApp {
             .gap_2()
             .child(heading(
                 "Output cap",
-                "The most tokens one OpenRouter reply may use. Lower it if OpenRouter says you're out of credits (402).",
+                "The most tokens one Claude Code (OpenRouter) reply may use. Lower it if OpenRouter says you're out of credits (402).",
                 t,
             ))
             .child(
@@ -603,33 +599,14 @@ impl KynexApp {
             .gap_2()
             .child(heading(
                 "My models",
-                "The OpenRouter models the model menus offer. Click one to make it the default.",
+                "OpenRouter models offered in the new-session picker. Click one to make it the default.",
                 t,
             ))
             .child(div().flex().flex_col().gap_0p5().children(mine))
             .child(input_box(p.add_input.clone(), t))
             .children(self.render_model_results(p, t, cx))
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap_2()
-                    .px_2()
-                    .py_1p5()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(t.border_variant)
-                    .text_xs()
-                    .text_color(t.text_muted)
-                    .child(div().mt(px(1.)).child(icon(Icon::Shield, t.warning).size_3()))
-                    .child(div().flex_1().min_w_0().child(
-                        "Weaker and free models may struggle with Claude Code's file edits and tool use, and keep their \
-                         own safety training. Free models are rate-limited and shared, so expect 429s at busy times.",
-                    )),
-            )
     }
 
-    /// What the search finds, with a row to add a typed ID the catalogue doesn't list.
     fn render_model_results(&self, p: &ProvidersView, t: &Palette, cx: &mut Context<Self>) -> Option<gpui::Div> {
         let query = p.add_input.read(cx).text().trim().to_string();
         if query.is_empty() {

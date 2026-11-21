@@ -1,14 +1,13 @@
-//! Telling you a session wants you while Kynex is in the background: an OS
-//! notification saying which session and why (the app posts it; opt-in), and
-//! a "needs you" badge on the app's icon: an amber dot over the taskbar button
-//! on Windows, a Dock badge on macOS. Linux has no common badge; nothing there.
+//! Minimal background OS notifications and "next pane that needs you" cycling.
+//!
+//! In-UI status lamps handle attention while Kynex is in front; when Kynex is in the background
+//! and notifications are enabled, an OS notification fires once per pane that newly needs you
+//! or finishes. No sounds, no per-provider notification rules, no taskbar/Dock badge.
 
-use crate::session::Session;
-use crate::sound::Sound;
+use crate::agent_panes::AgentState;
 
-/// Of sessions in a stable order, each with whether it wants you: the first one after
-/// `current` that does, wrapping round and never `current` itself. With no `current` in the
-/// list, the first that does.
+/// Of panes in a stable order, each with whether it wants you: the first one after `current`
+/// that does, wrapping round and never `current` itself.
 pub fn next_waiting<T: PartialEq + Copy>(order: &[(T, bool)], current: Option<T>) -> Option<T> {
     let at = current.and_then(|c| order.iter().position(|(k, _)| *k == c));
     let n = order.len();
@@ -16,143 +15,48 @@ pub fn next_waiting<T: PartialEq + Copy>(order: &[(T, bool)], current: Option<T>
     (0..n).map(|i| &order[(start + i) % n]).find(|(k, waiting)| *waiting && Some(*k) != current).map(|(k, _)| *k)
 }
 
-/// Why a session wants you.
+/// Why an `agent_cli` pane triggers a background OS notification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Why {
-    /// A turn ended and you haven't looked at it.
+pub enum Alert {
     Finished,
-    /// A permission prompt or a question waits for your answer.
-    Answer,
-    /// Claude is waiting for you to do something in the browser.
-    Browser,
+    NeedsYou,
 }
 
-impl Why {
-    /// What a session wants of you, if anything.
-    pub fn of(s: &Session) -> Option<Self> {
-        if s.waiting() {
-            Some(Self::Answer)
-        } else if !s.busy && s.wants_browser() {
-            Some(Self::Browser)
-        } else if s.finished {
-            Some(Self::Finished)
-        } else {
-            None
+impl Alert {
+    pub fn of(state: AgentState) -> Option<Self> {
+        match state {
+            AgentState::NeedsYou => Some(Self::NeedsYou),
+            AgentState::Done => Some(Self::Finished),
+            AgentState::Working | AgentState::Idle => None,
         }
     }
 
-    /// A notification's body: what to do about it.
     pub fn body(self) -> &'static str {
         match self {
             Self::Finished => "Finished",
-            Self::Answer => "Needs your answer",
-            Self::Browser => "Waiting for you in the browser",
+            Self::NeedsYou => "Needs your input",
         }
     }
 }
 
-/// What to notify about, going from `was` to `now`: only a new reason, once.
-/// Back to nothing, or the same reason as before, says nothing.
-pub fn news(was: Option<Why>, now: Option<Why>) -> Option<Why> {
+/// Only a new reason triggers a notification.
+pub fn news(was: Option<Alert>, now: Option<Alert>) -> Option<Alert> {
     now.filter(|n| was != Some(*n))
 }
 
-impl Why {
-    /// The sound that goes with it.
-    pub fn sound(self) -> Sound {
-        match self {
-            Self::Finished => Sound::Done,
-            Self::Answer | Self::Browser => Sound::NeedsYou,
-        }
-    }
-}
-
-/// Whether session `key` is in sight: the focused one, or in a visible pane.
-pub fn on_screen<T: PartialEq + Copy>(key: T, focused: Option<T>, visible: &[T]) -> bool {
-    focused == Some(key) || visible.contains(&key)
-}
-
-/// The sound for a batch of news: "needs you" wins over "done".
-pub fn loudest(whys: impl IntoIterator<Item = Why>) -> Option<Sound> {
-    whys.into_iter().map(Why::sound).max()
-}
-
-/// The process-wide app identity: the Windows AppUserModelID, which the OS
-/// groups taskbar buttons and notifications by. A dev build has its own, so
-/// it doesn't stack with the installed one.
+/// The process-wide app identity (Windows AppUserModelID, required for OS notifications).
 pub const APP_ID: &str = if cfg!(debug_assertions) { "Kynex.Kynex.Dev" } else { "Kynex.Kynex" };
-
-/// Shows or clears the "needs you" badge on the app's icon. `window` is the
-/// main window's native handle (an `HWND` on Windows; unused elsewhere).
-/// Blocks briefly on the OS; call it when the state changes, not every frame.
-pub fn set_badge(window: isize, on: bool) {
-    #[cfg(windows)]
-    crate::win_shell::set_overlay(window, on);
-    #[cfg(target_os = "macos")]
-    {
-        let _ = window;
-        mac::set_dock_badge(on);
-    }
-    #[cfg(not(any(windows, target_os = "macos")))]
-    let _ = (window, on);
-}
-
-#[cfg(target_os = "macos")]
-mod mac {
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::NSApplication;
-    use objc2_foundation::NSString;
-
-    /// A dot on the Dock icon, or none. Only from the main thread.
-    pub fn set_dock_badge(on: bool) {
-        let Some(mtm) = MainThreadMarker::new() else { return };
-        let tile = NSApplication::sharedApplication(mtm).dockTile();
-        let label = on.then(|| NSString::from_str("●"));
-        tile.setBadgeLabel(label.as_deref());
-    }
-}
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    use serde_json::json;
-
     use super::*;
-    use crate::session::{Item, Kind};
 
     #[test]
-    fn says_why_a_session_wants_you() {
-        let mut s = Session::new(Kind::Chat, PathBuf::new());
-        assert_eq!(Why::of(&s), None);
-        s.finished = true;
-        assert_eq!(Why::of(&s), Some(Why::Finished));
-        // A prompt outranks a finished turn.
-        s.handle(json!({ "type": "control_request", "request_id": "r", "request": { "subtype": "can_use_tool", "tool_name": "Bash" } }));
-        assert_eq!(Why::of(&s), Some(Why::Answer));
-        assert!(matches!(s.items.last(), Some(Item::Permission { .. })));
-    }
-
-    #[test]
-    fn needs_you_outranks_done_and_focus_is_on_screen() {
-        use Why::*;
-        assert_eq!(loudest([Finished, Browser, Finished]), Some(Sound::NeedsYou));
-        assert_eq!(loudest([Finished]), Some(Sound::Done));
-        assert_eq!(loudest([]), None);
-        assert!(on_screen(1, Some(1), &[]));
-        assert!(on_screen(2, Some(1), &[1, 2]));
-        assert!(!on_screen(3, Some(1), &[1, 2]));
-        assert!(!on_screen(3, None, &[]));
-    }
-
-    #[test]
-    fn only_a_new_reason_is_news() {
-        use Why::*;
-        assert_eq!(news(None, Some(Finished)), Some(Finished));
-        assert_eq!(news(Some(Finished), Some(Finished)), None);
-        assert_eq!(news(Some(Finished), Some(Answer)), Some(Answer));
-        assert_eq!(news(Some(Answer), None), None);
-        assert_eq!(Answer.body(), "Needs your answer");
+    fn only_new_alerts_are_news() {
+        assert_eq!(news(None, Some(Alert::Finished)), Some(Alert::Finished));
+        assert_eq!(news(Some(Alert::Finished), Some(Alert::Finished)), None);
+        assert_eq!(news(Some(Alert::Finished), Some(Alert::NeedsYou)), Some(Alert::NeedsYou));
+        assert_eq!(news(Some(Alert::NeedsYou), None), None);
     }
 
     #[test]
@@ -162,8 +66,6 @@ mod tests {
         assert_eq!(next_waiting(&order, Some(4)), Some(2));
         assert_eq!(next_waiting(&order, Some(1)), Some(2));
         assert_eq!(next_waiting(&order, None), Some(2));
-        assert_eq!(next_waiting(&order, Some(9)), Some(2));
         assert_eq!(next_waiting(&[(1, true)], Some(1)), None);
-        assert_eq!(next_waiting::<u8>(&[], None), None);
     }
 }

@@ -22,7 +22,6 @@ gix = { version = "0.90", default-features = false, features = ["status", "revis
 jiff = "0.2.42"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 kynex-core = { path = "crates/kynex-core" }
-pulldown-cmark = { version = "0.13", default-features = false }
 # The control protocol's JSON schema (`knx api schema`); already in the tree through gpui.
 schemars = "1"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -39,7 +38,7 @@ too_many_arguments = "allow"
 # The app: everything gpui. Logic without UI lives in crates/kynex-core.
 [package]
 name = "kynex"
-version = "0.0.36"
+version = "0.0.37"
 edition.workspace = true
 license = "GPL-3.0-or-later"
 publish = false
@@ -51,8 +50,6 @@ gpui_platform.workspace = true
 # The same as gpui's: screenshots are decoded to thumbnails as `RenderImage` frames.
 image.workspace = true
 kynex-core.workspace = true
-# The same as gpui's: the window's HWND, for the taskbar's "needs you" dot.
-raw-window-handle = "0.6"
 serde.workspace = true
 serde_json.workspace = true
 unicode-segmentation.workspace = true

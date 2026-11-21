@@ -4,10 +4,9 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
-use gpui::{AppContext, Context};
-use kynex_core::control::approval::Made;
+use gpui::{AppContext, Context, Window};
 use kynex_core::git;
-use kynex_core::live::Key;
+use kynex_core::layout::PaneId;
 use kynex_core::workspace::{self, same_folder};
 use serde_json::{Value, json};
 
@@ -49,17 +48,17 @@ impl KynexApp {
         }
     }
 
-    /// Makes a workspace on `branch` for the shown project and shows it; `reply` gets its folder
-    /// once git is done. With `session` (`Some(prompt)`), a session in it too, sent the prompt.
+    /// Makes a workspace on `branch` for the project and shows it; `reply` gets its folder
+    /// once git is done. If `provider` is given, launches that provider in its first pane.
     pub(super) fn create_workspace_for(
         &mut self,
         branch: String,
-        session: Option<(Option<String>, Option<String>)>,
-        caller: Option<Key>,
+        provider: Option<String>,
+        caller: Option<PaneId>,
         reply: Sender<Answer>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The asking session's project, which may not be the one shown.
         let project = match self.request_project(caller) {
             Ok(p) => p,
             Err(e) => {
@@ -67,7 +66,7 @@ impl KynexApp {
                 return;
             }
         };
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let root = project.clone();
             let name = branch.clone();
             let made = cx
@@ -76,25 +75,20 @@ impl KynexApp {
                     workspace::create(&root, &branch, base.as_deref())
                 })
                 .await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 match made {
                     Ok(path) => {
                         this.bind_made(&project, &path, &name, cx);
                         this.refresh_worktrees([&project], cx);
-                        this.approvals.record_made(Made::Workspace(path.clone()), caller);
-                        // The project may have been switched meanwhile; the workspace is its own project's.
                         let shown = this.workspace_project().as_deref() == Some(project.as_path());
                         if shown {
                             this.select_workspace(&path, cx);
+                            if let Some(prov) = provider {
+                                this.sync_tiles(window, cx);
+                                this.open_provider_pane(prov, None, window, cx);
+                            }
                         }
-                        let answer = match session {
-                            None => Ok(json!({ "created": path })),
-                            Some((prompt, why)) => this
-                                .session_in_new_workspace(&project, path.clone(), prompt, None, why, shown, caller)
-                                .map(|s| json!({ "created": path, "session": s["session"] }))
-                                .map_err(|e| format!("made {}, but no session in it: {e}", path.display())),
-                        };
-                        let _ = reply.send(answer);
+                        let _ = reply.send(Ok(json!({ "created": path })));
                     }
                     Err(e) => {
                         let _ = reply.send(Err(e));

@@ -1,324 +1,179 @@
-//! Tabs and sessions: which project is active, which of its sessions is shown,
-//! and opening, switching and closing them.
+//! Project tabs and session opening/focusing in the pure-CLI workspace.
 
 use std::path::PathBuf;
 
 use gpui::{Context, Focusable, PathPromptOptions, Window};
-use kynex_core::live::{Key, Live};
-use kynex_core::paths::chat_dir;
-use kynex_core::session::{Kind, Session};
+use kynex_core::layout::{Axis, PaneId};
+use kynex_core::tiling::{AgentCliPane, Content};
+use kynex_core::workspace::same_folder;
 
 use super::KynexApp;
-use super::state::{Active, ProjectState};
+use super::state::ProjectState;
 
 impl KynexApp {
-    /// Every open session, in every tab.
-    pub(super) fn all_sessions(&self) -> impl Iterator<Item = &Session> {
-        self.chat.sessions.iter().chain(self.code.values().flat_map(|l| l.sessions.iter()))
-    }
-
-    pub(super) fn all_sessions_mut(&mut self) -> impl Iterator<Item = &mut Session> {
-        self.chat.sessions.iter_mut().chain(self.code.values_mut().flat_map(|l| l.sessions.iter_mut()))
-    }
-
-    /// Copy live session ids into the saved state so they survive a restart.
-    pub(super) fn sync_session_ids(&mut self) {
-        let mut changed = false;
-        // A new session's early process may report an id before anything is
-        // sent; it names no conversation, so it isn't kept to resume.
-        let started = |s: &Session| s.session_id.clone().filter(|_| !s.is_new());
-        let chat_id = self.chat.current().and_then(started);
-        if self.saved.chat_session_id != chat_id {
-            self.saved.chat_session_id = chat_id;
-            changed = true;
-        }
-        for p in &mut self.saved.projects {
-            let Some(s) = self.code.get(&p.path).and_then(Live::current) else { continue };
-            if kynex_core::workspace::same_folder(&s.cwd, &p.path) {
-                if p.session_id != started(s) {
-                    p.session_id = started(s);
-                    changed = true;
-                }
-            } else if let Some(id) = started(s) {
-                // A session in another workspace (a worktree) can't be resumed from the
-                // project's folder: it's remembered for its own workspace instead.
-                let c = self
-                    .workspaces
-                    .entry(p.path.clone())
-                    .or_insert_with(|| kynex_core::workspace::Workspaces::load(&p.path));
-                if c.remember(&s.cwd, Some(&id))
-                    && let Err(e) = c.save(&p.path)
-                {
-                    eprintln!("{e}");
-                }
-            }
-        }
-        if changed {
-            self.save();
-            self.save_session_models();
-        }
-    }
-
-    /// Writes the model pinned to a session that only now has an id, as
-    /// [`Self::set_session_model`] does once it has one, and the provider it
-    /// runs on, so it reopens on it.
-    fn save_session_models(&mut self) {
-        let started: Vec<_> = self
-            .chat
-            .sessions
-            .iter()
-            .chain(self.code.values().flat_map(|l| l.sessions.iter()))
-            // A reopened one that hasn't sent anything may be on a fallback (the
-            // OpenRouter key not loaded yet): what it ran on stays recorded (#512).
-            .filter(|s| !s.is_new() && !s.awaits_restore())
-            .filter_map(|s| Some((s.cwd.clone(), s.session_id.clone()?, s.own_model.clone(), s.provider().provider())))
-            .collect();
-        for (cwd, id, model, provider) in started {
-            let g = self.groups_for(&cwd);
-            let (pin_changed, provider_changed) =
-                (model.is_some() && g.model_of(&id) != model.as_deref(), g.provider_of(&id) != provider);
-            if pin_changed || provider_changed {
-                self.edit_groups(&cwd, |g| {
-                    if let Some(m) = &model {
-                        g.set_model(&id, Some(m));
-                    }
-                    g.set_provider(&id, provider);
-                });
-            }
-        }
-    }
-
     pub(super) fn active_project(&self) -> Option<&ProjectState> {
-        match self.saved.active {
-            Active::Project(i) => self.saved.projects.get(i),
-            Active::Chat => None,
-        }
+        self.saved.active_project.and_then(|i| self.saved.projects.get(i))
     }
 
-    /// The active tab's folder: the project's path, or chat's own.
-    pub(super) fn active_dir(&self) -> PathBuf {
-        self.active_project().map_or_else(chat_dir, |p| p.path.clone())
+    /// The currently focused pane id in the active workspace.
+    pub(super) fn focused_pane_id(&self) -> Option<PaneId> {
+        let (_, cwd) = self.tiling_scope()?;
+        self.tiles.get(&cwd)?.focus()
     }
 
-    /// The shown session's uid. The one place that decides which session the root draws. Callers
-    /// outside key handlers get the key from here and pass it down.
-    pub(super) fn focused_key(&self) -> Option<Key> {
-        self.active_session().map(|s| s.uid)
+    /// The live instance id currently shown in the focused/main `agent_cli` pane, if any.
+    pub(super) fn focused_agent_id(&self) -> Option<super::agent_cli::AgentId> {
+        let (_, cwd) = self.tiling_scope()?;
+        let t = self.tiles.get(&cwd)?;
+        let pane = t.agent_focus()?;
+        self.pane_agents.get(&pane).copied()
     }
 
-    /// The key of the session the composer talks to: like `focused_key()`, but
-    /// a folder with no session gets one. For actions that used to go through `session_mut()`.
-    pub(super) fn composer_key(&mut self) -> Option<Key> {
-        self.session_mut().map(|s| s.uid)
+    /// The session id of the currently focused `agent_cli` pane, if any.
+    pub(super) fn focused_session_id(&self) -> Option<String> {
+        let (_, cwd) = self.tiling_scope()?;
+        let t = self.tiles.get(&cwd)?;
+        let pane = t.agent_focus()?;
+        self.pane_agent(pane).and_then(|a| a.meta.session_id.clone()).or_else(|| t.agent(pane)?.session_id.clone())
     }
 
-    pub(super) fn session_by_key(&self, key: Key) -> Option<&Session> {
-        self.all_sessions().find(|s| s.uid == key)
-    }
-
-    pub(super) fn session_for(&mut self, key: Key) -> Option<&mut Session> {
-        self.all_sessions_mut().find(|s| s.uid == key)
-    }
-
-    fn active_live(&self) -> Option<&Live> {
-        match self.saved.active {
-            Active::Chat => Some(&self.chat),
-            Active::Project(i) => self.saved.projects.get(i).and_then(|p| self.code.get(&p.path)),
-        }
-    }
-
-    fn active_session(&self) -> Option<&Session> {
-        self.active_live().and_then(Live::current)
-    }
-
-    /// The open sessions in the active tab's folder, created (with the saved
-    /// session resumed) on first use.
-    pub(super) fn live_mut(&mut self) -> Option<&mut Live> {
-        let wake = self.wake.clone();
-        let (kind, path, resume) = match self.saved.active {
-            Active::Chat => (Kind::Chat, chat_dir(), None),
-            Active::Project(i) => {
-                let p = self.saved.projects.get(i)?;
-                (Kind::Code, p.path.clone(), p.session_id.clone())
-            }
+    /// Replaces the current/main `agent_cli` pane with the inline provider picker so you can
+    /// start a new session without cluttering the workspace with extra panes. Any running CLI
+    /// in that pane stays alive in the background and can be switched back to from the Sessions list.
+    pub(super) fn new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((_, cwd)) = self.tiling_scope() else { return };
+        let Some(target) = self.tiles.get(&cwd).and_then(|t| t.agent_focus()) else {
+            return self.split_pane(Axis::Row, window, cx);
         };
-        let empty = match kind {
-            Kind::Chat => self.chat.sessions.is_empty(),
-            Kind::Code => self.code.get(&path).is_none_or(|l| l.sessions.is_empty()),
-        };
-        if empty {
-            let mut s = match resume {
-                Some(id) => Session::resume(kind, path.clone(), id, wake.clone()),
-                None => Session::new(kind, path.clone()),
-            };
-            self.start_model(&mut s);
-            s.wake = wake;
-            let live = match kind {
-                Kind::Chat => &mut self.chat,
-                Kind::Code => self.code.entry(path.clone()).or_default(),
-            };
-            live.sessions.push(s);
-            live.active = 0;
+        if let Some(t) = self.tiles.get_mut(&cwd) {
+            t.focus_pane(target);
         }
-        match kind {
-            Kind::Chat => Some(&mut self.chat),
-            Kind::Code => self.code.get_mut(&path),
+        if self.tiles.get(&cwd).and_then(|t| t.agent(target)).is_some_and(AgentCliPane::is_pending) {
+            self.picker_focus.focus(window, cx);
+            cx.notify();
+            return;
         }
+        self.show_picker_in_pane(target, window, cx);
     }
 
-    /// Gives a session the model it starts on: the one pinned to it (restored
-    /// from its folder's sessions when it resumes), else its folder's; and a
-    /// new one its provider.
-    pub(super) fn start_model(&mut self, s: &mut Session) {
-        let cwd = s.cwd.clone();
-        // A fork starts on what its original was pinned to.
-        if let Some(id) = s.session_id.clone().or_else(|| s.forked_from().map(str::to_string))
-            && s.own_model.is_none()
-        {
-            s.own_model = self.groups_for(&cwd).model_of(&id).map(str::to_string);
-        }
-        self.start_session(s);
-    }
-
-    /// The session the composer talks to.
-    pub(super) fn session_mut(&mut self) -> Option<&mut Session> {
-        self.live_mut()?.current_mut()
-    }
-
-    /// Shows `s` in the active tab. Sessions it replaces keep running if
-    /// they're working; idle ones close.
-    pub(super) fn open_session(&mut self, mut s: Session) {
-        let _t = kynex_core::trace::span("open_session");
-        self.adopt_project_settings(&mut s);
-        {
-            let _t = kynex_core::trace::span("open_session: start_model (settings, provider)");
-            self.start_model(&mut s);
-        }
-        s.wake = self.wake.clone();
-        let Some(live) = self.live_mut() else { return };
-        let closed = live.show(s);
-        self.forget(&closed);
-        self.warm_shown();
-    }
-
-    /// Shows the open session with this CLI id, or resumes it from its transcript.
-    /// An archived session comes out of the archive.
-    pub(super) fn switch_session(&mut self, kind: Kind, cwd: PathBuf, id: String) {
+    /// Resumes or switches to session `id` in workspace `cwd` inside the current/main
+    /// `agent_cli` pane. If a live instance is already running for `id` (visible or parked in
+    /// the background), focuses or swaps it in without restarting; otherwise launches a resume
+    /// CLI while parking whatever was previously in the pane.
+    pub(super) fn switch_session(&mut self, cwd: PathBuf, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.edit_groups(&cwd, |g| {
             g.unarchive(&id);
         });
-        if !self.show_open(|s| s.session_id.as_deref() == Some(id.as_str())) {
-            self.open_session(Session::resume(kind, cwd, id, self.wake.clone()));
+        if let Some(project) = self.workspace_project() {
+            self.saved_workspaces(&project).remember(&cwd, Some(&id));
         }
+        // Already running in this workspace (visible in a pane OR parked in background)?
+        if let Some(agent_id) = self.live_agent_of_session(&cwd, &id) {
+            self.go_to_agent(agent_id, window, cx);
+            return;
+        }
+        let provider = self
+            .sessions
+            .get(&cwd)
+            .and_then(|l| l.items.iter().find(|i| i.id == id))
+            .map(|i| i.provider.clone())
+            .unwrap_or_else(|| self.groups_for(&cwd).provider_of(&id));
+        let model = self.groups_for(&cwd).model_of(&id).map(str::to_string);
+
+        // Reuse the focused/main agent pane (or a pending pane if focused), parking whatever was there.
+        let target = self.tiles.get(&cwd).and_then(|t| {
+            t.agent_focus().or_else(|| t.agent_panes().into_iter().find(|(_, m)| m.is_pending()).map(|(p, _)| p))
+        });
+        let pane = match target {
+            Some(p) => {
+                if let Some(t) = self.tiles.get_mut(&cwd) {
+                    t.focus_pane(p);
+                }
+                p
+            }
+            None => {
+                let p = self.next_pane;
+                let bounds = self.tile_bounds();
+                let placed = self
+                    .tiles
+                    .get_mut(&cwd)
+                    .is_some_and(|t| t.split_agent(Axis::Row, p, AgentCliPane::pending(), bounds));
+                if !placed {
+                    return;
+                }
+                self.next_pane += 1;
+                p
+            }
+        };
+        self.launch_agent_cli(pane, cwd, provider, Some(id), model, window, cx);
     }
 
-    /// A new session in the active tab, unless the shown one is still new.
-    pub(super) fn new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        cx.notify();
-        if let Some(s) = self.session_mut()
-            && !s.is_new()
-        {
-            let (kind, cwd) = (s.kind, s.cwd.clone());
-            self.open_session(Session::new(kind, cwd));
-        }
-        self.focus_input(window, cx);
-    }
-
-    /// Shows an open session in the active tab, if one matches.
-    pub(super) fn show_open(&mut self, f: impl Fn(&Session) -> bool) -> bool {
-        let Some(live) = self.live_mut() else { return false };
-        if !live.show_where(f) {
-            return false;
-        }
-        let closed = live.prune();
-        self.forget(&closed);
-        self.warm_shown();
-        true
-    }
-
-    /// Puts the keyboard where the shown session wants it: its prompt, when it
-    /// has one up, else the composer. A session just switched to has no prompt
-    /// view yet; the one made for it on the next frame takes focus itself.
+    /// Moves keyboard focus into the focused pane: `TerminalView` for running `agent_cli`
+    /// panes, `picker_focus` for pending provider pickers, or the tool pane's focus handle.
     pub(super) fn focus_input(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus_tool_input(window, cx) {
             return;
         }
-        match &self.pane.prompt {
-            Some(p) if self.pane.prompt_has_focus(self.focused_key()) => {
-                p.view.read(cx).focus_handle(cx).focus(window, cx)
+        let Some((_, ws)) = self.tiling_scope() else {
+            self.focus.focus(window, cx);
+            return;
+        };
+        let Some(t) = self.tiles.get(&ws) else { return };
+        let Some(focus) = t.focus() else { return };
+        if t.content(focus) == Some(Content::AgentCli) {
+            if let Some(view) = self.pane_agent(focus).and_then(|a| a.view.as_ref()) {
+                view.read(cx).focus_handle(cx).focus(window, cx);
+            } else {
+                self.picker_focus.focus(window, cx);
             }
-            _ => self.pane.composer.read(cx).focus_handle(cx).focus(window, cx),
         }
     }
 
-    /// Closes an open session that isn't working (its transcript stays).
-    pub(super) fn close_open(&mut self, key: Key) {
-        if self.live_mut().is_some_and(|l| l.close(key)) {
-            self.forget(&[key]);
+    pub(super) fn select_project(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.saved.projects.len() {
+            return;
         }
-    }
-
-    /// Drops the view state of sessions that closed.
-    pub(super) fn forget(&mut self, closed: &[Key]) {
-        for k in closed {
-            self.threads.remove(k);
-            self.timelines.remove(k);
-        }
-        self.expanded.retain(|(k, _)| !closed.contains(k));
-        self.open_runs.retain(|(k, _)| !closed.contains(k));
-        self.forget_drafts(closed);
-    }
-
-    pub(super) fn select(&mut self, a: Active, window: &mut Window, cx: &mut Context<Self>) {
-        if self.saved.active != a {
-            self.saved.active = a;
+        if self.saved.active_project != Some(index) {
+            self.saved.active_project = Some(index);
             self.menu = None;
             self.save();
-            self.pane.composer.read(cx).focus_handle(cx).focus(window, cx);
+            self.sync_tiles(window, cx);
+            self.focus_input(window, cx);
         }
         cx.notify();
     }
 
     pub(super) fn add_project(&mut self, path: PathBuf) {
-        let idx = match self.saved.projects.iter().position(|p| p.path == path) {
+        let idx = match self.saved.projects.iter().position(|p| same_folder(&p.path, &path)) {
             Some(i) => i,
             None => {
-                // A folder opened for the first time starts on its setup checklist (open_pending_setup).
-                self.setup_for = Some(path.clone());
                 self.saved.projects.push(ProjectState::new(path));
                 self.saved.projects.len() - 1
             }
         };
-        self.saved.active = Active::Project(idx);
+        self.saved.active_project = Some(idx);
         self.save();
     }
 
     pub(super) fn close_project(&mut self, i: usize, cx: &mut Context<Self>) {
+        if i >= self.saved.projects.len() {
+            return;
+        }
         let p = self.saved.projects.remove(i);
         let known: Vec<PathBuf> = self
             .worktrees
             .get(&p.path)
             .map(|w| w.read(cx).list.iter().map(|w| w.path.clone()).collect())
             .unwrap_or_default();
-        let sessions: Vec<_> = self.code.remove(&p.path).into_iter().flat_map(|l| l.sessions).collect();
-        let cwds: Vec<PathBuf> = sessions.iter().map(|s| s.cwd.clone()).collect();
-        let closed: Vec<Key> = sessions.iter().map(|s| s.uid).collect();
-        drop(sessions);
-        self.forget(&closed);
-        self.drop_project_tiles(&p.path);
+        self.drop_project_tiles(&p.path, cx);
+        self.drop_gone_agents(cx);
+        self.drop_gone_terminals(cx);
         self.worktrees.remove(&p.path);
-        // Its Git views and terminals, in every workspace's folder (dropping a panel ends its shells).
-        self.drop_workspace_views(&p.path, &cwds, &known);
-        self.saved.active = match self.saved.active {
-            Active::Project(a) if a > i => Active::Project(a - 1),
-            Active::Project(a) if a == i && i > 0 => Active::Project(i - 1),
-            Active::Project(a) if a == i => {
-                if self.saved.projects.is_empty() {
-                    Active::Chat
-                } else {
-                    Active::Project(0)
-                }
-            }
+        self.drop_workspace_views(&p.path, &known);
+        self.saved.active_project = match self.saved.active_project {
+            Some(a) if a > i => Some(a - 1),
+            Some(a) if a == i && i > 0 => Some(i - 1),
+            Some(a) if a == i => (!self.saved.projects.is_empty()).then_some(0),
             other => other,
         };
         self.save();

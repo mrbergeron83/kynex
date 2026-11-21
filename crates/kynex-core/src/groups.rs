@@ -25,9 +25,9 @@ pub struct SessionGroups {
     /// Models pinned to a session, by session id, over the project's own;
     /// empty is the CLI's default.
     pub models: BTreeMap<String, String>,
-    /// The provider each session ran on, by session id, when it isn't
-    /// Anthropic; a reopened session runs on it again.
-    pub providers: BTreeMap<String, crate::provider::Provider>,
+    /// The canonical provider ID each session ran on, by session id, when it isn't
+    /// `claude`; a reopened session runs on it again.
+    pub providers: BTreeMap<String, String>,
     /// The workspace is open in the sidebar's tree though it isn't the selected one
     /// (opened by hand; see [`crate::tree`]).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -259,28 +259,51 @@ impl SessionGroups {
         self.models.get(id).map(String::as_str)
     }
 
-    /// The provider a session ran on: Anthropic unless recorded otherwise.
-    pub fn provider_of(&self, id: &str) -> crate::provider::Provider {
-        self.providers.get(id).copied().unwrap_or_default()
+    /// The canonical provider ID a session ran on: `claude` unless recorded otherwise.
+    pub fn provider_of(&self, id: &str) -> String {
+        self.providers
+            .get(id)
+            .map(|p| crate::agent_cli::normalize_provider_id(p))
+            .unwrap_or_else(|| crate::agent_cli::CLAUDE.to_string())
     }
 
-    /// `ids` split by the provider each ran on, Anthropic's first, keeping
-    /// their order; providers with none are left out.
-    pub fn by_provider(&self, ids: &[String]) -> Vec<(crate::provider::Provider, Vec<String>)> {
-        use crate::provider::Provider;
-        Provider::ALL
+    /// `ids` split by the provider each ran on, `claude` first, then alphabetical by provider id.
+    pub fn by_provider(&self, ids: &[String]) -> Vec<(String, Vec<String>)> {
+        let mut order: Vec<String> = Vec::new();
+        for id in ids {
+            let p = self.provider_of(id);
+            if !order.contains(&p) {
+                order.push(p);
+            }
+        }
+        order.sort_by(|a, b| {
+            let rank = |s: &str| match s {
+                crate::agent_cli::CLAUDE => 0,
+                crate::agent_cli::CLAUDE_OPENROUTER => 1,
+                crate::agent_cli::AGY => 2,
+                crate::agent_cli::AGY_OPENROUTER => 3,
+                crate::agent_cli::GROK => 4,
+                _ => 5,
+            };
+            rank(a).cmp(&rank(b)).then_with(|| a.cmp(b))
+        });
+        order
             .into_iter()
-            .map(|p| (p, ids.iter().filter(|id| self.provider_of(id) == p).cloned().collect::<Vec<_>>()))
-            .filter(|(_, ids)| !ids.is_empty())
+            .map(|p| {
+                let list: Vec<String> = ids.iter().filter(|id| self.provider_of(id) == p).cloned().collect();
+                (p, list)
+            })
+            .filter(|(_, list)| !list.is_empty())
             .collect()
     }
 
     /// Records the provider a session runs on.
-    pub fn set_provider(&mut self, id: &str, provider: crate::provider::Provider) {
-        if provider == crate::provider::Provider::Anthropic {
+    pub fn set_provider(&mut self, id: &str, provider: &str) {
+        let norm = crate::agent_cli::normalize_provider_id(provider);
+        if norm == crate::agent_cli::CLAUDE {
             self.providers.remove(id);
         } else {
-            self.providers.insert(id.to_string(), provider);
+            self.providers.insert(id.to_string(), norm);
         }
     }
 
@@ -569,7 +592,7 @@ mod tests {
         g.toggle_pin("pinned");
         g.rename("named", "A name");
         g.set_model("modelled", Some("opus"));
-        g.set_provider("grok", crate::provider::Provider::Grok);
+        g.set_provider("grok", crate::agent_cli::GROK);
         g.toggle_pin("open");
         g.toggle_pin("kept");
         let all = ["grouped", "archived", "pinned", "named", "modelled", "grok", "open", "kept"];
@@ -828,27 +851,26 @@ mod tests {
 
     #[test]
     fn providers_recorded_per_session() {
-        use crate::provider::Provider;
         let mut g = SessionGroups::default();
-        assert_eq!(g.provider_of("s"), Provider::Anthropic);
-        g.set_provider("s", Provider::OpenRouter);
-        assert_eq!(g.provider_of("s"), Provider::OpenRouter);
+        assert_eq!(g.provider_of("s"), "claude");
+        g.set_provider("s", "claude-openrouter");
+        assert_eq!(g.provider_of("s"), "claude-openrouter");
         let back: SessionGroups = serde_json::from_str(&serde_json::to_string(&g).unwrap()).unwrap();
-        assert_eq!(back.provider_of("s"), Provider::OpenRouter);
-        g.set_provider("s", Provider::Anthropic);
+        assert_eq!(back.provider_of("s"), "claude-openrouter");
+        g.set_provider("s", "anthropic");
         assert!(g.providers.is_empty());
-        g.set_provider("t", Provider::OpenRouter);
+        g.set_provider("t", "openrouter");
+        assert_eq!(g.provider_of("t"), "claude-openrouter");
         g.forget("t");
         assert!(g.providers.is_empty());
 
-        // Split for the panel: Anthropic's first, order kept, empty ones left out.
-        g.set_provider("b", Provider::OpenRouter);
-        g.set_provider("d", Provider::OpenRouter);
+        g.set_provider("b", "claude-openrouter");
+        g.set_provider("d", "claude-openrouter");
         let ids: Vec<String> = ["a", "b", "c", "d"].map(String::from).to_vec();
         let split = g.by_provider(&ids);
         assert_eq!(split.len(), 2);
-        assert_eq!((split[0].0, split[0].1.clone()), (Provider::Anthropic, vec!["a".to_string(), "c".into()]));
-        assert_eq!((split[1].0, split[1].1.clone()), (Provider::OpenRouter, vec!["b".to_string(), "d".into()]));
+        assert_eq!(split[0], ("claude".to_string(), vec!["a".to_string(), "c".into()]));
+        assert_eq!(split[1], ("claude-openrouter".to_string(), vec!["b".to_string(), "d".into()]));
         let only = g.by_provider(&["a".to_string()]);
         assert_eq!(only.len(), 1);
     }

@@ -1,109 +1,73 @@
-//! Go To: showing a session wherever it is (its project tab, workspace and pane), for the
-//! palette's sessions and for the key that jumps to the next session that needs you.
+//! Go To: jumping to a session or `agent_cli` pane across open projects and workspaces,
+//! for the command palette and the "Next agent that needs you" shortcut.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use gpui::{Context, Window};
+use kynex_core::agent_panes::AgentState;
 use kynex_core::attention::next_waiting;
-use kynex_core::live::Key;
 use kynex_core::palette::workspace_places;
-use kynex_core::session::Kind;
 use kynex_core::toasts::Toast;
-use kynex_core::workspace;
+use kynex_core::workspace::same_folder;
 
 use super::KynexApp;
 use super::keys;
-use super::state::Active;
-
-/// How to tell which session of a project is meant.
-#[derive(Clone, Copy)]
-pub(super) enum Which<'a> {
-    /// By the CLI's session id: open already, or to be resumed.
-    Id(&'a str),
-    /// An open session, by key.
-    Open(Key),
-}
 
 impl KynexApp {
-    /// Shows session `which` of `project`, which runs in `workspace`: selects the project's tab
-    /// and the workspace, then focuses the pane showing it, or shows it in the focused pane
-    /// (resuming it if it isn't open).
+    /// Reveals a session by CLI `session_id` in `project` / `workspace`: switches to the
+    /// project tab and workspace, then focuses or resumes the session in an `agent_cli` pane.
     pub(super) fn reveal_session(
         &mut self,
         project: &Path,
         workspace: &Path,
-        which: Which<'_>,
+        session_id: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(i) = self.saved.projects.iter().position(|p| p.path == project) else { return };
-        self.select(Active::Project(i), window, cx);
-        let here = self.workspace_cwd().is_some_and(|c| workspace::same_folder(&c, workspace));
+        let Some(i) = self.saved.projects.iter().position(|p| same_folder(&p.path, project)) else { return };
+        self.select_project(i, window, cx);
+        let here = self.workspace_cwd().is_some_and(|c| same_folder(&c, workspace));
         if !here {
             self.select_workspace(workspace, cx);
         }
-        let open = self.code.get(project).and_then(|l| {
-            l.sessions
-                .iter()
-                .find(|s| match which {
-                    Which::Id(id) => s.session_id.as_deref() == Some(id),
-                    Which::Open(key) => s.uid == key,
-                })
-                .map(|s| s.uid)
-        });
-        match (open, which) {
-            (Some(key), _) => {
-                // Shown first: the workspace's tiling is the one of the shown session's folder.
-                self.show_open(|s| s.uid == key);
-                if let Some((_, cwd, _)) = self.tiling_scope()
-                    && let Some(tiles) = self.tiles.get_mut(&cwd)
-                    && let Some(pane) = tiles.pane_of(key)
-                {
-                    // Its pane may be in another pane tab: this brings that tab up.
-                    tiles.focus_pane(pane);
-                    self.focus_pane(pane, window, cx);
-                }
-            }
-            (None, Which::Id(id)) => self.switch_session(Kind::Code, workspace.to_path_buf(), id.to_string()),
-            (None, Which::Open(_)) => {}
-        }
+        self.switch_session(workspace.to_path_buf(), session_id.to_string(), window, cx);
         self.focus_input(window, cx);
         cx.notify();
     }
 
-    /// Every open session in a stable order (project, workspace, then as opened): its project,
-    /// folder, key, and whether it needs you (a prompt waits).
-    fn sessions_in_order(&mut self, cx: &mut Context<Self>) -> Vec<(PathBuf, PathBuf, Key, bool)> {
-        let projects: Vec<PathBuf> = self.saved.projects.iter().map(|p| p.path.clone()).collect();
+    /// Collects all live `agent_cli` instances (visible and parked) across open projects
+    /// in a stable order: `(agent_id, needs_you)`.
+    fn agents_in_order(&mut self, cx: &mut Context<Self>) -> Vec<(super::agent_cli::AgentId, bool)> {
+        let projects: Vec<_> = self.saved.projects.iter().map(|p| p.path.clone()).collect();
         let mut rows = Vec::new();
         for (pi, project) in projects.iter().enumerate() {
-            if !self.code.contains_key(project) {
-                continue;
-            }
             let list = self.workspaces_of(project, cx);
             let places = workspace_places(&list.iter().map(|(c, _)| (c.main, c.label.as_str())).collect::<Vec<_>>());
-            let Some(live) = self.code.get(project) else { continue };
-            for (pos, s) in live.sessions.iter().enumerate() {
-                let place = list.iter().position(|(c, _)| c.at(&s.cwd)).map_or(usize::MAX, |i| places[i]);
-                rows.push(((pi, place, pos), (project.clone(), s.cwd.clone(), s.uid, s.waiting())));
+            for inst in self.agent_instances.values() {
+                let belongs = same_folder(&inst.cwd, project)
+                    || self.tile_projects.get(&inst.cwd).is_some_and(|p| same_folder(p, project));
+                if !belongs {
+                    continue;
+                }
+                let place = list.iter().position(|(c, _)| c.at(&inst.cwd)).map_or(usize::MAX, |i| places[i]);
+                let needs = inst.tracker.state() == AgentState::NeedsYou;
+                rows.push(((pi, place, inst.id), (inst.id, needs)));
             }
         }
         rows.sort_by_key(|(at, _)| *at);
         rows.into_iter().map(|(_, r)| r).collect()
     }
 
-    /// Shows the next session, in any project, that needs you (after the focused one, wrapping).
+    /// Jumps to the next live `agent_cli` instance (visible or parked), in any project,
+    /// that needs your input.
     pub(super) fn next_needs_you(&mut self, _: &keys::NextNeedsYou, window: &mut Window, cx: &mut Context<Self>) {
         self.palette = None;
-        let rows = self.sessions_in_order(cx);
-        let order: Vec<(Key, bool)> = rows.iter().map(|r| (r.2, r.3)).collect();
-        let current = self.focused_key().filter(|_| matches!(self.saved.active, Active::Project(_)));
-        let Some(key) = next_waiting(&order, current) else {
+        let order = self.agents_in_order(cx);
+        let current = self.focused_agent_id();
+        let Some(agent_id) = next_waiting(&order, current) else {
             self.toast(Toast::info("Nothing needs you."));
             return cx.notify();
         };
-        if let Some((project, cwd, _, _)) = rows.into_iter().find(|r| r.2 == key) {
-            self.reveal_session(&project, &cwd, Which::Open(key), window, cx);
-        }
+        self.go_to_agent(agent_id, window, cx);
     }
 }

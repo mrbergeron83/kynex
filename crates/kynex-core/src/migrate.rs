@@ -8,10 +8,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 /// The format this build writes.
-pub const CURRENT: u32 = 3;
+pub const CURRENT: u32 = 4;
 
 /// `MIGRATIONS[i]` turns a file at version `i` into version `i + 1`.
-const MIGRATIONS: &[fn(&mut Map<String, Value>)] = &[v0_to_v1, v1_to_v2, v2_to_v3];
+const MIGRATIONS: &[fn(&mut Map<String, Value>)] = &[v0_to_v1, v1_to_v2, v2_to_v3, v3_to_v4];
 
 const _: () = assert!(MIGRATIONS.len() == CURRENT as usize);
 
@@ -57,6 +57,26 @@ fn v2_to_v3(map: &mut Map<String, Value>) {
         "sound": if sounds == Some(Value::Bool(true)) { "Default" } else { "None" },
     });
     map.insert("notifications".into(), serde_json::json!({ "finished": rule, "needs_you": rule }));
+}
+
+/// Pure-CLI architecture: Chat tab removed (maps old `active` to `active_project`), and
+/// the complex `notifications` rules matrix becomes a simple `background_notifications` bool.
+fn v3_to_v4(map: &mut Map<String, Value>) {
+    if let Some(active) = map.remove("active") {
+        let idx = match active {
+            Value::Object(obj) => obj.get("Project").and_then(Value::as_u64),
+            _ => map.get("projects").and_then(Value::as_array).filter(|p| !p.is_empty()).map(|_| 0),
+        };
+        if let Some(i) = idx {
+            map.insert("active_project".into(), Value::from(i));
+        }
+    }
+    if let Some(Value::Object(rules)) = map.remove("notifications") {
+        let on = ["finished", "needs_you"]
+            .iter()
+            .any(|k| rules.get(*k).and_then(|r| r.get("delivery")).and_then(Value::as_str).is_some_and(|d| d != "Off"));
+        map.entry("background_notifications").or_insert(Value::Bool(on));
+    }
 }
 
 pub enum Loaded {
@@ -130,26 +150,22 @@ mod tests {
         "sessions_collapsed": false
     }"#;
 
-    fn object(v: &Value) -> &Map<String, Value> {
-        v.as_object().expect("object")
-    }
-
     #[test]
     fn unversioned_file_migrates_to_current_and_keeps_every_key() {
         let Loaded::Ok(v) = migrate(OLD) else { panic!("expected Ok") };
-        let before: Value = serde_json::from_str(OLD).unwrap();
         assert_eq!(v["version"], CURRENT);
-        for (k, val) in object(&before) {
-            assert_eq!(&v[k], val, "key {k} changed");
-        }
-        assert_eq!(object(&v).len(), object(&before).len() + 1);
+        assert_eq!(v["theme"], "dark");
+        assert_eq!(v["zoom"], 1.1);
+        assert_eq!(v["sessions_collapsed"], false);
+        assert_eq!(v["active_project"], 0);
+        assert!(v.get("active").is_none());
     }
 
     #[test]
     fn current_file_is_left_as_it_is() {
-        let text = r#"{"version": 3, "zoom": 1.0}"#;
+        let text = r#"{"version": 4, "zoom": 1.0}"#;
         let Loaded::Ok(v) = migrate(text) else { panic!("expected Ok") };
-        assert_eq!(v, serde_json::json!({"version": 3, "zoom": 1.0}));
+        assert_eq!(v, serde_json::json!({"version": 4, "zoom": 1.0}));
     }
 
     fn migrated(text: &str) -> Value {
@@ -162,19 +178,19 @@ mod tests {
         let v = migrated(
             r#"{"version": 1, "active": "Chat", "chief_view": true, "projects": [{"path": "a"}, {"path": "b"}]}"#,
         );
-        assert_eq!(v["active"], serde_json::json!({"Project": 0}));
+        assert_eq!(v["active_project"], 0);
+        assert!(v.get("active").is_none());
         assert_eq!(v["version"], CURRENT);
     }
 
     #[test]
-    fn knx_ops_with_no_projects_stays_on_chat() {
+    fn active_project_migration_preserves_index_and_handles_empty() {
         let v = migrated(r#"{"version": 1, "active": "Chat", "chief_view": true, "projects": []}"#);
-        assert_eq!(v["active"], "Chat");
-        // Chat itself, or another project, is left alone.
+        assert!(v.get("active_project").is_none());
         let v = migrated(r#"{"version": 1, "active": {"Project": 1}, "chief_view": true, "projects": [1, 2]}"#);
-        assert_eq!(v["active"], serde_json::json!({"Project": 1}));
+        assert_eq!(v["active_project"], 1);
         let v = migrated(r#"{"version": 1, "active": "Chat", "chief_view": false, "projects": [1]}"#);
-        assert_eq!(v["active"], "Chat");
+        assert_eq!(v["active_project"], 0);
     }
 
     #[test]
@@ -184,24 +200,29 @@ mod tests {
                 "chief_workers": {}, "chief_spent": {}, "chief_working": [],
                 "claude": {"model": "m", "worker_model": "haiku", "careful": true}}"#,
         );
-        assert_eq!(v, serde_json::json!({"version": 3, "zoom": 1.0, "claude": {"model": "m"}}));
+        assert_eq!(v, serde_json::json!({"version": 4, "zoom": 1.0, "claude": {"model": "m"}}));
         // A project's settings file keeps them at the top level.
         let v = migrated(r#"{"version": 1, "model": "m", "worker_model": "haiku", "careful": true}"#);
-        assert_eq!(v, serde_json::json!({"version": 3, "model": "m"}));
+        assert_eq!(v, serde_json::json!({"version": 4, "model": "m"}));
     }
 
     #[test]
-    fn notify_and_sounds_become_rules() {
+    fn notify_and_rules_become_background_notifications() {
         let v = migrated(r#"{"version": 2, "notify": true, "sounds": true, "zoom": 1.0}"#);
-        let both = serde_json::json!({"delivery": "Both", "sound": "Default"});
-        assert_eq!(v["notifications"], serde_json::json!({"finished": both, "needs_you": both}));
-        assert!(v.get("notify").is_none() && v.get("sounds").is_none());
-        let v = migrated(r#"{"version": 2, "notify": true, "sounds": false}"#);
-        assert_eq!(v["notifications"]["needs_you"], serde_json::json!({"delivery": "Both", "sound": "None"}));
+        assert_eq!(v["background_notifications"], true);
+        assert!(v.get("notify").is_none() && v.get("sounds").is_none() && v.get("notifications").is_none());
         let v = migrated(r#"{"version": 2, "notify": false, "sounds": true}"#);
-        assert_eq!(v["notifications"]["finished"], serde_json::json!({"delivery": "Off", "sound": "Default"}));
+        assert_eq!(v["background_notifications"], false);
+        let v = migrated(
+            r#"{"version": 3, "notifications": {"finished": {"delivery": "Background"}, "needs_you": {"delivery": "Off"}}}"#,
+        );
+        assert_eq!(v["background_notifications"], true);
+        let v = migrated(
+            r#"{"version": 3, "notifications": {"finished": {"delivery": "Off"}, "needs_you": {"delivery": "Off"}}}"#,
+        );
+        assert_eq!(v["background_notifications"], false);
         // Nothing saved, nothing added.
-        assert!(migrated(r#"{"version": 2}"#).get("notifications").is_none());
+        assert!(migrated(r#"{"version": 3}"#).get("background_notifications").is_none());
     }
 
     #[test]

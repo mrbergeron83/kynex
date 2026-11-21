@@ -13,37 +13,27 @@ use crate::ui::px;
 use gpui::{Context, Entity, div, prelude::*};
 use kynex_core::fmt::bytes;
 use kynex_core::paths::project_name;
-use kynex_core::session;
+use kynex_core::sessions;
 use kynex_core::storage::{self, Part, Roots, SessionUse, Sort, Usage};
 use kynex_core::toasts::Toast;
 
 use super::KynexApp;
-use super::settings::heading;
+use super::app_settings::heading;
 use crate::theme::{Palette, mono};
 use crate::ui::input::TextInput;
 use crate::ui::{ghost_button, outline_button, spinner};
 
 pub(super) struct StorageView {
-    /// `None` while the folders are walked.
     pub(super) usage: Option<Rc<Usage>>,
-    /// Each session's title and the folder it ran in, read from its log after
-    /// the sizes are in.
     pub(super) info: HashMap<String, LogInfo>,
-    /// A deletion waiting for Yes, shown under what asked for it.
     pub(super) pending: Option<Pending>,
-    /// A deletion under way.
     pub(super) deleting: bool,
     pub(super) filter: Entity<TextInput>,
     pub(super) sort: Sort,
-    /// Sessions showing where their files are.
     pub(super) open: HashSet<String>,
-    /// How many of the list are shown.
     pub(super) shown: usize,
-    /// Measuring again; the last measurements stay up meanwhile.
     measuring: bool,
-    /// Settings opened again since the last measuring: measure on the next look.
     pub(super) stale: bool,
-    /// Single sessions' disk use for their menus, by id; `None` while measured.
     sizes: HashMap<String, Option<u64>>,
 }
 
@@ -51,11 +41,9 @@ pub(super) struct StorageView {
 pub(super) struct LogInfo {
     pub(super) title: Option<String>,
     pub(super) cwd: Option<PathBuf>,
-    /// The log's length and modification time when read: unchanged, it isn't read again.
     stamp: Option<(u64, SystemTime)>,
 }
 
-/// A log's length and modification time.
 fn stamp(path: &std::path::Path) -> Option<(u64, SystemTime)> {
     let m = std::fs::metadata(path).ok()?;
     Some((m.len(), m.modified().ok()?))
@@ -63,18 +51,15 @@ fn stamp(path: &std::path::Path) -> Option<(u64, SystemTime)> {
 
 #[derive(Clone)]
 pub(super) struct Pending {
-    /// Which row or cleanup line asked: a session id, or a cleanup's name.
     pub(super) at: String,
     targets: Vec<(String, String)>,
     parts: &'static [Part],
     question: String,
 }
 
-/// Rows shown at first, and added by "Show more".
 pub(super) const PAGE: usize = 25;
 
 impl KynexApp {
-    /// The page's state, made on first use.
     pub(super) fn storage_view(&mut self, cx: &mut Context<Self>) -> &mut StorageView {
         self.storage.get_or_insert_with(|| StorageView {
             usage: None,
@@ -91,9 +76,6 @@ impl KynexApp {
         })
     }
 
-    /// Walks the session folders again, off the UI thread: sizes first, then
-    /// the title and folder of each log that changed since it was last read.
-    /// What was measured last stays up until then.
     pub(super) fn scan_storage(&mut self, cx: &mut Context<Self>) {
         let v = self.storage_view(cx);
         v.measuring = true;
@@ -125,7 +107,7 @@ impl KynexApp {
                         let stamp = stamp(p);
                         match known.get(id) {
                             Some(k) if k.stamp.is_some() && k.stamp == stamp => k.clone(),
-                            _ => LogInfo { title: session::title_of(p), cwd: session::cwd_of(p), stamp },
+                            _ => LogInfo { title: sessions::title_of(p), cwd: sessions::cwd_of(p), stamp },
                         }
                     };
                     logs.into_iter().map(|(id, p)| (id.clone(), read(&id, &p))).collect()
@@ -143,14 +125,17 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// The open project a session folder belongs to.
     pub(super) fn project_for_slug(&self, slug: &str) -> Option<PathBuf> {
         self.saved.projects.iter().map(|p| p.path.clone()).find(|p| storage::slug(p).eq_ignore_ascii_case(slug))
     }
 
-    /// Sessions a cleanup leaves alone: open in Kynex, or pinned.
+    /// Sessions a cleanup leaves alone: open in an `agent_cli` pane, or pinned.
     pub(super) fn keeps(&mut self, u: &SessionUse) -> bool {
-        let open = self.all_sessions().any(|s| s.session_id.as_deref() == Some(u.id.as_str()));
+        let open = self
+            .tiles
+            .values()
+            .flat_map(|t| t.agent_panes())
+            .any(|(_, m)| m.session_id.as_deref() == Some(u.id.as_str()));
         let pinned = self.project_for_slug(&u.slug).is_some_and(|p| self.groups_for(&p).is_pinned(&u.id));
         open || pinned
     }
@@ -180,22 +165,18 @@ impl KynexApp {
         }
     }
 
-    /// Does the deletion waiting for Yes, then walks the folders again.
     fn confirm_storage(&mut self, cx: &mut Context<Self>) {
         let Some(view) = &mut self.storage else { return };
-        // The question stays up, saying it's deleting, until it's done.
         let Some(p) = view.pending.clone().filter(|p| !p.targets.is_empty()) else { return };
         if view.deleting {
             return;
         }
         view.deleting = true;
-        // Deleted logs leave the sessions panel and their groups.
         if p.parts.contains(&Part::Log) {
             for (slug, id) in &p.targets {
                 if let Some(path) = self.project_for_slug(slug) {
                     self.edit_groups(&path, |g| g.forget(id));
                 }
-                self.unlink_session(id);
             }
             self.reread_sessions();
         }
@@ -228,8 +209,6 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Session `id`'s disk use, for its menu: measured off the UI thread the
-    /// first time it's asked for, `None` until then.
     pub(super) fn disk_use(&mut self, cwd: PathBuf, id: &str, cx: &mut Context<Self>) -> Option<u64> {
         let v = self.storage_view(cx);
         if let Some(size) = v.sizes.get(id) {
@@ -256,7 +235,6 @@ impl KynexApp {
         None
     }
 
-    /// Settings → Storage with the list narrowed to session `id`, its files shown.
     pub(super) fn show_storage_of(&mut self, id: String, cx: &mut Context<Self>) {
         self.app_settings = None;
         self.open_app_settings(cx);
@@ -276,7 +254,7 @@ impl KynexApp {
         let measuring = self.storage.as_ref().is_some_and(|v| v.measuring);
         let head = div().flex().flex_col().gap_2().child(heading(
             "Storage",
-            "What Claude Code keeps for each session: its log, its scratchpad (temporary files) and file checkpoints, which rewind restores files from.",
+            "What Claude Code keeps for each session: its log, its scratchpad (temporary files) and file checkpoints.",
             t,
         ));
         let Some(usage) = self.storage.as_ref().and_then(|v| v.usage.clone()) else {

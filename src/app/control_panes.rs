@@ -1,4 +1,4 @@
-//! The control socket's pane commands for terminal and agent-CLI panes: `knx pane list | read |
+//! The control socket's pane commands for terminal and `agent_cli` panes: `knx pane list | read |
 //! run | prompt | wait`. Panes are found in every workspace shown since Kynex started, not only
 //! the shown one, so an agent can drive a pane in the background; one that was never drawn has
 //! its program started first.
@@ -31,11 +31,11 @@ const FIRST_PROMPT_WITHIN: Duration = Duration::from_secs(20);
 /// The most lines of a command's output an answer carries (the last ones).
 const OUTPUT_LINES: usize = 2000;
 
-/// What runs in a terminal pane.
+/// What runs in a terminal or `agent_cli` pane.
 enum Runs {
     Shell,
     Command,
-    /// An agent CLI, by rule id.
+    /// An `agent_cli` pane, by provider id.
     Agent(String),
 }
 
@@ -43,7 +43,7 @@ impl KynexApp {
     /// `knx pane list`: the shown tab's panes, or with `all` every pane of every workspace
     /// shown since Kynex started.
     pub(super) fn pane_list(&self, all: bool) -> Value {
-        let shown = self.tiling_scope().map(|(_, ws, _)| ws);
+        let shown = self.tiling_scope().map(|(_, ws)| ws);
         if !all {
             let Some(ws) = shown else { return json!({ "panes": [] }) };
             let Some(t) = self.tiles.get(&ws) else { return json!({ "panes": [] }) };
@@ -65,15 +65,17 @@ impl KynexApp {
         json!({ "panes": panes })
     }
 
-    /// Starts terminal pane `pane`'s program if it was never drawn (a tab not shown since
-    /// Kynex started). Nothing for other panes.
+    /// Starts `pane`'s program if it was never drawn (a tab not shown since Kynex started).
     pub(super) fn start_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        if self.term_panes.contains_key(&pane) {
+        if self.pane_agent(pane).is_some_and(|a| a.view.is_some()) || self.term_panes.contains_key(&pane) {
+            return;
+        }
+        if let Some((ws, _)) = self.agent_pane_location(pane) {
+            self.ensure_agent_started(pane, &ws, window, cx);
             return;
         }
         let ws = self.tiles.iter().find(|(_, t)| t.term_pane(pane).is_some()).map(|(ws, _)| ws.clone());
         if let Some(ws) = ws {
-            // An agent's starts its watch too.
             self.start_terminal_pane(pane, &ws, window, cx);
         }
     }
@@ -112,7 +114,10 @@ impl KynexApp {
         match runs {
             Runs::Shell => {}
             Runs::Agent(id) => {
-                return Err(Some(format!("pane {pane} runs {}: use `knx pane prompt {pane}`", self.agent_name(&id))));
+                return Err(Some(format!(
+                    "pane {pane} runs {}: use `knx pane prompt {pane}`",
+                    self.provider_display_name(&id)
+                )));
             }
             Runs::Command => return Err(Some(format!("pane {pane} runs a custom command, not a shell"))),
         }
@@ -120,7 +125,6 @@ impl KynexApp {
             view.update(cx, |v, cx| v.run(command, cx));
             return Ok(json!({ "pane": pane, "sent": true }));
         }
-        // A shell that exited starts again; its marks start over with it.
         if view.read(cx).exited() {
             view.update(cx, |v, cx| v.restart(cx));
         }
@@ -162,7 +166,7 @@ impl KynexApp {
     /// A new terminal pane below everything in the shown tab, with a shell starting; the focus
     /// stays where it was.
     fn new_terminal_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Result<PaneId, String> {
-        let (_, ws, _) = self.tiling_scope().ok_or("open a project first")?;
+        let (_, ws) = self.tiling_scope().ok_or("open a project first")?;
         let id = self.next_pane;
         let ratio = self.terminal_ratio(window);
         let bounds = self.layout_bounds(cx);
@@ -175,7 +179,6 @@ impl KynexApp {
             t.focus_pane(f);
         }
         self.next_pane += 1;
-        // A pane of its own gets a shell of its own, not the folder's hidden ones.
         let panel = Self::new_term_panel(&ws, window, cx);
         self.term_panes.insert(id, panel.clone());
         panel.update(cx, |p, cx| {
@@ -186,7 +189,7 @@ impl KynexApp {
         Ok(id)
     }
 
-    /// `knx pane prompt`: types a message into an agent pane and sends it with the agent's
+    /// `knx pane prompt`: types a message into an `agent_cli` pane and sends it with the agent's
     /// key; with `wait`, answers when it's done or blocked.
     pub(super) fn pane_prompt(
         &mut self,
@@ -197,9 +200,13 @@ impl KynexApp {
         cx: &mut Context<Self>,
     ) -> Result<Value, Option<String>> {
         let (view, id) = self.agent_terminal(pane, cx).map_err(Some)?;
-        let rule = self.agent_rules.iter().find(|r| r.id == id).cloned();
+        let rule_id = kynex_core::agent_cli::rule_id(&id);
+        let rule = self.agent_rules.iter().find(|r| r.id == rule_id).cloned();
         if !view.read(cx).paste(text) {
-            return Err(Some(format!("{} in pane {pane} is starting: try again in a moment", self.agent_name(&id))));
+            return Err(Some(format!(
+                "{} in pane {pane} is starting: try again in a moment",
+                self.provider_display_name(&id)
+            )));
         }
         let (key, after) =
             rule.as_ref().map_or((b"\r".to_vec(), Duration::from_millis(80)), |r| (r.submit_bytes(), r.submit_after()));
@@ -210,14 +217,13 @@ impl KynexApp {
         .detach();
         if wait {
             let start_within = rule.map_or(Duration::from_secs(120), |r| r.start_within());
-            // Not started, whatever it shows now: that's from before the message.
             self.hold(Target::Agent { pane, start_within }, false, timeout, cx);
             return Err(None);
         }
         Ok(json!({ "pane": pane, "sent": true }))
     }
 
-    /// `knx pane wait`: answers when an agent pane isn't working any more.
+    /// `knx pane wait`: answers when an `agent_cli` pane isn't working any more.
     pub(super) fn pane_wait(
         &mut self,
         pane: PaneId,
@@ -238,7 +244,6 @@ impl KynexApp {
     /// The answer to a wait on a pane, once there is one. Called by `finish_control_waits`.
     pub(super) fn pane_wait_answer(&mut self, w: &mut Wait, cx: &mut Context<Self>) -> Option<Answer> {
         match &mut w.target {
-            Target::Session(_) => None,
             Target::Run { pane, how } => {
                 let pane = *pane;
                 let Ok((view, _)) = self.terminal_of(pane, cx) else {
@@ -255,7 +260,6 @@ impl KynexApp {
                             view.update(cx, |v, cx| v.run(&command, cx));
                             *how = hooked_run(marks);
                         } else if w.since.elapsed() > FIRST_PROMPT_WITHIN {
-                            // Its hooks never spoke (a profile that replaces them): the marker.
                             let command = std::mem::take(command);
                             match self.marked_run(&view, pane, &command, cx) {
                                 Ok(run) => *how = run,
@@ -268,18 +272,14 @@ impl KynexApp {
                         let v = view.read(cx);
                         let marks = v.marks();
                         let (n, code) = marks.last.unwrap_or((0, 0));
-                        // Not yet at a prompt after it, or (a shell that numbers commands) the
-                        // prompt is after an empty Enter, not the command.
                         if marks.prompts <= *after || marks.running.is_some() || (n > 0 && n < *first) {
                             *settled = None;
                             return None;
                         }
-                        // The next line of a command of several starts within a look.
                         if *settled != Some(marks.prompts) {
                             *settled = Some(marks.prompts);
                             return None;
                         }
-                        // A shell that numbers its commands links their output: none is "".
                         let output = (n > 0).then(|| {
                             let outputs = (*first..=n).filter_map(|i| v.output(i));
                             outputs.filter(|o| !o.trim().is_empty()).collect::<Vec<_>>().join("\n")
@@ -300,14 +300,12 @@ impl KynexApp {
                 };
                 let state = self.agent_state(pane);
                 w.started |= state == AgentState::Working;
-                // Asking something before it started on the message is asking it of the one before:
-                // blocked only once it took the message, or kept asking a while.
                 if state == AgentState::NeedsYou && (w.started || w.since.elapsed() > STILL_ASKING) {
                     Some(Ok(agent_answer(pane, "blocked", &view, cx)))
                 } else if w.started && state != AgentState::Working {
                     Some(Ok(agent_answer(pane, "done", &view, cx)))
                 } else if !w.started && w.since.elapsed() > start_within {
-                    let name = self.agent_name(&id);
+                    let name = self.provider_display_name(&id);
                     Some(Err(format!("{name} in pane {pane} didn't start working within {}s", start_within.as_secs())))
                 } else {
                     None
@@ -316,7 +314,7 @@ impl KynexApp {
         }
     }
 
-    /// Looks at the waits every so often while one waits on a pane: nothing else rings for them.
+    /// Looks at the waits every so often while one waits on a pane.
     pub(super) fn watch_pane_waits(&mut self, cx: &mut Context<Self>) {
         if self.pane_wait_watch {
             return;
@@ -328,7 +326,7 @@ impl KynexApp {
                 let more = this
                     .update(cx, |this, cx| {
                         this.finish_control_waits(cx);
-                        let more = this.control_waits.iter().any(|w| !matches!(w.target, Target::Session(_)));
+                        let more = !this.control_waits.is_empty();
                         this.pane_wait_watch = more;
                         more
                     })
@@ -341,23 +339,36 @@ impl KynexApp {
         .detach();
     }
 
-    /// Tells the listeners an agent pane finished a turn or wants you, as for sessions.
-    pub(super) fn agent_event(&self, pane: PaneId, id: &str, was: AgentState, now: AgentState) {
+    /// Broadcasts `AgentState`, `NeedsYou`, and `TurnEnd` events over the control socket.
+    pub(super) fn agent_event(&self, pane: PaneId, provider: &str, was: AgentState, now: AgentState) {
         let Some(server) = &self.control else { return };
+        let inst = self.agent_instances.get(&pane).or_else(|| self.pane_agent(pane));
+        let session_id = inst.and_then(|a| a.meta.session_id.clone());
+        let detail = inst.map(|a| a.tracker.detail()).filter(|d| !d.is_empty()).map(str::to_string);
+        server.broadcast(
+            Event::AgentState,
+            json!({
+                "pane": pane,
+                "provider": provider,
+                "session_id": session_id,
+                "state": format!("{now:?}").to_lowercase(),
+                "detail": detail,
+            }),
+        );
         match now {
-            AgentState::NeedsYou => server.broadcast(Event::NeedsYou, json!({ "pane": pane, "agent": id })),
+            AgentState::NeedsYou => server.broadcast(Event::NeedsYou, json!({ "pane": pane, "provider": provider })),
             AgentState::Done | AgentState::Idle if was == AgentState::Working => {
-                server.broadcast(Event::TurnEnd, json!({ "pane": pane, "agent": id, "state": "done" }));
+                server.broadcast(Event::TurnEnd, json!({ "pane": pane, "provider": provider, "state": "done" }));
             }
             _ => {}
         }
     }
 
     fn agent_state(&self, pane: PaneId) -> AgentState {
-        self.agent_trackers.get(&pane).map(|t| t.state()).unwrap_or_default()
+        self.pane_agent(pane).or_else(|| self.agent_instances.get(&pane)).map(|a| a.tracker.state()).unwrap_or_default()
     }
 
-    /// An agent pane's terminal and its agent's rule id.
+    /// An `agent_cli` pane's terminal and its provider id.
     fn agent_terminal(&self, pane: PaneId, cx: &Context<Self>) -> Result<(Entity<TerminalView>, String), String> {
         match self.terminal_of(pane, cx)? {
             (view, Runs::Agent(id)) => Ok((view, id)),
@@ -366,58 +377,64 @@ impl KynexApp {
         }
     }
 
-    /// Pane `pane`'s shown terminal tab, in any workspace, and what runs in it.
+    /// Pane `pane`'s terminal view, in any workspace, and what runs in it.
     fn terminal_of(&self, pane: PaneId, cx: &Context<Self>) -> Result<(Entity<TerminalView>, Runs), String> {
         let tiles = self.tiles.values().find(|t| t.has(pane)).ok_or_else(|| format!("no pane {pane}"))?;
-        let tp = match tiles.content(pane) {
-            Some(Content::Terminal) => tiles.term_pane(pane).ok_or_else(|| format!("no pane {pane}"))?,
-            Some(Content::Session(k)) => {
-                return Err(format!("pane {pane} is session {k}: use `knx session read | prompt | wait {k}`"));
+        match tiles.content(pane) {
+            Some(Content::AgentCli) => {
+                let meta = tiles.agent(pane).ok_or_else(|| format!("no pane {pane}"))?;
+                let provider =
+                    meta.provider.clone().ok_or_else(|| format!("pane {pane} hasn't picked a provider yet"))?;
+                let view = self
+                    .pane_agent(pane)
+                    .and_then(|a| a.view.clone())
+                    .ok_or_else(|| format!("pane {pane} is starting: try again in a moment"))?;
+                Ok((view, Runs::Agent(provider)))
             }
-            _ => return Err(format!("pane {pane} isn't a terminal or agent pane")),
-        };
-        let runs = match (&tp.agent, &tp.command) {
-            (Some(id), _) => Runs::Agent(id.clone()),
-            (None, Some(_)) => Runs::Command,
-            (None, None) => Runs::Shell,
-        };
-        let view = self
-            .term_panes
-            .get(&pane)
-            .and_then(|p| p.read(cx).active_view())
-            .ok_or_else(|| format!("pane {pane} is starting: try again in a moment"))?;
-        Ok((view, runs))
+            Some(Content::Terminal) => {
+                let tp = tiles.term_pane(pane).ok_or_else(|| format!("no pane {pane}"))?;
+                let runs = if tp.command.is_some() { Runs::Command } else { Runs::Shell };
+                let view = self
+                    .term_panes
+                    .get(&pane)
+                    .and_then(|p| p.read(cx).active_view())
+                    .ok_or_else(|| format!("pane {pane} is starting: try again in a moment"))?;
+                Ok((view, runs))
+            }
+            _ => Err(format!("pane {pane} isn't a terminal or agent pane")),
+        }
     }
 }
 
-/// How a command typed now into a hooked shell whose marks are `marks` says it finished.
 fn hooked_run(marks: kynex_core::terminal::ShellMarks) -> Run {
     let last = marks.last.map_or(0, |(n, _)| n);
     Run::Hooked { after: marks.prompts, first: last + 1, settled: None }
 }
 
-/// A pane as `knx pane list` gives it.
 fn pane_entry(t: &Tiling, p: PaneId) -> Value {
-    let agent = t.term_pane(p).and_then(|tp| tp.agent.clone());
-    let (kind, session) = match t.content(p) {
-        Some(Content::Session(k)) => ("session", Some(k)),
-        Some(Content::Terminal) if agent.is_some() => ("agent", None),
-        Some(Content::Terminal) => ("terminal", None),
-        Some(Content::Git) => ("git", None),
-        Some(Content::Timeline) => ("timeline", None),
-        Some(Content::Tree) => ("sessions", None),
-        Some(Content::Agents) => ("agents", None),
-        None => ("unknown", None),
-    };
-    let mut v = json!({ "pane": p, "kind": kind, "session": session, "focused": Some(p) == t.focus() });
-    if let Some(id) = agent {
-        v["agent"] = json!(id);
+    match t.content(p) {
+        Some(Content::AgentCli) => {
+            let meta = t.agent(p);
+            let mut v = json!({
+                "pane": p,
+                "kind": "agent_cli",
+                "provider": meta.and_then(|m| m.provider.as_deref()),
+                "session_id": meta.and_then(|m| m.session_id.as_deref()),
+                "focused": Some(p) == t.focus(),
+            });
+            if let Some(model) = meta.and_then(|m| m.model.as_deref()) {
+                v["model"] = json!(model);
+            }
+            v
+        }
+        Some(Content::Terminal) => json!({ "pane": p, "kind": "terminal", "focused": Some(p) == t.focus() }),
+        Some(Content::Git) => json!({ "pane": p, "kind": "git", "focused": Some(p) == t.focus() }),
+        Some(Content::Tree) => json!({ "pane": p, "kind": "sessions", "focused": Some(p) == t.focus() }),
+        Some(Content::Agents) => json!({ "pane": p, "kind": "agents", "focused": Some(p) == t.focus() }),
+        None => json!({ "pane": p, "kind": "unknown", "focused": Some(p) == t.focus() }),
     }
-    v
 }
 
-/// What a finished `pane run --wait` answers: its exit code and what it printed (the last
-/// [`OUTPUT_LINES`]; `null` if the shell doesn't say).
 fn run_answer(pane: PaneId, code: i32, output: Option<String>) -> Value {
     let mut v = json!({ "pane": pane, "exit": code, "output": null });
     if let Some(out) = output {
@@ -430,7 +447,6 @@ fn run_answer(pane: PaneId, code: i32, output: Option<String>) -> Value {
     v
 }
 
-/// How an agent pane's turn stands, with its screen.
 fn agent_answer(pane: PaneId, state: &str, view: &Entity<TerminalView>, cx: &Context<KynexApp>) -> Value {
     json!({ "pane": pane, "state": state, "text": view.read(cx).screen_text().unwrap_or_default().trim_end() })
 }

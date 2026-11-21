@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::groups::SessionGroups;
 use crate::project::normalize;
-use crate::session;
+use crate::sessions;
 use crate::workspace::{Workspace, Workspaces, same_folder};
 
 /// A workspace that was removed, remembered for its sessions.
@@ -84,8 +84,8 @@ pub struct Purged {
 /// the UI thread.
 pub fn delete_sessions(cwd: &Path) -> Purged {
     let mut out = Purged::default();
-    for s in session::list_sessions(cwd) {
-        match session::delete_session(cwd, &s.id) {
+    for s in sessions::list_sessions(cwd) {
+        match sessions::delete_session(cwd, &s.id) {
             Ok(()) => out.deleted.push(s.id),
             Err(e) => out.errors.push(e),
         }
@@ -107,10 +107,10 @@ pub fn delete_sessions(cwd: &Path) -> Purged {
 /// transcripts folder, so `claude --resume <id>` run in `to` finds it. The original stays.
 /// A log `to` already has is left alone. Blocking: file copies. A Grok session can't be moved.
 pub fn continue_in(from: &Path, id: &str, to: &Path) -> Result<(), String> {
-    let src = session::find_transcript(from, id)
+    let src = sessions::find_claude_transcript(from, id)
         .ok_or_else(|| "Only Claude Code sessions can be continued in another workspace".to_string())?;
-    let dir = session::transcripts_dir(to)
-        .or_else(|| Some(session::projects_dir()?.join(session::transcripts_name(to))))
+    let dir = sessions::transcripts_dir(to)
+        .or_else(|| Some(sessions::projects_dir()?.join(crate::storage::slug(to))))
         .ok_or_else(|| "Couldn't find the transcripts folder".to_string())?;
     copy_session(&src, &dir, false)
 }
@@ -119,9 +119,10 @@ pub fn continue_in(from: &Path, id: &str, to: &Path) -> Result<(), String> {
 /// replaced (an earlier try's copy may be behind). The original stays until the caller
 /// deletes it, once the old process is gone. Blocking: file copies.
 pub fn move_to(from: &Path, id: &str, to: &Path) -> Result<(), String> {
-    let src = session::find_transcript(from, id).ok_or_else(|| "Couldn't find the session's log".to_string())?;
-    let dir = session::transcripts_dir(to)
-        .or_else(|| Some(session::projects_dir()?.join(session::transcripts_name(to))))
+    let src =
+        sessions::find_claude_transcript(from, id).ok_or_else(|| "Couldn't find the session's log".to_string())?;
+    let dir = sessions::transcripts_dir(to)
+        .or_else(|| Some(sessions::projects_dir()?.join(crate::storage::slug(to))))
         .ok_or_else(|| "Couldn't find the transcripts folder".to_string())?;
     copy_session(&src, &dir, true)
 }
@@ -130,9 +131,9 @@ pub fn move_to(from: &Path, id: &str, to: &Path) -> Result<(), String> {
 /// transcripts folder only, never one found elsewhere (that may be the copy), and only
 /// when the copy is there in `to`'s, a folder of its own. Blocking.
 pub fn drop_moved(from: &Path, id: &str, to: &Path) -> Result<(), String> {
-    let dir = session::transcripts_dir(from).ok_or("no transcripts folder")?;
+    let dir = sessions::transcripts_dir(from).ok_or("no transcripts folder")?;
     let file = format!("{id}.jsonl");
-    let copied = session::transcripts_dir(to).filter(|d| *d != dir).is_some_and(|d| d.join(&file).is_file());
+    let copied = sessions::transcripts_dir(to).filter(|d| *d != dir).is_some_and(|d| d.join(&file).is_file());
     if !copied {
         return Err("the moved log isn't in its new folder; the old one stays".into());
     }

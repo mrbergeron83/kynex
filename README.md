@@ -4,61 +4,30 @@
 
 <h1 align="center">Kynex</h1>
 
-<p align="center">A fast, native desktop workspace for Claude Code, written in Rust.</p>
+<p align="center">A fast, native desktop workspace for interactive AI agent CLIs, written in Rust.</p>
 
 <p align="center">
   <a href="https://github.com/mrbergeron83/kynex/actions/workflows/ci.yml"><img src="https://github.com/mrbergeron83/kynex/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://github.com/mrbergeron83/kynex/actions/workflows/security.yml"><img src="https://github.com/mrbergeron83/kynex/actions/workflows/security.yml/badge.svg?branch=main" alt="Security"></a>
-  <a href="https://scorecard.dev/viewer/?uri=github.com/mrbergeron83/kynex"><img src="https://api.scorecard.dev/projects/github.com/mrbergeron83/kynex/badge" alt="OpenSSF Scorecard"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/mrbergeron83/kynex"><img src="https://api.scorecard.dev/projects/github.com/mrbergeron83/kynex/badge.svg?branch=main" alt="OpenSSF Scorecard"></a>
   <a href="https://github.com/mrbergeron83/kynex/releases/latest"><img src="https://img.shields.io/github/v/release/mrbergeron83/kynex?include_prereleases&sort=semver" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" alt="License: GPL-3.0-or-later"></a>
 </p>
 
 ## What it is
 
-Kynex is a desktop app for working with [Claude Code](https://claude.com/claude-code). It runs
-your installed `claude` CLI behind the scenes, so you get the same agent, tools, skills, MCP
-servers and settings, with the same account and quota. You don't need an API key. It runs on
-Windows, macOS and Linux. Optionally, sessions can also run on other models through
-[OpenRouter](https://openrouter.ai) with your own key.
+Kynex is a native desktop workspace for running interactive agent CLIs — **Claude Code** (`claude`), **Antigravity** (`agy`), **Grok Build** (`grok`), and any CLI configured via `agent_rules` (`codex`, `copilot`, `cursor`, `opencode`, or your own) — side by side across projects and git worktrees.
 
-## Why use it
-
-Claude Code in a terminal works well for one task at a time. Once you have several projects
-and sessions going, Kynex keeps them easier to follow:
-
-- **All your work in one window.** Projects are tabs, and each project has its own sessions,
-  grouped, pinned and searchable. A session keeps running when you switch away, and a dot
-  tells you when one finishes or needs an answer, even if Kynex is in the background.
-- **Readable transcripts.** Edits show as diffs, runs of tool calls fold into one line ("Edited
-  app.rs ×3, read 2 files"), code is highlighted, and file paths open in your editor.
-- **Prompts you click instead of type.** Permission requests, plans and questions take the
-  message box's place, with numbered choices and the same keys as Claude Code.
-- **Less switching between apps.** A Git view, a terminal, a timeline of each session and an
-  image viewer are all in the window.
-- **No terminal setup.** Kynex installs Claude Code, signs you in and keeps it and itself
-  up to date.
-- **Native and fast.** Written in Rust on [gpui](https://www.gpui.rs/), Zed's UI framework.
-  It isn't a web view, so long conversations scroll smoothly.
+Instead of wrapping CLIs in a custom chat protocol, Kynex runs each provider's **native interactive CLI** inside a high-performance GPU-rendered terminal (`agent_cli` pane) built with Rust, [gpui](https://www.gpui.rs/), and `alacritty_terminal`. Every CLI keeps its own TUI, slash commands, permissions, MCP servers, and native auto-updater. For **Claude Code** and **Antigravity**, Kynex also provides one-click **OpenRouter** overrides backed by your OS keychain.
 
 ## Features
 
-- **Sessions per project:** several Claude Code sessions per folder, groups and an archive,
-  unread markers, turn recaps with time and cost, and a Chat tab for plain conversation.
-- **Composer:** image attachments (paste, drop or pick), `@file` mentions, slash commands,
-  message history, and a queue for messages you write while Claude works.
-- **Rewind:** go back to an earlier message and restore the conversation, the files, or both.
-- **Context and limits:** how full the context is (compact it in one click), and your 5-hour
-  and weekly usage.
-- **Git view:** branches, stage and commit, diffs, history, fetch / pull / push, worktrees.
-- **Built-in terminal:** PowerShell, Git Bash or your shell under the conversation; play
-  buttons run the commands Claude suggests.
-- **Background tasks:** see what's running, watch its output live, stop it.
-- **Extensions:** add, check and remove MCP servers, including a one-click browser server.
-- **Find anything:** command palette (Ctrl+K) and find in the conversation (Ctrl+F).
-- **Storage:** see how much disk sessions use and clean up old ones.
-- **OpenRouter:** run a session on another model (Qwen, Kimi, GLM…) with your OpenRouter key,
-  side by side with your Claude sessions.
+- **Pure native CLIs in GPU terminal panes (`agent_cli`):** Start any session with a keyboard-first inline provider picker (`Claude Code`, `Claude Code (OpenRouter)`, `Antigravity`, `Antigravity (OpenRouter)`, `Grok Build`, `Codex`, `Copilot`, `Cursor`, `opencode`, and custom rules in `<data dir>/agents/`).
+- **Live status hooks & Agents pane:** Native CLI hooks (`knx hook`) and screen-pattern fallback report when each agent is working, needs your input, or finished — powering status lamps on project tabs, the Sessions tree, the Agents pane (`Ctrl+Shift+J`), and optional OS notifications while Kynex is in the background.
+- **Workspaces & Sessions tree:** Organize projects into tabs with git worktrees, extra folders, session groups, pins, archive, search, and one-click resume for past sessions.
+- **Hyprland-style tiling panes:** Split, move, swap, resize, zoom, undo/redo layouts, and save/restore named layouts with tmux-style prefix keys (`Ctrl+B`).
+- **Built-in Git pane & plain Terminals:** Stage, commit, inspect diffs/history/branches, manage worktrees, and open plain PowerShell/bash/zsh panes with find and copy mode.
+- **Storage cleanup:** Measure disk usage of Claude Code session logs, scratchpads, and checkpoints, and clean up old sessions safely.
 
 ## Install
 
@@ -74,212 +43,51 @@ macOS (Apple silicon) and Linux (x86_64), no sudo needed; run it again to update
 curl -fsSL https://raw.githubusercontent.com/mrbergeron83/kynex/main/install.sh | sh
 ```
 
-Both install the latest release, verify it against `SHA256SUMS`, and add a `knx` command to
-start Kynex from a terminal. Archives are also on the
-[releases page](https://github.com/mrbergeron83/kynex/releases), each with a build provenance
-attestation (`gh attestation verify <archive> --repo mrbergeron83/kynex`). Builds are not
-code-signed yet.
+Both install the latest release, verify it against `SHA256SUMS`, and add the `knx` CLI. Archives are also on the [releases page](https://github.com/mrbergeron83/kynex/releases).
 
-### Scripting a running Kynex
+## Scripting a running Kynex (`knx`)
 
-`knx` also talks to the Kynex that is running, over a local socket in the data folder (a named
-pipe on Windows, a Unix socket elsewhere) that only you can reach. Each command prints one JSON
-line; errors go to stderr with exit code 1.
+`knx` talks to the running Kynex over a per-user local socket (named pipe on Windows, Unix domain socket on macOS/Linux). Each command prints one JSON line.
 
 ```sh
 knx <folder>                                  # open a folder in the running Kynex (or start on it)
-knx project list | create <folder> | open <folder> | remove <folder>   # projects (tabs)
-knx workspace list | open <folder> | remove <folder> [--force]   # the shown project's checkouts
-knx workspace create <branch> [--session] [--why <reason>] [--prompt <message…>]   # a new checkout, with a session in it
-knx pane list [--all] | split [row|column] | focus <id> | close [id]   # panes of the shown tab (--all: every workspace)
-knx pane move <id> left|right|up|down|new-tab|tab <n> | swap <id> <other>   # rearrange panes
+knx project list | create <folder> | open <folder> | remove <folder>
+knx workspace list | open <folder> | create <branch> [--provider <id>] | remove <folder> [--force]
+knx pane list [--all] | split [row|column] | focus <id> | close [id]
+knx pane move <id> left|right|up|down | swap <id> <other>
 knx pane resize <id> left|right|up|down [--by <px>] | zoom <id> [--off]
-knx pane read <id> [--lines N]                # a terminal or agent pane's screen, or its last N lines
-knx pane run <id|new> <command…> [--wait]     # type a command into a shell pane; --wait gives its exit code and output
-knx pane prompt <id> <message…> [--wait] | wait <id>   # agent-CLI panes (codex, opencode…): done or blocked
-knx session list | prompt <s> <message…> [--wait] | read <s> | wait <s>   # <s>: a session's number or its session id
-knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] [--why <reason>] [--prompt <message…>]
-knx session fork <s> [--at <message number>] [--pane …] | open <session id> [--pane …]
-knx session close <s> | rename <s> <title…> | archive <s> | pin <s> [--off]
-knx request status <id> | wait <id>           # a request still waiting for your OK
-knx notify <title> [body…] [--pane <id> | --session <s>]   # a toast, or an OS notification when Kynex is in the background; a click goes there
-knx events                                    # a line per finished turn, session or agent pane that needs you, session.created / session.closed
-knx api schema                                # the requests, answers and events as JSON (works without Kynex running)
+knx pane read <id> [--lines N]
+knx pane run <id|new> <command…> [--wait] [--timeout <secs>]
+knx pane prompt <id> <message…> [--wait] [--timeout <secs>] | wait <id>
+knx session list | new [--workspace <folder>] [--provider <id>] [--model <m>] [--pane right|down]
+knx session open <session id> [--pane right|down] | rename <id> <title…> | archive <id> | pin <id> [--off]
+knx events                                    # stream turn_end, needs_you, and agent_state events
+knx api schema                                # JSON schema for all requests, answers, and events
 ```
 
-Whatever changes something (everything but listing, reading, waiting, moving around and `notify`) waits
-for your OK on a card in Kynex first, whoever asks: **Start**, **Start in a new worktree** for a
-new session, or **Not now**. Sessions started this way don't take the focus. A request not
-answered within 30 seconds prints `{"state": "pending", "request": N}`; `knx request wait N`
-gets its outcome. Asked from inside a session, the card says which one, and notes when the
-request is about something that session didn't start; `workspace remove --force` isn't offered
-to a session at all.
+## OpenRouter overrides
 
-A session started or forked at a session's request (or forked by hand with `/fork`) is that
-session's child: the sessions tree nests it under its parent, and its first message says who
-started it and why (`--why`). When a child a session asked for ends a turn, its answer goes to
-its parent as a message (a fork made by hand only nests), at once if the parent is idle or with the next queued messages if it's working; a
-closed parent gets nothing. The outcome of a request that answered `pending` reaches the asking
-session the same way. Sessions nest at most 4 deep, with at most 5 children open at once.
+Add your OpenRouter key in **Settings → Providers** (stored in the OS keychain, never in Kynex's files), pick your models under **My models**, and select **Claude Code (OpenRouter)** or **Antigravity (OpenRouter)** in any new-session picker. Native **Claude Code** and **Antigravity** sessions stay completely untouched.
 
-Every wait takes `--timeout <seconds>`. Kynex's terminals start PowerShell and bash with small
-hooks that tell it when a command ends, its exit code and what it printed (nothing is printed or
-changed in your prompt; bash then reads its login files through the hooks script rather than
-`--login`; `KYNEX_NO_SHELL_HOOKS=1` turns them off). A command of several lines answers with
-the last line's exit code. Other shells (zsh, fish) get a
-marker typed after the command instead, which shows in the terminal. An agent rule
-(`<data dir>/agents/*.json`) can set `submit` (the key that sends a message, Enter by default),
-`submit_after_ms` and `start_within_secs`.
+## Shortcuts
 
-A prompt sent this way is a normal message: it runs under the session's permission mode, and
-permission prompts are still answered in Kynex (`--wait` then returns with `"state":"waiting"`).
-The line protocol (`{"cmd": "session_list"}` …) is described in `crates/kynex-core/src/control/protocol.rs`.
-
-## User guide
-
-### First start
-
-1. Start Kynex. If Claude Code isn't installed or signed in, Kynex offers to do both. You can
-   also start with an OpenRouter key instead of signing in (see below).
-2. Add a project folder with the button, or drag the folder onto the window. Each project
-   gets its own tab and colour.
-3. Start a session (Ctrl+N) and type what you want done.
-
-### Set up a project
-
-A new project opens on its **Setup** checklist. A few minutes there saves many prompts later:
-
-1. **Trust the folder** if it has its own `.claude` settings or MCP servers. Claude Code
-   ignores them until you do.
-2. **Pick a permission mode** (Permissions): how much Claude does without asking.
-3. **Allow the starter rules** for what's in the folder (git, Cargo, npm…): everyday commands
-   Claude would otherwise ask about. Never a push, a publish or a delete.
-4. **Tell Claude how the project works:** send `/init` and Claude writes a `CLAUDE.md` (build,
-   test, layout) that every session reads.
-5. **Set what gets delegated** (the robot in the toolbar): click **Ask Claude for a rule**,
-   send it, and paste the answer back. Builds, tests and routine edits then go to cheaper
-   subagents.
-
-Come back any time: the shield in the toolbar has the project's settings, the robot its agents.
-
-### Talking to Claude
-
-- **Enter** sends, and **Ctrl+J** adds a new line. Type `/` for slash commands and `@` to
-  mention a file or folder. Paste or drop images to attach them.
-- While Claude works, **Enter** queues your message for when the turn ends. **Ctrl+Enter**
-  stops Claude and sends it now, and **Esc** stops Claude.
-- **↑ / ↓** go through messages you've sent, and **Ctrl+R** searches them. **Ctrl+S**
-  stashes a draft, and **Ctrl+G** opens it in your editor.
-- **Esc Esc** on an empty message box opens Rewind: pick a message to go back to it, with or
-  without the file changes made after it.
-- The chips under the message box pick the model and effort, and on a new session the provider
-  (Anthropic or OpenRouter) when both are set up.
-
-### Answering prompts
-
-When Claude asks for permission, shows a plan or asks a question, the prompt takes the
-message box's place. Pick a choice with its number or the arrow keys. **Shift+Tab** allows an
-action for the rest of the session, and **Tab** on Yes lets you add a comment ("yes, but use
-the staging config"). To be asked less often, set the permission mode in the project's
-Claude settings (the shield in the toolbar).
-
-### Around the window
-
-- **Sessions panel** (left): right-click a session to rename, pin, group or archive it, or
-  drag it into a group. Its menu (the arrow in its header) can also group sessions by provider.
-- **Timeline** (Ctrl+Shift+T): every message you sent with the files edited and commands run
-  in that turn. Click a step to jump to it.
-- **Terminal** (Ctrl+`): a shell under the conversation. The Run button on a code block runs
-  its command there.
-- **Git**: the Code / Git switch in the toolbar, or a branch chip over the conversation,
-  opens the Git view to stage, commit, see diffs and history, and pull or push.
-- **Status footer**: CPU and memory of Kynex and its processes, your usage limits, what's
-  left on your OpenRouter key, and updates waiting to be installed.
-
-### Shortcuts
-
-Use Cmd instead of Ctrl on macOS. You can rebind any of these in `keymap.json` (Settings →
-Keyboard).
+Use Cmd instead of Ctrl on macOS. Rebind any shortcut in `keymap.json` (**Settings → Keyboard**).
 
 | Keys | Does |
 | --- | --- |
-| Ctrl+K | Command palette: sessions, tabs and actions |
-| Ctrl+F | Find in the conversation |
-| Ctrl+N | New session |
-| Ctrl+PageUp / PageDown | Previous / next session |
-| Ctrl+W | Close the project tab |
+| Ctrl+K | Command palette: sessions, projects, providers, and actions |
+| Ctrl+N | New session (opens the inline provider picker) |
+| Ctrl+O | Open project folder |
+| Ctrl+W | Close pane (or project tab) |
+| Ctrl+Shift+G | Toggle Git pane |
+| Ctrl+Shift+J | Toggle Agents pane |
+| Ctrl+Shift+A | Jump to next agent that needs you |
+| Ctrl+` | Toggle plain terminal pane |
+| Ctrl+B then v / - | Split pane right / down |
+| Ctrl+B then h/j/k/l | Focus neighbouring pane |
+| Ctrl+B then z / x | Zoom / close pane |
+| Ctrl+B then y | Terminal copy mode |
 | Ctrl+, | Settings |
-| Ctrl+` (Ctrl on macOS too) | Terminal |
-| Ctrl+Shift+T | Timeline |
-| Ctrl+= / Ctrl+- / Ctrl+0 | Zoom in / out / reset |
-| Alt+P | Model picker |
-| Esc | Stop Claude |
-
-### Settings
-
-The gear in the title bar (Ctrl+,) has Kynex's own settings: which `claude` to use, the
-default shell, Providers (your Anthropic sign-in and OpenRouter), theme, fonts, zoom,
-notifications, keep-awake, and Storage for cleaning up old sessions. Each project's Claude
-settings (the shield in the toolbar) hold its permission mode, effort, extra folders and rules.
-
-### Delegating to subagents
-
-Sessions on Anthropic models hand routine work (contained edits, build and test runs, web
-lookups) to cheaper subagents, mostly Haiku, and keep design and debugging.
-
-- **Agents** (the robot in the project's toolbar): on or off for this project, which agents it
-  uses, and its own rule for what goes to them. **Ask Claude for a rule** drafts the rule, and
-  **Ask Claude for new agents** suggests agents to add.
-- **Settings → Agents** (Ctrl+,): the agents themselves, and whether delegating is on by default.
-
-Changes apply from a session's next start.
-
-### Other models through OpenRouter
-
-Kynex can run a session on a model from [OpenRouter](https://openrouter.ai) instead of Claude,
-using Claude Code as before. You pay OpenRouter for what you use; your Claude plan isn't touched.
-
-1. Create a key at [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) and add
-   credit to your account.
-2. In Settings → Providers, paste the key under OpenRouter and click **Save and check**. Kynex
-   keeps it in your OS keychain (Credential Manager, Keychain or the Secret Service), never in
-   its own files, and checks it: credit left, or what's wrong.
-3. On a new session, pick **OpenRouter** in the provider chip under the message box, then a
-   model from **My models**. A session keeps its provider once you've sent something; start a
-   new session to switch.
-
-Good to know:
-
-- **My models** (Settings → Providers) are the models the menu offers. Search OpenRouter's
-  catalogue to add one, with prices shown, or type its ID. Models marked **No tools** can't
-  edit files or run commands, so they're no use for Claude Code.
-- **Output cap**: OpenRouter sessions are limited to 8,000 output tokens per reply by default.
-  Without a cap, Claude Code asks for up to 64K tokens and OpenRouter refuses requests your credit
-  can't cover (402). Lower it if you see "out of credits"; raise it for long edits.
-- **Free models** (IDs ending in `:free`) cost nothing but are rate-limited and shared, so expect
-  "rate-limited" (429) at busy times. OpenRouter changes which models are free; Kynex marks them
-  in the search.
-- **Other models aren't Claude.** Weaker models may struggle with Claude Code's file edits and
-  tool use. Qwen and other models keep their own safety training and behaviour; Claude's
-  doesn't come with Claude Code.
-- If you set OpenRouter up by hand before (`OPENROUTER_API_KEY` and `OR_MODEL`, or `ANTHROPIC_*`
-  variables pointing at OpenRouter), Kynex picks it up on first launch and moves the key into the
-  keychain. Your Anthropic sessions never go through OpenRouter.
-- Costs: the footer shows what's left on your key. Kynex doesn't show a per-turn price for
-  OpenRouter sessions, because Claude Code can only price Claude models.
-
-### Grok
-
-Grok is opt-in: turn it on under **Settings → Providers → Grok**, which can also install
-xAI's Grok Build CLI and sign you in to it in the browser. Then pick **Grok** on a new session.
-
-Kynex runs Grok Build in the project folder over the Agent Client Protocol: one process per
-session that stays up between messages and sleeps when idle. It uses Grok's own tools, login and
-models; the model and effort menus list what Grok offers, and switch a running session. Grok
-asks before edits and commands in Kynex's permission prompts, and Accept edits and Auto let
-edits through. The context meter and each turn's cost come from what Grok reports. Grok
-sessions started in Kynex stay in the sessions list and reopen where they left off. A session
-keeps its provider once you've sent something.
 
 ## Links
 
@@ -291,9 +99,4 @@ keeps its provider once you've sent something.
 ## License
 
 Copyright © 2026 Michael Bergeron. Kynex is free software under the
-[GNU General Public License v3.0 or later](LICENSE): use it for anything, including paid
-work, and fork or change it as you like, as long as anything you distribute stays under the
-same license with its source available. Third-party notices are in [NOTICE.md](NOTICE.md).
-
-The license covers the code, not the name: forks should go by a different name and logo,
-so nobody mistakes them for Kynex.
+[GNU General Public License v3.0 or later](LICENSE). Third-party notices are in [NOTICE.md](NOTICE.md).

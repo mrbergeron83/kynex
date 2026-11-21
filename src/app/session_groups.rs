@@ -1,7 +1,4 @@
-//! Organising the sessions panel: groups that collapse, an archive, pinned
-//! sessions, their right-click menus, renaming a group or session in place,
-//! and dragging sessions between them. The rules live in `kynex_core::groups`;
-//! this draws them.
+//! Organising the sessions tree: groups, archive, pinning, renaming, and drag-and-drop.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,7 +9,6 @@ use gpui::{
     prelude::*,
 };
 use kynex_core::groups::{GroupId, Selection, SessionGroups};
-
 use kynex_core::toasts::Toast;
 
 use super::KynexApp;
@@ -21,33 +17,22 @@ use crate::theme::{theme, ui_font};
 use crate::ui::input::TextInput;
 use crate::ui::{Lamp, divider, lamp_count, menu_item, popover, section_label};
 
-/// What a session menu item does when clicked.
 type MenuAction = Box<dyn Fn(&mut KynexApp, &mut Window, &mut Context<KynexApp>)>;
 
-/// What the name field is renaming.
 #[derive(Clone, PartialEq)]
 enum Editing {
-    /// This group in this folder.
     Group(PathBuf, GroupId),
-    /// A session, in its panel row or (`in_header`) the session header.
-    Session { cwd: PathBuf, id: String, in_header: bool },
+    Session { cwd: PathBuf, id: String },
 }
 
-/// Each folder's groups as loaded, and the panel's own view state.
 pub(super) struct Organize {
     by_folder: HashMap<PathBuf, SessionGroups>,
-    /// What's being renamed, if anything.
     editing: Option<Editing>,
     name: Entity<TextInput>,
-    /// Sessions picked to archive or delete together, and the folder they're in.
     pub(super) selection: Selection,
     pub(super) selection_cwd: Option<PathBuf>,
-    /// The tree's session rows in the order drawn, each with its workspace: for
-    /// Shift+click runs and the list's keys.
     pub(super) shown: Vec<(PathBuf, String)>,
-    /// "Delete" was clicked on the picked sessions and waits for Yes.
     pub(super) confirm_bulk_delete: bool,
-    /// The row the list's ↑ / ↓ keys are on.
     pub(super) cursor: Option<String>,
 }
 
@@ -65,23 +50,18 @@ impl Organize {
         }
     }
 
-    /// A session's name given by hand, if its folder's groups are loaded.
     pub(super) fn name_of(&self, cwd: &Path, id: &str) -> Option<String> {
         self.by_folder.get(cwd)?.name_of(id).map(str::to_string)
     }
 }
 
-/// Sessions being dragged onto a group, the archive or a pinned row: the one
-/// grabbed, and with it every other picked one.
 #[derive(Clone)]
 pub(super) struct DraggedSession {
-    /// The workspace they're in: they only drop into its own groups and sections.
     pub cwd: PathBuf,
     pub ids: Vec<String>,
     pub title: SharedString,
 }
 
-/// A group header being dragged to another place among the groups.
 #[derive(Clone)]
 pub(super) struct DraggedGroup {
     pub cwd: PathBuf,
@@ -99,7 +79,6 @@ impl Render for DraggedGroup {
 impl Render for DraggedSession {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
-        // Drawn outside the window's root, so it doesn't inherit the font.
         popover(cx).font_family(ui_font()).px_2().py_1().max_w(px(240.)).text_sm().text_color(t.text).child(
             div().truncate().child(match self.ids.len() {
                 1 => self.title.clone(),
@@ -110,12 +89,10 @@ impl Render for DraggedSession {
 }
 
 impl KynexApp {
-    /// A folder's groups, read from disk the first time.
     pub(super) fn groups_for(&mut self, cwd: &Path) -> &SessionGroups {
         self.organize.by_folder.entry(cwd.to_path_buf()).or_insert_with(|| SessionGroups::load(cwd))
     }
 
-    /// Changes a folder's groups and saves them if anything changed.
     pub(super) fn edit_groups(&mut self, cwd: &Path, f: impl FnOnce(&mut SessionGroups)) {
         self.groups_for(cwd);
         let Some(groups) = self.organize.by_folder.get_mut(cwd) else { return };
@@ -128,7 +105,6 @@ impl KynexApp {
         }
     }
 
-    /// Shows the name field in place of group `id`'s header.
     pub(super) fn start_group_rename(
         &mut self,
         cwd: PathBuf,
@@ -136,7 +112,6 @@ impl KynexApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // One open at a time: the field moves, so keep what the last one had.
         self.commit_rename(cx);
         let name = self.groups_for(&cwd).group(id).map(|g| g.name.clone()).unwrap_or_default();
         self.organize.name.update(cx, |input, cx| input.set_text(name, cx));
@@ -145,13 +120,10 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Shows the name field in place of a session's name: in its panel row, or
-    /// in the session header (`in_header`), filled with the name it has now.
     pub(super) fn start_session_rename(
         &mut self,
         cwd: PathBuf,
         id: String,
-        in_header: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -160,53 +132,43 @@ impl KynexApp {
         let name = self.groups_for(&cwd).name_of(&id).map(str::to_string).or(listed).unwrap_or_default();
         self.organize.name.update(cx, |input, cx| input.set_text(name, cx));
         self.organize.name.read(cx).focus_handle(cx).focus(window, cx);
-        self.organize.editing = Some(Editing::Session { cwd, id, in_header });
+        self.organize.editing = Some(Editing::Session { cwd, id });
         cx.notify();
     }
 
-    /// The name field, while it's renaming session `id` in the panel row or (`in_header`) the header.
-    pub(super) fn session_name_field(&self, id: &str, in_header: bool, cx: &mut Context<Self>) -> Option<gpui::Div> {
-        matches!(&self.organize.editing, Some(Editing::Session { id: e, in_header: h, .. }) if e == id && *h == in_header)
-            .then(|| self.rename_field(cx))
+    pub(super) fn session_name_field(&self, id: &str, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        matches!(&self.organize.editing, Some(Editing::Session { id: e, .. }) if e == id).then(|| self.rename_field(cx))
     }
 
-    /// The name field in place: Enter or a click anywhere else keeps the name,
-    /// Esc leaves it as it was.
     fn rename_field(&self, cx: &mut Context<Self>) -> gpui::Div {
         let t = theme(cx).clone();
         crate::ui::name_field(self.organize.name.clone(), &t)
             .on_mouse_down_out(cx.listener(|this, _, _, cx| this.commit_rename(cx)))
     }
 
-    /// A session's name given by hand, which wins over generated ones.
     pub(super) fn given_name(&mut self, cwd: &Path, id: &str) -> Option<String> {
         self.groups_for(cwd).name_of(id).map(str::to_string)
     }
 
-    /// Enter in the name field: keeps the new name. A session's blank name
-    /// goes back to the generated one.
     pub(super) fn commit_rename(&mut self, cx: &mut Context<Self>) {
         let Some(editing) = self.organize.editing.take() else { return };
         let name = self.organize.name.read(cx).text().to_string();
         match editing {
             Editing::Group(cwd, id) => self.edit_groups(&cwd, |g| g.rename_group(id, &name)),
-            Editing::Session { cwd, id, .. } => {
+            Editing::Session { cwd, id } => {
                 self.edit_groups(&cwd, |g| g.rename(&id, &name));
-                // Re-read the list so the new name shows everywhere.
                 self.reread_sessions();
             }
         }
         cx.notify();
     }
 
-    /// Esc in the name field: leaves the name as it was. Returns whether it was open.
     pub(super) fn cancel_rename(&mut self) -> bool {
         self.organize.editing.take().is_some()
     }
 
-    /// The menu for a session row: rename or pin it, move it between groups, archive it.
     pub(super) fn session_menu_items(&mut self, id: &str, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let Some(cwd) = self.folder_of_listed(id).or_else(|| self.panel_folder().map(|(_, c)| c)) else {
+        let Some(cwd) = self.folder_of_listed(id).or_else(|| self.workspace_cwd()) else {
             return Vec::new();
         };
         let groups = self.groups_for(&cwd).clone();
@@ -221,29 +183,34 @@ impl KynexApp {
                 }))
                 .into_any_element()
         };
-        // Beside what's on show, in a pane of its own (projects only).
-        if self.tiling_scope().is_some() {
-            for (n, label, side) in [
-                (2100, "Open to the side", kynex_core::layout::Direction::Right),
-                (2101, "Open below", kynex_core::layout::Direction::Down),
-            ] {
-                let open_id = id.to_string();
-                items.push(item(
-                    label.into(),
-                    n,
-                    cx,
-                    Box::new(move |this, window, cx| this.open_beside(open_id.clone(), None, Some(side), window, cx)),
-                ));
-            }
-            items.push(div().my_1().child(divider(cx)).into_any_element());
+        for (n, label, side) in [
+            (2100, "Open to the side", kynex_core::layout::Direction::Right),
+            (2101, "Open below", kynex_core::layout::Direction::Down),
+        ] {
+            let open_id = id.to_string();
+            items.push(item(
+                label.into(),
+                n,
+                cx,
+                Box::new(move |this, window, cx| this.open_beside(open_id.clone(), None, Some(side), window, cx)),
+            ));
         }
+        if let Some(agent_id) = self.live_agent_of_session(&cwd, id) {
+            items.push(item(
+                "Stop live session".into(),
+                2102,
+                cx,
+                Box::new(move |this, window, cx| this.stop_agent(agent_id, window, cx)),
+            ));
+        }
+        items.push(div().my_1().child(divider(cx)).into_any_element());
         let (rename_id, rename_cwd) = (id.to_string(), cwd.clone());
         items.push(item(
             "Rename".into(),
             2000,
             cx,
             Box::new(move |this, window, cx| {
-                this.start_session_rename(rename_cwd.clone(), rename_id.clone(), false, window, cx)
+                this.start_session_rename(rename_cwd.clone(), rename_id.clone(), window, cx)
             }),
         ));
         let (pin_id, pin_cwd) = (id.to_string(), cwd.clone());
@@ -303,15 +270,15 @@ impl KynexApp {
             1002,
             cx,
             Box::new(move |this, _, _| {
-                if archived {
-                    this.unarchive_nest(&archive_cwd, std::slice::from_ref(&archive_id));
-                } else {
-                    // With the sessions it started.
-                    this.archive_nest(&archive_cwd, std::slice::from_ref(&archive_id));
-                }
+                this.edit_groups(&archive_cwd, |g| {
+                    if archived {
+                        g.unarchive(&archive_id);
+                    } else {
+                        g.archive(&archive_id);
+                    }
+                });
             }),
         ));
-        // Its disk use, which opens Settings → Storage on it.
         let size = self.disk_use(cwd, id, cx).map_or_else(|| "measuring…".into(), kynex_core::fmt::bytes);
         let id = id.to_string();
         items.push(item(
@@ -323,7 +290,6 @@ impl KynexApp {
         items
     }
 
-    /// The menu for a group header: rename or delete it.
     pub(super) fn group_menu_items(&mut self, cwd: &Path, id: GroupId, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let cwd = cwd.to_path_buf();
         let t = theme(cx).clone();
@@ -355,8 +321,7 @@ impl KynexApp {
         ]
     }
 
-    /// A group: its header (click to collapse, right-click for its menu, or the
-    /// name field while renaming) and its rows. Sessions dropped on it join it.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn render_group(
         &mut self,
         cwd: &Path,
@@ -374,10 +339,7 @@ impl KynexApp {
         let hover = t.hover;
         let (toggle_cwd, drop_cwd, menu_cwd) = (cwd.to_path_buf(), cwd.to_path_buf(), cwd.to_path_buf());
         let (reorder_cwd, group_cwd) = (cwd.to_path_buf(), cwd.to_path_buf());
-        // A section header: its name, and its count while folded.
         let label = if open { group.name.clone() } else { format!("{} · {count}", group.name) };
-        // Folded, its sessions' lamps can't be seen: one tell on the header
-        // instead, in the most urgent one's colour, with how many have news.
         let tell = (!open && !news.is_empty())
             .then(|| lamp_count(("group-news", i), Lamp::most_urgent(news.iter().copied()), news.len(), cx));
         let text = t.text;
@@ -411,12 +373,10 @@ impl KynexApp {
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                // Not the pane's menu as well.
                 cx.stop_propagation();
                 this.open_menu(Menu::Group(menu_cwd.clone(), id), ev.position, gpui::Anchor::TopLeft, cx)
             }),
         )
-        // Dragged onto another group, it takes that group's place.
         .on_drag(DraggedGroup { cwd: group_cwd, id, name: group.name.clone().into() }, |d, _, _, cx| {
             cx.new(|_| d.clone())
         });
@@ -453,8 +413,6 @@ impl KynexApp {
             .into_any_element()
     }
 
-    /// The archived sessions, with "Show archived" on: dimmed, last, no header. Dropped
-    /// here, a session is archived.
     pub(super) fn render_archived(&mut self, cwd: &Path, rows: Vec<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
         let hover = theme(cx).hover;
         let drop_cwd = cwd.to_path_buf();
@@ -470,7 +428,11 @@ impl KynexApp {
                 if d.cwd != drop_cwd {
                     return;
                 }
-                this.archive_nest(&drop_cwd, &d.ids);
+                this.edit_groups(&drop_cwd, |g| {
+                    for id in &d.ids {
+                        g.archive(id);
+                    }
+                });
                 this.organize.selection.clear();
                 cx.notify();
             }))

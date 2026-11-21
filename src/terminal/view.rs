@@ -101,7 +101,7 @@ impl TerminalView {
     fn start(&mut self, cx: &mut Context<Self>) {
         // Output rings this from the PTY thread; one task redraws, coalescing bursts.
         let (tx, rx) = async_channel::bounded::<()>(1);
-        let wake: kynex_core::session::Wake = Arc::new(move || {
+        let wake: kynex_core::terminal::Wake = Arc::new(move || {
             let _ = tx.try_send(());
         });
         cx.spawn(async move |this, cx| {

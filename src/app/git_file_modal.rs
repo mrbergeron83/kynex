@@ -33,9 +33,9 @@ impl KynexApp {
         cx: &mut Context<Self>,
     ) {
         let view = cx.new(|cx| FileDiffView::new(root, path, untracked, staged, cx));
-        cx.subscribe_in(&view, window, |this, _, ev: &FileDiffEvent, window, cx| match ev {
+        cx.subscribe_in(&view, window, |this, _, ev: &FileDiffEvent, _window, cx| match ev {
             FileDiffEvent::Close => this.close_git_file_modal(cx),
-            FileDiffEvent::ViewImage(image, size) => this.open_rendered(image.clone(), *size, window, cx),
+            FileDiffEvent::ViewImage(_, _) => {}
         })
         .detach();
         self.git_file = Some(GitDiffModal::File(view));
@@ -51,9 +51,9 @@ impl KynexApp {
         cx: &mut Context<Self>,
     ) {
         let view = cx.new(|cx| FileDiffView::open_file(path, line, cx));
-        cx.subscribe_in(&view, window, |this, _, ev: &FileDiffEvent, window, cx| match ev {
+        cx.subscribe_in(&view, window, |this, _, ev: &FileDiffEvent, _window, cx| match ev {
             FileDiffEvent::Close => this.close_git_file_modal(cx),
-            FileDiffEvent::ViewImage(image, size) => this.open_rendered(image.clone(), *size, window, cx),
+            FileDiffEvent::ViewImage(_, _) => {}
         })
         .detach();
         self.git_file = Some(GitDiffModal::File(view));

@@ -1,49 +1,36 @@
-//! The sessions panel: the sidebar's tree of workspaces and their sessions
-//! (`session_tree.rs`), its header (filter, select, new workspace, add folder, new
-//! session), and each workspace's list of past sessions, read off the UI thread.
+//! The Sessions & Workspaces tree pane: reads each workspace's past sessions off the UI
+//! thread via `kynex_core::sessions` and renders the tree (`session_tree.rs`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::ui::px;
-use gpui::{Anchor, AnyElement, Context, Focusable, MouseButton, Window, div, prelude::*};
+use gpui::{Anchor, Context, Focusable, Window, div, prelude::*};
 use kynex_core::layout::PaneId;
-use kynex_core::session::{self, Kind, SessionInfo};
+use kynex_core::sessions::{self, SessionInfo};
 
 use super::KynexApp;
-use super::keys::{NewSession, ToggleSessions};
 use super::menus::Menu;
 use super::session_rows::OpenSession;
 use super::session_tree::TreeCtx;
 use crate::theme::theme;
-use crate::ui::motion::grow;
 use crate::ui::{Icon, Tooltip, icon_button, scrollbar, section_label};
 
-/// A workspace's past sessions, re-read when its open sessions change (one starts,
-/// gets its id, a reply starts or finishes) or something they show does.
 pub struct SessionList {
-    /// What it was read for.
     pub(super) read: ListRead,
-    /// Shared, so the tree can hold it while it draws without a copy.
     pub items: Rc<Vec<SessionInfo>>,
-    /// The repository's default branch: sessions on another one say theirs.
     pub(super) default_branch: Option<String>,
-    /// Something it shows changed (a rename, a setting): read it again.
     stale: bool,
 }
 
-/// What a workspace's list is read again for when it changes.
 #[derive(Clone, PartialEq)]
 pub struct ListRead {
     pub(super) cwd: PathBuf,
     current: Option<String>,
-    /// The workspace's open sessions and whether each is busy: titles and times
-    /// move when a reply starts or finishes.
     live: Vec<(Option<String>, bool)>,
 }
 
-/// The lists' reads: the newest asked for and the newest shown, per folder.
 #[derive(Default)]
 pub(super) struct Reads {
     reading: HashMap<PathBuf, ListRead>,
@@ -51,17 +38,12 @@ pub(super) struct Reads {
 }
 
 impl KynexApp {
-    /// Sessions are being deleted: they leave the lists now. The caller has them read
-    /// again ([`Self::reread_sessions`]) once their files are gone; a read before that
-    /// would bring them back for a moment.
     pub(super) fn relist_sessions(&mut self, gone: &[String]) {
         for l in self.sessions.values_mut() {
             Rc::make_mut(&mut l.items).retain(|i| !gone.contains(&i.id));
         }
     }
 
-    /// Reads a folder's past sessions off the UI thread (each transcript's ends); the
-    /// tree keeps showing the last list until they're in.
     fn read_sessions(&mut self, read: ListRead, cx: &mut Context<Self>) {
         let cwd = read.cwd.clone();
         self.session_reads.reading.insert(cwd.clone(), read.clone());
@@ -72,13 +54,11 @@ impl KynexApp {
         cx.spawn(async move |this, cx| {
             let (mut items, default_branch, gone) = cx
                 .background_spawn(async move {
-                    let gone = session::gone_sessions(&cwd, &saved);
-                    (session::list_sessions(&cwd), kynex_core::git::default_branch(&cwd), gone)
+                    let gone = sessions::gone_sessions(&cwd, &saved);
+                    (sessions::list_sessions(&cwd), kynex_core::git::default_branch(&cwd), gone)
                 })
                 .await;
             this.update(cx, |this, cx| {
-                // An older read than one already shown: drop it. A newer one on its way
-                // still lets this one show meanwhile.
                 let reads = this.session_reads.reads.entry(read.cwd.clone()).or_default();
                 if n < reads.1 {
                     return;
@@ -87,19 +67,21 @@ impl KynexApp {
                 if this.session_reads.reading.get(&read.cwd) == Some(&read) {
                     this.session_reads.reading.remove(&read.cwd);
                 }
-                // Sessions deleted outside Kynex leave sessions.json; open ones may not
-                // have a transcript yet.
                 if let Some(gone) = gone.filter(|g| !g.is_empty()) {
-                    let open: Vec<String> = this.all_sessions().filter_map(|s| s.session_id.clone()).collect();
+                    let open: Vec<String> = this
+                        .tiles
+                        .values()
+                        .flat_map(|t| t.agent_panes())
+                        .filter_map(|(_, m)| m.session_id.clone())
+                        .chain(this.agent_instances.values().filter_map(|a| a.meta.session_id.clone()))
+                        .collect();
                     this.edit_groups(&read.cwd, |g| {
                         g.drop_gone(|id| !gone.iter().any(|x| x == id), &open);
                     });
                 }
-                // A name given by hand wins, and counts as named, so none is generated.
                 for i in &mut items {
                     if let Some(name) = this.given_name(&read.cwd, &i.id) {
                         i.title = name;
-                        i.named = true;
                     }
                 }
                 let cwd = read.cwd.clone();
@@ -111,15 +93,12 @@ impl KynexApp {
         .detach();
     }
 
-    /// Has every list read again, keeping it on screen meanwhile.
     pub(super) fn reread_sessions(&mut self) {
         for l in self.sessions.values_mut() {
             l.stale = true;
         }
     }
 
-    /// Runs `f` once the list of `cwd` is read: now if it is, else after reading it off the
-    /// UI thread (a folded workspace's isn't). The tree reads it again when it's drawn.
     pub(super) fn with_list(
         &mut self,
         cwd: &Path,
@@ -134,7 +113,7 @@ impl KynexApp {
             let read = dir.clone();
             let (items, default_branch) = cx
                 .background_spawn(
-                    async move { (session::list_sessions(&read), kynex_core::git::default_branch(&read)) },
+                    async move { (sessions::list_sessions(&read), kynex_core::git::default_branch(&read)) },
                 )
                 .await;
             this.update(cx, |this, cx| {
@@ -152,8 +131,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Has the list of `cwd` read if it isn't, or is out of date for its `open` sessions
-    /// and the shown one (`current`, when it's there). Returns whether it's still to come.
     pub(super) fn want_list(
         &mut self,
         cwd: &Path,
@@ -170,51 +147,6 @@ impl KynexApp {
         !self.sessions.contains_key(cwd)
     }
 
-    /// The panel with its drag-to-resize right edge, or nothing while collapsed. Only where
-    /// there are no panes to hold the tree: chat.
-    pub(super) fn render_sessions_column(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let open = !self.saved.sessions_collapsed;
-        let leaving = self.exits.sessions.track_flag(open, window, cx);
-        if !open && leaving.is_none() {
-            return None;
-        }
-        let t = theme(cx).clone();
-        // Slides open when shown (Ctrl+B) and shut when hidden; the width is the dragged one.
-        Some(grow(
-            "sessions-in",
-            div()
-                .relative()
-                .flex_none()
-                .h_full()
-                .bg(t.panel)
-                .border_r_1()
-                .border_color(t.border)
-                .child(self.render_sessions_panel(window, cx, None))
-                .child(
-                    div()
-                        .id("sessions-resize")
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .right(px(-3.))
-                        .w(px(6.))
-                        .cursor_col_resize()
-                        .hover(|s| s.bg(t.border_focused.opacity(0.6)))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, _, _, cx| {
-                                this.resizing_sessions = true;
-                                cx.stop_propagation();
-                            }),
-                        ),
-                ),
-            // Saved at normal size, so it grows with the zoom like what's in it.
-            self.saved.sessions_width * self.saved.zoom,
-            leaving,
-        ))
-    }
-
-    /// The tree, in the sidebar (`pane` is `None`) or in a pane.
     pub(super) fn render_sessions_panel(
         &mut self,
         window: &mut Window,
@@ -222,31 +154,24 @@ impl KynexApp {
         pane: Option<PaneId>,
     ) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
-        let Some(live) = self.live_mut() else { return div() };
-        let Some(s) = live.current() else { return div() };
-        let (kind, cwd, current, current_uid) = (s.kind, s.cwd.clone(), s.session_id.clone(), s.uid);
-        let fresh = s.is_new();
-        // The title filter, while it's open.
+        let Some((_, cwd)) = self.tiling_scope() else { return div() };
+        let current = self.focused_session_id();
+        let current_agent = self.focused_agent_id();
         let query = if self.filtering_sessions {
             self.session_filter.read(cx).text().trim().to_lowercase()
         } else {
             String::new()
         };
         let cursor = self.organize.cursor.clone().filter(|_| self.sessions_focus.is_focused(window));
-        let ctx = TreeCtx { kind, cwd: cwd.clone(), current: current.clone(), current_uid, query, cursor };
+        let ctx = TreeCtx { cwd: cwd.clone(), current, current_agent, query, cursor };
         let tree = self.render_tree(&ctx, cx);
-        // The rows in the order drawn, for Shift+click runs, "All" and the list's keys.
         self.organize.shown = tree.order.clone();
-        // Picks stay in one workspace: the one they were made in.
         let pick_cwd = self.organize.selection_cwd.clone().unwrap_or_else(|| cwd.clone());
         let in_pick_folder: Vec<String> =
             tree.order.iter().filter(|(p, _)| *p == pick_cwd).map(|(_, id)| id.clone()).collect();
         self.sync_picks(&pick_cwd, &in_pick_folder);
         let picking = self.organize.selection.on;
-        // A project, whose workspaces are rows in the tree (chat has none).
-        let project = self.workspace_project().filter(|_| kind == Kind::Code);
 
-        // In a pane, the header is the handle that drags it.
         let header = div()
             .id("sessions-header")
             .flex()
@@ -274,24 +199,11 @@ impl KynexApp {
                     }))
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle_picking(cwd.clone(), cx)))
             })
-            // The header adds workspaces; a session is made on its workspace's row. Chat has
-            // no workspace rows, so its "New session" stays here.
-            .map(|d| match project.is_some() {
-                true => d.child(
-                    icon_button("add-workspace", Icon::FolderPlus, cx)
-                        .tooltip(Tooltip::text("Add workspace"))
-                        .on_click(cx.listener(|this, ev: &gpui::ClickEvent, _, cx| {
-                            this.open_menu(Menu::AddWorkspace, ev.position(), Anchor::TopLeft, cx)
-                        })),
-                ),
-                false => d.child(
-                    icon_button("new-session", Icon::Plus, cx)
-                        .when(fresh, |b| b.opacity(0.4))
-                        .when(fresh, |b| b.tooltip(Tooltip::text("Already a new session")))
-                        .when(!fresh, |b| b.tooltip(Tooltip::for_action("New session", NewSession, "")))
-                        .on_click(cx.listener(|this, _, window, cx| this.new_session(window, cx))),
-                ),
-            })
+            .child(icon_button("add-workspace", Icon::FolderPlus, cx).tooltip(Tooltip::text("Add workspace")).on_click(
+                cx.listener(|this, ev: &gpui::ClickEvent, _, cx| {
+                    this.open_menu(Menu::AddWorkspace, ev.position(), Anchor::TopLeft, cx)
+                }),
+            ))
             .child(
                 icon_button("sessions-more", Icon::ChevronDown, cx)
                     .tooltip(Tooltip::text("Sessions options"))
@@ -299,14 +211,12 @@ impl KynexApp {
                         this.open_menu(Menu::SessionsPanel, ev.position(), Anchor::TopLeft, cx)
                     })),
             )
-            .child(match pane {
-                // In a pane, the panel's own button closes the pane.
-                Some(id) => icon_button("close-sessions-pane", Icon::Close, cx)
-                    .tooltip(Tooltip::text("Close pane"))
-                    .on_click(cx.listener(move |this, _, window, cx| this.close_pane_id(id, window, cx))),
-                None => icon_button("hide-sessions", Icon::PanelLeft, cx)
-                    .tooltip(Tooltip::for_action("Hide sessions", ToggleSessions, ""))
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_sessions(&ToggleSessions, window, cx))),
+            .when_some(pane, |d, id| {
+                d.child(
+                    icon_button("close-sessions-pane", Icon::Close, cx)
+                        .tooltip(Tooltip::text("Close pane"))
+                        .on_click(cx.listener(move |this, _, window, cx| this.close_pane_id(id, window, cx))),
+                )
             });
 
         let filter = self.filtering_sessions.then(|| {
@@ -322,7 +232,6 @@ impl KynexApp {
                     .bg(t.editor)
                     .text_sm()
                     .child(self.session_filter.clone())
-                    // Esc closes the filter and shows every session again.
                     .on_key_down(cx.listener(|this, ev: &gpui::KeyDownEvent, window, cx| {
                         if ev.keystroke.key == "escape" {
                             cx.stop_propagation();
@@ -331,9 +240,8 @@ impl KynexApp {
                     })),
             )
         });
-        let forms = if project.is_some() { self.render_workspace_forms(cx) } else { Vec::new() };
-        // Last in the tree: the sessions of workspaces removed through Kynex.
-        let removed = if project.is_some() { self.render_removed_workspaces(cx) } else { None };
+        let forms = self.render_workspace_forms(cx);
+        let removed = self.render_removed_workspaces(cx);
 
         let scroll = scrollbar::handle("session-list");
         let list = div()
@@ -344,7 +252,6 @@ impl KynexApp {
             .track_scroll(&scroll)
             .px_1p5()
             .pb_1()
-            // Its own keys while it has the focus: ↑ / ↓, Enter, F2, Delete, Shift+Delete.
             .key_context("SessionList")
             .track_focus(&self.sessions_focus)
             .on_action(cx.listener(Self::list_up))
@@ -356,7 +263,7 @@ impl KynexApp {
             .children(forms)
             .children(tree.rows)
             .children(removed);
-        let picks = self.render_pick_bar(kind, pick_cwd, in_pick_folder, tree.busy, cx);
+        let picks = self.render_pick_bar(pick_cwd, in_pick_folder, tree.busy, cx);
         div()
             .flex()
             .flex_col()
@@ -367,7 +274,6 @@ impl KynexApp {
             .children(picks)
     }
 
-    /// Opens the title filter, or closes it and shows every session again.
     fn toggle_session_filter(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
         self.filtering_sessions = !self.filtering_sessions;
         if self.filtering_sessions {

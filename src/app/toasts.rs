@@ -1,13 +1,10 @@
-//! The toast stack: one corner for every note (a background task ending in
-//! another session, a new version, an error), the window's corner picked in
-//! Settings › Appearance, clear of the bars and the composer. The rules (how
-//! long each stays, pausing, merging, how many show, where) are
-//! `kynex_core::toasts`; here they draw, tick, and do what their button says.
+//! The toast stack: one corner for brief status notices (new version, errors, background
+//! workspace actions), positioned in the window corner picked in Settings › Appearance.
 
 use std::time::{Duration, Instant};
 
 use crate::ui::px;
-use gpui::{AnyElement, Context, Window, canvas, div, prelude::*};
+use gpui::{AnyElement, Context, Window, div, prelude::*};
 use kynex_core::toasts::{Action, Kind, Toast};
 
 use super::KynexApp;
@@ -28,12 +25,10 @@ impl KynexApp {
         self.toasts.push(toast)
     }
 
-    /// Before drawing: the shown session's own toasts go, and the stack's
-    /// clock runs while there's anything in it, paused while the pointer is on
-    /// it or the window is in the background.
+    /// Before drawing: clears toasts for the focused pane and ticks the stack clock.
     pub(super) fn sync_toasts(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if let Some(key) = self.focused_key() {
-            self.toasts.seen(key);
+        if let Some(pane) = self.focused_pane_id() {
+            self.toasts.seen(pane);
         }
         self.toasts_paused = self.toast_hover || !window.is_window_active();
         if self.toasts.is_empty() || self.toasts_ticking {
@@ -69,35 +64,14 @@ impl KynexApp {
     fn toast_act(&mut self, id: u64, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         self.toasts.dismiss(id);
         match action {
-            Action::GoToSession(key) => self.go_to_session(key, window, cx),
-            Action::GoToPane(id) => self.focus_pane(id, window, cx),
+            Action::GoToPane(pane) => self.go_to_agent(pane, window, cx),
             Action::ViewUpdate => self.open_about(cx),
-            Action::ContinueInChat(key) => self.continue_in_chat(key, cx),
             Action::RebindWorkspace(id) => self.rebind_workspace(id, cx),
         }
         cx.notify();
     }
 
-    /// Measures the conversation's free area, laid over it, for the toasts to
-    /// stay clear of its header and composer; repaints if it moved.
-    pub(super) fn toast_room_probe(&self) -> impl IntoElement + use<> {
-        let room = self.pane.toast_room.clone();
-        canvas(
-            move |bounds, window, _| {
-                if room.get() != Some(bounds) {
-                    room.set(Some(bounds));
-                    window.refresh();
-                }
-            },
-            |_, _, _, _| {},
-        )
-        .absolute()
-        .inset_0()
-    }
-
-    /// The stack in its corner of the conversation, newest nearest the edge; `None`
-    /// with nothing to show. Only the toasts take the mouse, not the space
-    /// around them.
+    /// The stack in its corner of the window, newest nearest the edge; `None` with nothing to show.
     pub(super) fn render_toasts(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.toasts.is_empty() {
             return None;
@@ -105,21 +79,11 @@ impl KynexApp {
         let t = theme(cx).clone();
         let exit = if cx.reduce_motion() { Duration::ZERO } else { motion::QUICK };
         let corner = self.saved.toast_corner;
-        // Clear of the title bar and footer, and in the conversation of its
-        // header above and the composer below, and of the side panels.
-        let size = window.viewport_size();
-        let (height, width) = (f32::from(size.height), f32::from(size.width));
         let rem = window.rem_size();
         let footer = if self.saved.footer { f32::from(FOOTER_HEIGHT.to_pixels(rem)) } else { 0. };
-        let (mut top, mut bottom) = (f32::from(TITLE_BAR_HEIGHT.to_pixels(rem)), footer);
-        let (mut left, mut right) = (0., 0.);
-        if let Some(room) = self.pane.toast_room.get() {
-            top = top.max(f32::from(room.top()));
-            bottom = bottom.max(height - f32::from(room.bottom()));
-            left = f32::from(room.left()).max(0.);
-            right = (width - f32::from(room.right())).max(0.);
-        }
-        let place = corner.place(top, bottom, left, right);
+        let top = f32::from(TITLE_BAR_HEIGHT.to_pixels(rem)) + 40.;
+        let bottom = footer;
+        let place = corner.place(top, bottom, 0., 0.);
         let (shown, more) = self.toasts.visible();
         let mut rows: Vec<AnyElement> = shown.iter().map(|toast| toast_row(toast, exit, &t, cx)).collect();
         if corner.is_top() {
@@ -166,8 +130,6 @@ impl KynexApp {
     }
 }
 
-/// One toast: one line of icon, title, muted detail, its button, and a × that
-/// shows on hover. The whole line does the button's action too.
 fn toast_row(toast: &Toast, exit: Duration, t: &Palette, cx: &mut Context<KynexApp>) -> AnyElement {
     let id = toast.id;
     let (which, colour) = match toast.kind {
@@ -185,7 +147,6 @@ fn toast_row(toast: &Toast, exit: Duration, t: &Palette, cx: &mut Context<KynexA
     let row = div()
         .id(("toast", id as usize))
         .group("toast")
-        // Clicks on a toast stay on it, not the transcript or composer under it.
         .occlude()
         .h(px(32.))
         .max_w(px(460.))

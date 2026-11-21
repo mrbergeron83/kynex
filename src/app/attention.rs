@@ -1,43 +1,40 @@
-//! Telling you a session wants you while Kynex is in the background
-//! (`kynex_core::attention`): an OS notification per session that newly
-//! finishes or needs an answer, when that's turned on, and a dot on the app's
-//! taskbar / Dock icon while any session wants you. Clicking a notification
-//! brings Kynex up on that session.
+//! Background OS notifications for `agent_cli` panes (`kynex_core::attention`).
+//!
+//! While Kynex is in the foreground, in-UI status lamps show every agent's state.
+//! When Kynex is in the background and `background_notifications` is enabled, a
+//! simple OS notification fires once per pane that newly finishes or needs input.
+//! Clicking the notification focuses Kynex on that pane.
 
 use gpui::{Context, SystemNotification, Window};
-use kynex_core::attention::{self, Why};
-use kynex_core::live::Key;
-use kynex_core::notify::{self, Event, Route};
-use kynex_core::toasts::{Action, Toast};
+use kynex_core::agent_panes::AgentState;
+use kynex_core::attention::{self, Alert};
 
 use super::KynexApp;
+use super::agent_cli::AgentId;
 
-/// A session's notification tag, which a click hands back.
-pub(super) fn tag(key: Key) -> String {
-    format!("session-{key}")
+fn tag(id: AgentId) -> String {
+    format!("agent-{id}")
 }
 
 impl KynexApp {
-    /// Clicking a notification shows its session.
+    /// Clicking an OS notification brings Kynex up and focuses (or swaps in) the agent.
     pub(super) fn watch_notification_clicks(window: &Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
         let handle = window.window_handle();
         cx.on_system_notification_response(move |response, cx| {
-            let key = response.tag.strip_prefix("session-").and_then(|k| k.parse::<Key>().ok());
-            let pane = response.tag.strip_prefix("pane-").and_then(|p| p.parse::<u64>().ok());
-            if key.is_none() && pane.is_none() {
+            let Some(id) = response
+                .tag
+                .strip_prefix("agent-")
+                .or_else(|| response.tag.strip_prefix("pane-"))
+                .and_then(|p| p.parse::<AgentId>().ok())
+            else {
                 return;
-            }
+            };
             handle
                 .update(cx, |_, window, cx| {
                     window.activate_window();
                     this.update(cx, |this, cx| {
-                        this.show_from_background(cx);
-                        if let Some(key) = key {
-                            this.go_to_session(key, window, cx);
-                        } else if let Some(pane) = pane {
-                            this.focus_pane(pane, window, cx);
-                        }
+                        this.go_to_agent(id, window, cx);
                     })
                     .ok();
                 })
@@ -45,89 +42,37 @@ impl KynexApp {
         });
     }
 
-    /// After sessions change: notifies about each session that newly wants
-    /// you while Kynex isn't in front (if notifications are on), takes back
-    /// those you've seen to, and sets the icon's dot. Only calls the OS on a change.
-    pub(super) fn sync_attention(&mut self, cx: &mut Context<Self>) {
-        let now: Vec<(Key, Why)> = self
-            .chat
-            .sessions
-            .iter()
-            .chain(self.code.values().flat_map(|l| l.sessions.iter()))
-            .filter_map(|s| Some((s.uid, Why::of(s)?)))
-            .collect();
-        let mut heard = Vec::new();
-        if self.saved.notifications.any_on() {
-            let focused = self.focused_key();
-            let visible: Vec<Key> = self
-                .tiling_scope()
-                .and_then(|(_, cwd, _)| self.tiles.get(&cwd))
-                .map(|t| t.visible().into_iter().map(|(_, k)| k).collect())
-                .unwrap_or_default();
-            for &(key, why) in &now {
-                if attention::news(self.wants.get(&key).copied(), Some(why)).is_none() {
-                    continue;
-                }
-                let event = Event::from(why);
-                let provider = self.session_by_key(key).map(|s| notify::provider_name(s.provider()));
-                let rule = self.saved.notifications.resolve(event, provider);
-                let on_screen = attention::on_screen(key, focused, &visible);
-                let title = self.session_title(key);
-                match rule.delivery.route(self.window_active, on_screen) {
-                    Route::Nothing => continue,
-                    Route::Os => {
-                        cx.show_system_notification(SystemNotification {
-                            tag: tag(key).into(),
-                            title: title.unwrap_or_else(|| "Kynex".into()).into(),
-                            body: why.body().into(),
-                            actions: Vec::new(),
-                        });
-                    }
-                    Route::Toast => {
-                        if !self.agents_pane_open() {
-                            let project =
-                                self.code.iter().find(|(_, l)| l.sessions.iter().any(|s| s.uid == key)).map(|(p, _)| p);
-                            let detail = match project.and_then(|p| p.file_name()) {
-                                Some(name) => format!("{} · {}", name.to_string_lossy(), why.body()),
-                                None => why.body().to_string(),
-                            };
-                            let toast = if why == Why::Finished { Toast::success("") } else { Toast::warning("") };
-                            let toast = self.toast(toast.detail(detail).session(key).action(Action::GoToSession(key)));
-                            toast.title = title.unwrap_or_else(|| "Another session".into());
-                        }
-                    }
-                }
-                heard.push((event, rule.sound));
+    /// Dismisses any pending OS notification for live instance `id`.
+    pub(super) fn clear_agent_alert(&mut self, id: AgentId, cx: &Context<Self>) {
+        if self.wants.remove(&id).is_some() {
+            cx.dismiss_system_notification(&tag(id));
+        }
+    }
+
+    /// Updates the alert state for live instance `id`. Fires a background OS
+    /// notification when `background_notifications` is enabled and Kynex is not active;
+    /// dismisses any previous notification when the alert clears.
+    pub(super) fn sync_agent_alert(&mut self, id: AgentId, name: &str, state: AgentState, cx: &mut Context<Self>) {
+        let prev = self.wants.get(&id).copied();
+        let now = Alert::of(state);
+        if let Some(alert) = attention::news(prev, now)
+            && self.saved.background_notifications
+            && !self.window_active
+        {
+            cx.show_system_notification(SystemNotification {
+                tag: tag(id).into(),
+                title: name.to_string().into(),
+                body: alert.body().into(),
+                actions: Vec::new(),
+            });
+        }
+        match now {
+            Some(alert) => {
+                self.wants.insert(id, alert);
+            }
+            None => {
+                self.clear_agent_alert(id, cx);
             }
         }
-        if let Some((event, sound)) = notify::loudest(heard) {
-            sound.play(event);
-        }
-        for key in self.wants.keys().filter(|k| !now.iter().any(|(n, _)| n == *k)) {
-            cx.dismiss_system_notification(&tag(*key));
-        }
-        self.wants = now.into_iter().collect();
-        let badge = !self.wants.is_empty();
-        if badge != self.badged {
-            self.badged = badge;
-            attention::set_badge(self.native_window, badge);
-        }
-    }
-}
-
-/// The main window's native handle, for the taskbar badge: its `HWND` on Windows.
-pub(super) fn native_handle(window: &Window) -> isize {
-    #[cfg(windows)]
-    {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        match HasWindowHandle::window_handle(window).map(|h| h.as_raw()) {
-            Ok(RawWindowHandle::Win32(h)) => h.hwnd.get(),
-            _ => 0,
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = window;
-        0
     }
 }
