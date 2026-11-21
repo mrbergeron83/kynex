@@ -1,13 +1,11 @@
 //! The Sessions & Workspaces tree: each workspace row folds/unfolds to show its active
 //! `agent_cli` panes and past sessions on disk (`kynex_core::sessions` + `kynex_core::tree`).
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::SystemTime;
 
 use gpui::{AnyElement, Context, div, prelude::*};
-use kynex_core::sessions::SessionInfo;
 use kynex_core::tree::{self, Branch, Section, View};
 use kynex_core::workspace;
 
@@ -127,27 +125,45 @@ impl KynexApp {
         let path = place.path.clone();
         let open = self.open_agent_sessions(&path);
         let busy: Vec<String> = open.iter().filter(|o| o.busy).filter_map(|o| o.id.clone()).collect();
-        let groups = self.groups_for(&path).clone();
+        let groups = self.groups_rc(&path);
+        let groups_gen = self.organize.generation;
         let wanted = place.selected || groups.tree_open || filtering;
         let here = place.selected;
         let mut loading = false;
         if wanted {
             loading = self.want_list(&path, if here { ctx.current.clone() } else { None }, &open, cx);
         }
-        let items: Rc<Vec<SessionInfo>> = self.sessions.get(&path).map(|l| l.items.clone()).unwrap_or_default();
-        let default_branch = self.sessions.get(&path).and_then(|l| l.default_branch.clone());
-        let index: HashMap<String, usize> = items.iter().enumerate().map(|(i, s)| (s.id.clone(), i)).collect();
-        let listed: Vec<(String, SystemTime)> = items.iter().map(|i| (i.id.clone(), i.modified)).collect();
         let open_ids: Vec<String> = open.iter().filter_map(|o| o.id.clone()).collect();
-        let fresh: Vec<String> = open.iter().rev().map(OpenSession::key).filter(|k| !index.contains_key(k)).collect();
-        let mut sections = tree::sections(&groups, &listed, &open_ids, &fresh, SystemTime::now());
-        if filtering {
-            let title = |key: &str| match index.get(key) {
-                Some(&i) => items[i].title.clone(),
-                None => open.iter().find(|o| o.key() == key).map_or_else(|| "Session".into(), |o| o.title.clone()),
-            };
-            sections.retain(|k| tree::matches(&ctx.query, &title(k)));
-        }
+        let (items, index, default_branch, base_sections) = match self.sessions.get_mut(&path) {
+            Some(list) => {
+                let items = list.items.clone();
+                let index = list.index.clone();
+                let default_branch = list.default_branch.clone();
+                let fresh: Vec<String> =
+                    open.iter().rev().map(OpenSession::key).filter(|k| !index.contains_key(k)).collect();
+                let sections = list.sections(groups_gen, &groups, &open_ids, &fresh);
+                (items, index, default_branch, sections)
+            }
+            None => {
+                let fresh: Vec<String> = open.iter().rev().map(OpenSession::key).collect();
+                let sections = Rc::new(tree::sections(&groups, &[], &open_ids, &fresh, SystemTime::now()));
+                (Rc::default(), Rc::default(), None, sections)
+            }
+        };
+        let mut sections_owned;
+        let sections: &tree::Sections = if filtering || self.saved.sessions_by_provider {
+            sections_owned = (*base_sections).clone();
+            if filtering {
+                let title = |key: &str| match index.get(key) {
+                    Some(&i) => items[i].title.as_str(),
+                    None => open.iter().find(|o| o.key() == key).map_or("Session", |o| o.title.as_str()),
+                };
+                sections_owned.retain(|k| tree::matches(&ctx.query, title(k)));
+            }
+            &sections_owned
+        } else {
+            &base_sections
+        };
         let by_provider = (self.saved.sessions_by_provider && !filtering)
             .then(|| {
                 let listed_recent: Vec<String> =
@@ -155,17 +171,20 @@ impl KynexApp {
                 groups.by_provider(&listed_recent)
             })
             .filter(|split| split.len() > 1);
-        if let Some(split) = &by_provider {
-            let new: Vec<String> = sections.recent.iter().filter(|k| !index.contains_key(*k)).cloned().collect();
-            sections.recent = new.into_iter().chain(split.iter().flat_map(|(_, ids)| ids.iter().cloned())).collect();
-        }
+        let sections_with_provider;
+        let sections: &tree::Sections = if let Some(split) = &by_provider {
+            let mut s = sections.clone();
+            let new: Vec<String> = s.recent.iter().filter(|k| !index.contains_key(*k)).cloned().collect();
+            s.recent = new.into_iter().chain(split.iter().flat_map(|(_, ids)| ids.iter().cloned())).collect();
+            sections_with_provider = s;
+            &sections_with_provider
+        } else {
+            sections
+        };
         let view = View { groups: &groups, show_archived: self.saved.sessions_show_archived, filtering };
         let is_open = tree::workspace_open(place.selected, groups.tree_open, filtering, sections.len());
-        let branch = Branch {
-            path: path.clone(),
-            open: is_open,
-            rows: if is_open { view.drawn(&sections) } else { Vec::new() },
-        };
+        let branch =
+            Branch { path: path.clone(), open: is_open, rows: if is_open { view.drawn(sections) } else { Vec::new() } };
 
         let shown_count = if view.show_archived { sections.len() } else { sections.len() - sections.archived.len() };
         place.row.open = is_open;
@@ -191,16 +210,17 @@ impl KynexApp {
         }
 
         let row_ctx = RowCtx {
-            cwd: path.clone(),
+            cwd: &path,
             here,
-            current: ctx.current.clone(),
+            current: ctx.current.as_deref(),
             current_agent: ctx.current_agent,
             picking: self.organize.selection.on,
-            cursor: ctx.cursor.clone(),
+            cursor: ctx.cursor.as_deref(),
             picked_ids: self.organize.selection.ids.clone(),
-            default_branch,
+            default_branch: default_branch.as_deref(),
+            groups: &groups,
             open: &open,
-            t: t.clone(),
+            t: &t,
         };
         let take = |this: &mut Self, keys: &[String], cx: &mut Context<Self>| -> Vec<AnyElement> {
             keys.iter()

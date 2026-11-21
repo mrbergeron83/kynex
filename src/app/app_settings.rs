@@ -584,6 +584,9 @@ impl KynexApp {
                 choice(("app-footer", usize::from(on)), self.saved.footer == on, label.to_string(), t).on_click(
                     cx.listener(move |this, _, _, cx| {
                         this.saved.footer = on;
+                        if on {
+                            let _ = this.resources_wake.try_send(());
+                        }
                         this.save();
                         cx.notify();
                     }),

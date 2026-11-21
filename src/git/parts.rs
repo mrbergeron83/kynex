@@ -17,9 +17,10 @@ impl GitView {
         self.busy.clone()
     }
 
-    /// Drawn somewhere: keeps the periodic re-read going.
-    pub(crate) fn touch(&mut self) {
+    /// Drawn somewhere: keeps the periodic re-read going while visible and focused.
+    pub(crate) fn touch(&mut self, cx: &mut Context<Self>) {
         self.drawn = Some(Instant::now());
+        self.ensure_polling(cx);
     }
 
     /// Stages `paths` (pathspecs: files or folders), or unstages them.
@@ -52,7 +53,7 @@ impl GitView {
 
     /// The commit box: message, Amend, and Commit (or Commit all with nothing staged).
     pub fn render_commit_area(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        self.touch();
+        self.touch(cx);
         let (staged, unstaged) = self.status.as_ref().map_or((0, 0), |s| (s.staged().count(), s.unstaged().count()));
         self.commit_box(staged, unstaged, window, cx).into_any_element()
     }
@@ -60,21 +61,21 @@ impl GitView {
     /// The bar with the branch picker, how the branch stands against its upstream, and
     /// fetch / pull / push; `compact` folds it to icons for a narrow pane.
     pub fn render_sync_bar(&mut self, compact: bool, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        self.touch();
+        self.touch(cx);
         self.render_top_bar(compact, false, window, cx).into_any_element()
     }
 
     /// The commit list of the branch, narrow; a click asks for the commit's details
     /// ([`GitEvent::ShowDetail`]), drawn by [`Self::render_detail`].
     pub fn render_history_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        self.touch();
+        self.touch(cx);
         self.render_history(cx)
     }
 
     /// The Branches tab: local and remote branches with their menus (switch, rename,
     /// publish, compare, delete…), the worktrees, and a new branch or worktree.
     pub fn render_branches_list(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        self.touch();
+        self.touch(cx);
         if self.tab != Tab::Branches {
             self.tab = Tab::Branches;
             self.load_branches(false, cx);

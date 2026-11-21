@@ -147,8 +147,8 @@ pub struct KynexApp {
     tiled_last: Option<PathBuf>,
     /// The name being typed for "Save layout as…", in the layouts menu.
     layout_name: Option<Entity<TextInput>>,
-    /// Resize mode (`prefix r`): h / j / k / l and the arrows grow the focused pane.
-    resize_mode: Option<pane_keys::ResizePlace>,
+    /// Sticky keyboard mode (`prefix r` resize, `prefix n` navigate), until Esc.
+    pane_mode: Option<pane_keys::PaneMode>,
     /// The row picked with the keys in the workspace / project picker menus.
     menu_pick: usize,
     /// The key just handled by resize mode, so the views under it don't take it too.
@@ -202,6 +202,8 @@ pub struct KynexApp {
     toasts_ticking: bool,
     /// What Kynex and its processes use, as last read (`footer.rs`).
     resources: Option<kynex_core::resources::Usage>,
+    /// Wakes the resources sampler when the footer is shown or the window regains focus.
+    resources_wake: async_channel::Sender<()>,
     /// Mouse-wheel turns made smooth for every scroll area.
     wheel: SmoothWheel,
     /// Which `agent_cli` panes currently want attention (`attention.rs`).
@@ -268,7 +270,7 @@ impl KynexApp {
         let theme_watch = Self::watch_themes(cx);
         Self::watch_cli_updates(cx);
         Self::watch_app_updates(cx);
-        Self::watch_resources(cx);
+        let resources_wake = Self::watch_resources(cx);
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.probe_clis(cx))).detach();
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.load_openrouter(cx))).detach();
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.fold_worktree_tabs(cx))).detach();
@@ -316,6 +318,9 @@ impl KynexApp {
             this.window_active = window.is_window_active();
             crate::ui::motion::set_window_active(this.window_active);
             if window.is_window_active() {
+                if this.saved.footer {
+                    let _ = this.resources_wake.try_send(());
+                }
                 let folders: Vec<PathBuf> = this.worktrees.keys().cloned().collect();
                 this.refresh_worktrees(&folders, cx);
             }
@@ -330,7 +335,7 @@ impl KynexApp {
         })
         .detach();
 
-        Self::watch_resize_keys(cx);
+        Self::watch_pane_mode_keys(cx);
         let focus = cx.focus_handle();
         focus.focus(window, cx);
         if let Some(found) = saved.newer_than_us {
@@ -376,7 +381,7 @@ impl KynexApp {
             tile_projects: HashMap::new(),
             tiled_last: None,
             layout_name: None,
-            resize_mode: None,
+            pane_mode: None,
             menu_pick: 0,
             resize_swallow: false,
             tile_drag: None,
@@ -407,6 +412,7 @@ impl KynexApp {
             toasts_paused: false,
             toasts_ticking: false,
             resources: None,
+            resources_wake,
             wheel: SmoothWheel::default(),
             wants: HashMap::new(),
             awake: None,

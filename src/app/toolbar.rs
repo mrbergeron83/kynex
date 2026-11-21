@@ -4,13 +4,13 @@
 use std::path::PathBuf;
 
 use crate::ui::px;
-use gpui::{Context, div, prelude::*};
+use gpui::{Context, FontWeight, div, prelude::*};
 use kynex_core::open::{Opener, open_project};
 use kynex_core::toasts::Toast;
 
 use super::KynexApp;
 use super::keys::{ToggleAgents, ToggleGit, ToggleSessions, ToggleTerminal};
-use crate::theme::theme;
+use crate::theme::{mono, theme};
 use crate::ui::{Icon, Tooltip, icon_button};
 
 impl KynexApp {
@@ -49,6 +49,26 @@ impl KynexApp {
                 cx.notify();
             }))
         };
+        let mode_pill = self.pane_mode_badge().map(|(label, hint)| {
+            div()
+                .id("pane-mode-pill")
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_1p5()
+                .h(px(22.))
+                .px_2()
+                .rounded_md()
+                .border_1()
+                .border_color(t.accent)
+                .bg(t.accent.opacity(0.14))
+                .text_xs()
+                .cursor_pointer()
+                .child(div().font_family(mono()).font_weight(FontWeight::SEMIBOLD).text_color(t.accent).child(label))
+                .child(div().max_w(px(360.)).truncate().text_color(t.text_muted).child(hint))
+                .tooltip(Tooltip::with_meta(format!("{label} mode — click or press Esc to exit"), hint))
+                .on_click(cx.listener(|this, _, window, cx| this.exit_pane_mode(window, cx)))
+        });
         bar.child(
             div()
                 .flex_1()
@@ -59,6 +79,7 @@ impl KynexApp {
                 .text_color(t.text_placeholder)
                 .child(here.display().to_string()),
         )
+        .children(mode_pill)
         .child(
             icon_button("toggle-agents-pane", Icon::Bot, cx)
                 .when(self.agents_pane_open(), |b| b.bg(t.active))

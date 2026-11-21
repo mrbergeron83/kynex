@@ -18,14 +18,19 @@ const SAMPLE_EVERY: Duration = Duration::from_secs(3);
 
 impl KynexApp {
     /// Reads Kynex's process tree every few seconds, off the UI thread.
-    pub(super) fn watch_resources(cx: &mut Context<Self>) {
+    /// Parks completely (zero timer wakeups) when the footer is hidden or the
+    /// window is unfocused; returns a wake handle to resume immediately.
+    pub(super) fn watch_resources(cx: &mut Context<Self>) -> async_channel::Sender<()> {
+        let (tx, rx) = async_channel::bounded::<()>(1);
         cx.spawn(async move |this, cx| {
             let mut sampler = Sampler::default();
             loop {
                 let wanted = this.read_with(cx, |this, _| this.saved.footer && this.window_active);
                 let Ok(wanted) = wanted else { break };
                 if !wanted {
-                    cx.background_executor().timer(SAMPLE_EVERY).await;
+                    if rx.recv().await.is_err() {
+                        break;
+                    }
                     continue;
                 }
                 let (back, usage) = cx
@@ -49,6 +54,7 @@ impl KynexApp {
             }
         })
         .detach();
+        tx
     }
 
     pub(super) fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {

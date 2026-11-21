@@ -14,32 +14,31 @@ use crate::theme::{Palette, theme};
 use crate::ui::motion::{self, pop};
 use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, spinner};
 
-/// How often the stack's time moves: smooth enough for a toast fading out.
-const TICK: Duration = Duration::from_millis(16);
-/// While nothing in the stack is aging (paused, or only toasts that never expire).
-const IDLE_TICK: Duration = Duration::from_millis(250);
-
 impl KynexApp {
     /// Puts a toast up (or merges it into a like one).
     pub(super) fn toast(&mut self, toast: Toast) -> &mut Toast {
         self.toasts.push(toast)
     }
 
-    /// Before drawing: clears toasts for the focused pane and ticks the stack clock.
+    /// Before drawing: clears toasts for the focused pane and ticks the stack clock
+    /// only while at least one toast is expiring or animating out.
     pub(super) fn sync_toasts(&mut self, window: &Window, cx: &mut Context<Self>) {
         if let Some(pane) = self.focused_pane_id() {
             self.toasts.seen(pane);
         }
         self.toasts_paused = self.toast_hover || !window.is_window_active();
-        if self.toasts.is_empty() || self.toasts_ticking {
+        if self.toasts_ticking || self.toasts.next_tick(self.toasts_paused).is_none() {
             return;
         }
         self.toasts_ticking = true;
         cx.spawn(async move |this, cx| {
             let mut last = Instant::now();
             loop {
-                let busy = this.read_with(cx, |this, _| this.toasts.aging(this.toasts_paused));
-                let wait = if matches!(busy, Ok(false)) { IDLE_TICK } else { TICK };
+                let wait = this.read_with(cx, |this, _| this.toasts.next_tick(this.toasts_paused));
+                let Ok(Some(wait)) = wait else {
+                    let _ = this.update(cx, |this, _| this.toasts_ticking = false);
+                    break;
+                };
                 cx.background_executor().timer(wait).await;
                 let now = Instant::now();
                 let dt = now - last;
@@ -49,7 +48,7 @@ impl KynexApp {
                     if this.toasts.tick(dt, this.toasts_paused, exit) {
                         cx.notify();
                     }
-                    this.toasts_ticking = !this.toasts.is_empty();
+                    this.toasts_ticking = this.toasts.next_tick(this.toasts_paused).is_some();
                     this.toasts_ticking
                 });
                 if !matches!(going, Ok(true)) {
@@ -113,7 +112,7 @@ impl KynexApp {
             .max_w(px(460.))
             .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
                 this.toast_hover = *hovered;
-                this.toasts_paused = *hovered;
+                this.toasts_paused = *hovered || !this.window_active;
                 cx.notify();
             }))
             .map(|d| if corner.is_top() { d.children(rows).children(more) } else { d.children(more).children(rows) });
