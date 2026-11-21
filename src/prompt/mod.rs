@@ -375,14 +375,28 @@ impl PromptView {
     fn render_permission(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let t = theme(cx).clone();
         let max_h = window.viewport_size().height * 0.35;
+        let desc_max_h = window.viewport_size().height * 0.15;
+        let cmd = self.req.input["command"].as_str().unwrap_or("");
+        let dup_cmd = self.req.tool == "Bash" && self.req.description.trim() == cmd.trim();
         let show_desc = !self.req.description.is_empty()
+            && !dup_cmd
             && !matches!(self.req.tool.as_str(), "Write" | "Edit" | "MultiEdit" | "Read");
         div()
             .flex()
             .flex_col()
             .gap_2()
             .child(self.header(cx))
-            .when(show_desc, |d| d.child(div().text_sm().text_color(t.text_muted).child(self.req.description.clone())))
+            .when(show_desc, |d| {
+                d.child(
+                    div()
+                        .id("prompt-desc")
+                        .max_h(desc_max_h)
+                        .overflow_y_scroll()
+                        .text_sm()
+                        .text_color(t.text_muted)
+                        .child(self.req.description.clone()),
+                )
+            })
             .when(!self.req.why.is_empty(), |d| {
                 d.child(div().text_xs().text_color(t.text_placeholder).child(format!("Why: {}", self.req.why)))
             })
