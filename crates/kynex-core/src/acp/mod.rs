@@ -596,6 +596,9 @@ impl Acp {
             match self.decide(&name, &input) {
                 Some(true) => return vec![Out::Write(choose(v["id"].clone(), &options, &["allow_once"]))],
                 Some(false) => return vec![Out::Write(choose(v["id"].clone(), &options, &["reject_once"]))],
+                None if matches!(kind, "read" | "search") => {
+                    return vec![Out::Write(choose(v["id"].clone(), &options, &["allow_once"]))];
+                }
                 None => suggestions = suggestion(&name, &input),
             }
         }
@@ -732,7 +735,16 @@ fn tool(call: &Value) -> (String, Value) {
             rename(&mut input, &["Content", "CodeContent"], "content");
             "Write"
         }
-        other => other,
+        other => {
+            if call["kind"].as_str() == Some("execute")
+                && input.as_object().is_some_and(|m| m.contains_key("CommandLine") || m.contains_key("command"))
+            {
+                rename(&mut input, &["CommandLine"], "command");
+                "Bash"
+            } else {
+                other
+            }
+        }
     };
     (name.to_string(), input)
 }

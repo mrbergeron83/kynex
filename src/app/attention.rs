@@ -84,15 +84,17 @@ impl KynexApp {
                         });
                     }
                     Route::Toast => {
-                        let project =
-                            self.code.iter().find(|(_, l)| l.sessions.iter().any(|s| s.uid == key)).map(|(p, _)| p);
-                        let detail = match project.and_then(|p| p.file_name()) {
-                            Some(name) => format!("{} · {}", name.to_string_lossy(), why.body()),
-                            None => why.body().to_string(),
-                        };
-                        let toast = if why == Why::Finished { Toast::success("") } else { Toast::warning("") };
-                        let toast = self.toast(toast.detail(detail).session(key).action(Action::GoToSession(key)));
-                        toast.title = title.unwrap_or_else(|| "Another session".into());
+                        if !self.agents_pane_open() {
+                            let project =
+                                self.code.iter().find(|(_, l)| l.sessions.iter().any(|s| s.uid == key)).map(|(p, _)| p);
+                            let detail = match project.and_then(|p| p.file_name()) {
+                                Some(name) => format!("{} · {}", name.to_string_lossy(), why.body()),
+                                None => why.body().to_string(),
+                            };
+                            let toast = if why == Why::Finished { Toast::success("") } else { Toast::warning("") };
+                            let toast = self.toast(toast.detail(detail).session(key).action(Action::GoToSession(key)));
+                            toast.title = title.unwrap_or_else(|| "Another session".into());
+                        }
                     }
                 }
                 heard.push((event, rule.sound));

@@ -37,6 +37,9 @@ impl KynexApp {
     /// After a poll: each task that ended in a session that isn't shown gets a
     /// toast; several in one session merge into one that counts them.
     pub(super) fn toast_new_tasks(&mut self, news: Vec<(Key, Notice)>) {
+        if self.agents_pane_open() {
+            return;
+        }
         let shown = self.focused_key();
         for (key, n) in news.into_iter().filter(|(k, n)| Some(*k) != shown && n.status != Status::Event) {
             let session = self.session_title(key).unwrap_or_else(|| "another session".into());

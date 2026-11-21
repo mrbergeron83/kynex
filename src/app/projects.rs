@@ -68,7 +68,9 @@ impl KynexApp {
             .sessions
             .iter()
             .chain(self.code.values().flat_map(|l| l.sessions.iter()))
-            .filter(|s| !s.is_new())
+            // A reopened one that hasn't sent anything may be on a fallback (the
+            // OpenRouter key not loaded yet): what it ran on stays recorded (#512).
+            .filter(|s| !s.is_new() && !s.awaits_restore())
             .filter_map(|s| Some((s.cwd.clone(), s.session_id.clone()?, s.own_model.clone(), s.provider().provider())))
             .collect();
         for (cwd, id, model, provider) in started {

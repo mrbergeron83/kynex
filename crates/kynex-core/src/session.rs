@@ -642,15 +642,28 @@ impl Session {
         !self.reopened && !self.talked && self.items.is_empty()
     }
 
-    /// Puts a reopened session back on the provider it ran on, before any
-    /// process of this run starts. Its conversation is the same; only a session
-    /// already running here, or one that has started, keeps what it has.
+    /// Puts a reopened session back on the provider it ran on, until it has sent
+    /// something here. Its conversation is the same; a process started early
+    /// on another provider (before the OpenRouter key loaded) starts again on
+    /// this one. One that has sent something keeps what it has.
     pub fn restore_provider(&mut self, provider: crate::provider::Launch) -> Result<(), String> {
-        if self.is_running() || self.talked {
+        if provider == self.provider {
+            return Ok(());
+        }
+        if self.talked {
             return Err(format!("This session already runs on {}.", self.provider.provider().label()));
+        }
+        if self.is_running() {
+            self.kill();
         }
         self.provider = provider;
         Ok(())
+    }
+
+    /// Reopened (or forked) and nothing sent here yet: its provider is still
+    /// the one recorded for it, and can be put back ([`Self::restore_provider`]).
+    pub fn awaits_restore(&self) -> bool {
+        !self.is_new() && !self.talked
     }
 
     /// Reopen a previous conversation: replay its transcript from Claude Code's
@@ -3328,10 +3341,14 @@ mod tests {
         resumed.session_id = Some("abc".into());
         resumed.reopened = true;
         assert!(resumed.set_provider(openrouter()).is_err());
-        // Reopened, it goes back to the provider it ran on, until it starts here.
+        assert!(resumed.awaits_restore());
+        // Reopened, it goes back to the provider it ran on, until it starts here:
+        // also after a fallback to Anthropic (the key not loaded yet).
+        resumed.restore_provider(Launch::Anthropic).unwrap();
         resumed.restore_provider(openrouter()).unwrap();
         assert_eq!(resumed.provider().provider(), Provider::OpenRouter);
         resumed.talked = true;
+        assert!(!resumed.awaits_restore());
         assert!(resumed.restore_provider(Launch::Anthropic).is_err());
     }
 

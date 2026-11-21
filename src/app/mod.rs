@@ -854,7 +854,7 @@ impl KynexApp {
                     turn_ends.push((s.uid, i));
                 }
             }
-            openrouter_turn_ended |= was_busy && !s.busy && s.provider().provider().is_openrouter();
+            openrouter_turn_ended |= was_busy && !s.busy && s.provider().provider().uses_openrouter_key();
             for item in s.items.get(seen..).into_iter().flatten() {
                 match item {
                     session::Item::Task(n) => ended.push((s.uid, n.clone())),
