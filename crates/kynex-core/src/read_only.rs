@@ -265,15 +265,15 @@ fn part_reads(part: &str) -> bool {
 fn gh_reads(args: &[String]) -> bool {
     let Some(first) = args.first().map(|s| s.to_ascii_lowercase()) else { return false };
     let second = args.get(1).map(|s| s.to_ascii_lowercase());
-    match (first.as_str(), second.as_deref()) {
-        ("status" | "version" | "--version", _) => true,
-        ("search", Some(_)) => true,
-        ("auth", Some("status")) => true,
-        ("pr", Some("list" | "view" | "status" | "diff" | "checks")) => true,
-        ("issue", Some("list" | "view" | "status")) => true,
-        ("repo" | "run" | "release" | "workflow", Some("list" | "view")) => true,
-        _ => false,
-    }
+    matches!(
+        (first.as_str(), second.as_deref()),
+        ("status" | "version" | "--version", _)
+            | ("search", Some(_))
+            | ("auth", Some("status"))
+            | ("pr", Some("list" | "view" | "status" | "diff" | "checks"))
+            | ("issue", Some("list" | "view" | "status"))
+            | ("repo" | "run" | "release" | "workflow", Some("list" | "view"))
+    )
 }
 
 /// Whether `git <args>` only reads.
