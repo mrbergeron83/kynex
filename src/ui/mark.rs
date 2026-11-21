@@ -28,10 +28,13 @@ pub fn mark(id: impl Into<ElementId>, size: Pixels, lamp: Lamp, cx: &App) -> Any
     // The caret keeps the theme's state colours, but idle and working are the mark's petrol.
     let c = if working { accent } else { lamp.color(cx).unwrap_or(accent) };
     let caret = div().absolute().left(u(26.)).top(u(20.)).w(u(12.)).h(u(60.)).rounded_full().bg(c);
-    let caret = if working {
+    let animate = working && !super::motion::paused();
+    let caret = if animate {
         caret
             .with_animation((id.clone(), "caret"), pulse(), move |d, a| d.opacity(a).shadow(glow(c.opacity(a), u(14.))))
             .into_any_element()
+    } else if working {
+        caret.shadow(glow(c.opacity(0.75), u(14.))).into_any_element()
     } else if lamp == Lamp::Idle {
         caret.into_any_element()
     } else {
@@ -50,11 +53,14 @@ pub fn mark(id: impl Into<ElementId>, size: Pixels, lamp: Lamp, cx: &App) -> Any
         .child(caret);
 
     // The housing glows with the caret's pulse while working.
-    if working {
+    if animate {
         let blur = size.max(px(20.)) * 0.4;
         housing
             .with_animation((id, "glow"), pulse(), move |d, a| d.shadow(glow(accent.opacity(a * 0.45), blur)))
             .into_any_element()
+    } else if working {
+        let blur = size.max(px(20.)) * 0.4;
+        housing.shadow(glow(accent.opacity(0.35), blur)).into_any_element()
     } else {
         housing.into_any_element()
     }

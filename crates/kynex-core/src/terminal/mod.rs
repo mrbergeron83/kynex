@@ -7,6 +7,7 @@
 
 pub mod hooks;
 mod keys;
+mod links;
 pub mod marker;
 mod search;
 mod shell;
@@ -28,7 +29,8 @@ use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Config;
 use alacritty_terminal::tty;
 
-pub use keys::{Key, key_bytes, paste_bytes};
+pub use keys::{Key, KeyMode, MouseBtn, MouseEventKind, key_bytes, mouse_bytes, paste_bytes};
+pub use links::{LinkSpan, LinkTarget, TerminalLink, find_urls};
 use marker::Mark;
 pub use search::{CopyMotion, Match};
 pub use shell::{ShellKind, ShellSpec, elevated, resolve as resolve_shell, which};
@@ -341,9 +343,65 @@ impl Terminal {
         self.write(paste_bytes(text, bracketed));
     }
 
+    /// Keyboard encoding modes currently requested by the program (app cursor, Kitty protocol).
+    pub fn key_mode(&self) -> KeyMode {
+        let mode = *self.term.lock().mode();
+        use alacritty_terminal::term::TermMode;
+        KeyMode {
+            app_cursor: mode.contains(TermMode::APP_CURSOR),
+            kitty_disambiguate: mode.contains(TermMode::DISAMBIGUATE_ESC_CODES),
+            kitty_report_all: mode.contains(TermMode::REPORT_ALL_KEYS_AS_ESC),
+            kitty_associated_text: mode.contains(TermMode::REPORT_ASSOCIATED_TEXT),
+        }
+    }
+
     /// Application-cursor mode (vim, less…): arrows send `ESC O` sequences.
     pub fn app_cursor(&self) -> bool {
         self.term.lock().mode().contains(alacritty_terminal::term::TermMode::APP_CURSOR)
+    }
+
+    /// The running program asked for mouse events (`?1000h` / `?1002h` / `?1003h`).
+    pub fn mouse_mode(&self) -> bool {
+        self.term.lock().mode().intersects(alacritty_terminal::term::TermMode::MOUSE_MODE)
+    }
+
+    /// Sends a mouse event to the program if it asked for mouse reporting.
+    pub fn send_mouse(&self, kind: MouseEventKind, line: usize, col: usize, shift: bool, alt: bool, ctrl: bool) {
+        let mode = *self.term.lock().mode();
+        use alacritty_terminal::term::TermMode;
+        if !mode.intersects(TermMode::MOUSE_MODE) {
+            return;
+        }
+        if matches!(kind, MouseEventKind::Drag(_)) && !mode.intersects(TermMode::MOUSE_DRAG | TermMode::MOUSE_MOTION) {
+            return;
+        }
+        let sgr = mode.contains(TermMode::SGR_MOUSE);
+        if let Some(bytes) = mouse_bytes(kind, line, col, shift, alt, ctrl, sgr) {
+            let _ = self.pty.send(Msg::Input(Cow::Owned(bytes)));
+        }
+    }
+
+    /// Whether the alternate screen buffer is active (full-screen TUIs, pagers).
+    pub fn alt_screen(&self) -> bool {
+        self.term.lock().mode().contains(alacritty_terminal::term::TermMode::ALT_SCREEN)
+    }
+
+    /// Whether wheel scroll on the alternate screen should translate to Up/Down arrows.
+    pub fn alternate_scroll(&self) -> bool {
+        self.term.lock().mode().contains(alacritty_terminal::term::TermMode::ALTERNATE_SCROLL)
+    }
+
+    /// Notifies the program of focus gain/loss when it requested DECSET 1004 (`FOCUS_IN_OUT`).
+    pub fn focus_changed(&self, focused: bool) {
+        if self.term.lock().mode().contains(alacritty_terminal::term::TermMode::FOCUS_IN_OUT) {
+            let seq: &'static [u8] = if focused { b"\x1b[I" } else { b"\x1b[O" };
+            let _ = self.pty.send(Msg::Input(Cow::Borrowed(seq)));
+        }
+    }
+
+    /// Finds a clickable URL, OSC 8 hyperlink, or local file path under visible `(line, column)`.
+    pub fn link_at(&self, line: usize, column: usize) -> Option<TerminalLink> {
+        links::link_at(&self.term.lock(), &self.cwd, line, column)
     }
 
     pub fn size(&self) -> Size {
@@ -351,12 +409,21 @@ impl Terminal {
     }
 
     pub fn resize(&mut self, size: Size) {
+        self.resize_with_cell(size, 8, 16);
+    }
+
+    pub fn resize_with_cell(&mut self, size: Size, cell_width: u16, cell_height: u16) {
         if size == self.size || size.columns < 2 || size.lines < 1 {
             return;
         }
         self.size = size;
         self.term.lock().resize(size);
-        let _ = self.pty.send(Msg::Resize(window_size(size)));
+        let _ = self.pty.send(Msg::Resize(WindowSize {
+            num_lines: size.lines as u16,
+            num_cols: size.columns as u16,
+            cell_width: cell_width.max(1),
+            cell_height: cell_height.max(1),
+        }));
     }
 
     /// Scrolls through history: positive is up.

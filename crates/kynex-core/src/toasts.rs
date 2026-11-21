@@ -207,9 +207,26 @@ impl Toasts {
     }
 
     /// Whether time changes anything: a toast closing, or one that expires
-    /// and isn't `paused`. False means ticking can slow down.
+    /// and isn't `paused`. False means ticking can stop altogether.
     pub fn aging(&self, paused: bool) -> bool {
         self.list.iter().any(|t| t.leaving.is_some() || (!paused && t.lifetime.is_some()))
+    }
+
+    /// How long to wait before the next [`Self::tick`], or `None` when nothing is
+    /// aging (no timer needed until something changes). Closing toasts animate at
+    /// ~60 fps (`16 ms`); waiting for expiry checks at most every `200 ms` so
+    /// hover/unfocus pauses stay responsive without spinning at 60 Hz.
+    pub fn next_tick(&self, paused: bool) -> Option<Duration> {
+        const FRAME: Duration = Duration::from_millis(16);
+        const WAIT_STEP: Duration = Duration::from_millis(200);
+        if self.list.iter().any(|t| t.leaving.is_some()) {
+            return Some(FRAME);
+        }
+        if paused {
+            return None;
+        }
+        let soonest = self.list.iter().filter_map(|t| t.lifetime.map(|life| life.saturating_sub(t.age))).min()?;
+        Some(soonest.clamp(FRAME, WAIT_STEP))
     }
 
     /// Closes one: you clicked its ×, or its button.
@@ -459,5 +476,27 @@ mod tests {
         run(&mut t, 2.1, false);
         t.tick(Duration::ZERO, false, Duration::ZERO);
         assert!(t.is_empty());
+    }
+
+    #[test]
+    fn next_tick_stops_when_nothing_ages_and_speeds_up_only_while_leaving() {
+        let mut t = Toasts::default();
+        assert_eq!(t.next_tick(false), None);
+        // Persistent error / progress toasts need no timer at all.
+        let err_id = t.push(Toast::error("broke")).id;
+        t.push(Toast::progress("working…"));
+        assert_eq!(t.next_tick(false), None);
+        assert_eq!(t.next_tick(true), None);
+        // Dismissing a persistent toast animates at 16ms even while paused.
+        t.dismiss(err_id);
+        assert_eq!(t.next_tick(true), Some(Duration::from_millis(16)));
+        run(&mut t, 0.2, true);
+        assert_eq!(t.next_tick(false), None);
+        // An expiring toast ticks slowly until it starts leaving, and stops when paused.
+        t.push(Toast::info("saved"));
+        assert_eq!(t.next_tick(false), Some(Duration::from_millis(200)));
+        assert_eq!(t.next_tick(true), None);
+        run(&mut t, 5.05, false);
+        assert_eq!(t.next_tick(false), Some(Duration::from_millis(16)));
     }
 }

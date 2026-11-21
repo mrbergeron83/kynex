@@ -213,13 +213,17 @@ pub fn icon(icon: Icon, color: Hsla) -> gpui::Svg {
     svg().path(icon.path()).size_4().flex_none().text_color(color)
 }
 
-/// A spinning loader icon.
-pub fn spinner(id: impl Into<ElementId>, color: Hsla, size: gpui::Rems) -> gpui::AnimationElement<gpui::Svg> {
-    icon(Icon::Loader, color).size(size).with_animation(
-        id,
-        motion::looping(Duration::from_millis(900)),
-        |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
-    )
+/// A spinning loader icon (pauses when the window is unfocused/minimized).
+pub fn spinner(id: impl Into<ElementId>, color: Hsla, size: gpui::Rems) -> gpui::AnyElement {
+    let loader = icon(Icon::Loader, color).size(size);
+    if motion::paused() {
+        return loader.into_any_element();
+    }
+    loader
+        .with_animation(id, motion::looping(Duration::from_millis(900)), |svg, delta| {
+            svg.with_transformation(Transformation::rotate(percentage(delta)))
+        })
+        .into_any_element()
 }
 
 /// A borderless button: text and/or icon, a hover wash, rounded.
@@ -459,7 +463,7 @@ pub fn lamp(id: impl Into<ElementId>, state: Lamp, cx: &App) -> gpui::AnyElement
     let dot = div().flex_none().size(px(7.)).rounded_full();
     match state.color(cx) {
         None => dot.border_1().border_color(theme(cx).text_placeholder).into_any_element(),
-        Some(c) if state == Lamp::Working => {
+        Some(c) if state == Lamp::Working && !motion::paused() => {
             dot.bg(c).with_animation(id, pulse(), |d, a| d.opacity(a)).into_any_element()
         }
         Some(c) => dot.bg(c).into_any_element(),
@@ -485,7 +489,9 @@ pub fn lamp_count(id: impl Into<ElementId>, state: Lamp, count: usize, cx: &App)
         .font_weight(FontWeight::SEMIBOLD)
         .child(count.to_string());
     match state {
-        Lamp::Working => pill.with_animation(id, pulse(), |d, a| d.opacity(0.55 + 0.45 * a)).into_any_element(),
+        Lamp::Working if !motion::paused() => {
+            pill.with_animation(id, pulse(), |d, a| d.opacity(0.55 + 0.45 * a)).into_any_element()
+        }
         _ => pill.into_any_element(),
     }
 }

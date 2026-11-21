@@ -2,9 +2,11 @@
 //! branch, changed files and distance from main, for the workspaces section of the
 //! sessions panel (`workspaces.rs`) and the Git pane.
 
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::Poll;
 use std::time::{Duration, Instant};
 
 use gpui::{App, Context, Entity, prelude::*};
@@ -12,11 +14,27 @@ use kynex_core::git::{self, Worktree};
 
 use super::KynexApp;
 
-/// Fallback poll interval for what a filesystem watcher can miss.
+/// Fallback poll interval for what a filesystem watcher can miss (active window only).
 const FALLBACK_EVERY: Duration = Duration::from_secs(60);
 
-/// How often the watcher's flag is looked at (no `git` runs unless it's set).
-const CHECK_EVERY: Duration = Duration::from_secs(1);
+/// Short debounce after a filesystem event before re-reading git worktrees.
+const WATCH_DEBOUNCE: Duration = Duration::from_millis(200);
+
+/// Waits until either a wake arrives on `rx` or `wait` elapses, without spinning.
+async fn wait_or_wake(rx: &async_channel::Receiver<()>, wait: Duration, cx: &gpui::AsyncApp) -> bool {
+    let mut recv = std::pin::pin!(rx.recv());
+    let mut timer = std::pin::pin!(cx.background_executor().timer(wait));
+    std::future::poll_fn(|cx| {
+        if let Poll::Ready(res) = recv.as_mut().poll(cx) {
+            return Poll::Ready(res.is_ok());
+        }
+        if timer.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(true);
+        }
+        Poll::Pending
+    })
+    .await
+}
 
 /// A project's worktrees, re-read in the background while the project is open.
 pub struct Worktrees {
@@ -25,28 +43,55 @@ pub struct Worktrees {
     reading: bool,
     again: bool,
     watch: Option<kynex_core::watch::GitWatch>,
+    wake: async_channel::Sender<()>,
 }
 
 impl Worktrees {
     fn new(root: PathBuf, cx: &mut Context<Self>) -> Self {
         let changed = Arc::new(AtomicBool::new(false));
+        let (wake_tx, wake_rx) = async_channel::bounded::<()>(1);
         let flag = changed.clone();
-        let watch = kynex_core::watch::watch_git(&root, move || flag.store(true, Ordering::Relaxed));
+        let notify_tx = wake_tx.clone();
+        let watch = kynex_core::watch::watch_git(&root, move || {
+            flag.store(true, Ordering::Relaxed);
+            if crate::ui::motion::window_active() {
+                let _ = notify_tx.try_send(());
+            }
+        });
         cx.spawn(async move |this, cx| {
             let mut last: Option<Instant> = None;
             loop {
+                if !crate::ui::motion::window_active() {
+                    if wake_rx.recv().await.is_err() {
+                        break;
+                    }
+                    continue;
+                }
                 let due = last.is_none_or(|t| t.elapsed() >= FALLBACK_EVERY);
-                if changed.swap(false, Ordering::Relaxed) || due {
+                let dirty = changed.swap(false, Ordering::Relaxed);
+                if dirty || due {
+                    if dirty && last.is_some() {
+                        cx.background_executor().timer(WATCH_DEBOUNCE).await;
+                        changed.store(false, Ordering::Relaxed);
+                    }
                     if this.update(cx, |this, cx| this.refresh(cx)).is_err() {
                         break;
                     }
                     last = Some(Instant::now());
                 }
-                cx.background_executor().timer(CHECK_EVERY).await;
+                let wait = last.map_or(FALLBACK_EVERY, |t| FALLBACK_EVERY.saturating_sub(t.elapsed()));
+                if !wait_or_wake(&wake_rx, wait.max(WATCH_DEBOUNCE), cx).await {
+                    break;
+                }
             }
         })
         .detach();
-        Self { list: Vec::new(), root, reading: false, again: false, watch }
+        Self { list: Vec::new(), root, reading: false, again: false, watch, wake: wake_tx }
+    }
+
+    /// Wakes the background watcher (e.g. when the window regains focus).
+    pub fn wake(&self) {
+        let _ = self.wake.try_send(());
     }
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -136,11 +181,15 @@ impl KynexApp {
         entity
     }
 
-    /// Re-reads the worktrees of these folders, where they're being watched.
+    /// Re-reads the worktrees of these folders, where they're being watched, and wakes
+    /// their watcher loops after window focus resumes.
     pub(super) fn refresh_worktrees<'a>(&mut self, folders: impl IntoIterator<Item = &'a PathBuf>, cx: &mut App) {
         for folder in folders {
             if let Some(w) = self.worktrees.get(folder) {
-                w.update(cx, |w, cx| w.refresh(cx));
+                w.update(cx, |w, cx| {
+                    w.wake();
+                    w.refresh(cx);
+                });
             }
         }
     }

@@ -67,7 +67,7 @@ impl AgentRule {
             alt: parts.contains(&"alt"),
             shift: parts.contains(&"shift"),
         };
-        crate::terminal::key_bytes(&k, false).unwrap_or_else(|| b"\r".to_vec())
+        crate::terminal::key_bytes(&k, crate::terminal::KeyMode::default()).unwrap_or_else(|| b"\r".to_vec())
     }
 
     pub fn submit_after(&self) -> std::time::Duration {

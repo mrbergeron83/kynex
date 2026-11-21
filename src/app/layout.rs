@@ -133,7 +133,7 @@ impl KynexApp {
     pub(super) fn sync_before_render(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_tiles(window, cx);
         self.sync_git_pane(window, cx);
-        self.sync_resize_mode();
+        self.sync_pane_mode();
         self.sync_awake();
         self.sync_toasts(window, cx);
         self.load_project_settings();

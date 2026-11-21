@@ -17,6 +17,82 @@ pub(super) const RESIZE_STEP: f32 = 40.0;
 /// Where resize mode was started: workspace, focused pane, active project index.
 pub(super) type ResizePlace = (PathBuf, kynex_core::layout::PaneId, Option<usize>);
 
+/// Sticky keyboard modes entered from the prefix key (active until Esc).
+#[derive(Clone, PartialEq, Eq)]
+pub(super) enum PaneMode {
+    /// `prefix r`: h / j / k / l and arrows grow the focused pane.
+    Resize(ResizePlace),
+    /// `prefix n`: single-key focus, swap, split, zoom, close, tab and workspace navigation.
+    Navigate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NavKey {
+    Focus(Direction),
+    Swap(Direction),
+    StepPane(isize),
+    Split(Axis),
+    Zoom,
+    ClosePane,
+    StepTab(isize),
+    JumpTab(usize),
+    StepWorkspace(isize),
+    EnterResize,
+    Exit,
+    Ignore,
+    PassThrough,
+    ExitAndPassThrough,
+}
+
+/// Maps a keystroke while in sticky Navigate mode.
+fn classify_nav_key(key: &str, shift: bool, other_mods: bool) -> NavKey {
+    if matches!(key, "shift" | "control" | "alt" | "platform" | "function") {
+        return NavKey::PassThrough;
+    }
+    if other_mods {
+        return NavKey::ExitAndPassThrough;
+    }
+    if shift {
+        return match key {
+            "h" | "left" => NavKey::Swap(Direction::Left),
+            "j" | "down" => NavKey::Swap(Direction::Down),
+            "k" | "up" => NavKey::Swap(Direction::Up),
+            "l" | "right" => NavKey::Swap(Direction::Right),
+            "tab" => NavKey::StepPane(-1),
+            "[" | "{" => NavKey::StepWorkspace(-1),
+            "]" | "}" => NavKey::StepWorkspace(1),
+            _ => NavKey::Ignore,
+        };
+    }
+    match key {
+        "h" | "left" => NavKey::Focus(Direction::Left),
+        "j" | "down" => NavKey::Focus(Direction::Down),
+        "k" | "up" => NavKey::Focus(Direction::Up),
+        "l" | "right" => NavKey::Focus(Direction::Right),
+        "tab" => NavKey::StepPane(1),
+        "v" => NavKey::Split(Axis::Row),
+        "-" => NavKey::Split(Axis::Column),
+        "z" => NavKey::Zoom,
+        "x" => NavKey::ClosePane,
+        "[" => NavKey::StepTab(-1),
+        "]" => NavKey::StepTab(1),
+        "{" | "p" => NavKey::StepWorkspace(-1),
+        "}" | "n" => NavKey::StepWorkspace(1),
+        "r" => NavKey::EnterResize,
+        "escape" | "enter" | "q" => NavKey::Exit,
+        "1" => NavKey::JumpTab(0),
+        "2" => NavKey::JumpTab(1),
+        "3" => NavKey::JumpTab(2),
+        "4" => NavKey::JumpTab(3),
+        "5" => NavKey::JumpTab(4),
+        "6" => NavKey::JumpTab(5),
+        "7" => NavKey::JumpTab(6),
+        "8" => NavKey::JumpTab(7),
+        "9" => NavKey::JumpTab(8),
+        _ => NavKey::Ignore,
+    }
+}
+
 impl KynexApp {
     pub(super) fn with_pane_actions(&self, root: Stateful<gpui::Div>, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
         root.on_action(cx.listener(|_, _: &keys::SendPrefix, _, _| {}))
@@ -30,6 +106,7 @@ impl KynexApp {
             .on_action(cx.listener(|this, _: &keys::ClosePane, w, cx| this.close_pane(w, cx)))
             .on_action(cx.listener(Self::close_pane_or_tab))
             .on_action(cx.listener(Self::start_resize_mode))
+            .on_action(cx.listener(Self::start_navigate_mode))
             .on_action(cx.listener(|this, _: &keys::PickWorkspace, w, cx| this.open_picker(Menu::Workspaces, w, cx)))
             .on_action(cx.listener(|this, _: &keys::NewWorkspace, w, cx| this.open_new_workspace(w, cx)))
             .on_action(cx.listener(Self::close_workspace))
@@ -102,9 +179,43 @@ impl KynexApp {
         Some((cwd, t.focus()?, self.saved.active_project))
     }
 
-    pub(super) fn sync_resize_mode(&mut self) {
-        if self.resize_mode.is_some() && self.resize_mode != self.resize_place() {
-            self.resize_mode = None;
+    pub(super) fn sync_pane_mode(&mut self) {
+        match &self.pane_mode {
+            Some(PaneMode::Resize(place)) if Some(place) != self.resize_place().as_ref() => {
+                self.pane_mode = None;
+            }
+            Some(PaneMode::Navigate)
+                if self.menu.is_some()
+                    || self.palette.is_some()
+                    || self.app_settings.is_some()
+                    || self.about_open
+                    || self.git_file.is_some() =>
+            {
+                self.pane_mode = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Short mode label and hint for the toolbar pill while Navigate or Resize mode is active.
+    pub(super) fn pane_mode_badge(&self) -> Option<(&'static str, &'static str)> {
+        match &self.pane_mode {
+            Some(PaneMode::Navigate) => Some((
+                "NAVIGATE",
+                "hjkl focus · HJKL swap · v/- split · z zoom · x close · [/] tab · {/} ws · r resize · Esc",
+            )),
+            Some(PaneMode::Resize(_)) => Some(("RESIZE", "hjkl / arrows · Esc")),
+            None => None,
+        }
+    }
+
+    pub(super) fn exit_pane_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(mode) = self.pane_mode.take() {
+            if matches!(mode, PaneMode::Resize(_)) {
+                self.save_layouts(cx);
+            }
+            self.focus_input(window, cx);
+            cx.notify();
         }
     }
 
@@ -112,19 +223,29 @@ impl KynexApp {
         if !self.has_several_panes() {
             return;
         }
-        self.resize_mode = self.resize_place();
+        self.pane_mode = self.resize_place().map(PaneMode::Resize);
         self.toast(Toast::info("Resize: h j k l or arrows, Esc when done"));
         cx.notify();
     }
 
-    pub(super) fn watch_resize_keys(cx: &mut Context<Self>) {
+    fn start_navigate_mode(&mut self, _: &keys::NavigateMode, _: &mut Window, cx: &mut Context<Self>) {
+        if self.active_project().is_none() {
+            return;
+        }
+        self.menu = None;
+        self.palette = None;
+        self.pane_mode = Some(PaneMode::Navigate);
+        cx.notify();
+    }
+
+    pub(super) fn watch_pane_mode_keys(cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
         cx.intercept_keystrokes(move |ev, window, cx| {
             this.update(cx, |this, cx| {
-                let took = if this.resize_mode.is_some() {
-                    this.resize_key(ev, window, cx)
-                } else {
-                    this.picker_key(ev, window, cx)
+                let took = match &this.pane_mode {
+                    Some(PaneMode::Resize(_)) => this.resize_key(ev, window, cx),
+                    Some(PaneMode::Navigate) => this.navigate_key(ev, window, cx),
+                    None => this.picker_key(ev, window, cx),
                 };
                 if took {
                     this.resize_swallow = true;
@@ -134,6 +255,77 @@ impl KynexApp {
             .ok();
         })
         .detach();
+    }
+
+    fn navigate_key(&mut self, ev: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let k = &ev.keystroke;
+        let m = k.modifiers;
+        let other_mods = m.control || m.alt || m.platform || m.function;
+        match classify_nav_key(k.key.as_str(), m.shift, other_mods) {
+            NavKey::PassThrough => false,
+            NavKey::ExitAndPassThrough => {
+                self.pane_mode = None;
+                cx.notify();
+                false
+            }
+            NavKey::Exit => {
+                self.pane_mode = None;
+                self.focus_input(window, cx);
+                cx.notify();
+                true
+            }
+            NavKey::Ignore => true,
+            NavKey::Focus(dir) => {
+                self.focus_pane_toward(dir, window, cx);
+                true
+            }
+            NavKey::Swap(dir) => {
+                self.swap_pane_toward(dir, window, cx);
+                true
+            }
+            NavKey::StepPane(by) => {
+                self.step_pane(by, window, cx);
+                true
+            }
+            NavKey::Split(axis) => {
+                self.split_pane(axis, window, cx);
+                true
+            }
+            NavKey::Zoom => {
+                self.toggle_pane_zoom(window, cx);
+                true
+            }
+            NavKey::ClosePane => {
+                self.close_pane(window, cx);
+                true
+            }
+            NavKey::StepTab(by) => {
+                if by > 0 {
+                    self.next_tab(&keys::NextTab, window, cx);
+                } else {
+                    self.prev_tab(&keys::PrevTab, window, cx);
+                }
+                true
+            }
+            NavKey::JumpTab(i) => {
+                self.jump(i, window, cx);
+                true
+            }
+            NavKey::StepWorkspace(by) => {
+                self.step_workspace(by, cx);
+                self.sync_tiles(window, cx);
+                self.focus_input(window, cx);
+                cx.notify();
+                true
+            }
+            NavKey::EnterResize => {
+                if self.has_several_panes() {
+                    self.pane_mode = self.resize_place().map(PaneMode::Resize);
+                    cx.notify();
+                }
+                true
+            }
+        }
     }
 
     fn resize_key(&mut self, ev: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
@@ -151,7 +343,7 @@ impl KynexApp {
             _ => None,
         };
         let Some((_, cwd)) = self.tiling_scope().filter(|_| self.has_several_panes()) else {
-            self.resize_mode = None;
+            self.pane_mode = None;
             return false;
         };
         if let Some(dir) = dir.filter(|_| plain) {
@@ -162,7 +354,7 @@ impl KynexApp {
             cx.notify();
             return true;
         }
-        self.resize_mode = None;
+        self.pane_mode = None;
         self.save_layouts(cx);
         cx.notify();
         if plain && matches!(k.key.as_str(), "escape" | "enter") {
@@ -231,5 +423,39 @@ impl KynexApp {
     pub(super) fn jump_to_project(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.menu = None;
         self.select_project(i, window, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navigate_mode_maps_focus_swap_split_tabs_workspaces_and_exit() {
+        assert_eq!(classify_nav_key("h", false, false), NavKey::Focus(Direction::Left));
+        assert_eq!(classify_nav_key("down", false, false), NavKey::Focus(Direction::Down));
+        assert_eq!(classify_nav_key("k", false, false), NavKey::Focus(Direction::Up));
+        assert_eq!(classify_nav_key("right", false, false), NavKey::Focus(Direction::Right));
+        assert_eq!(classify_nav_key("h", true, false), NavKey::Swap(Direction::Left));
+        assert_eq!(classify_nav_key("up", true, false), NavKey::Swap(Direction::Up));
+        assert_eq!(classify_nav_key("tab", false, false), NavKey::StepPane(1));
+        assert_eq!(classify_nav_key("tab", true, false), NavKey::StepPane(-1));
+        assert_eq!(classify_nav_key("v", false, false), NavKey::Split(Axis::Row));
+        assert_eq!(classify_nav_key("-", false, false), NavKey::Split(Axis::Column));
+        assert_eq!(classify_nav_key("z", false, false), NavKey::Zoom);
+        assert_eq!(classify_nav_key("x", false, false), NavKey::ClosePane);
+        assert_eq!(classify_nav_key("[", false, false), NavKey::StepTab(-1));
+        assert_eq!(classify_nav_key("]", false, false), NavKey::StepTab(1));
+        assert_eq!(classify_nav_key("3", false, false), NavKey::JumpTab(2));
+        assert_eq!(classify_nav_key("{", true, false), NavKey::StepWorkspace(-1));
+        assert_eq!(classify_nav_key("}", false, false), NavKey::StepWorkspace(1));
+        assert_eq!(classify_nav_key("p", false, false), NavKey::StepWorkspace(-1));
+        assert_eq!(classify_nav_key("n", false, false), NavKey::StepWorkspace(1));
+        assert_eq!(classify_nav_key("r", false, false), NavKey::EnterResize);
+        assert_eq!(classify_nav_key("escape", false, false), NavKey::Exit);
+        assert_eq!(classify_nav_key("q", false, false), NavKey::Exit);
+        assert_eq!(classify_nav_key("shift", true, false), NavKey::PassThrough);
+        assert_eq!(classify_nav_key("k", false, true), NavKey::ExitAndPassThrough);
+        assert_eq!(classify_nav_key("a", false, false), NavKey::Ignore);
     }
 }

@@ -584,11 +584,22 @@ pub fn font_families(cx: &App) -> Vec<String> {
 }
 
 pub fn init_fonts(cx: &App) {
+    let _t = kynex_core::trace::span("init_fonts");
     if let Err(e) = cx.text_system().add_fonts(FONTS.iter().map(|f| Cow::Borrowed(*f)).collect()) {
         eprintln!("kynex: couldn't load the bundled fonts: {e}");
     }
-    let installed = cx.text_system().all_font_names();
-    if let Some(f) = ["Hubot Sans Expanded", "Hubot Sans"].into_iter().find(|f| installed.iter().any(|n| n == f)) {
+    // Probe only the bundled label font family instead of enumerating every system font.
+    // DirectWrite files the expanded cuts under "Hubot Sans"; other platforms use the full name.
+    let order = if cfg!(target_os = "windows") {
+        ["Hubot Sans", "Hubot Sans Expanded"]
+    } else {
+        ["Hubot Sans Expanded", "Hubot Sans"]
+    };
+    let ts = cx.text_system();
+    if let Some(f) = order.into_iter().find(|f| {
+        let id = ts.resolve_font(&gpui::font(*f));
+        ts.get_font_for_id(id).is_some_and(|resolved| resolved.family.as_ref() == *f)
+    }) {
         let _ = LABEL.set(f.into());
     }
 }

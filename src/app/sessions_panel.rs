@@ -4,11 +4,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::ui::px;
 use gpui::{Anchor, Context, Focusable, Window, div, prelude::*};
+use kynex_core::groups::SessionGroups;
 use kynex_core::layout::PaneId;
 use kynex_core::sessions::{self, SessionInfo};
+use kynex_core::tree::{self, Sections};
 
 use super::KynexApp;
 use super::menus::Menu;
@@ -17,11 +20,75 @@ use super::session_tree::TreeCtx;
 use crate::theme::theme;
 use crate::ui::{Icon, Tooltip, icon_button, scrollbar, section_label};
 
+/// How long cached `tree::Sections` stay valid before re-checking the 7-day recent cutoff.
+const SECTIONS_CACHE_TTL: Duration = Duration::from_secs(60);
+
+struct CachedSections {
+    groups_gen: u64,
+    open_ids: Vec<String>,
+    fresh: Vec<String>,
+    at: Instant,
+    sections: Rc<Sections>,
+}
+
 pub struct SessionList {
     pub(super) read: ListRead,
     pub items: Rc<Vec<SessionInfo>>,
+    pub(super) index: Rc<HashMap<String, usize>>,
+    pub(super) listed: Rc<Vec<(String, SystemTime)>>,
     pub(super) default_branch: Option<String>,
     stale: bool,
+    sections_cache: Option<CachedSections>,
+}
+
+impl SessionList {
+    fn new(read: ListRead, items: Vec<SessionInfo>, default_branch: Option<String>, stale: bool) -> Self {
+        let index: HashMap<String, usize> = items.iter().enumerate().map(|(i, s)| (s.id.clone(), i)).collect();
+        let listed: Vec<(String, SystemTime)> = items.iter().map(|i| (i.id.clone(), i.modified)).collect();
+        Self {
+            read,
+            items: Rc::new(items),
+            index: Rc::new(index),
+            listed: Rc::new(listed),
+            default_branch,
+            stale,
+            sections_cache: None,
+        }
+    }
+
+    fn rebuild_indices(&mut self) {
+        let index: HashMap<String, usize> = self.items.iter().enumerate().map(|(i, s)| (s.id.clone(), i)).collect();
+        let listed: Vec<(String, SystemTime)> = self.items.iter().map(|i| (i.id.clone(), i.modified)).collect();
+        self.index = Rc::new(index);
+        self.listed = Rc::new(listed);
+        self.sections_cache = None;
+    }
+
+    pub(super) fn sections(
+        &mut self,
+        groups_gen: u64,
+        groups: &SessionGroups,
+        open_ids: &[String],
+        fresh: &[String],
+    ) -> Rc<Sections> {
+        if let Some(c) = &self.sections_cache
+            && c.groups_gen == groups_gen
+            && c.open_ids == open_ids
+            && c.fresh == fresh
+            && c.at.elapsed() < SECTIONS_CACHE_TTL
+        {
+            return c.sections.clone();
+        }
+        let sections = Rc::new(tree::sections(groups, &self.listed, open_ids, fresh, SystemTime::now()));
+        self.sections_cache = Some(CachedSections {
+            groups_gen,
+            open_ids: open_ids.to_vec(),
+            fresh: fresh.to_vec(),
+            at: Instant::now(),
+            sections: sections.clone(),
+        });
+        sections
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -40,7 +107,11 @@ pub(super) struct Reads {
 impl KynexApp {
     pub(super) fn relist_sessions(&mut self, gone: &[String]) {
         for l in self.sessions.values_mut() {
+            let before = l.items.len();
             Rc::make_mut(&mut l.items).retain(|i| !gone.contains(&i.id));
+            if l.items.len() != before {
+                l.rebuild_indices();
+            }
         }
     }
 
@@ -85,7 +156,7 @@ impl KynexApp {
                     }
                 }
                 let cwd = read.cwd.clone();
-                this.sessions.insert(cwd, SessionList { read, items: Rc::new(items), default_branch, stale: false });
+                this.sessions.insert(cwd, SessionList::new(read, items, default_branch, false));
                 cx.notify();
             })
             .ok();
@@ -118,12 +189,7 @@ impl KynexApp {
                 .await;
             this.update(cx, |this, cx| {
                 let read = ListRead { cwd: dir.clone(), current: None, live: Vec::new() };
-                this.sessions.entry(dir).or_insert(SessionList {
-                    read,
-                    items: Rc::new(items),
-                    default_branch,
-                    stale: true,
-                });
+                this.sessions.entry(dir).or_insert_with(|| SessionList::new(read, items, default_branch, true));
                 f(this, cx);
             })
             .ok();
