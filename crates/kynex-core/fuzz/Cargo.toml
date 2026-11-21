@@ -24,22 +24,15 @@ libfuzzer-sys = "0.4"
 members = ["."]
 
 [[bin]]
-name = "stream_json"
-path = "fuzz_targets/stream_json.rs"
+name = "hook_payload"
+path = "fuzz_targets/hook_payload.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "transcript"
-path = "fuzz_targets/transcript.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "session_log"
-path = "fuzz_targets/session_log.rs"
+name = "session_summary"
+path = "fuzz_targets/session_summary.rs"
 test = false
 doc = false
 bench = false
@@ -94,50 +87,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "theme_file"
-path = "fuzz_targets/theme_file.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "user_commands"
-path = "fuzz_targets/user_commands.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "versions"
-path = "fuzz_targets/versions.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "markdown"
-path = "fuzz_targets/markdown.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "claude_config"
-path = "fuzz_targets/claude_config.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "mcp_config"
-path = "fuzz_targets/mcp_config.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "file_links"
-path = "fuzz_targets/file_links.rs"
+name = "config_files"
+path = "fuzz_targets/config_files.rs"
 test = false
 doc = false
 bench = false
@@ -145,13 +96,6 @@ bench = false
 [[bin]]
 name = "highlight"
 path = "fuzz_targets/highlight.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "mentions"
-path = "fuzz_targets/mentions.rs"
 test = false
 doc = false
 bench = false
@@ -180,34 +124,6 @@ bench = false
 [[bin]]
 name = "file_view"
 path = "fuzz_targets/file_view.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "grok_acp"
-path = "fuzz_targets/grok_acp.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "session_notice"
-path = "fuzz_targets/session_notice.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "named_layout"
-path = "fuzz_targets/named_layout.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "read_only"
-path = "fuzz_targets/read_only.rs"
 test = false
 doc = false
 bench = false

@@ -96,11 +96,10 @@ pub enum InputEvent {
     /// Enter in a field that sends (Shift+Enter adds a line instead).
     Submit,
     /// Paste with an image on the clipboard: the owner decides what to do with it.
+    #[allow(dead_code)]
     PasteImages(Vec<Image>),
-    /// A paste long enough to fold ([`TextInput::fold_pastes`]): the owner puts
-    /// something in its place with [`TextInput::insert`].
-    PasteFolded(String),
     /// A click on an atomic [`Mark`] (these bytes of the text).
+    #[allow(dead_code)]
     MarkClicked(Range<usize>),
 }
 
@@ -140,10 +139,6 @@ pub struct TextInput {
     revealed: Option<(usize, usize)>,
     /// What the owner colours; ranges that no longer fit the text are left out.
     marks: Vec<Mark>,
-    /// Long pastes go to the owner ([`InputEvent::PasteFolded`]) instead of in.
-    fold_pastes: bool,
-    /// Text was pasted since the field was last set.
-    pasted: bool,
 }
 
 impl TextInput {
@@ -165,30 +160,7 @@ impl TextInput {
             scroll: ScrollHandle::new(),
             revealed: None,
             marks: Vec::new(),
-            fold_pastes: false,
-            pasted: false,
         }
-    }
-
-    /// Long pastes ([`kynex_core::composer::paste::folds`]) go to the owner to fold.
-    pub fn fold_pastes(mut self) -> Self {
-        self.fold_pastes = true;
-        self
-    }
-
-    /// Colours parts of the text; see [`Mark`]. Set again whenever the text changes.
-    pub fn set_marks(&mut self, marks: Vec<Mark>) {
-        self.marks = marks;
-    }
-
-    /// Whether text was pasted since the field was last set.
-    pub fn pasted(&self) -> bool {
-        self.pasted
-    }
-
-    /// Puts `text` where the cursor is, over any selection.
-    pub fn insert(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.replace(self.selected_range.clone(), text, cx);
     }
 
     /// The atomic mark `offset` falls in: strictly inside, or (`edge`) at its end too.
@@ -198,12 +170,6 @@ impl TextInput {
             .filter(|m| m.atomic && m.range.end <= self.content.len())
             .map(|m| m.range.clone())
             .find(|r| r.start < offset && (offset < r.end || (edge && offset == r.end)))
-    }
-
-    /// For the scroll area around a multi-line field (`track_scroll`), which
-    /// then follows the cursor as it moves or text comes in.
-    pub fn scroll_handle(&self) -> ScrollHandle {
-        self.scroll.clone()
     }
 
     pub fn multiline(mut self) -> Self {
@@ -233,36 +199,13 @@ impl TextInput {
         self
     }
 
-    pub fn set_placeholder(&mut self, text: impl Into<SharedString>) {
-        self.placeholder = text.into();
-    }
-
     pub fn text(&self) -> &str {
         &self.content
     }
 
     pub fn set_text(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
         self.content = text.into();
-        self.pasted = false;
         let end = self.content.len();
-        self.selected_range = end..end;
-        self.selection_reversed = false;
-        self.marked_range = None;
-        self.goal_x = None;
-        cx.emit(InputEvent::Changed);
-        cx.notify();
-    }
-
-    /// Where the cursor is, as a byte offset into [`text`](Self::text); `None`
-    /// while text is selected or an IME composition is under way.
-    pub fn cursor(&self) -> Option<usize> {
-        (self.selected_range.is_empty() && self.marked_range.is_none()).then_some(self.selected_range.end)
-    }
-
-    /// Replaces the bytes in `range` with `text` and puts the cursor after it.
-    pub fn replace(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
-        self.content.replace_range(range.clone(), text);
-        let end = range.start + text.len();
         self.selected_range = end..end;
         self.selection_reversed = false;
         self.marked_range = None;
@@ -484,11 +427,6 @@ impl TextInput {
         }
         if let Some(text) = item.text() {
             let text = text.replace("\r\n", "\n");
-            self.pasted = true;
-            if self.fold_pastes && self.multiline && kynex_core::composer::paste::folds(&text) {
-                cx.emit(InputEvent::PasteFolded(text));
-                return;
-            }
             let text = if self.multiline { text } else { text.replace('\n', " ") };
             self.replace_text_in_range(None, &text, window, cx);
         }

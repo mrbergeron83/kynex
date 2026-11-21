@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-//! Kynex: a desktop workspace for Claude Code. This crate is the gpui app;
+//! Kynex: a native GPU-accelerated workspace for interactive agent CLIs
+//! (Claude Code, Antigravity, Grok, and more). This crate is the gpui app;
 //! logic without UI lives in `kynex-core` (crates/kynex-core).
 
 mod app;
@@ -8,10 +9,6 @@ mod chrome;
 mod file_links;
 mod git;
 mod git_pane;
-mod markdown;
-mod pane;
-mod prompt;
-mod scratch;
 mod terminal;
 mod theme;
 mod ui;
@@ -21,20 +18,21 @@ use gpui::{
 };
 
 fn main() {
-    // Started by a session as its OpenRouter chat harness, not as the app. Its
-    // environment (PATH included) is the app's, so nothing else needs setting up.
-    if let Some(code) = kynex_core::chat_api::main_if_asked() {
+    // Started by `Terminal::spawn` to unset conflicting env vars before exec'ing a CLI.
+    if let Some(code) = kynex_core::terminal::pty_exec_if_asked() {
         std::process::exit(code);
     }
     // Started by the Git pane's file viewer to draw a PDF's pages, away from the app.
     if let Some(code) = kynex_core::file_view::pdf::child_main() {
         std::process::exit(code);
     }
-    // `knx context | pane | session | events …`: ask the running app and print what it says.
+    // `knx hook | project | workspace | pane | session | events …`: talk to the running app.
     // `knx <folder>`: the running app opens it; with none, this one starts on it.
     let args: Vec<String> = std::env::args().skip(1).collect();
     if kynex_core::control::args::is_command(&args) {
-        kynex_core::control::client::attach_console();
+        if args.first().map(String::as_str) != Some("hook") {
+            kynex_core::control::client::attach_console();
+        }
         std::process::exit(kynex_core::control::client::run(&args));
     }
     if let Some(folder) = args.first().filter(|a| std::path::Path::new(a).is_dir())
@@ -48,15 +46,13 @@ fn main() {
     // Started from Finder or the Dock, macOS gives no shell PATH: find `claude` and friends anyway.
     // SAFETY: first thing in main, before any other thread starts.
     unsafe { kynex_core::env_path::fix() };
-    // Started from a session's shell (a dev build, say): that session's identity isn't ours.
+    // Started from a pane's shell (a dev build, say): that pane's identity isn't ours.
     // SAFETY: as above, no other thread runs yet.
     unsafe { kynex_core::control::agent::forget_inherited() };
-    // Sessions, shells and helpers end with Kynex, even if it crashes or is killed.
+    // Agent CLIs, shells and helpers end with Kynex, even if it crashes or is killed.
     if let Err(e) = kynex_core::process::tie_children_to_kynex() {
         eprintln!("kynex: {e}; child processes may outlive Kynex");
     }
-    // Images read back from logs and tool results are shown as gpui images.
-    kynex_core::session::set_preview_maker(ui::image_viewer::preview);
     gpui_platform::application().with_assets(ui::Assets).run(|cx: &mut App| {
         // Before any window: the taskbar groups by this ID, and notifications need one.
         cx.set_app_identity(kynex_core::attention::APP_ID, "Kynex");
@@ -88,12 +84,8 @@ fn main() {
         ui::motion::apply(saved.motion, cx);
         kynex_core::cli::set_program(saved.cli_path.clone());
         kynex_core::workspace::set_worktree_root(saved.worktree_root.clone());
-        kynex_core::delegate::set_default(saved.delegate);
-        kynex_core::browser::set(saved.browser);
         kynex_core::terminal::ShellKind::set_default(saved.shell);
-        kynex_core::project::set_bypass_allowed(saved.allow_bypass);
         ui::input::bind_keys(cx);
-        prompt::bind_keys(cx);
         terminal::bind_keys(cx);
         app::bind_keys(cx);
         app::bind_command_keys(&saved.projects.iter().map(|p| p.path.clone()).collect::<Vec<_>>(), cx);

@@ -1,43 +1,201 @@
-//! Getting the `claude` CLI ready without a terminal: the install / sign-in
-//! screen that takes the workspace's place, and the update strip above the composer.
+//! Background CLI discovery and update monitoring for Claude Code, Grok Build,
+//! and Antigravity CLI (`agy`).
+//!
+//! No blocking setup screen: Kynex always opens straight into workspaces, and each
+//! `agent_cli` pane's inline provider picker lets you launch or install any CLI.
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
-use crate::ui::px;
-use gpui::{AnyElement, Context, FontWeight, Hsla, div, prelude::*};
+use gpui::{AppContext, Context};
+use kynex_core::antigravity::setup as agy_setup;
 use kynex_core::cli::{self, UpdateState};
+use kynex_core::grok::setup as grok_setup;
 
-use super::{KynexApp, models};
-use crate::theme::{Palette, theme};
-use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, outline_button, primary_button, spinner};
+use super::KynexApp;
 
 pub(super) const CLI_CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
-/// The last Claude Code version check: running now, when, and why it failed.
+/// The native agent CLIs Kynex monitors for updates and can update in place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) enum ManagedCli {
+    Claude,
+    Grok,
+    Antigravity,
+}
+
+impl ManagedCli {
+    pub const ALL: [Self; 3] = [Self::Claude, Self::Grok, Self::Antigravity];
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Grok => "grok",
+            Self::Antigravity => "agy",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude Code",
+            Self::Grok => "Grok Build",
+            Self::Antigravity => "Antigravity CLI",
+        }
+    }
+
+    pub const fn update_cmd(self) -> &'static str {
+        match self {
+            Self::Claude => "claude update",
+            Self::Grok => "grok update",
+            Self::Antigravity => "agy update",
+        }
+    }
+
+    pub fn is_installed(self) -> bool {
+        match self {
+            Self::Claude => cli::program().is_file(),
+            Self::Grok => kynex_core::grok::installed(),
+            Self::Antigravity => kynex_core::antigravity::installed(),
+        }
+    }
+
+    pub fn installed_version(self) -> Result<String, String> {
+        match self {
+            Self::Claude => cli::installed_version(),
+            Self::Grok => grok_setup::installed_version(),
+            Self::Antigravity => agy_setup::installed_version(),
+        }
+    }
+
+    pub fn check(self) -> Result<(String, String), String> {
+        match self {
+            Self::Claude => cli::check(),
+            Self::Grok => grok_setup::check(),
+            Self::Antigravity => agy_setup::check(),
+        }
+    }
+
+    pub fn update(self) -> Result<String, String> {
+        match self {
+            Self::Claude => cli::update(),
+            Self::Grok => grok_setup::update(),
+            Self::Antigravity => agy_setup::update(),
+        }
+    }
+}
+
+/// The last version check for one CLI: running now, when, and why it failed.
 #[derive(Default)]
 pub(super) struct CliCheck {
     pub checking: bool,
-    pub at: Option<std::time::SystemTime>,
+    pub at: Option<SystemTime>,
     pub error: Option<String>,
 }
 
-/// Getting the `claude` CLI ready to run sessions, without leaving Kynex.
-pub enum Setup {
-    Checking,
-    Ready,
-    Missing { error: Option<String> },
-    Installing,
-    LoggedOut { error: Option<String> },
-    SigningIn(cli::Login),
+/// Version and update status for one managed CLI.
+pub(super) struct CliTracker {
+    pub installed: bool,
+    pub version: Option<String>,
+    pub update: UpdateState,
+    pub check: CliCheck,
+}
+
+impl Default for CliTracker {
+    fn default() -> Self {
+        Self { installed: false, version: None, update: UpdateState::Idle, check: CliCheck::default() }
+    }
+}
+
+/// Update tracking for Claude Code, Grok Build, and Antigravity CLI.
+#[derive(Default)]
+pub(super) struct CliUpdates {
+    pub claude: CliTracker,
+    pub grok: CliTracker,
+    pub agy: CliTracker,
+}
+
+impl CliUpdates {
+    pub fn get(&self, cli: ManagedCli) -> &CliTracker {
+        match cli {
+            ManagedCli::Claude => &self.claude,
+            ManagedCli::Grok => &self.grok,
+            ManagedCli::Antigravity => &self.agy,
+        }
+    }
+
+    pub fn get_mut(&mut self, cli: ManagedCli) -> &mut CliTracker {
+        match cli {
+            ManagedCli::Claude => &mut self.claude,
+            ManagedCli::Grok => &mut self.grok,
+            ManagedCli::Antigravity => &mut self.agy,
+        }
+    }
+
+    pub fn any_available(&self) -> bool {
+        ManagedCli::ALL.iter().any(|&c| matches!(self.get(c).update, UpdateState::Available { .. }))
+    }
 }
 
 impl KynexApp {
-    /// Look for a newer Claude Code now and every few hours after.
+    /// Background-probes installed CLIs (`claude`, `grok`, `agy`, elevation) once at startup
+    /// so later UI renders never block on PATH lookup.
+    pub(super) fn probe_clis(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let probed = cx
+                .background_spawn(async {
+                    kynex_core::grok::installed();
+                    kynex_core::antigravity::installed();
+                    kynex_core::terminal::elevated();
+                    ManagedCli::ALL.map(|c| {
+                        let installed = c.is_installed();
+                        let version = installed.then(|| c.installed_version().ok()).flatten();
+                        (c, installed, version)
+                    })
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                for (c, installed, version) in probed {
+                    let tr = this.cli_updates.get_mut(c);
+                    tr.installed = installed;
+                    if let Some(v) = version {
+                        tr.version = Some(v);
+                    }
+                }
+                this.refresh_provider_catalog(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Looks for newer versions of every installed CLI (`claude`, `grok`, `agy`) now and every few hours after.
     pub(super) fn watch_cli_updates(cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
-                let found = cx.background_spawn(async { cli::check() }).await;
-                if this.update(cx, |this, cx| this.cli_checked(found, false, cx)).is_err() {
+                let results = cx
+                    .background_spawn(async {
+                        ManagedCli::ALL.map(|c| {
+                            if !c.is_installed() {
+                                return (c, None);
+                            }
+                            (c, Some(c.check()))
+                        })
+                    })
+                    .await;
+                let ok = this.update(cx, |this, cx| {
+                    for (c, found) in results {
+                        match found {
+                            Some(res) => {
+                                this.cli_updates.get_mut(c).installed = true;
+                                this.cli_checked(c, res, false, cx);
+                            }
+                            None => {
+                                this.cli_updates.get_mut(c).installed = false;
+                            }
+                        }
+                    }
+                });
+                if ok.is_err() {
                     break;
                 }
                 cx.background_executor().timer(CLI_CHECK_EVERY).await;
@@ -46,438 +204,96 @@ impl KynexApp {
         .detach();
     }
 
-    /// Checks for a newer Claude Code right now, from the About modal or the Kynex
-    /// menu. Offers it even if the user skipped that version before.
-    pub(super) fn check_cli_now(&mut self, cx: &mut Context<Self>) {
-        if self.cli_check.checking || matches!(self.cli_update, UpdateState::Updating { .. }) {
+    /// Checks every installed CLI for updates right now (from the Kynex menu or Command Palette).
+    pub(super) fn check_all_clis_now(&mut self, cx: &mut Context<Self>) {
+        for c in ManagedCli::ALL {
+            if self.cli_updates.get(c).installed || c == ManagedCli::Claude {
+                self.check_cli_now(c, cx);
+            }
+        }
+    }
+
+    /// Checks for a newer release of `cli` right now, from the About modal.
+    pub(super) fn check_cli_now(&mut self, cli: ManagedCli, cx: &mut Context<Self>) {
+        let tr = self.cli_updates.get_mut(cli);
+        if tr.check.checking || matches!(tr.update, UpdateState::Updating { .. }) {
             return;
         }
-        self.cli_check.checking = true;
+        tr.check.checking = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let found = cx.background_spawn(async { cli::check() }).await;
-            this.update(cx, |this, cx| this.cli_checked(found, true, cx)).ok();
+            let found = cx.background_spawn(async move { cli.check() }).await;
+            this.update(cx, |this, cx| this.cli_checked(cli, found, true, cx)).ok();
         })
         .detach();
     }
 
-    /// Takes in a version check. Never interrupts an update in progress; a
-    /// background check stays quiet about a release the user skipped.
-    fn cli_checked(&mut self, found: Result<(String, String), String>, manual: bool, cx: &mut Context<Self>) {
+    fn cli_checked(
+        &mut self,
+        cli: ManagedCli,
+        found: Result<(String, String), String>,
+        manual: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let skipped = (cli == ManagedCli::Claude).then(|| self.saved.skipped_cli_version.clone()).flatten();
+        let tr = self.cli_updates.get_mut(cli);
         if manual {
-            self.cli_check.checking = false;
+            tr.check.checking = false;
         }
-        self.cli_check.at = Some(std::time::SystemTime::now());
-        self.cli_check.error = found.as_ref().err().cloned();
+        tr.check.at = Some(SystemTime::now());
+        tr.check.error = found.as_ref().err().cloned();
         if let Ok((installed, _)) = &found {
-            self.claude_version = Some(installed.clone());
+            tr.installed = true;
+            tr.version = Some(installed.clone());
         }
-        if matches!(self.cli_update, UpdateState::Updating { .. }) {
+        if matches!(tr.update, UpdateState::Updating { .. }) {
             return cx.notify();
         }
         match found {
             Ok((installed, latest)) if cli::is_newer(&latest, &installed) => {
-                if manual || self.saved.skipped_cli_version.as_deref() != Some(latest.as_str()) {
-                    self.cli_update = UpdateState::Available { installed, latest };
+                if manual || skipped.as_deref() != Some(latest.as_str()) {
+                    tr.update = UpdateState::Available { installed, latest };
                 }
             }
-            // Updated elsewhere (or by the CLI itself) since the last check.
-            Ok(_) if matches!(self.cli_update, UpdateState::Available { .. }) => self.cli_update = UpdateState::Idle,
+            Ok(_) if matches!(tr.update, UpdateState::Available { .. }) => tr.update = UpdateState::Idle,
             Ok(_) => {}
-            Err(e) => eprintln!("kynex: couldn't check for Claude Code updates: {e}"),
+            Err(e) => eprintln!("kynex: couldn't check for {} updates: {e}", cli.label()),
         }
         cx.notify();
     }
 
-    /// Installs the newest Claude Code with `claude update`. Idle sessions stop
-    /// first so their binary isn't in use, and resume on the new one with the next
-    /// message; busy ones restart once they finish.
-    pub(super) fn update_cli(&mut self, cx: &mut Context<Self>) {
-        let UpdateState::Available { latest, .. } = &self.cli_update else { return };
-        self.cli_update = UpdateState::Updating { latest: latest.clone() };
-        for s in self.all_sessions_mut().filter(|s| !s.busy) {
-            s.kill();
-        }
+    /// Runs `<cli> update` off the UI thread. Active interactive panes stay untouched;
+    /// new panes pick up the updated CLI.
+    pub(super) fn update_cli(&mut self, cli: ManagedCli, cx: &mut Context<Self>) {
+        let latest = match &self.cli_updates.get(cli).update {
+            UpdateState::Available { latest, .. } => latest.clone(),
+            _ => return,
+        };
+        self.cli_updates.get_mut(cli).update = UpdateState::Updating { latest };
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = cx.background_spawn(async { cli::update() }).await;
+            let result = cx.background_spawn(async move { cli.update() }).await;
             this.update(cx, |this, cx| {
-                this.cli_update = match result {
+                let tr = this.cli_updates.get_mut(cli);
+                tr.update = match result {
                     Ok(version) => {
-                        this.claude_version = Some(version.clone());
-                        // Busy ones finish on the old version, then start again on the new.
-                        for s in this.all_sessions_mut().filter(|s| s.is_running()) {
-                            s.stale = true;
-                        }
+                        tr.installed = true;
+                        tr.version = Some(version.clone());
+                        tr.check.error = None;
                         UpdateState::Updated { version }
                     }
                     Err(e) => UpdateState::Failed(e),
                 };
+                match cli {
+                    ManagedCli::Grok => this.load_grok_status(cx),
+                    ManagedCli::Antigravity => this.load_antigravity_status(cx),
+                    ManagedCli::Claude => {}
+                }
+                this.refresh_provider_catalog(cx);
                 cx.notify();
             })
             .ok();
         })
         .detach();
     }
-
-    fn skip_cli_version(&mut self, cx: &mut Context<Self>) {
-        if let UpdateState::Available { latest, .. } = &self.cli_update {
-            self.saved.skipped_cli_version = Some(latest.clone());
-            self.save();
-        }
-        self.cli_update = UpdateState::Idle;
-        cx.notify();
-    }
-
-    /// Asks the CLI whether it's installed and signed in, and shows the setup
-    /// screen if it isn't.
-    pub(super) fn check_setup(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            let status = cx
-                .background_spawn(async {
-                    // Looked up once and kept; renders ask for them, so here, off the UI thread, first.
-                    kynex_core::grok::installed();
-                    kynex_core::antigravity::installed();
-                    kynex_core::terminal::elevated();
-                    cli::status()
-                })
-                .await;
-            this.update(cx, |this, cx| {
-                this.setup = match status {
-                    cli::Status::Ready => {
-                        models::retry_fetch();
-                        Setup::Ready
-                    }
-                    cli::Status::Missing => Setup::Missing { error: None },
-                    cli::Status::LoggedOut => Setup::LoggedOut { error: None },
-                };
-                if this.workspace_ready() && !this.saved.setup_checked {
-                    this.saved.setup_checked = true;
-                    this.save();
-                }
-                this.refresh_new_sessions();
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn install_cli(&mut self, cx: &mut Context<Self>) {
-        self.setup = Setup::Installing;
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let result = cx.background_spawn(async { cli::install() }).await;
-            this.update(cx, |this, cx| match result {
-                Ok(()) => this.check_setup(cx),
-                Err(e) => {
-                    this.setup = Setup::Missing { error: Some(e) };
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    /// Starts `claude auth login` (which opens the browser) and watches it until
-    /// it finishes or the user cancels.
-    pub(super) fn sign_in(&mut self, console: bool, cx: &mut Context<Self>) {
-        match cli::Login::start(console) {
-            Ok(login) => self.setup = Setup::SigningIn(login),
-            Err(e) => self.setup = Setup::LoggedOut { error: Some(e) },
-        }
-        self.login_code.update(cx, |input, cx| input.set_text("", cx));
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_millis(300)).await;
-                let done = this.update(cx, |this, cx| {
-                    let Setup::SigningIn(login) = &mut this.setup else { return true };
-                    // Repaint while waiting, so the sign-in URL shows once printed.
-                    cx.notify();
-                    match login.finished() {
-                        None => false,
-                        Some(Ok(())) => {
-                            this.check_setup(cx);
-                            true
-                        }
-                        Some(Err(e)) => {
-                            this.setup = Setup::LoggedOut { error: Some(e) };
-                            true
-                        }
-                    }
-                });
-                if done.unwrap_or(true) {
-                    break;
-                }
-            }
-        })
-        .detach();
-    }
-
-    pub(super) fn submit_login_code(&mut self, cx: &mut Context<Self>) {
-        let code = self.login_code.read(cx).text().trim().to_string();
-        let Setup::SigningIn(login) = &mut self.setup else { return };
-        if code.is_empty() {
-            return;
-        }
-        if let Err(e) = login.send_code(&code) {
-            self.setup = Setup::LoggedOut { error: Some(e) };
-        }
-        self.login_code.update(cx, |input, cx| input.set_text("", cx));
-        cx.notify();
-    }
-
-    /// Installing Claude Code or signing in, in the workspace's place, until the CLI is ready.
-    pub(super) fn render_setup(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let t = theme(cx).clone();
-        let busy = |label: &'static str| {
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .text_sm()
-                .text_color(t.text_muted)
-                .child(spinner("setup-spin", t.accent, px(14.)))
-                .child(label)
-        };
-        let error = |e: &Option<String>| e.clone().map(|e| div().text_xs().text_color(t.error).child(e));
-        let (title, body, content): (&str, &str, AnyElement) = match &self.setup {
-            _ if self.workspace_ready() => return None,
-            // Only until a first check has passed: after that the workspace shows right away.
-            Setup::Checking => (
-                "Getting ready",
-                "Kynex is looking for Claude Code on this computer.",
-                busy("Checking Claude Code…").into_any_element(),
-            ),
-            Setup::Ready => return None,
-            Setup::Missing { error: e } => (
-                "Set up Claude Code",
-                "Kynex runs on Claude Code, which isn't installed on this computer yet. Kynex can install it for you; it takes about a minute.",
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .children(error(e))
-                    .child(
-                        div().flex().child(
-                            primary_button("setup-install", "Install Claude Code", cx)
-                                .on_click(cx.listener(|this, _, _, cx| this.install_cli(cx))),
-                        ),
-                    )
-                    .into_any_element(),
-            ),
-            Setup::Installing => (
-                "Set up Claude Code",
-                "Downloading and installing the latest Claude Code.",
-                busy("Installing Claude Code…").into_any_element(),
-            ),
-            Setup::LoggedOut { error: e } => (
-                "Sign in to Claude",
-                "Sign in with your Claude account (Pro, Max, Team or Enterprise). Your browser opens to finish.",
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .children(error(e))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                primary_button("setup-sign-in", "Sign in", cx)
-                                    .on_click(cx.listener(|this, _, _, cx| this.sign_in(false, cx))),
-                            )
-                            .child(
-                                ghost_button("setup-console", cx)
-                                    .text_color(t.text_muted)
-                                    .child("Use an Anthropic Console account")
-                                    .tooltip(Tooltip::text("Pay per use with API billing instead of a subscription"))
-                                    .on_click(cx.listener(|this, _, _, cx| this.sign_in(true, cx))),
-                            ),
-                    )
-                    .child(self.render_setup_openrouter(&t, cx))
-                    .into_any_element(),
-            ),
-            Setup::SigningIn(login) => {
-                let url = login.url();
-                (
-                    "Sign in to Claude",
-                    "Finish signing in in your browser. Kynex continues on its own when you're done.",
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_3()
-                        .child(busy("Waiting for the browser…"))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_1p5()
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(t.text_muted)
-                                        .child("If the page shows a code, paste it here:"),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .px_2()
-                                                .py_1()
-                                                .rounded_md()
-                                                .border_1()
-                                                .border_color(t.border)
-                                                .bg(t.editor)
-                                                .text_sm()
-                                                .child(self.login_code.clone()),
-                                        )
-                                        .child(
-                                            outline_button("setup-code", "Continue", cx)
-                                                .on_click(cx.listener(|this, _, _, cx| this.submit_login_code(cx))),
-                                        ),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .when_some(url, |d, url| {
-                                    d.child(
-                                        ghost_button("setup-open", cx)
-                                            .text_color(t.text_muted)
-                                            .child("Open the sign-in page again")
-                                            .on_click(move |_, _, cx| cx.open_url(&url)),
-                                    )
-                                })
-                                .child(
-                                    ghost_button("setup-cancel", cx).text_color(t.text_muted).child("Cancel").on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            this.setup = Setup::LoggedOut { error: None };
-                                            cx.notify();
-                                        }),
-                                    ),
-                                ),
-                        )
-                        .into_any_element(),
-                )
-            }
-        };
-        Some(
-            div()
-                .flex()
-                .flex_1()
-                .min_h_0()
-                .items_center()
-                .justify_center()
-                .bg(t.editor)
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_4()
-                        .w(px(460.))
-                        .p_6()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(t.border)
-                        .bg(t.panel)
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_1p5()
-                                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
-                                .child(div().text_sm().text_color(t.text_muted).child(body)),
-                        )
-                        .child(content),
-                )
-                .into_any_element(),
-        )
-    }
-
-    /// The Claude Code update strip above the composer: an offer, progress, or the outcome.
-    pub(super) fn render_cli_update(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let t = theme(cx).clone();
-        let (lead, text, color): (AnyElement, String, _) = match &self.cli_update {
-            UpdateState::Idle => return None,
-            UpdateState::Available { installed, latest } => (
-                icon(Icon::ArrowUp, t.info).size_3p5().into_any_element(),
-                format!("Claude Code {latest} is available (you have {installed})"),
-                t.text,
-            ),
-            UpdateState::Updating { latest } => (
-                spinner("cli-update-spin", t.accent, px(14.)).into_any_element(),
-                format!("Updating Claude Code to {latest}…"),
-                t.text_muted,
-            ),
-            UpdateState::Updated { version } => (
-                icon(Icon::Check, t.success).size_3p5().into_any_element(),
-                format!("Claude Code updated to {version}. Sessions pick it up with their next message."),
-                t.text,
-            ),
-            UpdateState::Failed(e) => (icon(Icon::Dot, t.error).size_3p5().into_any_element(), e.clone(), t.text),
-        };
-        let dismiss = || {
-            icon_button("cli-update-dismiss", Icon::Close, cx).on_click(cx.listener(|this, _, _, cx| {
-                this.cli_update = UpdateState::Idle;
-                cx.notify();
-            }))
-        };
-        let actions = match &self.cli_update {
-            UpdateState::Available { .. } => div()
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(
-                    ghost_button("cli-skip", cx)
-                        .text_xs()
-                        .text_color(t.text_muted)
-                        .child("Skip this version")
-                        .on_click(cx.listener(|this, _, _, cx| this.skip_cli_version(cx))),
-                )
-                .child(
-                    outline_button("cli-update", "Update", cx)
-                        .tooltip(Tooltip::text("Runs `claude update`; idle sessions restart on the new version"))
-                        .on_click(cx.listener(|this, _, _, cx| this.update_cli(cx))),
-                )
-                .into_any_element(),
-            UpdateState::Updating { .. } => div().into_any_element(),
-            _ => dismiss().into_any_element(),
-        };
-        Some(update_strip(lead, text, color, actions, &t))
-    }
-}
-
-/// A one-line strip above the composer: an update offer, its progress or its outcome.
-pub(super) fn update_strip(
-    lead: AnyElement,
-    text: String,
-    color: Hsla,
-    actions: AnyElement,
-    t: &Palette,
-) -> AnyElement {
-    div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .pl_2()
-        .pr_1()
-        .py_1()
-        .rounded_md()
-        .border_1()
-        .border_color(t.border_variant)
-        .bg(t.panel)
-        .child(lead)
-        .child(div().flex_1().min_w_0().text_xs().text_color(color).child(text))
-        .child(actions)
-        .into_any_element()
 }

@@ -48,6 +48,7 @@ type Subscribers = Arc<Mutex<Vec<Sender<String>>>>;
 /// The socket being served. Dropping it takes its address file away.
 pub struct Server {
     dir: PathBuf,
+    address: String,
     calls: Calls,
     subscribers: Subscribers,
 }
@@ -98,7 +99,12 @@ impl Server {
                 }
             })
             .map_err(|e| e.to_string())?;
-        Ok(Self { dir: dir.to_path_buf(), calls, subscribers })
+        Ok(Self { dir: dir.to_path_buf(), address, calls, subscribers })
+    }
+
+    /// The local socket / named pipe address this server listens on.
+    pub fn address(&self) -> &str {
+        &self.address
     }
 
     /// The requests that came in since the last call.

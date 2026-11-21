@@ -10,8 +10,43 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vi_mode::ViMotion;
 
+use std::ops::Range;
+
 use super::SelectBy;
-use crate::find::occurrences;
+
+/// Non-overlapping case-insensitive byte ranges of `query` in `line`.
+fn occurrences(line: &str, query: &str) -> Vec<Range<usize>> {
+    if query.is_empty() || line.is_empty() {
+        return Vec::new();
+    }
+    let needle = query.to_lowercase();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let mut lower = String::with_capacity(line.len());
+    let mut starts = Vec::with_capacity(line.len());
+    let mut ends = Vec::with_capacity(line.len());
+    for (orig_start, ch) in line.char_indices() {
+        let orig_end = orig_start + ch.len_utf8();
+        for lc in ch.to_lowercase() {
+            let before = lower.len();
+            lower.push(lc);
+            for _ in before..lower.len() {
+                starts.push(orig_start);
+                ends.push(orig_end);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while let Some(rel) = lower[pos..].find(&needle) {
+        let start = pos + rel;
+        let end = start + needle.len();
+        out.push(starts[start]..ends[end - 1]);
+        pos = end;
+    }
+    out
+}
 
 /// One match on a single row: grid line (negative in the scrollback) and the columns it
 /// covers, `end` exclusive (a wide character covers two).

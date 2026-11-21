@@ -1,30 +1,25 @@
-//! Popup menus: model (`models.rs` draws its list), appearance (theme and fonts), permission mode, effort, and the
-//! right-click menus of project tabs, sessions and session groups. One is open at a time, anchored where it was clicked.
+//! Popup menus: Kynex menu, appearance (theme and fonts), project tab, sessions,
+//! workspaces, pane, Agents pane rows, and keyboard pickers.
 
-use crate::ui::px;
 use std::path::PathBuf;
 
+use crate::ui::px;
 use gpui::{Anchor, AnyElement, Context, Pixels, Point, SharedString, anchored, deferred, div, prelude::*};
+use kynex_core::layout::PaneId;
 use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
-use kynex_core::project::{self, Mode};
 use kynex_core::update;
 
-use super::{KynexApp, models};
+use super::KynexApp;
 use crate::theme::{self, DEFAULT_CODE_FONT, DEFAULT_UI_FONT, SUGGESTED_CODE_FONTS, SUGGESTED_UI_FONTS, THEMES, theme};
 use crate::ui::motion::pop;
-use crate::ui::{Icon, Tooltip, divider, icon, menu_item, popover, scrollbar};
+use crate::ui::{Icon, divider, icon, menu_item, popover, scrollbar};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Menu {
-    /// Who answers a new session: Anthropic or OpenRouter.
-    Provider,
-    Model,
     Kynex,
     Theme,
     Font(FontRole),
-    Mode,
-    Effort,
     Tab(usize),
     /// A past session's right-click menu, by its id.
     Session(String),
@@ -32,26 +27,22 @@ pub enum Menu {
     Group(PathBuf, kynex_core::groups::GroupId),
     /// The right-click menu for several picked sessions.
     Sessions(Vec<String>),
-    /// The sessions panel header's menu: grouping by provider, showing archived, tidying old sessions.
+    /// The sessions panel header's menu.
     SessionsPanel,
-    /// The sessions panel header's "Add workspace": a worktree on a branch, or a folder.
+    /// The sessions panel header's "Add workspace".
     AddWorkspace,
     /// A workspace's right-click menu, by its folder.
     Workspace(PathBuf),
     /// A pane's right-click menu.
-    Pane(kynex_core::layout::PaneId),
-    /// A pane tab's right-click menu.
-    PaneTab(usize),
+    Pane(PaneId),
     /// A row of the Agents pane's right-click menu.
-    Running(kynex_core::running::Who),
-    /// The workspace picker (`prefix w`): this project's workspaces.
+    Running(PaneId),
+    /// The workspace picker (`prefix w`).
     Workspaces,
-    /// The older layouts of this workspace (`prefix s`), to bring one back.
+    /// The older layouts of this workspace (`prefix s`).
     Layouts,
-    /// The project picker (`prefix shift-p`): the open projects, and Open project….
+    /// The project picker (`prefix shift-p`).
     Projects,
-    /// Where the composer's `#` note goes: a CLAUDE.md file.
-    Memory,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -68,43 +59,6 @@ pub struct OpenMenu {
 }
 
 impl KynexApp {
-    /// The effort levels, for the settings modal's project or the active one:
-    /// only those the selected model takes, once the CLI has said which.
-    fn effort_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let path =
-            self.settings.as_ref().map(|s| s.path.clone()).or_else(|| self.active_project().map(|p| p.path.clone()));
-        let current = match (&self.settings, &path) {
-            (Some(s), _) => s.claude.effort.clone(),
-            (None, Some(p)) => self.claude_settings(p).effort,
-            _ => String::new(),
-        };
-        // Only the levels the model takes, once its provider has said which.
-        let allowed = if self.active_provider() == kynex_core::provider::Provider::Grok {
-            models::grok_model(&self.active_model()).map(|m| m.efforts).filter(|e| !e.is_empty())
-        } else {
-            models::current_model(&self.active_model()).map(|m| m.efforts)
-        };
-        let levels = project::EFFORTS
-            .iter()
-            .filter(|(id, _)| id.is_empty() || allowed.as_ref().is_none_or(|a| a.iter().any(|e| e == id)));
-        levels
-            .enumerate()
-            .map(|(n, (id, name))| {
-                let id = id.to_string();
-                let path = path.clone();
-                menu_item(("effort", n), *name, current == id, cx)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.menu = None;
-                        if let Some(path) = &path {
-                            this.set_effort(path.clone(), id.clone(), cx);
-                        }
-                        cx.notify();
-                    }))
-                    .into_any_element()
-            })
-            .collect()
-    }
-
     /// Opens `which` at `at`, or closes it if it's already open.
     pub(super) fn open_menu(&mut self, which: Menu, at: Point<Pixels>, anchor: Anchor, cx: &mut Context<Self>) {
         self.layout_name = None;
@@ -116,7 +70,7 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Which picker (workspaces, projects) is open, for its keys.
+    /// Which picker (workspaces, projects, layouts) is open, for its keys.
     pub(super) fn open_picker_menu(&self) -> Option<Menu> {
         self.menu
             .as_ref()
@@ -130,7 +84,6 @@ impl KynexApp {
         let (which, at, anchor) = (open.which.clone(), open.at, open.anchor);
         let t = theme(cx).clone();
         let mut items: Vec<AnyElement> = Vec::new();
-        // Font lists are long: they scroll inside the menu.
         let mut scroll = false;
         match &which {
             Menu::Kynex => {
@@ -167,7 +120,6 @@ impl KynexApp {
                         }))
                         .into_any_element(),
                 );
-                // Theme, fonts and motion, a step away without a picker in the bar.
                 let custom =
                     self.saved.custom_theme.as_ref().and_then(|id| self.custom_themes.iter().find(|c| &c.id == id));
                 let current: String = match custom {
@@ -184,22 +136,23 @@ impl KynexApp {
                         }))
                         .into_any_element(),
                 );
+                let cli_update = self.cli_updates.any_available();
                 items.push(
-                    menu_item("kynex-extensions", "Extensions", false, cx)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.menu = None;
-                            this.open_extensions(0, cx);
-                        }))
-                        .into_any_element(),
-                );
-                items.push(
-                    menu_item("kynex-check-cli", "Check for Claude Code updates", false, cx)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.menu = None;
-                            this.open_about(cx);
-                            this.check_cli_now(cx);
-                        }))
-                        .into_any_element(),
+                    menu_item(
+                        "kynex-check-cli",
+                        if cli_update { "CLI updates available" } else { "Check for CLI updates" },
+                        false,
+                        cx,
+                    )
+                    .when(cli_update, |d| d.text_color(t.accent))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.menu = None;
+                        this.open_about(cx);
+                        if !cli_update {
+                            this.check_all_clis_now(cx);
+                        }
+                    }))
+                    .into_any_element(),
                 );
                 items.push(div().my_1().child(divider(cx)).into_any_element());
                 for (n, (label, url)) in [
@@ -215,75 +168,6 @@ impl KynexApp {
                                 this.menu = None;
                                 cx.open_url(&url);
                                 cx.notify();
-                            }))
-                            .into_any_element(),
-                    );
-                }
-            }
-            Menu::Model => {
-                // Whether picks apply to the folder's sessions or only this one (#136).
-                // Switching keeps the menu open; "This session" starts from the model in use.
-                {
-                    let own = self.session_model().is_some();
-                    let current = self.active_model();
-                    let folder = if self.active_project().is_some() { "This project" } else { "All chats" };
-                    let hover = t.hover;
-                    let scope = |n: usize, label: &'static str, on: bool, cx: &mut Context<Self>| {
-                        let pin = (n == 1).then(|| current.clone());
-                        div()
-                            .id(("model-scope", n))
-                            .flex_1()
-                            .flex()
-                            .justify_center()
-                            .py_0p5()
-                            .rounded_md()
-                            .text_xs()
-                            .cursor_pointer()
-                            .text_color(if on { t.text } else { t.text_muted })
-                            .when(on, |d| d.bg(t.active))
-                            .when(!on, |d| d.hover(move |s| s.bg(hover)))
-                            .child(label)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.set_session_model(pin.clone(), cx);
-                            }))
-                    };
-                    items.push(
-                        div()
-                            .flex()
-                            .gap_1()
-                            .p_0p5()
-                            .mb_1()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(t.border_variant)
-                            .child(scope(0, folder, !own, cx))
-                            .child(scope(1, "This session", own, cx))
-                            .into_any_element(),
-                    );
-                }
-                if self.active_provider().is_openrouter() {
-                    items.extend(self.openrouter_model_items(cx));
-                } else if self.active_provider() == kynex_core::provider::Provider::Grok {
-                    items.extend(self.grok_model_items(cx));
-                } else if self.active_provider() == kynex_core::provider::Provider::Antigravity {
-                    items.extend(self.antigravity_model_items(cx));
-                } else {
-                    items.extend(self.model_items(cx));
-                }
-            }
-            Menu::Provider => {
-                let current = self.active_provider().picker();
-                for (n, p) in self.providers_available().into_iter().enumerate() {
-                    let help = p.help();
-                    items.push(
-                        menu_item(("provider", n), p.label(), current == p, cx)
-                            .child(div().flex_none().text_xs().text_color(t.text_placeholder).child(help))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.menu = None;
-                                // The one it's on already keeps its Chat / Work mode.
-                                if this.active_provider().picker() != p {
-                                    this.set_provider(p, cx);
-                                }
                             }))
                             .into_any_element(),
                     );
@@ -362,7 +246,6 @@ impl KynexApp {
                 let rest = all.into_iter().filter(|f| !suggested.contains(f));
                 let row = |n: usize, name: String, cx: &mut Context<Self>| {
                     let label = if name == default { format!("{name} (built in)") } else { name.clone() };
-                    // Suggested fonts are shown in themselves; the long list stays plain.
                     menu_item(("font", n), label, *current == *name, cx)
                         .when(n < suggested.len(), |d| d.font_family(name.clone()))
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -386,31 +269,6 @@ impl KynexApp {
                     items.push(row(suggested.len() + n, name, cx));
                 }
             }
-            Menu::Mode => {
-                let key = self.focused_key();
-                let session = key.and_then(|k| self.session_by_key(k));
-                let current = session.map(|s| s.mode);
-                let bypass = session.is_some_and(|s| s.can_bypass());
-                for (n, m) in Mode::choices(bypass).into_iter().enumerate() {
-                    items.push(
-                        menu_item(("mode", n), m.label(), current == Some(m), cx)
-                            .h_auto()
-                            .py_1()
-                            .child(div())
-                            .tooltip(Tooltip::text(m.help()))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if let Some(s) = key.and_then(|k| this.session_for(k)) {
-                                    s.set_mode(m);
-                                }
-                                this.menu = None;
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    );
-                }
-            }
-            Menu::Effort => items = self.effort_items(cx),
-            Menu::Memory => items = self.memory_items(cx),
             Menu::Tab(i) => {
                 let i = *i;
                 let path = self.saved.projects.get(i).map(|p| p.path.clone()).unwrap_or_default();
@@ -453,8 +311,7 @@ impl KynexApp {
             Menu::SessionsPanel => items = self.sessions_panel_menu_items(cx),
             Menu::AddWorkspace => items = self.add_workspace_menu_items(cx),
             Menu::Pane(pane) => items = self.pane_menu_items(*pane, cx),
-            Menu::PaneTab(tab) => items = self.pane_tab_menu_items(*tab, cx),
-            Menu::Running(who) => items = self.running_menu_items(*who, cx),
+            Menu::Running(pane) => items = self.running_menu_items(*pane, cx),
             Menu::Workspaces => {
                 let list = match self.workspace_project() {
                     Some(project) => self.workspaces_of(&project, cx),
@@ -530,10 +387,8 @@ impl KynexApp {
                             .into_any_element(),
                     );
                 }
-                // Tidying its sessions away.
                 items.push(div().my_1().child(divider(cx)).into_any_element());
                 items.extend(self.tidy_menu_items(&path.clone(), cx));
-                // The project's own tree can't be removed; a linked worktree can (its branch stays).
                 if self.active_project().is_some_and(|p| !kynex_core::workspace::same_folder(&p.path, path)) {
                     let folder = self
                         .active_project()
@@ -574,11 +429,9 @@ impl KynexApp {
                     SharedString::from(format!("menu-in-{which:?}")),
                     popover(cx)
                         .min_w(px(match which {
-                            Menu::Theme | Menu::Model => 300.,
+                            Menu::Theme => 300.,
                             _ => 200.,
                         }))
-                        // Clicks stop here: the row under "Rename" mustn't take them
-                        // (and the focus) too.
                         .occlude()
                         .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                             this.menu = None;
@@ -598,7 +451,6 @@ impl KynexApp {
                                 d.children(items)
                             }
                         }),
-                    // Drops down into place.
                     gpui::px(-4.),
                     leaving,
                 )),

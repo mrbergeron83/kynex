@@ -1,20 +1,17 @@
-//! The custom title bar: app name, Chat, one tab per project, Settings
-//! and the window buttons. Usage limits and the update pill are in the footer.
-//! The theme lives in Settings and the Kynex menu's Appearance.
+//! The custom title bar: app name, one tab per project, Settings, and window buttons.
+//! OpenRouter credit and the update pill are in the footer.
 
 use crate::ui::px;
 use gpui::{
     Anchor, AnyElement, ClickEvent, Context, DragMoveEvent, FontWeight, Hsla, MouseButton, SharedString, Window,
     canvas, div, prelude::*,
 };
-use kynex_core::live::{Key, Live};
 use kynex_core::paths::project_name;
 use kynex_core::tab_order;
 
 use super::KynexApp;
 use super::keys::{MoveTabLeft, MoveTabRight, OpenProject, OpenSettings, PROJECTS_AT};
 use super::menus::Menu;
-use super::state::Active;
 use crate::chrome::{self, TITLE_BAR_HEIGHT};
 use crate::theme::{mix, theme, ui_font};
 use crate::ui::mark::mark;
@@ -38,7 +35,6 @@ pub(super) struct DraggedTab {
 impl Render for DraggedTab {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx);
-        // Drawn outside the window's root, so it doesn't inherit the font.
         popover(cx)
             .font_family(ui_font())
             .flex_row()
@@ -54,19 +50,11 @@ impl Render for DraggedTab {
 }
 
 impl KynexApp {
-    pub(super) fn render_title_bar(
-        &mut self,
-        key: Option<Key>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
+    pub(super) fn render_title_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
-        // The mark's lamp shows the shown session.
         let hover = t.hover;
-        let shown =
-            key.and_then(|k| self.session_by_key(k)).map_or(Lamp::Idle, |s| Lamp::of(s.busy, s.waiting(), s.finished));
-        let status = |l: &Live| (l.busy(), l.waiting(), l.finished());
-        // A drag let go outside the window, or cancelled, never drops.
+        // The mark's lamp reflects the active project's most urgent agent state.
+        let shown = self.active_project().map_or(Lamp::Idle, |p| self.project_lamp(&p.path));
         if self.tab_drag.is_some() && !cx.has_active_drag() {
             self.tab_drag = None;
         }
@@ -76,11 +64,10 @@ impl KynexApp {
             None => (0..n).collect(),
         };
         *self.tab_spans.borrow_mut() = vec![(0., 0.); n];
-        let chat = status(&self.chat);
-        let mut tabs = vec![self.render_tab(0, 0, "Chat".into(), None, None, chat, cx)];
+        let mut tabs = Vec::with_capacity(n);
         for (slot, i) in order.into_iter().enumerate() {
             let p = &self.saved.projects[i];
-            let state = self.code.get(&p.path).map_or((false, false, false), status);
+            let state = self.project_lamp(&p.path);
             let tooltip = p.path.display().to_string();
             let colour = self.project_colour(&p.path, &t);
             tabs.push(self.render_tab(
@@ -94,7 +81,6 @@ impl KynexApp {
             ));
         }
 
-        // The shown project's colour tints the bar, with a line of it along the bottom.
         let colour = self.active_colour(&t);
         div()
             .id("title-bar")
@@ -109,7 +95,6 @@ impl KynexApp {
                 None => d.bg(t.title_bar).border_b_1().border_color(t.border),
             })
             .pl(chrome::leading_inset() + gpui::px(10.))
-            // The mark and name open the Kynex menu (About, updates).
             .child(
                 div()
                     .id("kynex-menu")
@@ -126,7 +111,6 @@ impl KynexApp {
                     .child(mark("title-mark", gpui::px(22.), shown, cx))
                     .child(section_label("Kynex", cx).font_weight(FontWeight::EXTRA_BOLD))
                     .on_click(cx.listener(|this, ev: &ClickEvent, window, cx| {
-                        // Drop the menu from under the bar rather than from the cursor.
                         let at = gpui::point(ev.position().x, TITLE_BAR_HEIGHT.to_pixels(window.rem_size()));
                         this.open_menu(Menu::Kynex, at, Anchor::TopLeft, cx)
                     })),
@@ -138,7 +122,6 @@ impl KynexApp {
                     .tooltip(Tooltip::for_action("Open project folder", OpenProject, ""))
                     .on_click(cx.listener(|this, _, _, cx| this.pick_project(cx))),
             )
-            // The empty middle of the bar is the window's title bar.
             .child(chrome::drag_area(div().id("drag").flex_1().h_full()))
             .child(
                 icon_button("app-settings", Icon::Settings, cx)
@@ -149,8 +132,6 @@ impl KynexApp {
             .child(chrome::window_controls(window, cx))
     }
 
-    /// `pos` is the tab's place in the bar (Chat is 0, then the
-    /// projects), `slot` where a project tab is shown while one is dragged.
     #[allow(clippy::too_many_arguments)]
     fn render_tab(
         &self,
@@ -159,16 +140,26 @@ impl KynexApp {
         label: SharedString,
         colour: Option<Hsla>,
         tooltip: Option<String>,
-        (busy, waiting, finished): (bool, bool, bool),
+        state: Lamp,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = theme(cx).clone();
-        let active = self.tab_pos() == pos;
+        let active = self.tab_pos() == Some(pos);
         let hover = t.hover;
         let fg = if active { t.text } else { t.text_muted };
         let lifted = self.tab_drag.is_some_and(|d| d.from + PROJECTS_AT == pos);
         let drag = DraggedTab { from: pos.saturating_sub(PROJECTS_AT), label: label.clone(), colour };
         let spans = self.tab_spans.clone();
+        let record = canvas(
+            move |b, _, _| {
+                if let Some(span) = spans.borrow_mut().get_mut(slot) {
+                    *span = (f32::from(b.left()), f32::from(b.right()));
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0();
         div()
             .id(("tab", pos))
             .relative()
@@ -183,50 +174,35 @@ impl KynexApp {
             .cursor_pointer()
             .when(active, |d| d.bg(t.active))
             .when(!active, |d| d.hover(move |s| s.bg(hover)))
-            .child(icon(if pos == 0 { Icon::Message } else { Icon::Folder }, colour.unwrap_or(fg)).size_3p5())
+            .child(icon(Icon::Folder, colour.unwrap_or(fg)).size_3p5())
             .child(label)
-            .map(|d| match Lamp::of(busy, waiting, finished) {
+            .map(|d| match state {
                 Lamp::Idle => d,
-                state => d.child(lamp(("tab-lamp", pos), state, cx)),
+                s => d.child(lamp(("tab-lamp", pos), s, cx)),
             })
             .when_some(tooltip, |d, tip| {
                 d.tooltip(Tooltip::with_meta(tip, "Middle-click to close · right-click for more"))
             })
             .on_click(cx.listener(move |this, _, window, cx| this.jump(pos, window, cx)))
-            .when(pos >= PROJECTS_AT, |d| {
-                // Where it is, for working out which slot a dragged tab is over.
-                let record = canvas(
-                    move |b, _, _| {
-                        if let Some(span) = spans.borrow_mut().get_mut(slot) {
-                            *span = (f32::from(b.left()), f32::from(b.right()));
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .inset_0();
-                // Its own spot stays faint while the dragged copy follows the pointer.
-                d.child(record)
-                    .when(lifted, |d| d.opacity(0.35))
-                    .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
-                    .on_mouse_down(
-                        MouseButton::Middle,
-                        cx.listener(move |this, _, _, cx| {
-                            this.close_project(pos - PROJECTS_AT, cx);
-                            cx.notify();
-                        }),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
-                            this.open_menu(Menu::Tab(pos - PROJECTS_AT), ev.position, Anchor::TopLeft, cx)
-                        }),
-                    )
-            })
+            .child(record)
+            .when(lifted, |d| d.opacity(0.35))
+            .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(move |this, _, _, cx| {
+                    this.close_project(pos - PROJECTS_AT, cx);
+                    cx.notify();
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, ev: &gpui::MouseDownEvent, _, cx| {
+                    this.open_menu(Menu::Tab(pos - PROJECTS_AT), ev.position, Anchor::TopLeft, cx)
+                }),
+            )
             .into_any_element()
     }
 
-    /// The pointer moved with a project tab held: show it in the slot it's over.
     pub(super) fn drag_tab(&mut self, ev: &DragMoveEvent<DraggedTab>, _: &mut Window, cx: &mut Context<Self>) {
         let from = ev.drag(cx).from;
         let spans = self.tab_spans.borrow().clone();
@@ -247,9 +223,8 @@ impl KynexApp {
         }
     }
 
-    /// Ctrl+Shift+PageUp / PageDown: the shown project tab one place over.
     pub(super) fn move_tab_left(&mut self, _: &MoveTabLeft, _: &mut Window, cx: &mut Context<Self>) {
-        if let Active::Project(i) = self.saved.active
+        if let Some(i) = self.saved.active_project
             && i > 0
         {
             self.move_project(i, i - 1);
@@ -258,22 +233,20 @@ impl KynexApp {
     }
 
     pub(super) fn move_tab_right(&mut self, _: &MoveTabRight, _: &mut Window, cx: &mut Context<Self>) {
-        if let Active::Project(i) = self.saved.active {
+        if let Some(i) = self.saved.active_project {
             self.move_project(i, i + 1);
             cx.notify();
         }
     }
 
-    /// Moves project tab `from` to `to`; the shown tab stays shown.
     fn move_project(&mut self, from: usize, to: usize) {
         if from == to || from >= self.saved.projects.len() || to >= self.saved.projects.len() {
             return;
         }
         tab_order::move_item(&mut self.saved.projects, from, to);
-        if let Active::Project(a) = self.saved.active {
-            self.saved.active = Active::Project(tab_order::moved(a, from, to));
+        if let Some(a) = self.saved.active_project {
+            self.saved.active_project = Some(tab_order::moved(a, from, to));
         }
-        // It named a tab by its old place.
         self.confirm_close = None;
         self.save();
     }

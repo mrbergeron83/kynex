@@ -1,20 +1,19 @@
-//! The palette's session rows: each workspace's past sessions, and the open ones the listing
-//! doesn't have yet.
+//! The palette's session rows: each workspace's past sessions on disk and its active
+//! `agent_cli` panes with their live status lamps.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use kynex_core::fmt::ago;
 use kynex_core::palette::{Entry, Kind, State};
-use kynex_core::session::{self, Item, SessionInfo};
-use kynex_core::workspace;
+use kynex_core::sessions::SessionInfo;
 
 use super::KynexApp;
 use super::palette::{Folder, Row, Target};
 use crate::ui::Lamp;
 
 impl KynexApp {
-    /// The rows and entries for sessions, in `folders`' order.
+    /// The rows and entries for sessions and active `agent_cli` panes, in `folders`' order.
     pub(super) fn palette_session_rows(
         &self,
         folders: &[Folder],
@@ -22,17 +21,17 @@ impl KynexApp {
     ) -> (Vec<Row>, Vec<Entry>) {
         let mut rows = Vec::new();
         let mut entries = Vec::new();
-        let state_of = |o: &session::Session| match Lamp::of(o.busy, o.waiting(), o.finished) {
+        let lamp_state = |l: Lamp| match l {
             Lamp::Idle => State::Idle,
             Lamp::Working => State::Working,
             Lamp::NeedsYou => State::NeedsYou,
             Lamp::Done => State::Done,
         };
         for f in folders.iter() {
-            let live = self.code.get(&f.project);
+            let mut listed_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
             for s in sessions.get(&f.path).into_iter().flatten() {
-                let open = live.and_then(|l| l.sessions.iter().find(|o| o.session_id.as_deref() == Some(&s.id)));
-                let state = open.map(state_of);
+                listed_ids.insert(s.id.as_str());
+                let state = self.live_agent_of_session(&f.path, &s.id).map(|id| lamp_state(self.instance_lamp(id)));
                 rows.push(Row {
                     target: Target::Session { project: f.project.clone(), workspace: f.path.clone(), id: s.id.clone() },
                     detail: ago(s.modified).into(),
@@ -47,58 +46,15 @@ impl KynexApp {
                     state,
                 });
             }
-        }
-        // Open sessions the listing doesn't have (new ones, with no log on disk yet), in their
-        // workspace's group. One with an id waits for its folder's listing, so it isn't shown twice.
-        for f in folders.iter().filter(|f| f.section.workspace == 0) {
-            let Some(live) = self.code.get(&f.project) else { continue };
-            // An empty session (nothing sent) isn't worth a row, as in the sessions tree.
-            for o in live.sessions.iter().filter(|s| !s.is_new()) {
-                let home = folders
-                    .iter()
-                    .find(|g| g.project == f.project && workspace::same_folder(&g.path, &o.cwd))
-                    .unwrap_or(f);
-                if let Some(id) = &o.session_id {
-                    let listed = |g: &Folder| sessions.get(&g.path).map(|l| l.iter().any(|i| i.id == *id));
-                    let all = folders.iter().filter(|g| g.project == f.project);
-                    if all.clone().any(|g| listed(g) == Some(true)) || listed(home) != Some(false) {
-                        continue;
-                    }
+            // Live `agent_cli` instances in this workspace not already represented by a disk session row.
+            for (agent_id, sid, name, lamp) in self.live_agents_in(&f.path) {
+                if sid.as_deref().is_some_and(|id| listed_ids.contains(id)) {
+                    continue;
                 }
-                let title = o.items.iter().find_map(|i| match i {
-                    Item::User { text, .. } if !text.is_empty() => {
-                        Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
-                    }
-                    _ => None,
-                });
-                let state = state_of(o);
+                let state = lamp_state(lamp);
                 rows.push(Row {
-                    target: Target::Open { project: f.project.clone(), workspace: home.path.clone(), key: o.uid },
-                    detail: "".into(),
-                    hint: state.word().into(),
-                });
-                entries.push(Entry {
-                    kind: Kind::Session,
-                    title: title.unwrap_or_else(|| "New session".into()),
-                    keywords: home.project_name.clone(),
-                    when: Some(std::time::SystemTime::now()),
-                    section: Some(home.section.clone()),
-                    state: Some(state),
-                });
-            }
-        }
-        // Agent panes, with their state read off their screens, so Go To's filters find them.
-        for f in folders.iter() {
-            for (pane, name, lamp) in self.agents_in(&f.path) {
-                let state = match lamp {
-                    Lamp::Idle => State::Idle,
-                    Lamp::Working => State::Working,
-                    Lamp::NeedsYou => State::NeedsYou,
-                    Lamp::Done => State::Done,
-                };
-                rows.push(Row {
-                    target: Target::AgentPane { project: f.project.clone(), workspace: f.path.clone(), pane },
-                    detail: "agent pane".into(),
+                    target: Target::AgentPane(agent_id),
+                    detail: "live session".into(),
                     hint: state.word().into(),
                 });
                 entries.push(Entry {

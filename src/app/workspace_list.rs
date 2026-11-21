@@ -1,13 +1,10 @@
-//! A workspace's row in the sidebar's tree, as in herdr: its name, its branch or folder
-//! mark, and a lamp rolled up from its sessions (with how many have news). It folds its
-//! sessions away or opens them, and has "New session" and the workspace's menu. Clicking
-//! it shows the workspace; clicking a lamp that wants you goes to that session.
+//! A workspace's row in the Sessions tree: its name, branch/folder mark, rolled-up agent
+//! lamp, fold toggle, "+ New session" button, and right-click menu.
 
 use std::path::{Path, PathBuf};
 
 use gpui::{Anchor, AnyElement, Context, MouseButton, MouseDownEvent, Window, div, prelude::*};
-use kynex_core::live::Key;
-use kynex_core::workspace;
+use kynex_core::layout::PaneId;
 
 use super::KynexApp;
 use super::menus::Menu;
@@ -15,7 +12,6 @@ use crate::theme::{mono, theme};
 use crate::ui::wash::row_wash;
 use crate::ui::{Icon, Lamp, Tooltip, icon, icon_button, lamp, lamp_count, px};
 
-/// A worktree's changes in words, for a tooltip: `3 files +42 -7, 2 ahead, 1 behind`.
 pub(super) fn stats_text(w: &kynex_core::git::Worktree) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(n) = w.changes.filter(|&n| n > 0) {
@@ -36,59 +32,34 @@ pub(super) fn stats_text(w: &kynex_core::git::Worktree) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(", "))
 }
 
-/// A workspace's row as the tree draws it.
 pub(super) struct WorkspaceRow {
     pub path: PathBuf,
     pub label: String,
-    /// Its branch when the name doesn't say it already, or "folder" / "missing".
     pub branch: Option<String>,
-    /// Set when it isn't on the branch it's bound to: what the branch's tooltip says.
     pub drift: Option<String>,
     pub tip: String,
     pub selected: bool,
-    /// Its sessions are drawn under it.
     pub open: bool,
-    /// Folded, how many sessions it holds (once its list is read).
     pub count: Option<usize>,
-    /// The lamps of what runs there: its open sessions and agent panes.
     pub lamps: Vec<Lamp>,
-    /// The open session that most wants you, if one does (needs you, or finished).
-    pub wants_you: Option<Key>,
+    /// The `agent_cli` pane in this workspace that most wants attention, if any.
+    pub wants_you: Option<PaneId>,
 }
 
 impl KynexApp {
-    /// Shows the open session `key`: its workspace comes up if it's another one, and its pane
-    /// takes the focus.
-    pub(super) fn focus_open_session(&mut self, key: Key, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(project) = self.workspace_project() else { return };
-        let Some(cwd) = self.session_by_key(key).map(|s| s.cwd.clone()) else { return };
-        let here = self.code.get(&project).and_then(|l| l.current()).map(|s| s.cwd.clone());
-        if !here.is_some_and(|h| workspace::same_folder(&h, &cwd)) {
-            self.select_workspace(&cwd, cx);
-        }
-        if let Some(live) = self.code.get_mut(&project) {
-            live.focus(key);
-        }
-        self.focus_input(window, cx);
-        cx.notify();
-    }
-
-    /// A new session in the workspace at `path`, which comes up first if it isn't shown.
     fn new_session_in(&mut self, path: &Path, here: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !here {
             self.select_workspace(path, cx);
+            self.sync_tiles(window, cx);
         }
         self.new_session(window, cx);
     }
 
-    /// Opens a folded workspace in the tree, or folds an open one (not the selected one,
-    /// which is always open).
     fn toggle_tree_open(&mut self, path: &Path, cx: &mut Context<Self>) {
         self.edit_groups(path, |g| g.tree_open = !g.tree_open);
         cx.notify();
     }
 
-    /// The row of workspace number `n`.
     pub(super) fn render_workspace_row(&mut self, n: usize, w: &WorkspaceRow, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let colour = self.workspace_project().and_then(|p| self.project_colour(&p, &t)).unwrap_or(t.accent);
@@ -100,17 +71,16 @@ impl KynexApp {
             0 | 1 => lamp(("workspace-lamp", n), state, cx),
             n_news => lamp_count(("workspace-lamp", n), state, n_news, cx),
         };
-        // Folded, a lamp that wants you goes to that session.
         let lamp_el = match wants_you.filter(|_| !open) {
-            Some(key) => div()
+            Some(pane) => div()
                 .id(("workspace-lamp-go", n))
                 .flex_none()
                 .cursor_pointer()
                 .child(lamp_el)
-                .tooltip(Tooltip::text("Go to the session that wants you"))
+                .tooltip(Tooltip::text("Go to the agent that wants you"))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
-                    this.focus_open_session(key, window, cx);
+                    this.go_to_agent(pane, window, cx);
                 }))
                 .into_any_element(),
             None => lamp_el,
@@ -184,7 +154,6 @@ impl KynexApp {
                     .when_some(drift, |d, tip| d.tooltip(Tooltip::text(tip)))
             }))
             .child(
-                // Always there on the shown workspace, on the others when hovered.
                 icon_button(("workspace-new-session", n), Icon::Plus, cx)
                     .when(!selected, |b| b.invisible().group_hover("workspace-row", |s| s.visible()))
                     .tooltip(Tooltip::text("New session in this workspace"))
@@ -198,7 +167,6 @@ impl KynexApp {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                    // Not the pane's menu as well.
                     cx.stop_propagation();
                     this.open_menu(Menu::Workspace(menu_path.clone()), ev.position, Anchor::TopLeft, cx)
                 }),

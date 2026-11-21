@@ -5,6 +5,21 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.37] - 2026-11-21
+
+### Added
+
+- Unified CLI update monitoring and in-place updates for **Grok Build** (`grok update`) and **Antigravity CLI** (`agy update`) alongside **Claude Code**, surfaced in the footer `Update` pill, About Kynex, the Kynex menu, Command Palette, and Settings → Providers.
+
+### Changed
+
+- Replaced the stream-json / ACP protocol wrappers and custom conversation UI with first-class `agent_cli` GPU terminal panes: every provider (`claude`, `agy`, `grok`, plus `agent_rules` CLIs like `codex`, `copilot`, `cursor`, `opencode`) now runs its native interactive CLI directly with its own TUI, permissions, and auto-updates intact.
+- Starting a new session (`+`, `Ctrl+N`, or palette) replaces the current main `agent_cli` pane with an inline keyboard-first provider picker while keeping previously running CLI instances alive in the background so you can cycle through them from the Sessions list, Agents pane, or `Ctrl+PageUp`/`Ctrl+PageDown` without cluttering the layout. OpenRouter overrides are supported for **Claude Code (OpenRouter)** and **Antigravity (OpenRouter)** with model selection and OS keychain storage.
+- Kynex now tracks agent status (Working, Needs You, Done) and session IDs via native CLI hooks for both Claude Code (`--settings`) and Antigravity (`~/.gemini/config/hooks.json`, guarded so standalone runs are untouched), with tightened `agent_rules` screen-pattern tracking as a fallback.
+- Simplified notifications to in-UI status lamps plus a single optional background OS notification toggle (`Settings → General → Background notifications`), removing sounds, notification rules matrix, Dock/taskbar badges, and close-to-tray.
+- Removed the Chat tab and non-standard session features (forking, child sessions/lineage, approval cards, rewind, timeline, subagent delegation, Claude project settings/extensions modals, scratch explorer, and AI auto-naming) in favor of pure project tabs, workspaces, tiling panes, Git, and terminal CLIs.
+- Slimmed the `knx` control socket to `project`, `workspace`, `pane`, `session` (`list`, `new`, `open`, `rename`, `archive`, `pin`), `events`, `api schema`, and internal `hook` callbacks.
+
 ## [0.0.36] - 2026-11-20
 
 ### Fixed
@@ -1050,7 +1065,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.36...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.37...HEAD
+[0.0.37]: https://github.com/mrbergeron83/kynex/compare/v0.0.36...v0.0.37
 [0.0.36]: https://github.com/mrbergeron83/kynex/compare/v0.0.35...v0.0.36
 [0.0.35]: https://github.com/mrbergeron83/kynex/compare/v0.0.34...v0.0.35
 [0.0.34]: https://github.com/mrbergeron83/kynex/compare/v0.0.33...v0.0.34

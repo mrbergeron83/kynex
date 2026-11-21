@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::live::Key;
+use crate::layout::PaneId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -36,27 +36,19 @@ impl Kind {
 /// What a toast's button (and a click on it) does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
-    /// "Go to session": shows that session.
-    GoToSession(Key),
-    /// "Go to pane": focuses that pane of the shown workspace.
-    GoToPane(u64),
+    /// "Go to pane": focuses that pane.
+    GoToPane(PaneId),
     /// "View": the About modal, where a new version installs.
     ViewUpdate,
-    /// "Continue in Chat": moves an OpenRouter session whose model takes no
-    /// tool calls to Chat, and sends its last message again there.
-    ContinueInChat(Key),
-    /// "Keep here": a drifted workspace is bound to the branch it's on now. The number
-    /// names what the app kept for it.
+    /// "Keep here": a drifted workspace is bound to the branch it's on now.
     RebindWorkspace(u64),
 }
 
 impl Action {
     pub fn label(self) -> &'static str {
         match self {
-            Action::GoToSession(_) => "Go to session",
             Action::GoToPane(_) => "Go to pane",
             Action::ViewUpdate => "View",
-            Action::ContinueInChat(_) => "Continue in Chat",
             Action::RebindWorkspace(_) => "Keep here",
         }
     }
@@ -71,9 +63,8 @@ pub struct Toast {
     /// Shown after the title, muted and cut to fit.
     pub detail: String,
     pub action: Option<Action>,
-    /// The session it's about: toasts of one kind for one session merge, and
-    /// go once that session is shown.
-    pub session: Option<Key>,
+    /// The pane it's about: toasts of one kind for one pane merge, and clear when focused.
+    pub pane: Option<PaneId>,
     /// How many notes merged into this one.
     pub count: usize,
     lifetime: Option<Duration>,
@@ -91,7 +82,7 @@ impl Toast {
             title: title.into(),
             detail: String::new(),
             action: None,
-            session: None,
+            pane: None,
             count: 1,
             lifetime: kind.lifetime(),
             age: Duration::ZERO,
@@ -129,8 +120,8 @@ impl Toast {
         self
     }
 
-    pub fn session(mut self, key: Key) -> Self {
-        self.session = Some(key);
+    pub fn pane(mut self, pane: PaneId) -> Self {
+        self.pane = Some(pane);
         self
     }
 
@@ -164,8 +155,8 @@ impl Toasts {
     /// session: that one counts it, takes the new title and detail, and starts
     /// its time again. Returns the toast up now, for its `count`.
     pub fn push(&mut self, toast: Toast) -> &mut Toast {
-        let same = toast.session.is_some().then(|| {
-            self.list.iter().position(|t| t.leaving.is_none() && t.kind == toast.kind && t.session == toast.session)
+        let same = toast.pane.is_some().then(|| {
+            self.list.iter().position(|t| t.leaving.is_none() && t.kind == toast.kind && t.pane == toast.pane)
         });
         if let Some(Some(i)) = same {
             let mut old = self.list.remove(i);
@@ -244,9 +235,9 @@ impl Toasts {
         }
     }
 
-    /// The session `key` is shown: its own toasts say nothing new.
-    pub fn seen(&mut self, key: Key) {
-        self.dismiss_where(|t| t.session == Some(key));
+    /// Pane `pane` is focused: its own toasts say nothing new.
+    pub fn seen(&mut self, pane: PaneId) {
+        self.dismiss_where(|t| t.pane == Some(pane));
     }
 
     /// The toasts to draw, oldest first, and how many more are behind "+N more".
@@ -415,15 +406,15 @@ mod tests {
     }
 
     #[test]
-    fn repeats_for_one_session_merge_and_start_again() {
+    fn repeats_for_one_pane_merge_and_start_again() {
         let mut t = Toasts::default();
-        t.push(Toast::success("task finished").session(7).detail("a"));
+        t.push(Toast::success("task finished").pane(7).detail("a"));
         run(&mut t, 4., false);
-        let merged = t.push(Toast::success("2 tasks finished").session(7).detail("b"));
+        let merged = t.push(Toast::success("2 tasks finished").pane(7).detail("b"));
         assert_eq!((merged.count, merged.title.as_str(), merged.detail.as_str()), (2, "2 tasks finished", "b"));
-        // Another session, or another kind, stands apart.
-        t.push(Toast::success("task finished").session(8));
-        t.push(Toast::error("task failed").session(7));
+        // Another pane, or another kind, stands apart.
+        t.push(Toast::success("task finished").pane(8));
+        t.push(Toast::error("task failed").pane(7));
         assert_eq!(t.visible().0.len(), 3);
         run(&mut t, 4., false);
         assert_eq!(t.visible().0.len(), 3, "the merge started its time again");
@@ -449,9 +440,9 @@ mod tests {
     }
 
     #[test]
-    fn showing_a_session_closes_its_toasts() {
+    fn showing_a_pane_closes_its_toasts() {
         let mut t = Toasts::default();
-        t.push(Toast::success("done").session(3).action(Action::GoToSession(3)));
+        t.push(Toast::success("done").pane(3).action(Action::GoToPane(3)));
         t.push(Toast::info("other"));
         t.seen(3);
         run(&mut t, 0.2, false);

@@ -51,7 +51,7 @@ impl ShellKind {
     }
 }
 
-/// A shell found on disk, ready to start.
+/// A shell or CLI found on disk, ready to start in a PTY.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShellSpec {
     pub kind: ShellKind,
@@ -59,6 +59,8 @@ pub struct ShellSpec {
     pub args: Vec<String>,
     /// Variables it gets besides the terminal's own.
     pub env: Vec<(String, String)>,
+    /// Inherited environment variables to unset before starting `program`.
+    pub env_remove: Vec<String>,
     /// What its tab is called instead of the shell's name (a custom command's).
     pub title: Option<String>,
     /// Text shown above it as it starts: the pane's scrollback from last time
@@ -97,7 +99,7 @@ pub fn resolve(kind: ShellKind) -> Result<ShellSpec, String> {
         args = hooked;
         env = vars;
     }
-    Ok(ShellSpec { kind, program, args, env, title: None, history: None })
+    Ok(ShellSpec { kind, program, args, env, env_remove: Vec::new(), title: None, history: None })
 }
 
 /// Git for Windows' bash, the one Claude Code itself uses: `CLAUDE_CODE_GIT_BASH_PATH`,

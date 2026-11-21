@@ -1,7 +1,6 @@
-//! The client end: what `knx` subcommands use to ask the running app, and how a second
-//! `knx <folder>` finds the first instance.
+//! The client end: what `knx` subcommands and `knx hook` use to talk to the running app.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -13,40 +12,28 @@ use super::protocol::request_line_from;
 
 const NOT_RUNNING: &str = "Kynex isn't running";
 
-/// Where the app whose data dir is `dir` listens, as its `control.addr` says.
 fn address_in(dir: &Path) -> Result<String, String> {
     let addr = std::fs::read_to_string(super::addr_file(dir)).map_err(|_| NOT_RUNNING.to_string())?;
     Ok(addr.trim().to_string())
 }
 
-/// Connects to the control socket at `addr`. Blocks only as long as connecting does.
 fn connect(addr: &str) -> Result<Stream, String> {
     let name = PathBuf::from(addr).to_fs_name::<GenericFilePath>().map_err(|e| e.to_string())?;
     Stream::connect(name).map_err(|_| NOT_RUNNING.to_string())
 }
 
-/// Connects to the running app's control socket. Blocks only as long as connecting does.
 fn open(dir: &Path) -> Result<Stream, String> {
     connect(&address_in(dir)?)
 }
 
-/// Whether an app is answering on the control socket.
 pub fn running() -> bool {
     running_in(&crate::paths::data_dir())
 }
 
-/// [`running`] for the app whose data dir is `dir`.
 pub fn running_in(dir: &Path) -> bool {
     open(dir).is_ok()
 }
 
-/// Sends `request` to the running app and hands each line it answers with to `on_line`: one
-/// answer, or for [`Request::Events`] every event until the app closes the connection.
-/// Blocks until then (a `wait` can take as long as a turn). `Err` if no app is running or the
-/// connection broke before an answer.
-///
-/// Run inside a session, it asks the app that session runs in (the address it was handed,
-/// whatever the data dir), and says which session asks.
 pub fn call(request: &Request, on_line: impl FnMut(&str)) -> Result<(), String> {
     let addr = match agent::handed_address() {
         Some(addr) => addr,
@@ -55,30 +42,21 @@ pub fn call(request: &Request, on_line: impl FnMut(&str)) -> Result<(), String> 
     send(&addr, request, agent::caller(), patience(request), on_line)
 }
 
-/// How long the first answer to `request` may take before the app counts as stuck: a few
-/// seconds for most, longer for git, none for what waits on a turn or listens.
 fn patience(request: &Request) -> Option<Duration> {
     match request {
+        Request::Hook { .. } => Some(Duration::from_millis(250)),
         Request::Events
-        | Request::SessionWait { .. }
-        | Request::SessionPrompt { wait: true, .. }
         | Request::PaneWait { .. }
         | Request::PaneRun { wait: true, .. }
-        | Request::PanePrompt { wait: true, .. }
-        | Request::RequestWait { .. } => None,
-        // The card's short wait, then git or a session's start.
-        r if super::approval::needs_card(r) => Some(super::approval::SHORT_WAIT + Duration::from_secs(300)),
+        | Request::PanePrompt { wait: true, .. } => None,
         _ => Some(Duration::from_secs(15)),
     }
 }
 
-/// [`call`] to the app whose data dir is `dir`.
 pub fn call_in(dir: &Path, request: &Request, on_line: impl FnMut(&str)) -> Result<(), String> {
     call_within(dir, request, patience(request), on_line)
 }
 
-/// [`call_in`] giving up on the first answer after `first` (never, for `None`): a Kynex whose
-/// window is stuck still accepts the connection but doesn't answer.
 pub fn call_within(
     dir: &Path,
     request: &Request,
@@ -88,7 +66,6 @@ pub fn call_within(
     send(&address_in(dir)?, request, None, first, on_line)
 }
 
-/// Sends `request` (from session `caller`, if any) to the socket at `addr`; see [`call_within`].
 fn send(
     addr: &str,
     request: &Request,
@@ -100,7 +77,6 @@ fn send(
     let mut send = &stream;
     writeln!(send, "{}", request_line_from(1, request, caller)).map_err(|e| e.to_string())?;
     send.flush().map_err(|e| e.to_string())?;
-    // Read on a thread of its own, so the wait for a line can end. It stops with the process.
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     std::thread::Builder::new()
         .name("control-client".into())
@@ -144,11 +120,33 @@ fn send(
     if got { Ok(()) } else { Err("Kynex closed the connection without answering".into()) }
 }
 
-/// The `knx` command line (without the program name): sends it to the running app and
-/// prints the answers, one JSON line each. The exit code: 0, or 1 with the reason on stderr
-/// (also when the app answered with an error).
+/// Fast, fire-and-forget handler for `knx hook <provider> [event]`: reads JSON from stdin,
+/// posts `Request::Hook` to the running Kynex with a 250ms budget, prints any required JSON
+/// stdout response (e.g. `{}` for `agy`), and ALWAYS returns exit code 0 so hooks never break CLIs.
+fn run_hook(provider: &str, event: Option<&str>) -> i32 {
+    let mut buf = String::new();
+    let _ = std::io::stdin().take(256 * 1024).read_to_string(&mut buf);
+    let report = crate::hooks::parse_payload(provider, event, &buf);
+    if let Some(pane) = agent::hook_target() {
+        let req = Request::Hook {
+            pane,
+            provider: provider.to_string(),
+            state: report.state,
+            session_id: report.session_id,
+            detail: report.detail,
+        };
+        let _ = call(&req, |_| {});
+    }
+    if let Some(reply) = crate::hooks::stdout_response(provider) {
+        println!("{reply}");
+    }
+    0
+}
+
 pub fn run(args: &[String]) -> i32 {
-    // The one command that isn't a request: the protocol's schema, static, no app needed.
+    if let Some((provider, event)) = super::args::wants_hook(args) {
+        return run_hook(provider, event);
+    }
     if super::args::wants_schema(args) {
         println!("{}", serde_json::to_string_pretty(&super::schema::schema()).unwrap_or_default());
         return 0;
@@ -174,8 +172,6 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
-/// Windows: the app has no console of its own (it is a window), so a `knx` subcommand takes
-/// the terminal it was started from to print to. Does nothing elsewhere.
 pub fn attach_console() {
     #[cfg(windows)]
     {
@@ -183,13 +179,11 @@ pub fn attach_console() {
         use windows_sys::Win32::System::Console::{
             ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
         };
-        // SAFETY: plain Win32 calls with valid arguments; the handles opened here live as long as the process.
         unsafe {
             if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
                 return;
             }
             for which in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-                // Left alone when the output is redirected to a file or a pipe.
                 let current = GetStdHandle(which);
                 if (current.is_null() || current as isize == -1)
                     && let Ok(console) = std::fs::OpenOptions::new().write(true).open("CONOUT$")
@@ -201,7 +195,6 @@ pub fn attach_console() {
     }
 }
 
-/// Asks the running app, if there is one, to open `folder` as a project. Whether one did.
 pub fn open_folder(folder: &str) -> bool {
     let request = Request::ProjectOpen { path: folder.to_string() };
     let mut answered_ok = false;

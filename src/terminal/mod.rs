@@ -155,11 +155,6 @@ impl TerminalPanel {
         self.tabs.get(self.active).map(|t| t.view.clone())
     }
 
-    /// The shown tab's screen text, once its program runs.
-    pub fn screen_text(&self, cx: &App) -> Option<String> {
-        self.tabs.get(self.active)?.view.read(cx).screen_text()
-    }
-
     /// Whether it was opened for a custom command rather than as a shell.
     pub fn is_command(&self) -> bool {
         self.command
@@ -204,30 +199,6 @@ impl TerminalPanel {
         if self.tabs.is_empty() {
             self.open(ShellKind::default_shell(), window, cx);
         }
-    }
-
-    /// Runs `command` in a shell of `kind`: the active tab if it is one, else
-    /// another open one, else a new one.
-    pub fn run(&mut self, kind: ShellKind, command: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let is_kind = |t: &Tab, cx: &App| t.view.read(cx).shell.kind == kind;
-        let target = if self.tabs.get(self.active).is_some_and(|t| is_kind(t, cx)) {
-            Some(self.active)
-        } else {
-            self.tabs.iter().rposition(|t| is_kind(t, cx))
-        };
-        let view = match target {
-            Some(i) => {
-                self.active = i;
-                self.tabs[i].view.clone()
-            }
-            None => match self.open(kind, window, cx) {
-                Some(v) => v,
-                None => return,
-            },
-        };
-        view.update(cx, |v, cx| v.run(command, cx));
-        view.read(cx).focus_handle(cx).focus(window, cx);
-        cx.notify();
     }
 
     pub fn focus_active(&self, window: &mut Window, cx: &mut App) {

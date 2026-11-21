@@ -97,6 +97,73 @@ pub fn logout() -> Result<(), String> {
     Err(format!("Couldn't sign Grok out: {}", last_line(&out.stderr).or(last_line(&out.stdout)).unwrap_or_default()))
 }
 
+/// The installed Grok Build version, from `grok --version`. Blocks.
+pub fn installed_version() -> Result<String, String> {
+    let program = super::program();
+    if !program.is_file() {
+        return Err("Grok Build isn't installed.".into());
+    }
+    let out = command(&program).arg("--version").output().map_err(|e| format!("failed to start `grok`: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    version_in(&text).ok_or_else(|| format!("unexpected `grok --version` output: {}", text.trim()))
+}
+
+/// Checks for a newer Grok Build via `grok update --check --json`, returning
+/// `(installed, latest)`. Blocks on the CLI and network.
+pub fn check() -> Result<(String, String), String> {
+    let program = super::program();
+    if !program.is_file() {
+        return Err("Grok Build isn't installed.".into());
+    }
+    let out = command(&program)
+        .args(["update", "--check", "--json"])
+        .output()
+        .map_err(|e| format!("failed to start `grok update --check`: {e}"))?;
+    if !out.status.success() && out.stdout.is_empty() {
+        return Err(format!(
+            "`grok update --check` failed: {}",
+            last_line(&out.stderr).or(last_line(&out.stdout)).unwrap_or_default()
+        ));
+    }
+    parse_update_check(&out.stdout)
+}
+
+fn parse_update_check(json: &[u8]) -> Result<(String, String), String> {
+    let v: serde_json::Value =
+        serde_json::from_slice(json).map_err(|e| format!("bad `grok update --check` output: {e}"))?;
+    if let Some(err) = v["error"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
+        return Err(err.to_string());
+    }
+    let current = v["currentVersion"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("`grok update --check` gave no currentVersion")?
+        .to_string();
+    let latest = v["latestVersion"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map_or_else(|| current.clone(), str::to_string);
+    Ok((current, latest))
+}
+
+/// Runs `grok update` and returns the version installed afterwards. Blocks.
+pub fn update() -> Result<String, String> {
+    let out =
+        command(super::program()).arg("update").output().map_err(|e| format!("failed to start `grok update`: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "`grok update` failed: {}",
+            last_line(&out.stderr).or(last_line(&out.stdout)).unwrap_or_default()
+        ));
+    }
+    match status() {
+        Status::Ready(v) | Status::SignedOut(v) => Ok(v),
+        Status::Missing => Err("Grok Build wasn't found after updating.".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +181,19 @@ mod tests {
         assert_eq!(Status::Ready("1.0.70".into()).describe(), "Grok Build 1.0.70 · signed in");
         assert!(Status::SignedOut("1".into()).describe().contains("not signed in"));
         assert!(Status::Missing.describe().contains("isn't installed"));
+    }
+
+    #[test]
+    fn parses_update_check_json() {
+        let avail = br#"{"currentVersion":"1.0.77","latestVersion":"1.0.92","updateAvailable":true,"error":null}"#;
+        assert_eq!(parse_update_check(avail), Ok(("1.0.77".into(), "1.0.92".into())));
+
+        let up_to_date = br#"{"currentVersion":"1.0.92","latestVersion":null,"updateAvailable":false,"error":null}"#;
+        assert_eq!(parse_update_check(up_to_date), Ok(("1.0.92".into(), "1.0.92".into())));
+
+        let failed = br#"{"currentVersion":"1.0.77","latestVersion":null,"updateAvailable":false,"error":"offline"}"#;
+        assert_eq!(parse_update_check(failed), Err("offline".into()));
+
+        assert!(parse_update_check(b"not json").is_err());
     }
 }

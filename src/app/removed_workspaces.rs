@@ -1,17 +1,14 @@
 //! "Removed workspaces": a last, folded section of the sessions tree. Removing a workspace
 //! keeps its sessions (`kynex_core::removed`), so each former workspace is a row here, folded,
-//! with its sessions under it once opened. A session opens to read: the log is found without
-//! its folder, which is gone, so nothing can be sent. "Continue in <main workspace>" copies it
+//! with its sessions under it once opened. "Continue in <main workspace>" copies a Claude log
 //! into the project's own transcripts and resumes it there. "Forget…" deletes them all.
-//!
-//! Right-clicking a row opens a small strip under it (not a popup menu) with what it can do.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use gpui::{AnyElement, Context, MouseButton, MouseDownEvent, div, prelude::*};
+use gpui::{AnyElement, Context, MouseButton, MouseDownEvent, Window, div, prelude::*};
 use kynex_core::removed::{self, Removed};
-use kynex_core::session::{self, Kind, SessionInfo};
+use kynex_core::sessions::{self, SessionInfo};
 use kynex_core::toasts::Toast;
 use kynex_core::workspace;
 
@@ -23,32 +20,24 @@ use crate::ui::{Icon, Tooltip, ghost_button, icon, outline_button, px, section_l
 /// What the section shows and asks. Folding is for this run only.
 #[derive(Default)]
 pub(super) struct RemovedUi {
-    /// The section itself is open.
     open: bool,
-    /// The former workspaces that are unfolded.
     unfolded: HashSet<PathBuf>,
-    /// Their sessions, read when first unfolded.
     sessions: HashMap<PathBuf, Vec<SessionInfo>>,
-    /// The strip under a row: what the right-click offers.
     acting: Option<Acting>,
 }
 
 #[derive(Clone, PartialEq)]
 enum Acting {
-    /// A former workspace's strip: Forget…
     Workspace(PathBuf),
-    /// The same, after Forget…: asks once.
     Forgetting(PathBuf),
-    /// A session's strip: Continue in the main workspace.
     Session(PathBuf, String),
 }
 
 impl KynexApp {
-    /// Reads the sessions of the removed workspace at `path` off the UI thread.
     fn read_removed_sessions(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let there = path.clone();
         cx.spawn(async move |this, cx| {
-            let list = cx.background_spawn(async move { session::list_sessions(&there) }).await;
+            let list = cx.background_spawn(async move { sessions::list_sessions(&there) }).await;
             this.update(cx, |this, cx| {
                 this.removed_ui.sessions.insert(path, list);
                 cx.notify();
@@ -58,7 +47,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Folds or unfolds a former workspace, reading its sessions the first time.
     fn toggle_removed(&mut self, path: &Path, cx: &mut Context<Self>) {
         let ui = &mut self.removed_ui;
         if !ui.unfolded.remove(path) {
@@ -68,33 +56,17 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// "Forget" on a removed workspace: deletes its sessions (transcripts, and their places in
-    /// its groups) and drops it from the list. Off the UI thread.
+    /// "Forget" on a removed workspace: deletes its sessions and drops it from the list.
     pub(super) fn forget_removed_workspace(&mut self, project: PathBuf, path: PathBuf, cx: &mut Context<Self>) {
         self.removed_ui.acting = None;
         let there = path.clone();
         cx.spawn(async move |this, cx| {
             let purged = cx.background_spawn(async move { removed::delete_sessions(&there) }).await;
             this.update(cx, |this, cx| {
-                for id in &purged.deleted {
-                    this.drafts.remove(id);
-                    if this.saved.drafts.remove(id).is_some() {
-                        this.save();
-                    }
-                }
                 this.edit_groups(&path, |g| purged.deleted.iter().for_each(|id| g.forget(id)));
-                purged.deleted.iter().for_each(|id| this.unlink_session(id));
                 this.removed_ui.sessions.remove(&path);
                 this.removed_ui.unfolded.remove(&path);
-                if let Some(live) = this.code.get_mut(&project) {
-                    let closed = live.close_where(|s| {
-                        workspace::same_folder(&s.cwd, &path)
-                            && s.session_id.as_ref().is_some_and(|id| purged.deleted.contains(id))
-                    });
-                    this.forget(&closed);
-                }
                 match purged.errors.first() {
-                    // Some stay: so does the row, for another try.
                     Some(e) => {
                         this.toast(Toast::error(format!("Couldn't delete {} session(s): {e}", purged.errors.len())));
                     }
@@ -112,19 +84,18 @@ impl KynexApp {
         .detach();
     }
 
-    /// "Continue in <main workspace>": copies the log there, then shows the main workspace
-    /// with the session resumed in it.
-    fn continue_removed_session(&mut self, from: PathBuf, id: String, cx: &mut Context<Self>) {
+    /// "Continue in <main workspace>": copies the log there, then resumes it in an `agent_cli` pane.
+    fn continue_removed_session(&mut self, from: PathBuf, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.removed_ui.acting = None;
         let Some(project) = self.workspace_project() else { return };
         let (to, sid) = (project.clone(), id.clone());
-        cx.spawn(async move |this, cx| {
-            let copied = cx.background_spawn(async move { session::continue_in(&from, &sid, &to) }).await;
-            this.update(cx, |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
+            let copied = cx.background_spawn(async move { removed::continue_in(&from, &sid, &to) }).await;
+            this.update_in(cx, |this, window, cx| {
                 match copied {
                     Ok(()) => {
                         this.select_workspace(&project, cx);
-                        this.switch_session(Kind::Code, project, id);
+                        this.switch_session(project, id, window, cx);
                         this.reread_sessions();
                     }
                     Err(e) => _ = this.toast(Toast::error(e)),
@@ -136,8 +107,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// The section: nothing when no workspace was removed. A header that folds, a row per
-    /// former workspace (name, branch) that folds too, and under it its sessions.
     pub(super) fn render_removed_workspaces(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let project = self.workspace_project()?;
         let current: Vec<_> = self.workspaces_of(&project, cx).into_iter().map(|(c, _)| c).collect();
@@ -272,8 +241,8 @@ impl KynexApp {
             };
             for (i, s) in list.iter().enumerate() {
                 let id = i + n * 1000;
-                let (from, sid, menu_sid) = (r.path.clone(), s.id.clone(), s.id.clone());
-                let menu_from = r.path.clone();
+                let (click_from, click_sid) = (r.path.clone(), s.id.clone());
+                let (menu_from, menu_sid) = (r.path.clone(), s.id.clone());
                 rows.push(
                     div()
                         .id(("removed-session", id))
@@ -289,11 +258,11 @@ impl KynexApp {
                         .child(row_wash(false, t.hover, t.selection))
                         .child(div().flex_1().min_w_0().truncate().text_color(t.text_muted).child(s.title.clone()))
                         .tooltip(Tooltip::text(format!(
-                            "{}\nRead only: its folder is gone",
+                            "{}\nClick to continue in {main}",
                             kynex_core::fmt::ago(s.modified)
                         )))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.switch_session(Kind::Code, from.clone(), sid.clone());
+                            this.removed_ui.acting = Some(Acting::Session(click_from.clone(), click_sid.clone()));
                             cx.notify();
                         }))
                         .on_mouse_down(
@@ -313,12 +282,12 @@ impl KynexApp {
                     let (from, sid) = (r.path.clone(), s.id.clone());
                     rows.push(strip(
                         &t,
-                        "Its folder is gone: copy it to the project's folder to go on",
+                        "Its folder is gone: copy it to the project's folder to resume it",
                         cx,
                         [
                             outline_button(("removed-continue", id), format!("Continue in {main}"), cx).on_click(
-                                cx.listener(move |this, _, _, cx| {
-                                    this.continue_removed_session(from.clone(), sid.clone(), cx)
+                                cx.listener(move |this, _, window, cx| {
+                                    this.continue_removed_session(from.clone(), sid.clone(), window, cx)
                                 }),
                             ),
                             ghost_button(("removed-continue-no", id), cx).child("Cancel").on_click(cx.listener(
@@ -354,7 +323,7 @@ impl KynexApp {
             .cursor_pointer()
             .child(icon(if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_placeholder).size(px(10.)))
             .child(section_label(&format!("Removed workspaces · {}", shown.len()), cx).flex_1())
-            .tooltip(Tooltip::text("Workspaces removed here: their sessions stay to read"))
+            .tooltip(Tooltip::text("Workspaces removed here: their sessions stay to resume"))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.removed_ui.open = !this.removed_ui.open;
                 cx.notify();
@@ -375,7 +344,6 @@ impl KynexApp {
     }
 }
 
-/// The strip under a row after a right-click: a line of words and its buttons.
 fn strip<const N: usize>(
     t: &crate::theme::Palette,
     text: &str,

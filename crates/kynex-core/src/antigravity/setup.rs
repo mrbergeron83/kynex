@@ -4,6 +4,9 @@
 
 use crate::cli::{command, last_line};
 
+/// Base URL of Antigravity CLI's official release manifests (same endpoint as `install.ps1` / `install.sh`).
+const MANIFEST_BASE_URL: &str = "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests";
+
 /// Where Antigravity stands on this machine.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
@@ -14,12 +17,83 @@ pub enum Status {
 }
 
 impl Status {
-    /// In words, for Settings: "Antigravity CLI 1.5.12 · on your OpenRouter key".
+    /// In words, for Settings: "Antigravity CLI 1.5.12".
     pub fn describe(&self) -> String {
         match self {
             Status::Missing => "The Antigravity CLI isn't installed.".into(),
-            Status::Ready(v) => format!("Antigravity CLI {v} · on your OpenRouter key"),
+            Status::Ready(v) => format!("Antigravity CLI {v}"),
         }
+    }
+}
+
+/// The installed `agy` version, from `agy --version`. Blocks.
+pub fn installed_version() -> Result<String, String> {
+    let program = super::program();
+    if !program.is_file() {
+        return Err("Antigravity CLI isn't installed.".into());
+    }
+    let out = command(&program).arg("--version").output().map_err(|e| format!("failed to start `agy`: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    version_in(&text).ok_or_else(|| format!("unexpected `agy --version` output: {}", text.trim()))
+}
+
+fn manifest_platform(os: &str, arch: &str, musl: bool) -> Result<&'static str, String> {
+    match (os, arch, musl) {
+        ("windows", "x86_64", _) => Ok("windows_amd64"),
+        ("windows", "aarch64", _) => Ok("windows_arm64"),
+        ("macos", "x86_64", _) => Ok("darwin_amd64"),
+        ("macos", "aarch64", _) => Ok("darwin_arm64"),
+        ("linux", "x86_64", true) => Ok("linux_amd64_musl"),
+        ("linux", "x86_64", false) => Ok("linux_amd64"),
+        ("linux", "aarch64", true) => Ok("linux_arm64_musl"),
+        ("linux", "aarch64", false) => Ok("linux_arm64"),
+        _ => Err(format!("unsupported platform for Antigravity CLI updates: {os} {arch}")),
+    }
+}
+
+fn parse_manifest_version(json: &[u8]) -> Result<String, String> {
+    let v: serde_json::Value =
+        serde_json::from_slice(json).map_err(|e| format!("bad Antigravity release manifest: {e}"))?;
+    v["version"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| crate::cli::parse(s).is_some())
+        .map(str::to_string)
+        .ok_or_else(|| "no valid `version` in Antigravity release manifest".into())
+}
+
+/// The newest Antigravity CLI release from its official manifest. Uses `curl`, same as `cli.rs`.
+pub fn latest_version() -> Result<String, String> {
+    let platform = manifest_platform(std::env::consts::OS, std::env::consts::ARCH, cfg!(target_env = "musl"))?;
+    let url = format!("{MANIFEST_BASE_URL}/{platform}.json");
+    let out = command("curl")
+        .args(["-fsSL", "--max-time", "15", &url])
+        .output()
+        .map_err(|e| format!("failed to start `curl`: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("couldn't fetch Antigravity releases: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    parse_manifest_version(&out.stdout)
+}
+
+/// The installed `agy` version and the newest release from Google's manifest. Blocks.
+pub fn check() -> Result<(String, String), String> {
+    Ok((installed_version()?, latest_version()?))
+}
+
+/// Runs `agy update` and returns the version installed afterwards. Blocks.
+pub fn update() -> Result<String, String> {
+    let out =
+        command(super::program()).arg("update").output().map_err(|e| format!("couldn't start `agy update`: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "`agy update` failed: {}",
+            last_line(&out.stderr).or(last_line(&out.stdout)).unwrap_or_default()
+        ));
+    }
+    match status() {
+        Status::Ready(v) => Ok(v),
+        Status::Missing => Err("Antigravity CLI wasn't found after updating.".into()),
     }
 }
 
@@ -89,7 +163,21 @@ mod tests {
 
     #[test]
     fn says_where_it_stands() {
-        assert_eq!(Status::Ready("1.5.12".into()).describe(), "Antigravity CLI 1.5.12 · on your OpenRouter key");
+        assert_eq!(Status::Ready("1.5.12".into()).describe(), "Antigravity CLI 1.5.12");
         assert!(Status::Missing.describe().contains("isn't installed"));
+    }
+
+    #[test]
+    fn resolves_manifest_platforms_and_parses_version() {
+        assert_eq!(manifest_platform("windows", "x86_64", false), Ok("windows_amd64"));
+        assert_eq!(manifest_platform("macos", "aarch64", false), Ok("darwin_arm64"));
+        assert_eq!(manifest_platform("linux", "x86_64", false), Ok("linux_amd64"));
+        assert_eq!(manifest_platform("linux", "aarch64", true), Ok("linux_arm64_musl"));
+        assert!(manifest_platform("freebsd", "x86_64", false).is_err());
+
+        let manifest = br#"{"version":"1.5.14","url":"https://example.invalid/agy","sha512":"abc"}"#;
+        assert_eq!(parse_manifest_version(manifest), Ok("1.5.14".into()));
+        assert!(parse_manifest_version(br#"{"version":"not-a-version"}"#).is_err());
+        assert!(parse_manifest_version(b"not json").is_err());
     }
 }

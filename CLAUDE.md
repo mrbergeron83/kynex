@@ -1,8 +1,11 @@
 # Kynex
 
-A native desktop workspace for Claude Code, written in Rust on gpui (Zed's UI framework,
-from crates.io as `gpui-pre`). It drives the installed `claude` CLI over its stream-json
-protocol, so no API key is needed.
+A native desktop workspace for interactive AI agent CLIs, written in Rust on gpui (Zed's UI
+framework, from crates.io as `gpui-pre`). Every provider (`claude`, `agy`, `grok`, plus
+`agent_rules` CLIs like `codex`, `copilot`, `cursor`, `opencode`) runs its native interactive
+CLI directly inside a GPU terminal (`agent_cli`) pane, preserving native TUIs, permissions,
+and auto-updates. OpenRouter overrides are supported for Claude Code (`claude-openrouter`)
+and Antigravity (`agy-openrouter`).
 
 ## Reporting and proposing
 
@@ -71,87 +74,38 @@ is `cargo fmt` (rustfmt.toml), not hand-tuned.
 A cargo workspace with two crates:
 
 - **`crates/kynex-core`** — everything that isn't drawing. No gpui; plain Rust, unit-tested.
-  - `session.rs` — a `claude` process and the stream-json protocol, session listing; reader
-    threads ring a `Wake` callback and the app drains every session on one task
-  - `live.rs` — `Live`: the open sessions in one folder, which is shown, which close
-  - `cli.rs` — managing the `claude` CLI so users never need a terminal: finding it (PATH,
-    then `~/.local/bin`), installing it with the official script, `claude auth login`, and
-    update checks against npm dist-tags with `claude update`
-  - `project.rs` — per-project settings folders (`<data dir>/projects/<name>-<hash>/`, one
-    JSON file per section); rules go to each session via `claude --settings`, mode / effort /
-    extra dirs via `--permission-mode`, `--effort`, `--add-dir`; the mode switches live, and
-    effort and added rules / dirs reach a running process via `apply_flag_settings` (`Launched`)
-  - `commands.rs` — slash commands: listing a folder's (the CLI's free `initialize`
-    handshake), matching as you type, and the built-ins Kynex runs itself (`/clear`, `/model`…)
-  - `history.rs` — sent messages per project for the composer's ↑ / ↓, Ctrl+R and stash;
-    `queue.rs` — messages written while Claude works, sent together when the turn ends
-  - `mcp.rs` — MCP tools and servers in words, server status, browser handoff;
-    `tasks.rs` — background tasks (`run_in_background`, agents, Monitors) from stream-json
-  - `attention.rs` — why a session wants you, for OS notifications and the icon's "needs
-    you" dot (Dock badge on macOS); `win_shell.rs` — the taskbar dot and app ID on Kynex's
-    shortcuts (Windows)
-  - `sound.rs` — the short sounds for notes and toasts (`MessageBeep`, `NSSound`, canberra / paplay)
-  - `zoom.rs` — the image viewer's fit, zoom and pan; `column.rs` — the Transcript width
-    setting and the prose / tool-row widths it gives; `env_path.rs` — the login shell's PATH
-    for an app started from Finder or the Dock (macOS)
-  - `rewind.rs` — going back to an earlier message: the log's current branch, the points with
-    their file checkpoints, restoring files (`--rewind-files`); the session resumes with
-    `--resume-session-at`
-  - `agent_panes.rs` — other agent CLIs in terminal panes: rules (`agent_rules/*.json`, user overrides in
-    `<data dir>/agents/`) read their state and resume id off the screen
-  - `scrollback.rs` — terminal panes' scrollback kept across a restart (bounded, one file per pane)
-  - `user_commands.rs` — custom commands (`commands.json`, user and per project): argv, placement, key, env
-  - `groups.rs` — session groups and the archive in the sessions panel (`sessions.json` per project)
-  - `lineage.rs` — which session started which (`parents.json` per project): nesting in the tree,
-    caps on depth and open children, and a child's answer sent back to its parent as a notice
-  - `grok/` — the Grok provider: `grok agent stdio` over ACP (`acp.rs` maps it to and from
-    stream-json, so sessions draw it like `claude`), usage and models (`usage.rs`), Grok's own
-    session records for the list and reopening (`log.rs`), install / sign-in (`setup.rs`)
-  - `timeline.rs` — a session's turns and their notable steps, for the timeline panel;
-    `transcript.rs` lays items out as transcript rows (tool runs folded) and maps between them
-  - `markdown.rs` — markdown (pulldown-cmark) parsed into plain blocks the app draws
-  - `motion.rs` — the Animations setting, the OS's "reduce motion", `Glide` (smooth,
-    time-based scrolling) and `Wheel` (wheel notches as gliding pixel steps)
-  - `git/` — everything git, parsed from machine formats: `status`, `diff` (hunks with line
-    numbers), `log` and commit details, `branch` (list / switch / create), `ops` (stage, discard,
-    commit, fetch / pull / push), `worktree`; `open.rs` — open a folder in VS Code / file
-    manager / terminal; `attach.rs` — image attachments; `fmt.rs` — times and turn recaps;
-    `paths.rs` — `data_dir()` and friends; `process.rs` — child processes die with Kynex (a
-    job object on Windows, `PR_SET_PDEATHSIG` on Linux) unless `detach`ed, like editors it opens
-  - `terminal/` — interactive terminals on `alacritty_terminal` (ConPTY on Windows): spawning
-    PowerShell / Git Bash, keys to bytes, render snapshots with resolved colours, selection;
-    shells inherit Kynex's rights (`elevated()` says if that's administrator)
+  - `agent_cli.rs` — provider catalog (`claude`, `claude-openrouter`, `agy`, `agy-openrouter`,
+    `grok`, and `agent_rules` CLIs) and `build_spec` constructing `ShellSpec` with clean env,
+    native CLI hooks, and OpenRouter overrides for Claude and Antigravity
+  - `hooks.rs` — native CLI hook config generator (`claude --settings`, `agy`) and JSON
+    payload parser invoked by `knx hook <provider> [event]`
+  - `sessions.rs` — reading past sessions from each CLI's native on-disk storage (`~/.claude/projects`,
+    `~/.grok/sessions`, `~/.gemini/antigravity-cli`, and `sessions.json`)
+  - `agent_panes.rs` — built-in + user agent screen rules (`agent_rules/*.json`, user overrides in
+    `<data dir>/agents/`) and hybrid hook + screen-pattern `Tracker`
+  - `tiling.rs` & `layout.rs` — Hyprland-style tiling of `agent_cli`, Sessions (`Tree`), Agents,
+    Git, and plain Terminal panes, with named layouts and layout undo/redo
+  - `running.rs` — Agents pane model across all open projects and workspaces
+  - `attention.rs` — minimal background OS notifications (`Alert`) and "next pane that needs you"
+  - `control/` — local control socket (`knx project | workspace | pane | session | events | hook`)
+  - `cli.rs`, `grok/`, `antigravity/`, `openrouter/`, `secrets.rs` — CLI discovery/install/updates
+    and OS keychain OpenRouter integration
+  - `project.rs`, `groups.rs`, `workspace.rs`, `removed.rs`, `storage.rs` — per-project data
+    folders (`<data dir>/projects/<name>-<hash>/`), session groups/pins/archive, git worktrees,
+    and disk cleanup
+  - `terminal/` — interactive GPU terminals on `alacritty_terminal` (ConPTY on Windows)
+  - `git/`, `file_view/`, `highlight/`, `themes.rs`, `user_commands.rs`, `scrollback.rs`,
+    `motion.rs`, `awake.rs`, `resources.rs`, `update.rs`, `toasts.rs`, `migrate.rs`
 - **`kynex`** (`src/`) — the gpui app.
-  - `main.rs` — app and window setup (custom title bar), key bindings, theme
-  - `app/` — `KynexApp`, the root view. `app/mod.rs` has its fields, startup and top-level
-    layout; every other file is one `impl KynexApp` block for one part of the window
-    (the table at the top of `app/mod.rs` lists them: title bar, sessions panel, transcript,
-    composer, prompts, menus, settings modal, setup screen…)
-  - `pane/` — `SessionPane`: one session view's composer and what goes with it (attachments,
-    slash / mention popups, find, history search, rewind); `KynexApp` holds the focused pane's as
-    `pane` and parks the others (`app/tiles.rs`, over `kynex_core::tiling`, a workspace's layout)
-  - `prompt/` — `PromptView`: permission / plan / question prompts in the composer's place,
-    Claude Code-style (cursor, numbered choices, a tab per question); `questions.rs` draws the
-    questions, whose state is `kynex_core::questions::Form`; `preview.rs` has titles and diffs
-  - `markdown.rs` — `kynex_core::markdown` blocks to gpui elements; parses are cached per
-    message, so frames only draw
-  - `git/` — the Git view (`GitView` entity): top bar with branch picker and fetch / pull / push,
-    Changes tab (commit box, staged / unstaged files), History tab, diff viewer; the table at the
-    top of `git/mod.rs` lists the files
-  - `terminal/` — the terminal panel a terminal pane shows (`TerminalPanel`, tabs of
-    `TerminalView`s drawn by a custom GPU element); play buttons on the ```bash / ```powershell commands Claude suggests
-    run their command there; Ctrl+` toggles it
-  - `ui/` — our small component kit, Zed `ui`-crate style: buttons, tooltips, menus, icons
-    (inline SVGs served as assets), spinner; `ui/input.rs` is the multi-line text field (IME,
-    selection, clipboard, image paste) built on gpui's input example; `ui/selectable.rs` is
-    mouse-selectable text across blocks; `ui/completions.rs` is the popup list of completions
-    (slash commands); `ui/motion.rs` has the transitions (`fade_in`, `pop_in`…) on gpui's
-    time-based `with_animation`, which `cx.reduce_motion()` turns off; `ui/smooth_scroll.rs`
-    catches every mouse-wheel turn at the window root and replays it as per-frame pixel
-    scrolls, so every scroll area glides without code of its own
-  - `chrome.rs` — title bar drag area and window buttons (native snap on Windows via
-    `WindowControlArea`, traffic lights on macOS, drawn buttons on Linux)
-  - `theme.rs` — palettes as a gpui global (`theme(cx)`), mono font pick, project colours
+  - `main.rs` — app and window setup (custom title bar), key bindings, theme, `knx` CLI entry
+  - `app/` — `KynexApp`, the root view; `app/agent_cli.rs` owns `agent_cli` panes (inline
+    keyboard-first provider picker, `TerminalView` hosting, native hook ingestion, and 500ms
+    screen-pattern fallback); `app/agents_pane.rs` renders the Agents pane; `app/sessions_panel.rs`
+    and `app/session_*.rs` render the Workspaces & Sessions tree; `app/tiles.rs` tiles panes
+  - `git/` & `git_pane/` — Git pane (`GitView`, Changes/History/Branches tabs, diff/file viewer)
+  - `terminal/` — `TerminalView` and `TerminalPanel` (GPU-rendered terminal grid, find, copy mode)
+  - `ui/` — Zed-style component kit (buttons, tooltips, menus, icons, text input, motion, scrollbars)
+  - `chrome.rs` & `theme.rs` — title bar controls, themes, fonts, and project colours
 
 ### Where code goes
 

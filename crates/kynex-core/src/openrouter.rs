@@ -81,7 +81,18 @@ impl FreeRequests {
 
 /// How long until the free-model count resets (midnight UTC), from Unix seconds `now`: "5h 12m".
 pub fn free_reset_in(now: u64) -> String {
-    crate::usage::until(86_400 - now % 86_400)
+    let secs = 86_400 - now % 86_400;
+    let mins = secs / 60;
+    let (h, m) = (mins / 60, mins % 60);
+    match (h, m) {
+        (0, m) => format!("{}m", m.max(1)),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h {m}m"),
+    }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 /// Whether an API error is OpenRouter's daily cap on free models
@@ -159,7 +170,7 @@ impl Problem {
             Problem::RateLimited => "Rate-limited (429): too many requests right now, which is common on \
                  :free models (20 a minute at most). Wait a minute, or pick a paid model."
                 .into(),
-            Problem::FreeDailyLimit => free_daily_limit_help(crate::usage::now()),
+            Problem::FreeDailyLimit => free_daily_limit_help(unix_now()),
             Problem::ModelNotFound(model) => {
                 format!("OpenRouter has no model \"{model}\". Check the ID at openrouter.ai/models.")
             }

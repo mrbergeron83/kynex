@@ -1,19 +1,19 @@
-//! Other agent CLIs (Codex, Copilot, Cursor, opencode…) in terminal panes, their state read
-//! off the screen, after herdr: each agent has a rule, a data file of text that, when it's
-//! on the screen, means the agent is working or waiting on you, and of what it prints to be
-//! resumed. The built-in rules are in `agent_rules/`; a file in `<data dir>/agents/` with
-//! the same `id` replaces one, and a new id is a new agent.
-//!
-//! Patterns are plain text, matched without regard to case anywhere on the screen. Waiting
-//! on you wins over working; a turn that stops working is done until you look at it.
+//! Agent CLIs in terminal panes: screen-pattern rules (`agent_rules/*.json`, user overrides in
+//! `<data dir>/agents/`) plus a hybrid [`Tracker`] that takes authoritative native hook events
+//! when a CLI supports them (`claude`, `agy`) and falls back to screen-pattern detection for
+//! CLIs without hooks (`grok`, `codex`, `copilot`, `cursor`, `opencode`, custom rules).
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::hooks::{HookReport, HookState};
 use crate::paths::data_dir;
 
-const BUILT_IN: [&str; 4] = [
+const BUILT_IN: [&str; 7] = [
+    include_str!("agent_rules/claude.json"),
+    include_str!("agent_rules/grok.json"),
+    include_str!("agent_rules/agy.json"),
     include_str!("agent_rules/codex.json"),
     include_str!("agent_rules/copilot.json"),
     include_str!("agent_rules/cursor.json"),
@@ -22,7 +22,7 @@ const BUILT_IN: [&str; 4] = [
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentRule {
-    /// What a pane and an override file call it (`codex`).
+    /// What a pane and an override file call it (`codex`, `claude`, `grok`, `agy`…).
     pub id: String,
     pub name: String,
     /// How it starts, as an argv.
@@ -36,8 +36,7 @@ pub struct AgentRule {
     /// Text that means a turn is over, for agents that say so.
     #[serde(default)]
     pub done: Vec<String>,
-    /// What comes right before the id in the line it prints to be resumed
-    /// (`codex resume `).
+    /// What comes right before the id in the line it prints to be resumed (`codex resume `).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_after: Option<String>,
     /// How to resume, `{id}` standing for the id.
@@ -47,12 +46,10 @@ pub struct AgentRule {
     /// `alt-enter`…; Enter if not said.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submit: Option<String>,
-    /// How long after the message is typed the key is pressed, in milliseconds (80 if not said):
-    /// pressed at once, some agents take it as part of the paste.
+    /// Delay after pasting before pressing submit, in milliseconds (80 if not said).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub submit_after_ms: Option<u64>,
-    /// How long it may take to start working on a message before a wait gives up, in seconds
-    /// (120 if not said; agents that start MCP servers first can be slow).
+    /// How long it may take to start working on a message before a wait gives up, in seconds (120).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_within_secs: Option<u64>,
 }
@@ -91,14 +88,14 @@ pub enum Seen {
     Quiet,
 }
 
-/// An agent pane's state, as the lamps show a session's.
+/// An `agent_cli` pane's live state, shown on lamps and in the Agents pane.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AgentState {
     #[default]
     Idle,
     Working,
     NeedsYou,
-    /// A turn ended and you haven't looked at it.
+    /// A turn ended and you haven't looked at it yet.
     Done,
 }
 
@@ -122,7 +119,7 @@ pub fn user_dir() -> PathBuf {
     data_dir().join("agents")
 }
 
-/// Every agent: the built-in rules with the user's from `dir` over them by id, sorted by
+/// Every agent rule: the built-in rules with the user's from `dir` over them by id, sorted by
 /// name. A file that doesn't read is left out and named in the errors. Blocks on the folder.
 pub fn rules(dir: &Path) -> (Vec<AgentRule>, Vec<String>) {
     let mut all: Vec<AgentRule> = BUILT_IN.iter().filter_map(|s| parse(s).ok()).collect();
@@ -176,16 +173,21 @@ pub fn resume_argv(rule: &AgentRule, id: Option<&str>) -> Vec<String> {
     }
 }
 
-/// Follows an agent pane's screen from one look to the next.
+/// Follows an `agent_cli` pane's state via native hooks (when available) and screen fallback.
 #[derive(Clone, Debug, Default)]
 pub struct Tracker {
     state: AgentState,
-    /// Looks in a row with no sign of work since it was working.
+    /// Short description of what the agent is doing ("Using Bash", "Needs permission", "Finished").
+    detail: String,
+    /// True once this pane has received at least one native hook event.
+    hooked: bool,
+    /// Screen detected `Blocked` while hooked (cleared once the prompt leaves the screen).
+    screen_blocked: bool,
+    /// Looks in a row with no sign of work since it was working (for screen-only tracking).
     quiet: u8,
 }
 
-/// Looks in a row without the working text before a turn counts as over: an agent redraws
-/// between steps, and a moment without the text isn't the end.
+/// Looks in a row without the working text before a turn counts as over on screen-only CLIs.
 pub const QUIET_LOOKS: u8 = 3;
 
 impl Tracker {
@@ -193,18 +195,85 @@ impl Tracker {
         self.state
     }
 
-    /// The state after the screen says `seen`; `looking` is whether you are on the pane,
-    /// which clears a done turn.
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+
+    pub fn is_hooked(&self) -> bool {
+        self.hooked
+    }
+
+    /// Marks the pane as seen by the user (focusing it clears `Done` → `Idle`).
+    pub fn mark_seen(&mut self) -> bool {
+        if self.state == AgentState::Done {
+            self.state = AgentState::Idle;
+            self.detail.clear();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Applies an authoritative native hook event. `looking` is whether the user is currently
+    /// focused on this pane in the active window.
+    pub fn on_hook(&mut self, report: &HookReport, looking: bool) -> AgentState {
+        self.hooked = true;
+        self.quiet = 0;
+        self.screen_blocked = false;
+        if let Some(next) = report.state {
+            self.state = match next {
+                HookState::Working => AgentState::Working,
+                HookState::NeedsYou => AgentState::NeedsYou,
+                HookState::Done if looking => AgentState::Idle,
+                HookState::Done => AgentState::Done,
+                HookState::Idle => AgentState::Idle,
+            };
+        }
+        if let Some(d) = &report.detail {
+            self.detail = d.clone();
+        } else if self.state == AgentState::Idle {
+            self.detail.clear();
+        }
+        self.state
+    }
+
+    /// Updates state from a periodic screen scan. When native hooks have reported for this
+    /// pane, screen scanning only catches `NeedsYou` permission prompts (e.g. `agy`) and
+    /// clears `Done` when focused, leaving hook transitions authoritative.
     pub fn update(&mut self, seen: Seen, looking: bool) -> AgentState {
+        if self.hooked {
+            if seen == Seen::Blocked {
+                self.screen_blocked = true;
+                self.state = AgentState::NeedsYou;
+                if self.detail.is_empty() {
+                    self.detail = "Wants you".into();
+                }
+            } else if self.screen_blocked {
+                self.screen_blocked = false;
+                if self.state == AgentState::NeedsYou {
+                    self.state = if seen == Seen::Working { AgentState::Working } else { AgentState::Idle };
+                }
+            }
+            if looking && self.state == AgentState::Done {
+                self.state = AgentState::Idle;
+                self.detail.clear();
+            }
+            return self.state;
+        }
         self.quiet = if seen == Seen::Quiet { self.quiet.saturating_add(1) } else { 0 };
         self.state = match seen {
             Seen::Blocked => AgentState::NeedsYou,
             Seen::Working => AgentState::Working,
             Seen::Done if !looking => AgentState::Done,
-            // Still working until it has been quiet a while.
             Seen::Quiet if self.state == AgentState::Working && self.quiet < QUIET_LOOKS => AgentState::Working,
             Seen::Quiet if !looking && matches!(self.state, AgentState::Working | AgentState::Done) => AgentState::Done,
             _ => AgentState::Idle,
+        };
+        self.detail = match self.state {
+            AgentState::NeedsYou => "Wants you".into(),
+            AgentState::Done => "Finished".into(),
+            AgentState::Working => "Working".into(),
+            AgentState::Idle => String::new(),
         };
         self.state
     }
@@ -237,7 +306,7 @@ mod tests {
         let (all, errors) = rules(Path::new("/no/such/dir"));
         assert!(errors.is_empty());
         let ids: Vec<&str> = all.iter().map(|r| r.id.as_str()).collect();
-        for id in ["codex", "copilot", "cursor", "opencode"] {
+        for id in ["claude", "grok", "agy", "codex", "copilot", "cursor", "opencode"] {
             assert!(ids.contains(&id), "{id}");
         }
     }
@@ -297,12 +366,45 @@ mod tests {
         assert_eq!(t.update(Seen::Quiet, false), AgentState::Done, "still unseen");
         assert_eq!(t.update(Seen::Quiet, true), AgentState::Idle);
         assert_eq!(t.update(Seen::Blocked, true), AgentState::NeedsYou);
-        // Done while you watch is just idle.
         t.update(Seen::Working, true);
         for _ in 0..QUIET_LOOKS {
             t.update(Seen::Quiet, true);
         }
         assert_eq!(t.state(), AgentState::Idle);
+    }
+
+    #[test]
+    fn hybrid_tracker_trusts_hooks_while_allowing_screen_blocked() {
+        let mut t = Tracker::default();
+        let working =
+            HookReport { state: Some(HookState::Working), session_id: None, detail: Some("Using Bash".into()) };
+        assert_eq!(t.on_hook(&working, false), AgentState::Working);
+        assert_eq!(t.detail(), "Using Bash");
+        // Quiet screen ticks must not prematurely end a hooked working turn.
+        for _ in 0..10 {
+            assert_eq!(t.update(Seen::Quiet, false), AgentState::Working);
+        }
+        // Screen-detected permission prompt can elevate to NeedsYou.
+        assert_eq!(t.update(Seen::Blocked, false), AgentState::NeedsYou);
+        // Clearing blocked screen restores working.
+        assert_eq!(t.update(Seen::Working, false), AgentState::Working);
+        // Hook Stop finishes the turn.
+        let done = HookReport { state: Some(HookState::Done), session_id: None, detail: Some("Finished".into()) };
+        assert_eq!(t.on_hook(&done, false), AgentState::Done);
+        assert!(t.mark_seen());
+        assert_eq!(t.state(), AgentState::Idle);
+    }
+
+    #[test]
+    fn ordinary_prose_does_not_false_trigger_agy_or_grok_rules() {
+        let (all, _) = rules(Path::new("/no/such/dir"));
+        let prose = "I am thinking about working on this PR. Please approve and accept the changes.";
+        for id in ["agy", "grok"] {
+            let rule = all.iter().find(|r| r.id == id).unwrap();
+            assert_eq!(detect(rule, prose), Seen::Quiet, "{id} false-triggered on prose");
+            assert_eq!(detect(rule, "Press esc to cancel"), Seen::Working, "{id} should detect working");
+            assert_eq!(detect(rule, "Allow once  Always allow"), Seen::Blocked, "{id} should detect blocked");
+        }
     }
 
     #[test]

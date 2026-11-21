@@ -1,15 +1,13 @@
-//! The window's layout model, after herdr: a workspace holds **tabs**, and each tab holds
-//! one tree of **panes**. Leaves are pane ids (the caller says what a pane shows, say a
-//! session [`Key`](crate::live::Key); ids must be unique across the workspaces it moves
-//! panes between), splits hold an [`Axis`] and a ratio. Splits are manual: split right or
-//! down from a pane, nothing is laid out for you.
+//! The window's layout model: each workspace holds one tree of **panes**. Leaves are pane ids
+//! (the caller says what each pane shows), splits hold an [`Axis`] and a ratio. Splits are
+//! manual: split right or down from a pane, nothing is laid out for you.
 //!
-//! [`Tab::rects`] turns a tree and the pixels it gets into each pane's rectangle and each
+//! [`Layout::rects`] turns the tree and the pixels it gets into each pane's rectangle and each
 //! divider's: they tile the bounds exactly, and no pane drops under [`MIN_W`] x [`MIN_H`]
 //! (a split that wouldn't fit is refused, a ratio is clamped). Ratios are fractions, so
 //! resizing one split leaves the proportions inside its sides alone.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 mod spot;
 pub use spot::Spot;
@@ -225,13 +223,13 @@ pub struct Divider {
     /// The line itself, [`DIVIDER`] thick.
     pub rect: Rect,
     pub axis: Axis,
-    /// Which split it belongs to: pass it to [`Tab::set_ratio`].
+    /// Which split it belongs to: pass it to [`Layout::set_ratio`].
     pub path: Path,
     /// Everything the split covers, both sides and the line.
     pub area: Rect,
 }
 
-/// Where every pane and divider of a tab sits.
+/// Where every pane and divider of a workspace sits.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Rects {
     pub panes: Vec<(PaneId, Rect)>,
@@ -284,19 +282,19 @@ fn place(node: &Node, r: Rect, path: &mut Path, out: &mut Rects) {
     }
 }
 
-/// One tab: a name and a tree of panes, one of them focused.
+/// A tree of panes, one of them focused.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Tab {
-    pub name: String,
+pub struct PaneTree {
     root: Node,
     focus: PaneId,
-    /// The pane filling the whole tab, if zoomed.
+    /// The pane filling the whole workspace, if zoomed.
+    #[serde(default)]
     zoomed: Option<PaneId>,
 }
 
-impl Tab {
-    pub fn new(name: impl Into<String>, pane: PaneId) -> Self {
-        Self { name: name.into(), root: Node::Pane(pane), focus: pane, zoomed: None }
+impl PaneTree {
+    pub fn new(pane: PaneId) -> Self {
+        Self { root: Node::Pane(pane), focus: pane, zoomed: None }
     }
 
     pub fn root(&self) -> &Node {
@@ -359,7 +357,7 @@ impl Tab {
         true
     }
 
-    /// Splits the whole tab in two, `new` after everything there (right for `Row`, below for
+    /// Splits the whole layout in two, `new` after everything there (right for `Row`, below for
     /// `Column`) with `ratio` of the room before it, and focuses it. Refused like [`Self::split`].
     pub fn split_root(&mut self, axis: Axis, new: PaneId, ratio: f32, bounds: Rect) -> bool {
         if self.contains(new) || !ratio.is_finite() {
@@ -378,8 +376,7 @@ impl Tab {
         true
     }
 
-    /// Closes `pane`: its sibling takes the space. False if it isn't here or is the only
-    /// pane (close the tab instead).
+    /// Closes `pane`: its sibling takes the space. False if it isn't here or is the only pane.
     pub fn close(&mut self, pane: PaneId) -> bool {
         let Some(next) = self.root.remove(pane) else { return false };
         if self.focus == pane {
@@ -391,7 +388,7 @@ impl Tab {
         true
     }
 
-    /// Zooms the focused pane to fill the tab, or puts the others back.
+    /// Zooms the focused pane to fill the workspace, or puts the others back.
     pub fn toggle_zoom(&mut self) {
         self.zoomed = match self.zoomed {
             Some(_) => None,
@@ -584,7 +581,14 @@ impl Tab {
     }
 
     fn valid(&self) -> bool {
-        self.root.valid() && self.contains(self.focus) && self.zoomed.is_none_or(|z| self.contains(z))
+        let panes = self.panes();
+        let mut seen = panes.clone();
+        seen.sort_unstable();
+        seen.dedup();
+        seen.len() == panes.len()
+            && self.root.valid()
+            && self.contains(self.focus)
+            && self.zoomed.is_none_or(|z| self.contains(z))
     }
 }
 
@@ -592,279 +596,233 @@ fn overlap(a0: f32, a1: f32, b0: f32, b1: f32) -> f32 {
     a1.min(b1) - a0.max(b0)
 }
 
-/// What a workspace shows: tabs, one of them active.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// What a workspace shows: one tree of split panes.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Layout {
-    tabs: Vec<Tab>,
-    active: usize,
+    tree: Option<PaneTree>,
+}
+
+#[derive(Deserialize)]
+struct LegacyTab {
+    #[allow(dead_code)]
+    #[serde(default)]
+    name: String,
+    root: Node,
+    focus: PaneId,
+    #[serde(default)]
+    zoomed: Option<PaneId>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyLayout {}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LayoutWire {
+    Tree(PaneTree),
+    LegacyTabs {
+        tabs: Vec<LegacyTab>,
+        #[serde(default)]
+        active: usize,
+    },
+    Empty(EmptyLayout),
+}
+
+impl Serialize for Layout {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Empty {}
+        match &self.tree {
+            Some(tree) => tree.serialize(serializer),
+            None => (Empty {}).serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Layout {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match LayoutWire::deserialize(deserializer)? {
+            LayoutWire::Tree(tree) => Ok(Self { tree: Some(tree) }),
+            LayoutWire::Empty(_) => Ok(Self { tree: None }),
+            LayoutWire::LegacyTabs { tabs, active } => {
+                if tabs.is_empty() {
+                    if active == 0 {
+                        return Ok(Self { tree: None });
+                    }
+                    return Err(serde::de::Error::custom("active tab out of range"));
+                }
+                if active >= tabs.len() {
+                    return Err(serde::de::Error::custom("active tab out of range"));
+                }
+                for tab in &tabs {
+                    let check = PaneTree { root: tab.root.clone(), focus: tab.focus, zoomed: tab.zoomed };
+                    if !check.valid() {
+                        return Err(serde::de::Error::custom("invalid legacy tab"));
+                    }
+                }
+                let focus = tabs[active].focus;
+                let zoomed = if tabs.len() == 1 { tabs[active].zoomed } else { None };
+                let mut root = tabs[active].root.clone();
+                for (i, tab) in tabs.into_iter().enumerate() {
+                    if i != active {
+                        root = Node::Split { axis: Axis::Row, ratio: 0.5, a: Box::new(root), b: Box::new(tab.root) };
+                    }
+                }
+                Ok(Self { tree: Some(PaneTree { root, focus, zoomed }) })
+            }
+        }
+    }
 }
 
 impl Layout {
-    /// One tab named `name` holding just `pane`.
-    pub fn new(name: impl Into<String>, pane: PaneId) -> Self {
-        Self { tabs: vec![Tab::new(name, pane)], active: 0 }
-    }
-
-    pub fn tabs(&self) -> &[Tab] {
-        &self.tabs
+    /// A workspace layout holding just `pane`.
+    pub fn new(pane: PaneId) -> Self {
+        Self { tree: Some(PaneTree::new(pane)) }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.tabs.is_empty()
+        self.tree.is_none()
     }
 
-    pub fn active(&self) -> usize {
-        self.active
+    pub fn root(&self) -> Option<&Node> {
+        self.tree.as_ref().map(PaneTree::root)
     }
 
-    pub fn tab(&self) -> Option<&Tab> {
-        self.tabs.get(self.active)
-    }
-
-    pub fn tab_mut(&mut self) -> Option<&mut Tab> {
-        self.tabs.get_mut(self.active)
-    }
-
-    /// Every pane in every tab.
+    /// Every pane in the workspace, left to right and top to bottom.
     pub fn panes(&self) -> Vec<PaneId> {
-        self.tabs.iter().flat_map(Tab::panes).collect()
+        self.tree.as_ref().map(PaneTree::panes).unwrap_or_default()
     }
 
-    /// The tab holding `pane`.
-    pub fn tab_of(&self, pane: PaneId) -> Option<usize> {
-        self.tabs.iter().position(|t| t.contains(pane))
+    pub fn contains(&self, pane: PaneId) -> bool {
+        self.tree.as_ref().is_some_and(|t| t.contains(pane))
     }
 
-    /// The panes in sight: the active tab's.
+    /// The panes in sight: all of them, or the zoomed pane alone.
     pub fn visible(&self) -> Vec<PaneId> {
-        match self.tab() {
+        match &self.tree {
             Some(t) => t.zoomed().map_or_else(|| t.panes(), |z| vec![z]),
             None => Vec::new(),
         }
     }
 
-    /// The focused pane of the active tab.
     pub fn focus(&self) -> Option<PaneId> {
-        self.tab().map(Tab::focus)
+        self.tree.as_ref().map(PaneTree::focus)
     }
 
-    /// A new tab after the active one, active now. False if `pane` is already somewhere here.
-    pub fn new_tab(&mut self, name: impl Into<String>, pane: PaneId) -> bool {
-        if self.tab_of(pane).is_some() {
-            return false;
-        }
-        let at = if self.tabs.is_empty() { 0 } else { self.active + 1 };
-        self.tabs.insert(at, Tab::new(name, pane));
-        self.active = at;
-        true
+    pub fn zoomed(&self) -> Option<PaneId> {
+        self.tree.as_ref().and_then(PaneTree::zoomed)
     }
 
-    /// Closes tab `i`; the panes it held are returned.
-    pub fn close_tab(&mut self, i: usize) -> Vec<PaneId> {
-        if i >= self.tabs.len() {
-            return Vec::new();
-        }
-        let gone = self.tabs.remove(i);
-        if i < self.active || self.active >= self.tabs.len() {
-            self.active = self.active.saturating_sub(1);
-        }
-        gone.panes()
+    pub fn set_focus(&mut self, pane: PaneId) -> bool {
+        self.tree.as_mut().is_some_and(|t| t.set_focus(pane))
     }
 
-    pub fn rename_tab(&mut self, i: usize, name: impl Into<String>) {
-        if let Some(t) = self.tabs.get_mut(i) {
-            t.name = name.into();
+    pub fn toggle_zoom(&mut self) {
+        if let Some(t) = &mut self.tree {
+            t.toggle_zoom();
         }
     }
 
-    /// Moves tab `from` to place `to`; the active tab stays the same tab.
-    pub fn move_tab(&mut self, from: usize, to: usize) {
-        if from >= self.tabs.len() || to >= self.tabs.len() || from == to {
-            return;
-        }
-        let tab = self.tabs.remove(from);
-        self.tabs.insert(to, tab);
-        self.active = match self.active {
-            a if a == from => to,
-            a if from < a && a <= to => a - 1,
-            a if to <= a && a < from => a + 1,
-            a => a,
-        };
-    }
-
-    pub fn select(&mut self, i: usize) -> bool {
-        if i >= self.tabs.len() {
-            return false;
-        }
-        self.active = i;
-        true
-    }
-
-    /// Jumps to tab `n`, counted from 1 as the keys do.
-    pub fn select_number(&mut self, n: usize) -> bool {
-        n.checked_sub(1).is_some_and(|i| self.select(i))
-    }
-
-    pub fn next_tab(&mut self) {
-        if !self.tabs.is_empty() {
-            self.active = (self.active + 1) % self.tabs.len();
-        }
-    }
-
-    pub fn prev_tab(&mut self) {
-        if !self.tabs.is_empty() {
-            self.active = (self.active + self.tabs.len() - 1) % self.tabs.len();
-        }
-    }
-
-    /// Splits `target` in its tab (see [`Tab::split`]) and makes that tab active.
+    /// Splits `target` (see [`PaneTree::split`]).
     pub fn split(&mut self, target: PaneId, axis: Axis, new: PaneId, bounds: Rect) -> bool {
         self.split_with(target, axis, new, 0.5, bounds)
     }
 
-    /// [`Self::split`] with `ratio` of the room going to `target` (see [`Tab::split_with`]).
+    /// [`Self::split`] with `ratio` of the room going to `target` (see [`PaneTree::split_with`]).
     pub fn split_with(&mut self, target: PaneId, axis: Axis, new: PaneId, ratio: f32, bounds: Rect) -> bool {
-        if self.tab_of(new).is_some() {
-            return false;
-        }
-        let Some(i) = self.tab_of(target) else { return false };
-        let done = self.tabs[i].split_with(target, axis, new, ratio, bounds);
-        if done {
-            self.active = i;
-        }
-        done
+        self.tree.as_mut().is_some_and(|t| t.split_with(target, axis, new, ratio, bounds))
     }
 
-    /// Splits the whole active tab (see [`Tab::split_root`]).
+    /// Splits the whole workspace (see [`PaneTree::split_root`]).
     pub fn split_root(&mut self, axis: Axis, new: PaneId, ratio: f32, bounds: Rect) -> bool {
-        self.tab_of(new).is_none() && self.tab_mut().is_some_and(|t| t.split_root(axis, new, ratio, bounds))
+        self.tree.as_mut().is_some_and(|t| t.split_root(axis, new, ratio, bounds))
     }
 
-    /// Closes a pane; the tab goes with it if it was the last one. False if it isn't here.
+    /// Closes `pane`; leaves the layout empty if it was the last one. False if it isn't here.
     pub fn close_pane(&mut self, pane: PaneId) -> bool {
-        let Some(i) = self.tab_of(pane) else { return false };
-        if self.tabs[i].close(pane) {
-            return true;
+        let Some(t) = &mut self.tree else { return false };
+        if !t.contains(pane) {
+            return false;
         }
-        self.close_tab(i);
+        if !t.close(pane) {
+            self.tree = None;
+        }
         true
     }
 
-    /// Takes a pane out of its tab without closing the session behind it (the tab goes
-    /// if it held only this pane). For moving it somewhere else.
-    pub fn take(&mut self, pane: PaneId) -> bool {
-        self.close_pane(pane)
+    pub fn swap(&mut self, a: PaneId, b: PaneId) -> bool {
+        self.tree.as_mut().is_some_and(|t| t.swap(a, b))
     }
 
-    /// Puts `pane` into tab `tab`, as a split of that tab's focused pane. With no tabs
-    /// at all it starts one named `name`. False if the tab has no room for it.
-    pub fn adopt(&mut self, tab: usize, pane: PaneId, axis: Axis, name: &str, bounds: Rect) -> bool {
-        if self.tab_of(pane).is_some() {
-            return false;
-        }
-        if self.tabs.is_empty() {
-            return self.new_tab(name, pane);
-        }
-        let Some(t) = self.tabs.get_mut(tab) else { return false };
-        let focus = t.focus();
-        let done = t.split(focus, axis, pane, bounds);
-        if done {
-            self.active = tab;
-        }
-        done
-    }
-
-    /// Moves `pane` beside `target` (or swaps them) inside their tab, which comes up (see
-    /// [`Tab::move_pane`]). False if they aren't in the same tab.
     pub fn move_pane(&mut self, pane: PaneId, target: PaneId, side: Option<Direction>, bounds: Rect) -> bool {
-        let Some(i) = self.tab_of(pane).filter(|i| self.tab_of(target) == Some(*i)) else { return false };
-        let done = self.tabs[i].move_pane(pane, target, side, bounds);
-        if done {
-            self.active = i;
-        }
-        done
+        self.tree.as_mut().is_some_and(|t| t.move_pane(pane, target, side, bounds))
     }
 
-    /// Moves `pane` past its neighbour in `dir` (see [`Tab::move_dir`]).
     pub fn move_dir(&mut self, pane: PaneId, dir: Direction, bounds: Rect) -> bool {
-        let Some(i) = self.tab_of(pane) else { return false };
-        let done = self.tabs[i].move_dir(pane, dir, bounds);
-        if done {
-            self.active = i;
-        }
-        done
+        self.tree.as_mut().is_some_and(|t| t.move_dir(pane, dir, bounds))
     }
 
-    /// Moves `pane` to tab `tab` of this layout. Nothing changes if it has no room there.
-    pub fn move_to_tab(&mut self, pane: PaneId, tab: usize, bounds: Rect) -> bool {
-        let Some(from) = self.tab_of(pane) else { return false };
-        if from == tab || tab >= self.tabs.len() {
-            return false;
-        }
-        let target = self.tabs[tab].focus();
-        // Along the focused pane's longer side (in units of a pane's least size), else the other.
-        let r = self.tabs[tab].rects(bounds).pane(target).unwrap_or(bounds);
-        let first = if r.w / MIN_W >= r.h / MIN_H { Axis::Row } else { Axis::Column };
-        let second = if first == Axis::Row { Axis::Column } else { Axis::Row };
-        let mut trial = self.tabs[tab].clone();
-        if !trial.split(target, first, pane, bounds) {
-            trial = self.tabs[tab].clone();
-            if !trial.split(target, second, pane, bounds) {
-                return false;
-            }
-        }
-        self.tabs[tab] = trial;
-        let last = self.tabs[from].panes().len() == 1;
-        if last {
-            self.tabs.remove(from);
-            self.active = if from < tab { tab - 1 } else { tab };
-        } else {
-            self.tabs[from].close(pane);
-            self.active = tab;
-        }
-        true
+    pub fn focus_dir(&mut self, dir: Direction, bounds: Rect) -> bool {
+        self.tree.as_mut().is_some_and(|t| t.focus_dir(dir, bounds))
     }
 
-    /// Reads a saved layout, or `None` if it is broken (a focus that isn't in its tab,
+    pub fn focus_next(&mut self) {
+        if let Some(t) = &mut self.tree {
+            t.focus_next();
+        }
+    }
+
+    pub fn focus_prev(&mut self) {
+        if let Some(t) = &mut self.tree {
+            t.focus_prev();
+        }
+    }
+
+    pub fn swap_dir(&mut self, dir: Direction, bounds: Rect) -> bool {
+        self.tree.as_mut().is_some_and(|t| t.swap_dir(dir, bounds))
+    }
+
+    pub fn rects(&self, bounds: Rect) -> Rects {
+        self.tree.as_ref().map(|t| t.rects(bounds)).unwrap_or_default()
+    }
+
+    pub fn set_ratio(&mut self, path: &[bool], ratio: f32, bounds: Rect) -> bool {
+        self.tree.as_mut().is_some_and(|t| t.set_ratio(path, ratio, bounds))
+    }
+
+    pub fn resize(&mut self, pane: PaneId, dir: Direction, px: f32, bounds: Rect) -> bool {
+        self.tree.as_mut().is_some_and(|t| t.resize(pane, dir, px, bounds))
+    }
+
+    pub fn spot(&self, pane: PaneId) -> Option<Spot> {
+        self.tree.as_ref().and_then(|t| t.spot(pane))
+    }
+
+    pub fn put_back(&mut self, pane: PaneId, spot: &Spot, bounds: Rect) -> bool {
+        self.tree.as_mut().is_some_and(|t| t.put_back(pane, spot, bounds))
+    }
+
+    /// Reads a saved layout, or `None` if it is broken (a focus that isn't in the tree,
     /// a pane twice).
     pub fn from_json(json: &str) -> Option<Self> {
         let layout: Self = serde_json::from_str(json).ok()?;
         layout.is_valid().then_some(layout)
     }
 
-    /// Whether the layout holds together: no pane twice, every tab's focus (and zoom) in
-    /// it, the active tab there. What a layout read from a file has to pass.
+    /// Whether the layout holds together: no pane twice, focus (and zoom) in the tree.
     pub fn is_valid(&self) -> bool {
-        let panes = self.panes();
-        let mut seen = panes.clone();
-        seen.sort_unstable();
-        seen.dedup();
-        seen.len() == panes.len()
-            && self.tabs.iter().all(Tab::valid)
-            && (self.tabs.is_empty() && self.active == 0 || self.active < self.tabs.len())
+        self.tree.as_ref().is_none_or(PaneTree::valid)
     }
 
     /// Gives every pane the id `f` returns for it (focus and zoom included), for panes
     /// read from a file whose ids may collide with ones in use. `f` must answer the same
     /// for the same id, and different ids must get different answers.
     pub fn renumber(&mut self, mut f: impl FnMut(PaneId) -> PaneId) {
-        for tab in &mut self.tabs {
-            tab.renumber(&mut f);
+        if let Some(t) = &mut self.tree {
+            t.renumber(&mut f);
         }
     }
-}
-
-/// Moves `pane` from one workspace's layout into the active tab of another's.
-/// Nothing changes (false) if `to` has no room for it or already has that pane.
-pub fn move_between(from: &mut Layout, to: &mut Layout, pane: PaneId, name: &str, bounds: Rect) -> bool {
-    if from.tab_of(pane).is_none() || to.tab_of(pane).is_some() {
-        return false;
-    }
-    let tab = to.active();
-    if !to.adopt(tab, pane, Axis::Row, name, bounds) {
-        return false;
-    }
-    from.take(pane)
 }
 
 #[cfg(test)]
@@ -878,15 +836,15 @@ mod tests {
     }
 
     /// Three panes: 1 | (2 over 3).
-    fn three() -> Tab {
-        let mut t = Tab::new("t", 1);
+    fn three() -> PaneTree {
+        let mut t = PaneTree::new(1);
         assert!(t.split(1, Axis::Row, 2, B));
         assert!(t.split(2, Axis::Column, 3, B));
         t
     }
 
     #[test]
-    fn a_root_split_runs_along_the_whole_tab() {
+    fn a_root_split_runs_along_the_whole_layout() {
         let mut t = three();
         assert!(t.split_root(Axis::Column, 4, 0.75, B));
         assert_eq!((t.panes(), t.focus()), (vec![1, 2, 3, 4], 4));
@@ -901,7 +859,7 @@ mod tests {
 
     #[test]
     fn split_makes_two_panes_and_focuses_the_new_one() {
-        let mut t = Tab::new("t", 1);
+        let mut t = PaneTree::new(1);
         assert!(t.split(1, Axis::Row, 2, B));
         assert_eq!(t.panes(), vec![1, 2]);
         assert_eq!(t.focus(), 2);
@@ -913,7 +871,7 @@ mod tests {
 
     #[test]
     fn split_down_stacks() {
-        let mut t = Tab::new("t", 1);
+        let mut t = PaneTree::new(1);
         assert!(t.split(1, Axis::Column, 2, B));
         let r = t.rects(B);
         assert!(r.pane(1).unwrap().y < r.pane(2).unwrap().y);
@@ -921,7 +879,7 @@ mod tests {
 
     #[test]
     fn split_refuses_missing_duplicate_and_cramped() {
-        let mut t = Tab::new("t", 1);
+        let mut t = PaneTree::new(1);
         assert!(!t.split(9, Axis::Row, 2, B));
         assert!(!t.split(1, Axis::Row, 1, B));
         let small = Rect::new(0.0, 0.0, MIN_W * 1.5, 900.0);
@@ -946,7 +904,7 @@ mod tests {
     #[test]
     fn a_pane_moves_to_each_side_of_another() {
         // three(): [1 | 2 over 3].
-        let at = |t: &Tab, p| t.rects(B).pane(p).unwrap();
+        let at = |t: &PaneTree, p| t.rects(B).pane(p).unwrap();
         let mut t = three();
         assert!(t.move_pane(3, 1, Some(Direction::Left), B));
         assert_eq!(t.panes(), vec![3, 1, 2]);
@@ -1019,13 +977,11 @@ mod tests {
     }
 
     #[test]
-    fn a_layout_moves_panes_in_one_tab_and_keeps_the_move_saved() {
-        let mut l = Layout::new("1", 1);
+    fn a_layout_moves_panes_and_keeps_the_move_saved() {
+        let mut l = Layout::new(1);
         assert!(l.split(1, Axis::Row, 2, B));
-        assert!(l.new_tab("2", 3));
-        assert!(!l.move_pane(3, 1, Some(Direction::Left), B), "another tab: move_to_tab does that");
         assert!(l.move_pane(2, 1, Some(Direction::Left), B));
-        assert_eq!((l.active(), l.tabs()[0].panes()), (0, vec![2, 1]));
+        assert_eq!(l.panes(), vec![2, 1]);
         assert!(l.move_dir(2, Direction::Right, B));
         let saved = serde_json::to_string(&l).unwrap();
         assert_eq!(Layout::from_json(&saved), Some(l));
@@ -1083,7 +1039,7 @@ mod tests {
     }
 
     #[test]
-    fn zoom_fills_the_tab_and_ends_on_another_focus() {
+    fn zoom_fills_the_workspace_and_ends_on_another_focus() {
         let mut t = three();
         t.toggle_zoom();
         let r = t.rects(B);
@@ -1096,8 +1052,8 @@ mod tests {
         t.toggle_zoom();
         t.toggle_zoom();
         assert_eq!(t.zoomed(), None);
-        assert_eq!(Tab::new("t", 1).zoomed(), None);
-        let mut one = Tab::new("t", 1);
+        assert_eq!(PaneTree::new(1).zoomed(), None);
+        let mut one = PaneTree::new(1);
         one.toggle_zoom();
         assert_eq!(one.zoomed(), None, "a lone pane has nothing to zoom out of");
     }
@@ -1162,180 +1118,56 @@ mod tests {
     }
 
     #[test]
-    fn tabs_open_close_rename_and_move() {
-        let mut l = Layout::new("one", 1);
-        assert!(l.new_tab("two", 2));
-        assert!(l.new_tab("three", 3));
-        assert!(!l.new_tab("dup", 2));
-        assert_eq!(l.active(), 2);
-        l.rename_tab(0, "uno");
-        assert_eq!(l.tabs()[0].name, "uno");
-        l.move_tab(2, 0);
-        assert_eq!(l.tabs().iter().map(|t| t.focus()).collect::<Vec<_>>(), vec![3, 1, 2]);
-        assert_eq!(l.active(), 0, "the active tab moved with it");
-        l.move_tab(1, 2);
-        assert_eq!(l.tabs().iter().map(|t| t.focus()).collect::<Vec<_>>(), vec![3, 2, 1]);
-        assert_eq!(l.active(), 0);
-        assert_eq!(l.close_tab(0), vec![3]);
-        assert_eq!(l.active(), 0);
-        assert_eq!(l.panes(), vec![2, 1]);
-        assert!(l.close_tab(9).is_empty());
-    }
-
-    #[test]
-    fn closing_tabs_keeps_the_active_one() {
-        let mut l = Layout::new("a", 1);
-        l.new_tab("b", 2);
-        l.new_tab("c", 3);
-        l.select(1);
-        l.close_tab(0);
-        assert_eq!(l.focus(), Some(2));
-        l.close_tab(1);
-        assert_eq!(l.focus(), Some(2));
-        l.close_tab(0);
-        assert!(l.is_empty());
-        assert_eq!(l.focus(), None);
-        assert!(l.visible().is_empty());
-        l.next_tab();
-        l.prev_tab();
-    }
-
-    #[test]
-    fn tab_navigation() {
-        let mut l = Layout::new("a", 1);
-        l.new_tab("b", 2);
-        l.new_tab("c", 3);
-        l.next_tab();
-        assert_eq!(l.active(), 0);
-        l.prev_tab();
-        assert_eq!(l.active(), 2);
-        assert!(l.select_number(2));
-        assert_eq!(l.active(), 1);
-        assert!(!l.select_number(0));
-        assert!(!l.select_number(4));
-        assert!(!l.select(3));
-        assert_eq!(l.active(), 1);
-    }
-
-    #[test]
-    fn splitting_a_pane_in_another_tab_switches_to_it() {
-        let mut l = Layout::new("a", 1);
-        l.new_tab("b", 2);
-        assert!(l.split(1, Axis::Row, 3, B));
-        assert_eq!(l.active(), 0);
-        assert_eq!(l.visible(), vec![1, 3]);
-        assert!(!l.split(1, Axis::Row, 2, B), "2 is already in another tab");
-        assert!(!l.split(9, Axis::Row, 4, B));
-    }
-
-    #[test]
-    fn closing_the_last_pane_closes_the_tab() {
-        let mut l = Layout::new("a", 1);
-        l.new_tab("b", 2);
-        l.split(2, Axis::Row, 3, B);
-        assert!(l.close_pane(3));
-        assert_eq!(l.tabs().len(), 2);
-        assert!(l.close_pane(2));
-        assert_eq!(l.tabs().len(), 1);
-        assert!(!l.close_pane(2));
-    }
-
-    #[test]
-    fn a_pane_moves_to_another_tab() {
-        let mut l = Layout::new("a", 1);
-        l.split(1, Axis::Row, 2, B);
-        l.new_tab("b", 3);
-        assert!(l.move_to_tab(2, 1, B));
-        assert_eq!(l.tabs()[0].panes(), vec![1]);
-        assert_eq!(l.tabs()[1].panes(), vec![3, 2]);
-        assert_eq!(l.active(), 1);
-        assert!(!l.move_to_tab(2, 1, B), "already there");
-        assert!(!l.move_to_tab(2, 7, B));
-        assert!(l.move_to_tab(1, 1, B));
-        assert_eq!(l.tabs().len(), 1, "the emptied tab went");
-        assert_eq!(l.tabs()[0].panes(), vec![3, 2, 1]);
-        assert_eq!(l.active(), 0);
-    }
-
-    #[test]
-    fn a_moved_pane_splits_the_focused_pane_along_its_longer_side() {
-        let narrow = Rect::new(0.0, 0.0, MIN_W * 2.0 + DIVIDER, 900.0);
-        let mut l = Layout::new("a", 1);
-        l.split(1, Axis::Row, 2, narrow);
-        l.new_tab("b", 3);
-        assert!(l.move_to_tab(3, 0, narrow), "no room beside 2, so under it");
-        let r = l.tabs()[0].rects(narrow);
-        let (two, three) = (r.pane(2).unwrap(), r.pane(3).unwrap());
-        assert!(three.y > two.y && close(three.x, two.x));
-    }
-
-    #[test]
-    fn a_pane_without_room_stays_put() {
-        let tiny = Rect::new(0.0, 0.0, MIN_W * 2.0 + DIVIDER, MIN_H);
-        let mut l = Layout::new("a", 1);
-        l.split(1, Axis::Row, 2, tiny);
-        l.new_tab("b", 3);
-        l.select(0);
-        assert!(!l.move_to_tab(3, 0, tiny));
-        assert_eq!(l.tabs().len(), 2);
-    }
-
-    #[test]
-    fn a_pane_moves_to_another_workspace() {
-        let mut a = Layout::new("a", 1);
-        a.split(1, Axis::Row, 2, B);
-        let mut b = Layout::default();
-        assert!(move_between(&mut a, &mut b, 2, "moved", B));
-        assert_eq!(a.panes(), vec![1]);
-        assert_eq!(b.panes(), vec![2]);
-        assert_eq!(b.tabs()[0].name, "moved");
-        assert!(move_between(&mut a, &mut b, 1, "x", B), "the last pane takes its tab with it");
-        assert!(a.is_empty());
-        assert_eq!(b.visible(), vec![2, 1]);
-        assert!(!move_between(&mut a, &mut b, 1, "x", B));
-    }
-
-    #[test]
     fn serde_round_trips_and_rejects_broken_layouts() {
-        let mut l = Layout::new("a", 1);
+        let mut l = Layout::new(1);
         l.split(1, Axis::Row, 2, B);
         l.split(2, Axis::Column, 3, B);
-        l.new_tab("b", 4);
-        l.select(0);
         let json = serde_json::to_string(&l).unwrap();
         assert_eq!(Layout::from_json(&json), Some(l));
         assert_eq!(Layout::from_json("{"), None);
-        let twice = json.replace("\"Pane\":4", "\"Pane\":1").replace("\"focus\":4", "\"focus\":1");
+        let twice = json.replace("\"Pane\":3", "\"Pane\":1").replace("\"focus\":3", "\"focus\":1");
         assert_eq!(Layout::from_json(&twice), None);
         assert_eq!(Layout::from_json(r#"{"tabs":[],"active":3}"#), None);
         assert!(Layout::from_json(r#"{"tabs":[],"active":0}"#).is_some());
+        assert!(Layout::from_json("{}").is_some());
+    }
+
+    #[test]
+    fn legacy_multi_tab_json_merges_all_panes_into_one_tree() {
+        let legacy = r#"{
+            "tabs":[
+                {"name":"1","root":{"Split":{"axis":"Row","ratio":0.5,"a":{"Pane":1},"b":{"Pane":2}}},"focus":2,"zoomed":null},
+                {"name":"2","root":{"Pane":3},"focus":3,"zoomed":null}
+            ],
+            "active":0
+        }"#;
+        let l = Layout::from_json(legacy).expect("legacy multi-tab layout loads");
+        assert_eq!(l.panes(), vec![1, 2, 3]);
+        assert_eq!(l.focus(), Some(2));
+        assert!(l.is_valid());
     }
 
     #[test]
     fn renumber_rewrites_panes_focus_and_zoom() {
-        let mut l = Layout::new("a", 1);
+        let mut l = Layout::new(1);
         l.split(1, Axis::Row, 2, B);
         l.split(2, Axis::Column, 3, B);
-        l.tab_mut().unwrap().toggle_zoom();
-        l.new_tab("b", 4);
-        l.select(0);
+        l.toggle_zoom();
         l.renumber(|p| p + 100);
-        assert_eq!(l.panes(), vec![101, 102, 103, 104]);
-        let t = &l.tabs()[0];
-        assert_eq!((t.focus(), t.zoomed()), (103, Some(103)));
+        assert_eq!(l.panes(), vec![101, 102, 103]);
+        assert_eq!((l.focus(), l.zoomed()), (Some(103), Some(103)));
         assert!(l.is_valid());
-        assert_eq!(l.focus(), Some(103));
     }
 
     #[test]
     fn a_pane_drops_out_of_a_loaded_layout() {
-        let mut l = Layout::new("a", 1);
+        let mut l = Layout::new(1);
         l.split(1, Axis::Row, 2, B);
-        l.new_tab("b", 3);
         assert!(l.close_pane(2));
-        assert!(l.close_pane(3));
         assert_eq!(l.panes(), vec![1]);
         assert!(l.is_valid());
+        assert!(l.close_pane(1));
+        assert!(l.is_empty());
     }
 
     /// A tiny deterministic generator, so the property test needs no dependency.
@@ -1376,7 +1208,7 @@ mod tests {
                 (MIN_W as usize + rng.next(1800)) as f32,
                 (MIN_H as usize + rng.next(1000)) as f32,
             );
-            let mut t = Tab::new("t", 0);
+            let mut t = PaneTree::new(0);
             let mut next = 1;
             for _ in 0..40 {
                 let panes = t.panes();

@@ -1,77 +1,58 @@
-//! The app's own Settings modal (Ctrl+, / Cmd+,), apart from a project's Claude
-//! settings: the `claude` CLI and terminal shell, providers (`providers.rs`),
-//! theme, fonts and animations, and the shortcuts file. Edits save to
-//! `state.json` at once.
+//! The app's Settings modal (Ctrl+, / Cmd+,): General (CLI path, worktrees, shell,
+//! background notifications, keep awake), Providers (`providers.rs`), Appearance,
+//! Keyboard, and Storage (`storage.rs`). Edits save to `state.json` immediately.
 
 use std::path::PathBuf;
 
 use crate::ui::px;
-use gpui::{Anchor, ClickEvent, Context, Entity, PathPromptOptions, Window, div, prelude::*};
+use gpui::{
+    Anchor, AnyElement, ClickEvent, Context, Entity, FontWeight, MouseButton, PathPromptOptions, Size, Window, div,
+    prelude::*,
+};
 use kynex_core::awake::KeepAwake;
-use kynex_core::browser::{self, Browser, Pick};
 use kynex_core::cli;
-use kynex_core::column::ColumnWidth;
-use kynex_core::live::SleepAfter;
 use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
 use kynex_core::paths::data_dir;
 use kynex_core::scale;
 use kynex_core::terminal::ShellKind;
 use kynex_core::tile_style::{self, TileTweaks};
-use kynex_core::tray::OnClose;
-
 use kynex_core::toasts::{Corner, Toast};
 
 use super::KynexApp;
 use super::menus::{FontRole, Menu};
-use super::settings::{heading, radio, settings_modal, settings_nav};
 use crate::theme::{self, Palette, THEMES, Theme, mono, theme};
 use crate::ui::input::{InputEvent, TextInput};
-use crate::ui::{Icon, Tooltip, icon, outline_button};
+use crate::ui::motion::{self, fade, pop};
+use crate::ui::{Icon, Tooltip, icon, icon_button, outline_button, scrollbar};
 
 #[derive(Clone)]
 pub struct AppSettingsView {
     pub(super) section: usize,
-    /// The `claude` in use and what it says its version is, once asked.
     cli: Option<CliInfo>,
     pub(super) providers: super::providers::ProvidersView,
-    pub(super) agents: super::agents_settings::AgentsView,
-    /// Which browsers are installed, and whether `npx` is on PATH; looked up
-    /// when the modal opens, not every frame.
-    browsers: Vec<Browser>,
-    npx: bool,
-    /// The search box over Keyboard's shortcuts.
     shortcuts_filter: Entity<TextInput>,
 }
 
-/// Found off the UI thread when the modal opens, so no frame searches PATH.
 #[derive(Clone)]
 struct CliInfo {
     program: PathBuf,
-    /// The picked `claude` is gone, so the one found is used.
     missing: bool,
     version: Result<String, String>,
 }
 
-const SECTIONS: [&str; 6] = ["General", "Providers", "Agents", "Appearance", "Keyboard", "Storage"];
-/// Where Providers, Agents, Appearance, Keyboard and Storage are in [`SECTIONS`], for opening Settings on them.
+const SECTIONS: [&str; 5] = ["General", "Providers", "Appearance", "Keyboard", "Storage"];
 pub(super) const PROVIDERS_SECTION: usize = 1;
-pub(super) const AGENTS_SECTION: usize = 2;
-pub(super) const APPEARANCE_SECTION: usize = 3;
-pub(super) const KEYBOARD_SECTION: usize = 4;
-pub(super) const STORAGE_SECTION: usize = 5;
+pub(super) const APPEARANCE_SECTION: usize = 2;
+pub(super) const KEYBOARD_SECTION: usize = 3;
+pub(super) const STORAGE_SECTION: usize = 4;
 
 impl KynexApp {
     pub(super) fn open_app_settings(&mut self, cx: &mut Context<Self>) {
         if self.app_settings.take().is_some() {
             return cx.notify();
         }
-        self.settings = None;
-        self.extensions = None;
         let providers = self.new_providers_view(cx);
-        let agents = self.new_agents_view(cx);
-        let browsers = Browser::ALL.into_iter().filter(|b| b.installed()).collect();
-        let npx = kynex_core::mcp_config::npx_found();
         let shortcuts_filter = cx.new(|cx| TextInput::new(cx).placeholder("Search shortcuts"));
         cx.subscribe(&shortcuts_filter, |_, _, ev, cx| {
             if let InputEvent::Changed = ev {
@@ -79,9 +60,7 @@ impl KynexApp {
             }
         })
         .detach();
-        self.app_settings =
-            Some(AppSettingsView { section: 0, cli: None, providers, agents, browsers, npx, shortcuts_filter });
-        // Storage is measured again each time Settings opens; the last stays up meanwhile.
+        self.app_settings = Some(AppSettingsView { section: 0, cli: None, providers, shortcuts_filter });
         if let Some(s) = &mut self.storage {
             s.stale = true;
         }
@@ -89,7 +68,6 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Opens Settings on one of its [`SECTIONS`].
     pub(super) fn open_settings_on(&mut self, section: usize, cx: &mut Context<Self>) {
         if self.app_settings.is_none() {
             self.open_app_settings(cx);
@@ -100,7 +78,6 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Finds the `claude` in use and asks it for its version, off the UI thread.
     fn read_cli_version(&mut self, cx: &mut Context<Self>) {
         let picked = self.saved.cli_path.clone();
         cx.spawn(async move |this, cx| {
@@ -123,8 +100,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Runs `claude` from `path`, or with `None` the one found on its own.
-    /// Sessions started from now on use it.
     fn set_cli_path(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
         cli::set_program(path.clone());
         self.saved.cli_path = path;
@@ -133,7 +108,6 @@ impl KynexApp {
             s.cli = None;
         }
         self.read_cli_version(cx);
-        self.check_setup(cx);
         cx.notify();
     }
 
@@ -154,7 +128,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// New worktrees go under `root` (a folder per project), or with `None` the data dir.
     fn set_worktree_root(&mut self, root: Option<PathBuf>, cx: &mut Context<Self>) {
         kynex_core::workspace::set_worktree_root(root.clone());
         self.saved.worktree_root = root;
@@ -179,15 +152,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Sessions started from now on get this browser.
-    fn set_browser(&mut self, pick: Pick, cx: &mut Context<Self>) {
-        browser::set(pick);
-        self.saved.browser = pick;
-        self.save();
-        cx.notify();
-    }
-
-    /// Turning it off forgets what was kept.
     fn set_terminal_history(&mut self, on: bool, cx: &mut Context<Self>) {
         self.saved.terminal_history = on;
         self.save();
@@ -220,7 +184,6 @@ impl KynexApp {
     }
 
     fn open_keymap(&mut self, cx: &mut Context<Self>) {
-        // Kynex writes it on first start; it may have been deleted since.
         let path = data_dir().join("keymap.json");
         if !path.exists()
             && let Err(e) = std::fs::write(&path, "{}\n")
@@ -236,7 +199,7 @@ impl KynexApp {
         leaving: Option<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<gpui::AnyElement> {
+    ) -> Option<AnyElement> {
         let view = self.app_settings.as_ref()?;
         let t = theme(cx).clone();
         let section = view.section.min(SECTIONS.len() - 1);
@@ -253,15 +216,22 @@ impl KynexApp {
         let content = match section {
             0 => self.render_general(&t, cx),
             1 => self.render_providers(&t, cx),
-            2 => self.render_agents_settings(&t, cx),
-            3 => self.render_appearance(&t, cx),
-            4 => self.render_keyboard(&t, cx),
+            2 => self.render_appearance(&t, cx),
+            3 => self.render_keyboard(&t, cx),
             _ => self.render_storage(&t, cx),
         };
         let footer = format!("Stored in {}", data_dir().join("state.json").display());
         let close = |this: &mut Self| this.app_settings = None;
-        let (nav, content) = (nav.into_any_element(), content.into_any_element());
-        Some(settings_modal(("Settings", None), nav, content, footer, close, window.viewport_size(), leaving, cx))
+        Some(settings_modal(
+            "Settings",
+            nav.into_any_element(),
+            content.into_any_element(),
+            footer,
+            close,
+            window.viewport_size(),
+            leaving,
+            cx,
+        ))
     }
 
     fn render_general(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
@@ -281,7 +251,7 @@ impl KynexApp {
             .gap_2()
             .child(heading(
                 "Claude Code CLI",
-                "Found on PATH, else in ~/.local/bin. Pick another for unusual installs; sessions started from now on use it.",
+                "Found on PATH, else in ~/.local/bin. Pick another for unusual installs; panes started from now on use it.",
                 t,
             ))
             .child(
@@ -328,7 +298,7 @@ impl KynexApp {
             .gap_2()
             .child(heading(
                 "Worktrees folder",
-                "New worktrees go here, in a folder per project; existing ones stay where they are. A project can pick its own under its Setup settings.",
+                "New git worktrees go here, in a folder per project; existing ones stay where they are.",
                 t,
             ))
             .child(
@@ -374,7 +344,7 @@ impl KynexApp {
             .gap_1()
             .child(heading(
                 "Terminal shell",
-                "What a new terminal opens. The + menu in the terminal panel opens either.",
+                "What a new plain terminal pane opens. The + menu in a terminal pane opens either.",
                 t,
             ))
             .children(shells.into_iter().enumerate().map(|(n, (label, kind))| {
@@ -389,7 +359,7 @@ impl KynexApp {
             .gap_1()
             .child(heading(
                 "Terminal scrollback",
-                "Whether a terminal pane shows what was on it before Kynex last quit, above a fresh shell.",
+                "Whether a plain terminal pane shows what was on it before Kynex last quit, above a fresh shell.",
                 t,
             ))
             .children([(true, "Bring it back"), (false, "Start empty")].into_iter().enumerate().map(
@@ -399,53 +369,25 @@ impl KynexApp {
                 },
             ));
 
-        let picked = self.saved.browser;
-        let installed = view.map(|v| v.browsers.clone()).unwrap_or_default();
-        let npx = view.is_none_or(|v| v.npx);
-        let browser = div()
+        let notify = self.saved.background_notifications;
+        let notifications = div()
             .flex()
             .flex_col()
             .gap_1()
             .child(heading(
-                "Browser",
-                "Claude opens pages, clicks and fills in forms in a window of its own, with a profile kept per \
-                 folder: sign in there once and it stays signed in. Sessions started from now on use it.",
+                "Background notifications",
+                "Show an OS notification when an agent finishes or needs your input while Kynex is in the background.",
                 t,
             ))
-            .children(Pick::ALL.into_iter().enumerate().map(|(n, p)| {
-                let missing = p.browser().is_some_and(|b| !installed.contains(&b));
-                let label = if missing { format!("{} (not found)", p.label()) } else { p.label().to_string() };
-                choice(("browser", n), picked == p, label, t)
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_browser(p, cx)))
-            }))
-            .when(!npx && picked != Pick::Off, |d| {
-                d.child(
-                    div()
-                        .text_xs()
-                        .text_color(t.warning)
-                        .child("Node.js isn't on your PATH; the browser runs with npx. Install it from nodejs.org."),
-                )
-            });
-
-        let past = self.saved.name_past_sessions;
-        let recent = format!("Also the {} most recent unnamed ones", super::titles::NAME_RECENT);
-        let naming = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(heading(
-                "Session names",
-                "Claude Haiku names sessions from their first message, one short call each on your plan.",
-                t,
-            ))
-            .children([(false, "Only the session you open".to_string()), (true, recent)].into_iter().map(
-                |(on, label)| {
-                    choice(("name-past", usize::from(on)), past == on, label, t)
-                        .on_click(cx.listener(move |this, _, _, cx| this.set_name_past_sessions(on, cx)))
-                },
-            ));
-
-        let notifications = self.render_notifications(t, cx);
+            .children([(true, "On"), (false, "Off")].into_iter().enumerate().map(|(n, (on, label))| {
+                choice(("bg-notify", n), notify == on, label.to_string(), t).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.saved.background_notifications = on;
+                        this.save();
+                        cx.notify();
+                    },
+                ))
+            }));
 
         let keep = self.saved.keep_awake;
         let awake = div()
@@ -454,51 +396,13 @@ impl KynexApp {
             .gap_1()
             .child(heading(
                 "Keep awake",
-                "Stops idle sleep so long turns and background tasks finish. The screen still turns off and locks.",
+                "Stops idle sleep while agents are working. The screen still turns off and locks.",
                 t,
             ))
             .children(KeepAwake::ALL.into_iter().enumerate().map(|(n, k)| {
                 choice(("keep-awake", n), keep == k, k.label().into(), t)
                     .on_click(cx.listener(move |this, _, _, cx| this.set_keep_awake(k, cx)))
             }));
-
-        let sleep_after = self.saved.sleep_after;
-        let sleep = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(heading(
-                "Sleep idle sessions",
-                "Stops an idle session's Claude process and its MCP servers to free memory. Its transcript stays; \
-                 it starts again when you open it or type. Sessions working, waiting on you or using the browser stay awake.",
-                t,
-            ))
-            .children(SleepAfter::ALL.into_iter().enumerate().map(|(n, s)| {
-                choice(("sleep-after", n), sleep_after == s, s.label().into(), t)
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_sleep_after(s, cx)))
-            }));
-
-        // Only where a hidden Kynex has a way back; elsewhere closing quits.
-        let closing = kynex_core::tray::Haven::of_os().map(|haven| {
-            let on = self.saved.on_close;
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(heading(
-                    "Closing the window",
-                    "Sessions and background tasks keep running while Kynex is hidden. Quit with Ctrl+Q (Cmd+Q).",
-                    t,
-                ))
-                .children(
-                    [(OnClose::KeepRunning, haven.label()), (OnClose::Quit, "Quit Kynex")].into_iter().enumerate().map(
-                        |(n, (o, label))| {
-                            choice(("on-close", n), on == o, label.into(), t)
-                                .on_click(cx.listener(move |this, _, _, cx| this.set_on_close(o, cx)))
-                        },
-                    ),
-                )
-        });
 
         div()
             .flex()
@@ -508,21 +412,8 @@ impl KynexApp {
             .child(worktrees)
             .child(shell)
             .child(history)
-            .child(browser)
-            .child(naming)
-            .child(self.render_bypass_setting(t, cx))
             .child(notifications)
-            .children(closing)
             .child(awake)
-            .child(sleep)
-    }
-
-    fn set_name_past_sessions(&mut self, on: bool, cx: &mut Context<Self>) {
-        self.saved.name_past_sessions = on;
-        self.save();
-        // Re-read the list so naming picks up (or stops after the current one).
-        self.reread_sessions();
-        cx.notify();
     }
 
     fn render_appearance(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
@@ -592,17 +483,6 @@ impl KynexApp {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_motion(m, cx)))
             }));
 
-        let column = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(heading("Transcript width", "How wide the conversation and the message box are.", t))
-            .children(ColumnWidth::ALL.into_iter().enumerate().map(|(n, w)| {
-                choice(("app-column", n), self.saved.column == w, format!("{} · {}", w.label(), w.help()), t)
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_column(w, cx)))
-            }));
-
-        // The look of the pane tiles: the theme's values until changed here.
         let style = self.saved.tiles.resolve(t.tile);
         let stepper = |id: &'static str,
                        label: &'static str,
@@ -631,7 +511,7 @@ impl KynexApp {
             .gap_2()
             .child(heading(
                 "Pane tiles",
-                "Side-by-side panes are tiles: the gap between and around them (0 for flush panes with thin dividers), the border and the corner radius. The theme sets the starting values.",
+                "Side-by-side panes are tiles: the gap between and around them (0 for flush panes with thin dividers), the border and the corner radius.",
                 t,
             ))
             .child(stepper("app-tile-gap", "Gap", style.gap, tile_style::MAX_GAP, |s, v| s.gap = Some(v), cx))
@@ -651,7 +531,7 @@ impl KynexApp {
             .flex()
             .flex_col()
             .gap_1()
-            .child(heading("Notification position", "Where notes like a task ending or an update show.", t))
+            .child(heading("Toast position", "Where brief status notices show.", t))
             .children(Corner::ALL.into_iter().enumerate().map(|(n, c)| {
                 choice(("app-toast-corner", n), self.saved.toast_corner == c, c.label().to_string(), t).on_click(
                     cx.listener(move |this, _, _, cx| {
@@ -695,7 +575,11 @@ impl KynexApp {
             .flex()
             .flex_col()
             .gap_1()
-            .child(heading("Status footer", "Kynex's CPU and memory, usage limits and updates, along the bottom.", t))
+            .child(heading(
+                "Status footer",
+                "Kynex's CPU and memory, OpenRouter credit and updates, along the bottom.",
+                t,
+            ))
             .children([(true, "Show"), (false, "Hide")].into_iter().map(|(on, label)| {
                 choice(("app-footer", usize::from(on)), self.saved.footer == on, label.to_string(), t).on_click(
                     cx.listener(move |this, _, _, cx| {
@@ -713,38 +597,21 @@ impl KynexApp {
             .child(themes)
             .child(zoom)
             .child(fonts)
-            .child(column)
             .child(tiles)
             .child(corner)
             .child(footer)
             .child(motion)
     }
 
-    /// Zooms the whole UI a step in (`dir` > 0), out (< 0), or back to normal (0).
     pub(super) fn zoom_by(&mut self, dir: i32, cx: &mut Context<Self>) {
         self.saved.zoom = if dir == 0 { scale::NORMAL } else { scale::step(self.saved.zoom, dir) };
         self.save();
-        // Every row's height changes with it.
-        for th in self.threads.values() {
-            th.list.remeasure();
-        }
         cx.refresh_windows();
     }
 
-    /// Sets one of the pane tiles' looks, and draws the panes again.
     fn tune_tiles(&mut self, set: fn(&mut TileTweaks, f32), value: f32, cx: &mut Context<Self>) {
         set(&mut self.saved.tiles, value);
         self.save();
-        cx.notify();
-    }
-
-    fn set_column(&mut self, w: ColumnWidth, cx: &mut Context<Self>) {
-        self.saved.column = w;
-        self.save();
-        // Row heights change with their width.
-        for th in self.threads.values() {
-            th.list.remeasure();
-        }
         cx.notify();
     }
 
@@ -781,7 +648,7 @@ impl KynexApp {
             .gap_2()
             .child(heading(
                 "Shortcuts",
-                "Rebind Kynex's shortcuts in keymap.json by name, e.g. { \"interrupt\": \"ctrl-c\" }; an empty string unbinds one. Shortcuts that start with `prefix` (Ctrl+B, then a key) follow the \"prefix\" entry, e.g. { \"prefix\": \"ctrl-a\" }. Changes apply from the next start.",
+                "Rebind Kynex's shortcuts in keymap.json by name, e.g. { \"interrupt\": \"ctrl-c\" }; an empty string unbinds one. Shortcuts that start with `prefix` (Ctrl+B, then a key) follow the \"prefix\" entry. Changes apply from the next start.",
                 t,
             ))
             .child(div().font_family(mono()).text_sm().text_color(t.text_muted).child(path.display().to_string()))
@@ -802,12 +669,36 @@ impl KynexApp {
             }))
             .child(div().flex().flex_col().children(rows))
             .when(empty, |d| d.child(div().px_2().text_sm().text_color(t.text_muted).child("No shortcut matches.")))
-            .child(super::input_modes::render_composer_keys(t))
     }
 }
 
 fn display_keys(keys: &str) -> String {
     kynex_core::shortcuts::display(keys, cfg!(target_os = "macos"))
+}
+
+/// Section heading inside Settings.
+pub(super) fn heading(title: &'static str, body: &'static str, t: &Palette) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_0p5()
+        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(title))
+        .child(div().text_xs().text_color(t.text_muted).child(body))
+}
+
+/// A radio button circle.
+pub(super) fn radio(selected: bool, t: &Palette) -> gpui::Div {
+    div()
+        .flex_none()
+        .mt(px(3.))
+        .size(px(14.))
+        .rounded_full()
+        .border_1()
+        .border_color(if selected { t.accent } else { t.border })
+        .flex()
+        .items_center()
+        .justify_center()
+        .when(selected, |d| d.child(div().size(px(6.)).rounded_full().bg(t.accent)))
 }
 
 /// A radio row: a label with a dot when it's the current choice.
@@ -830,4 +721,141 @@ pub(super) fn choice(
         .hover(move |s| s.bg(hover))
         .child(radio(selected, t))
         .child(div().text_sm().child(label))
+}
+
+/// Left sidebar navigation inside the Settings modal.
+fn settings_nav(
+    sections: &[&'static str],
+    active: usize,
+    pick: impl Fn(&mut KynexApp, usize) + Copy + 'static,
+    cx: &mut Context<KynexApp>,
+) -> gpui::Div {
+    let t = theme(cx).clone();
+    let hover = t.hover;
+    div()
+        .flex()
+        .flex_col()
+        .gap_0p5()
+        .w(px(156.))
+        .flex_none()
+        .p_2()
+        .border_r_1()
+        .border_color(t.border_variant)
+        .children(sections.iter().enumerate().map(|(i, label)| {
+            let on = i == active;
+            div()
+                .id(("settings-nav", i))
+                .px_2p5()
+                .py_1p5()
+                .rounded_md()
+                .text_sm()
+                .cursor_pointer()
+                .text_color(if on { t.text } else { t.text_muted })
+                .when(on, |d| d.bg(t.active))
+                .when(!on, |d| d.hover(move |s| s.bg(hover)))
+                .child(*label)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    pick(this, i);
+                    cx.notify();
+                }))
+        }))
+}
+
+/// Centered Settings modal shell.
+#[allow(clippy::too_many_arguments)]
+fn settings_modal(
+    title: &'static str,
+    nav: AnyElement,
+    content: AnyElement,
+    footer: String,
+    close: fn(&mut KynexApp),
+    vp: Size<gpui::Pixels>,
+    leaving: Option<f32>,
+    cx: &mut Context<KynexApp>,
+) -> AnyElement {
+    let t = theme(cx).clone();
+    let scroll = scrollbar::handle("settings-scroll");
+    let body = div()
+        .id("settings-scroll")
+        .flex_1()
+        .min_w_0()
+        .min_h_0()
+        .overflow_y_scroll()
+        .track_scroll(&scroll)
+        .p_5()
+        .child(content);
+    let card = div()
+        .id("settings-modal")
+        .occlude()
+        .flex()
+        .flex_col()
+        .w(gpui::px(760.).min(vp.width - gpui::px(80.)))
+        .h(gpui::px(600.).min(vp.height - gpui::px(100.)))
+        .rounded_lg()
+        .overflow_hidden()
+        .border_1()
+        .border_color(t.border)
+        .bg(t.panel)
+        .shadow_lg()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .h(px(44.))
+                .px_4()
+                .border_b_1()
+                .border_color(t.border_variant)
+                .child(div().flex_1().text_base().font_weight(FontWeight::SEMIBOLD).child(title))
+                .child(
+                    icon_button("settings-close", Icon::Close, cx)
+                        .tooltip(Tooltip::with_meta("Close", "Esc"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            close(this);
+                            cx.notify();
+                        })),
+                ),
+        )
+        .child(div().flex().flex_1().min_h_0().child(nav).child(scrollbar::vertical_over(
+            "settings-bar",
+            scroll,
+            body,
+            |d| d.flex_1().min_w_0().min_h_0(),
+        )))
+        .child(
+            div()
+                .flex_none()
+                .px_4()
+                .py_2()
+                .border_t_1()
+                .border_color(t.border_variant)
+                .text_xs()
+                .font_family(mono())
+                .text_color(t.text_placeholder)
+                .truncate()
+                .child(footer),
+        );
+    fade(
+        "settings-fade",
+        div()
+            .id("settings-backdrop")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(t.scrim())
+            .occlude()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    close(this);
+                    cx.notify();
+                }),
+            )
+            .child(pop("settings-in", card, gpui::px(8.), leaving)),
+        motion::QUICK,
+        leaving,
+    )
 }

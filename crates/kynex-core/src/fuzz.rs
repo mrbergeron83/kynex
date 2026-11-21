@@ -2,145 +2,30 @@
 //! format Kynex reads from outside, each feeding arbitrary text through the
 //! parsers for it. None may panic, whatever the input. Not part of the API.
 
-use std::path::PathBuf;
-
 use serde_json::Value;
 
-use crate::session::{Kind, Session};
-use crate::{cli, commands, extensions, git, markdown, mcp_config, rewind, session, tasks, update};
+use crate::{cli, git, hooks, sessions, update};
 
-/// Grok's `chat_history.jsonl` (a summary on the first line), as the sessions
-/// list and a reopened Grok session read them.
+/// Grok's `summary.json`, as the sessions list reads it.
 pub fn grok_history(text: &str) {
-    let mut lines = text.splitn(2, '\n');
-    if let Ok(v) = serde_json::from_str::<Value>(lines.next().unwrap_or("")) {
+    if let Ok(v) = serde_json::from_str::<Value>(text) {
         let _ = crate::grok::log::info_from("x", &v, || std::time::SystemTime::UNIX_EPOCH);
     }
-    let mut s = Session::new(Kind::Code, PathBuf::new());
-    for v in crate::grok::log::entries(lines.next().unwrap_or("")) {
-        s.replay_entry(v);
+}
+
+/// Native CLI hook JSON payloads fed to `knx hook <provider> [event]`.
+pub fn hook_payload(text: &str) {
+    for provider in ["claude", "claude-openrouter", "agy", "agy-openrouter", "other"] {
+        let _ = hooks::parse_payload(provider, None, text);
+        let _ = hooks::parse_payload(provider, Some("Stop"), text);
     }
-    let _ = crate::transcript::rows(&s.items);
 }
 
-/// What an ACP agent writes (`grok agent stdio`, `agy acp`: one JSON-RPC message
-/// per line), through the adapter in each agent's dialect and into a session,
-/// with the session's answers going back.
-pub fn grok_acp(text: &str) {
-    acp_through(crate::acp::Agent::Grok, text);
-    acp_through(crate::acp::Agent::Antigravity, text);
-}
-
-fn acp_through(agent: crate::acp::Agent, text: &str) {
-    use crate::acp::{Acp, Out};
-    let mut acp = Acp::new(PathBuf::new(), "m", crate::project::Mode::Manual, None).for_agent(agent);
-    let _ = acp.start();
-    let _ = acp.outgoing(serde_json::json!({ "type": "user", "message": { "content": "hi" } }));
-    let mut s = Session::new(Kind::Code, PathBuf::new());
+/// Claude Code session log metadata lines (first message, timestamps).
+pub fn session_summary(text: &str) {
     for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-        for out in acp.incoming(v) {
-            if let Out::Handle(v) = out {
-                s.handle(v);
-            }
-        }
-        // Answer whatever it asked, as a user would.
-        let asked: Vec<String> = s
-            .items
-            .iter()
-            .filter_map(|i| match i {
-                session::Item::Permission { request_id, .. } => Some(request_id.clone()),
-                _ => None,
-            })
-            .collect();
-        for id in asked {
-            let answer = serde_json::json!({ "type": "control_response", "response": {
-                "request_id": id, "response": { "behavior": "allow" } } });
-            let _ = acp.outgoing(answer);
-        }
-    }
-    let _ = crate::transcript::rows(&s.items);
-}
-
-/// A command an agent wants to run, as Kynex judges whether it only reads.
-pub fn read_only(text: &str) {
-    let _ = crate::read_only::is_read_only(text);
-    let _ = crate::rules::split_command(text);
-}
-
-/// The CLI's stream-json output, one event per line, as a live session reads it.
-pub fn stream_json(text: &str) {
-    let mut s = Session::new(Kind::Chat, PathBuf::new());
-    for line in text.lines() {
-        if let Ok(v) = serde_json::from_str::<Value>(line) {
-            s.handle(v);
-        }
-        let _ = s.pulse().map(|p| p.label("Claude"));
-    }
-    let _ = crate::mcp::handoff(&s.items);
-    let _ = crate::mcp::health(&s.mcp);
-    let _ = crate::transcript::rows(&s.items);
-    if let Some(limits) = s.take_limits() {
-        let now = limits.at(crate::usage::now());
-        let _ = [now.five_hour, now.seven_day].map(|w| w.map(|w| (w.percent(), w.level())));
-        let _ = limits.describe(0);
-    }
-}
-
-/// A Claude Code transcript on disk: replayed into a session, listed, rewound.
-pub fn transcript(text: &str) {
-    let mut s = Session::new(Kind::Chat, PathBuf::new());
-    for v in rewind::branch(text) {
-        s.replay_entry(v);
-    }
-    let _ = rewind::points_in(text);
-    for line in text.lines() {
-        let _ = session::first_message(line);
-        let _ = rewind::parse_time(line);
-        let _ = tasks::parse_notification(line);
-    }
-}
-
-/// A session log read back from its end: every line, at a chunk size the first
-/// byte picks, must come out as reading forward finds it; then the branch is
-/// walked and replayed as a session opens.
-pub fn session_log(bytes: &[u8]) {
-    use std::io::Cursor;
-
-    use crate::session_log::{Branch, lines_back, read_span};
-    let chunk = u64::from(bytes.first().copied().unwrap_or(1) % 64) + 1;
-    let mut back = Vec::new();
-    lines_back(&mut Cursor::new(bytes), bytes.len() as u64, chunk, u64::MAX, |offset, line| {
-        back.push((offset, line.to_vec()));
-        true
-    })
-    .unwrap();
-    let mut forward = Vec::new();
-    let mut offset = 0;
-    for line in bytes.split_inclusive(|b| *b == b'\n') {
-        let l = line.strip_suffix(b"\n").unwrap_or(line);
-        let l = l.strip_suffix(b"\r").unwrap_or(l);
-        if !l.is_empty() {
-            forward.push((offset, l.to_vec()));
-        }
-        offset += line.len() as u64;
-    }
-    forward.reverse();
-    assert_eq!(back, forward);
-
-    let mut r = Cursor::new(bytes);
-    let mut recent = Vec::new();
-    let walked = Branch { recent: chunk as usize }.walk(&mut r, None, |v| {
-        recent = v;
-        true
-    });
-    if let Ok(Some(w)) = walked {
-        let mut buf = Vec::new();
-        let older: Vec<Value> = w.older.iter().rev().filter_map(|s| read_span(&mut r, *s, &mut buf)).collect();
-        let mut s = Session::new(Kind::Chat, PathBuf::new());
-        for v in older.into_iter().chain(recent.into_iter().rev().map(|(_, v)| v)) {
-            s.replay_entry(v);
-        }
+        let _ = sessions::first_user_message(line.as_bytes());
+        let _ = sessions::parse_iso_time(line);
     }
 }
 
@@ -179,8 +64,7 @@ pub fn git_worktree(text: &str) {
     let _ = git::worktree::parse_left_right(text);
 }
 
-/// Files the Git pane's viewer previews: images, SVGs, PDF pages read back from the
-/// renderer process, and the caret moved over the bytes as lines.
+/// Files the Git pane's viewer previews: images, SVGs, PDF pages, and caret movement.
 pub fn file_view(bytes: &[u8]) {
     use crate::file_view::{Kind, caret, media, pdf};
     let _ = Kind::of("x", bytes);
@@ -203,15 +87,7 @@ pub fn file_view(bytes: &[u8]) {
     let _ = caret::selected_text(lines.as_slice(), &c);
 }
 
-/// Claude's replies, as markdown.
-pub fn markdown(text: &str) {
-    let _ = markdown::parse(text);
-}
-
-/// Versions and update info: `claude --version` and installer output, npm and
-/// GitHub release info, `SHA256SUMS`, typed slash commands.
-/// OpenRouter's answers to a key check (curl's output: a body, then the status),
-/// and a key written into curl's config.
+/// OpenRouter's answers to a key check, catalogue search, and curl config quoting.
 pub fn openrouter(text: &str) {
     if let Some((status, body)) = crate::openrouter::split_status(text) {
         let _ = crate::openrouter::answer(status, &body, "m").map_err(|p| p.message());
@@ -224,231 +100,53 @@ pub fn openrouter(text: &str) {
         }
     }
     let _ = crate::openrouter::valid_model_id(text);
-    // The chat harness's streamed replies, and logs read back as its history.
-    for line in text.lines() {
-        let _ = crate::chat_api::stream::event(line);
-    }
-    let _ = crate::chat_api::stream::failure(Some(400), text);
-    if let Ok(v) = serde_json::from_str::<Value>(text) {
-        let _ = crate::chat_api::stream::user_content(&v);
-        let _ = crate::chat_api::stream::assistant_text(&v);
-    }
-    let _ = crate::chat_api::history(text);
     let _ = crate::openrouter::import::find(|_| None, Some(text));
     let _ = crate::openrouter::import::reg_value(text, "OPENROUTER_API_KEY");
     if let Some(config) = crate::openrouter::curl_config(text, "https://openrouter.ai/api/v1/key", None) {
-        // Whatever the key, the config is two lines: the URL and its header.
         assert_eq!(config.lines().count(), 2, "{config:?}");
     }
 }
 
-/// An agent rule file (`agent_panes`), and its patterns run over the same text as a screen.
+/// An agent rule file (`agent_panes`), and its patterns run over screen text.
 pub fn agent_rule(text: &str) {
     if let Ok(rule) = crate::agent_panes::parse(text) {
         let _ = crate::agent_panes::detect(&rule, text);
         let id = crate::agent_panes::resume_id(&rule, text);
         let _ = crate::agent_panes::resume_argv(&rule, id.as_deref());
+        let _ = rule.submit_bytes();
     }
 }
 
-/// A `commands.json` (the user's or a project's custom commands).
-/// What a client of the control socket sends, and what `knx` is given.
+/// Control protocol line parser (`control::protocol`).
 pub fn control_request(text: &str) {
-    let _ = crate::control::protocol::parse_request(text);
-    let words: Vec<String> = text.split_whitespace().map(String::from).collect();
-    let _ = crate::control::args::parse(&words);
-}
-
-/// A theme file in the data dir's `themes/`.
-pub fn theme_file(text: &str) {
-    let _ = crate::themes::parse("x", text);
-}
-
-/// A shared layout file ([`crate::named_layouts`]): parsed, and when it holds together,
-/// applied and restored the way a workspace takes it.
-pub fn named_layout(text: &str) {
-    if let Ok(named) = crate::named_layouts::parse(text) {
-        let _ = named.summary();
-        let saved = crate::named_layouts::apply(&named);
-        let mut next = 0;
-        let _ = crate::tiling::Tiling::restore(&saved, &mut next, None, |_| Some(1));
+    for line in text.lines() {
+        let _ = crate::control::protocol::parse_incoming(line);
     }
 }
 
-pub fn user_commands(text: &str) {
-    let mut all = crate::user_commands::parse(text).unwrap_or_default();
-    let own = all.clone();
-    crate::user_commands::merge(&mut all, own);
-}
-
-pub fn versions(bytes: &[u8]) {
-    let text = String::from_utf8_lossy(bytes);
-    let _ = cli::last_line(bytes);
-    let _ = cli::strip_escapes(&text);
-    let (a, b) = text.split_once('\n').unwrap_or((&text, ""));
-    let _ = cli::is_newer(a, b);
-    let _ = update::parse_latest(bytes);
-    let _ = update::expected_sum(&text, a);
-    let _ = commands::parse(&text);
-    let _ = commands::unwrap(&text);
-}
-
-/// The CLI's config files: `~/.claude.json`, `.mcp.json`, settings, installed plugins.
-pub fn claude_config(text: &str) {
-    let Ok(v) = serde_json::from_str::<Value>(text) else { return };
-    let settings = [v.clone()];
-    for cwd in ["", "/", "C:/", "C:\\x\\", "/work/app"] {
-        let cwd = std::path::Path::new(cwd);
-        let servers = extensions::servers(&v, &v, &settings, cwd);
-        let _ = extensions::plugins(&v, &settings, cwd);
-        let live = crate::mcp::servers(&v);
-        for row in extensions::rows(&servers, &live) {
-            let _ = (row.label(), row.source.label(), row.transport.map(|t| t.detail()));
-        }
-    }
-    let _ = extensions::parse_mcp_json(&v);
-}
-
-/// What's typed into the Add server form, and `claude mcp list`'s output.
-pub fn mcp_config(text: &str) {
-    let (name, what) = text.split_once('\n').unwrap_or((text, text));
-    if let Ok(server) = mcp_config::NewServer::parse(name, mcp_config::Scope::Local, what) {
-        let _ = server.add_args();
-    }
-    let _ = mcp_config::parse_list(text);
-    let _ = crate::mcp_logs::last_error_in(text);
-    let _ = crate::catalog::front_matter(text);
-    if let Ok(v) = serde_json::from_str::<Value>(text) {
-        let _ = crate::catalog::parse_hooks(&v, &crate::catalog::Origin::User);
-        let _ = crate::plugins::parse_available(&v);
-        let _ = crate::plugins::parse_marketplaces(&v);
-        let _ = crate::plugins::parse_result(&v);
-        let _ = mcp_config::test_verdict(&v);
-    }
-}
-
-/// File paths in Claude's text, for clickable links.
-pub fn file_links(text: &str) {
-    let mut last = 0;
-    for r in crate::links::find(text) {
-        assert!(last <= r.range.start && r.range.start < r.range.end && r.range.end <= text.len(), "{r:?}");
-        assert!(text.is_char_boundary(r.range.start) && text.is_char_boundary(r.range.end), "{r:?}");
-        last = r.range.end;
-        let _ = crate::links::resolve(std::path::Path::new("/w"), &r.path);
-    }
-}
-
-/// `@file` mentions: the token at every cursor position, and a list of paths
-/// (the lines after the first) matched against the first line. Matched
-/// positions are in order, in bounds and on char boundaries.
-pub fn mentions(text: &str) {
-    use crate::mentions::{Files, at_cursor, insert_text, replace_range};
-    for (cursor, _) in text.char_indices() {
-        if let Some((range, query)) = at_cursor(text, cursor) {
-            assert!(range.end == cursor && text[range.clone()].ends_with(query), "{range:?}");
-            let whole = replace_range(text, range);
-            assert!(text.is_char_boundary(whole.end));
-        }
-    }
-    // Find in the transcript: the first line looked for in the rest.
-    let (query, paths) = text.split_once('\n').unwrap_or((text, ""));
-    let mut last = 0;
-    for r in crate::find::occurrences(paths, query) {
-        assert!(last <= r.start && r.start < r.end && r.end <= paths.len(), "{r:?}");
-        assert!(paths.is_char_boundary(r.start) && paths.is_char_boundary(r.end), "{r:?}");
-        last = r.end;
-    }
-    let files = Files::new(paths.lines().map(str::to_string).collect());
-    for m in files.matching(query, 50) {
-        let entry = &files.entries[m.index];
-        let _ = insert_text(entry);
-        let mut last = None;
-        for &p in &m.positions {
-            assert!(p < entry.len() && entry.is_char_boundary(p) && last.is_none_or(|l| l < p), "{m:?} in {entry:?}");
-            last = Some(p);
-        }
-    }
-}
-
-/// Code in every language the highlighter knows, whole and line by line:
-/// ranges sorted, not overlapping, in bounds and on char boundaries.
+/// Syntax highlighting in every language: ranges must stay in bounds, on char boundaries,
+/// sorted and non-overlapping.
 pub fn highlight(text: &str) {
-    use crate::highlight::{Highlighter, Lang, Side, Token};
-    fn check(text: &str, ranges: &[(std::ops::Range<usize>, Token)]) {
-        let mut last = 0;
-        for (r, _) in ranges {
-            assert!(last <= r.start && r.start < r.end && r.end <= text.len(), "{ranges:?}");
-            assert!(text.is_char_boundary(r.start) && text.is_char_boundary(r.end), "{ranges:?}");
-            last = r.end;
-        }
-    }
-    for lang in Lang::ALL {
-        check(text, &crate::highlight::highlight(lang, text));
-        let mut h = Highlighter::new(lang);
+    for lang in crate::highlight::Lang::ALL {
+        let mut h = crate::highlight::Highlighter::new(lang);
         for line in text.split('\n') {
-            check(line, &h.line(line));
-        }
-        // As a unified diff: `-` old, `+` new, the rest context.
-        let lines: Vec<_> = text
-            .split('\n')
-            .map(|l| match l.as_bytes().first() {
-                Some(b'-') => (Side::Old, &l[1..]),
-                Some(b'+') => (Side::New, &l[1..]),
-                _ => (Side::Both, l),
-            })
-            .collect();
-        let tokens = crate::highlight::diff(lang, lines.iter().copied());
-        assert_eq!(tokens.len(), lines.len());
-        for ((_, line), ranges) in lines.iter().zip(&tokens) {
-            check(line, ranges);
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            let mut end = 0;
+            for (r, _) in h.line(line) {
+                assert!(r.start >= end && r.start <= r.end && r.end <= line.len(), "{lang:?} {r:?} in {line:?}");
+                assert!(line.is_char_boundary(r.start) && line.is_char_boundary(r.end));
+                end = r.end;
+            }
         }
     }
 }
 
-/// Messages from other sessions (`<session-notification>`), as the transcript takes them out
-/// of a message from a session's log. What a notice written back says reads back the same.
-pub fn session_notice(text: &str) {
-    use crate::lineage::{Notice, notice, parse_notice, split_notices};
-    let (found, _) = split_notices(text);
-    let _ = parse_notice(text);
-    for n in found {
-        let back = parse_notice(&notice(&n)).expect("a notice reads back");
-        assert_eq!(back.from, n.from.replace(['"', '<', '>', '\n'], " "));
-    }
-    let n = Notice { from: "x".into(), title: text.into(), text: text.into() };
-    assert!(parse_notice(&notice(&n)).is_some());
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Every entry point once, on odd input, so they stay wired up.
-    #[test]
-    fn entry_points_take_anything() {
-        let inputs =
-            ["", "\0", "{}", "\n\n", "@@ -1 +1 @@\n", "{\"type\":\"result\"}\n{\"type\":\"user\"}", "\u{1b}[", "é\0\t"];
-        for t in inputs {
-            stream_json(t);
-            transcript(t);
-            session_log(t.as_bytes());
-            git_status(t);
-            git_diff(t);
-            git_log(t);
-            git_branch(t);
-            git_worktree(t);
-            markdown(t);
-            versions(t.as_bytes());
-            claude_config(t);
-            mcp_config(t);
-            github(t);
-            file_links(t);
-            highlight(t);
-            openrouter(t);
-            file_view(t.as_bytes());
-        }
-        claude_config(
-            r#"{"mcpServers":{"a":{"command":"x","args":[1]}},"projects":{"/work/app":{}},"plugins":{"p":[{}]}}"#,
-        );
-    }
+/// Named layouts, custom themes, custom commands, CLI version & update parsers.
+pub fn config_files(text: &str) {
+    let _ = crate::named_layouts::parse(text);
+    let _ = crate::themes::parse("fuzz", text);
+    let _ = crate::user_commands::parse(text);
+    let _ = cli::is_newer(text, "1.0.0");
+    let _ = update::expected_sum(text, "kynex-x86_64-pc-windows-msvc.zip");
+    let _ = crate::migrate::migrate(text);
 }

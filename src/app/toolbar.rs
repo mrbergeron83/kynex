@@ -1,18 +1,15 @@
-//! The bar above the transcript: the project path, the timeline and Git panes' buttons, the
-//! project's Claude settings, and buttons to open the project in other apps. The session's own
-//! details are in the session header below it.
+//! The workspace toolbar: workspace path, Sessions, Agents, Git, Terminal pane toggles,
+//! and buttons to open the workspace in external apps.
 
 use std::path::PathBuf;
 
 use crate::ui::px;
 use gpui::{Context, div, prelude::*};
 use kynex_core::open::{Opener, open_project};
-
 use kynex_core::toasts::Toast;
 
 use super::KynexApp;
-use super::keys::{ToggleGit, ToggleSessions, ToggleTerminal, ToggleTimeline};
-
+use super::keys::{ToggleAgents, ToggleGit, ToggleSessions, ToggleTerminal};
 use crate::theme::theme;
 use crate::ui::{Icon, Tooltip, icon_button};
 
@@ -37,15 +34,9 @@ impl KynexApp {
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_sessions(&ToggleSessions, window, cx))),
                 )
             });
-        let timeline = icon_button("toggle-timeline", Icon::Timeline, cx)
-            .when(self.timeline_shown(), |b| b.bg(t.active))
-            .tooltip(Tooltip::for_action("Timeline", ToggleTimeline, "jump to any message or step"))
-            .on_click(cx.listener(|this, _, window, cx| this.toggle_timeline(&ToggleTimeline, window, cx)));
         let Some(path) = project else {
-            // Chat is a tab in the title bar; here only the timeline.
-            return bar.child(div().flex_1()).child(timeline);
+            return bar;
         };
-        // Where you are: the selected workspace's folder, for the path and open-in buttons.
         let here = self.workspace_cwd().unwrap_or_else(|| path.clone());
         let open = |id: &'static str,
                     which: Icon,
@@ -69,39 +60,23 @@ impl KynexApp {
                 .child(here.display().to_string()),
         )
         .child(
+            icon_button("toggle-agents-pane", Icon::Bot, cx)
+                .when(self.agents_pane_open(), |b| b.bg(t.active))
+                .tooltip(Tooltip::for_action("Agents", ToggleAgents, "running agents across all workspaces"))
+                .on_click(cx.listener(|this, _, window, cx| this.toggle_agents(&ToggleAgents, window, cx))),
+        )
+        .child(
             icon_button("toggle-git-pane", Icon::GitBranch, cx)
                 .when(self.git_pane_shown(), |b| b.bg(t.active))
                 .tooltip(Tooltip::for_action("Git", ToggleGit, "changes, commit, sync, history and branches"))
                 .on_click(cx.listener(|this, _, window, cx| this.toggle_git(&ToggleGit, window, cx))),
-        )
-        .child(timeline)
-        .child({
-            // The project's Claude settings: permissions, mode, effort.
-            let path = path.clone();
-            icon_button("claude-settings", Icon::Shield, cx)
-                .tooltip(Tooltip::with_meta("Claude settings", "permissions, mode and effort for this project"))
-                .on_click(cx.listener(move |this, _, _, cx| this.open_settings(path.clone(), cx)))
-        })
-        .child({
-            // The project's subagents: which it uses and its own rule for them.
-            let path = path.clone();
-            icon_button("project-agents", Icon::Bot, cx)
-                .tooltip(Tooltip::with_meta("Agents", "the subagents this project hands work to"))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.open_project_settings_on(path.clone(), super::settings::AGENTS_SECTION, cx)
-                }))
-        })
-        .child(
-            icon_button("open-scratch", Icon::Files, cx)
-                .tooltip(Tooltip::with_meta("Scratch files", "Claude's temporary files, for every session here"))
-                .on_click(cx.listener(|this, _, window, cx| this.open_project_scratch(window, cx))),
         )
         .child(open("open-code", Icon::Code, "Open in VS Code", Opener::Code, here.clone(), cx))
         .child(open("open-files", Icon::Folder, "Open in file manager", Opener::Explorer, here.clone(), cx))
         .child(
             icon_button("open-term", Icon::Terminal, cx)
                 .when(self.has_terminal(), |b| b.bg(t.active))
-                .tooltip(Tooltip::for_action("Terminal", ToggleTerminal, "a pane in Kynex, under the conversation"))
+                .tooltip(Tooltip::for_action("Terminal", ToggleTerminal, "a shell pane in Kynex"))
                 .on_click(cx.listener(|this, _, window, cx| this.terminal_button(window, cx))),
         )
     }

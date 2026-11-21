@@ -1,0 +1,15 @@
+{
+  "id": "claude",
+  "name": "Claude Code",
+  "argv": ["claude"],
+  "working": ["esc to interrupt", "ctrl+c to interrupt"],
+  "blocked": [
+    "Do you want to",
+    "Allow once",
+    "Allow for this session",
+    "Esc to cancel",
+    "Yes, allow"
+  ],
+  "resume_after": "claude --resume ",
+  "resume_argv": ["claude", "--resume", "{id}"]
+}

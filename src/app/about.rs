@@ -6,13 +6,14 @@ use std::path::PathBuf;
 
 use crate::ui::px;
 use gpui::{AnyElement, Context, FontWeight, MouseButton, SharedString, Window, div, prelude::*};
-use kynex_core::cli::{self, UpdateState};
+use kynex_core::cli::UpdateState;
 use kynex_core::fmt::ago;
 use kynex_core::open::Opener;
 use kynex_core::{paths, update};
 
 use super::KynexApp;
 use super::app_update::VERSION;
+use super::setup::ManagedCli;
 use crate::theme::{Palette, mono, theme};
 use crate::ui::mark::mark;
 use crate::ui::motion::{self, fade, pop};
@@ -27,16 +28,12 @@ impl KynexApp {
     pub(super) fn open_about(&mut self, cx: &mut Context<Self>) {
         self.about_open = true;
         self.close_update_toast();
-        if self.claude_version.is_none() {
-            cx.spawn(async move |this, cx| {
-                let v = cx.background_spawn(async { cli::installed_version() }).await;
-                this.update(cx, |this, cx| {
-                    this.claude_version = Some(v.unwrap_or_else(|_| "not found".into()));
-                    cx.notify();
-                })
-                .ok();
-            })
-            .detach();
+        let need_probe = ManagedCli::ALL.iter().any(|&c| {
+            let tr = self.cli_updates.get(c);
+            tr.installed && tr.version.is_none()
+        }) || self.cli_updates.get(ManagedCli::Claude).version.is_none();
+        if need_probe {
+            self.probe_clis(cx);
         }
         cx.notify();
     }
@@ -66,7 +63,7 @@ impl KynexApp {
                     .child(
                         section_label("Kynex", cx).text_size(px(20.)).text_color(t.text).font_weight(FontWeight::BLACK),
                     )
-                    .child(div().text_sm().text_color(t.text_muted).child("A native workspace for Claude Code"))
+                    .child(div().text_sm().text_color(t.text_muted).child("A native workspace for agent CLIs"))
                     .child(
                         div()
                             .text_xs()
@@ -76,21 +73,40 @@ impl KynexApp {
                     ),
             );
 
+        let shown_clis: Vec<ManagedCli> = {
+            let mut list: Vec<ManagedCli> =
+                ManagedCli::ALL.into_iter().filter(|&c| self.cli_updates.get(c).installed).collect();
+            if list.is_empty() {
+                list.push(ManagedCli::Claude);
+            }
+            list
+        };
+        let cli_info_rows: Vec<AnyElement> = shown_clis
+            .iter()
+            .map(|&cli| {
+                let version = self.cli_updates.get(cli).version.clone();
+                let label = cli.label();
+                let copy_id = SharedString::from(format!("about-copy-{}", cli.id()));
+                info_row(label, version.clone().unwrap_or_else(|| "…".into()).into(), None, &t, cx)
+                    .children(version.map(|v| {
+                        icon_button(copy_id, Icon::Copy, cx).tooltip(Tooltip::text("Copy, for bug reports")).on_click(
+                            move |_, _, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(format!("{label} {v}")))
+                            },
+                        )
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        let cli_boxes: Vec<AnyElement> =
+            shown_clis.iter().map(|&cli| self.render_cli_box(cli, &t, cx).into_any_element()).collect();
+
         let rows = div()
             .flex()
             .flex_col()
             .gap_1()
             .child(info_row("Build", build.into(), None, &t, cx))
-            .child(
-                info_row("Claude Code", self.claude_version.clone().unwrap_or_else(|| "…".into()).into(), None, &t, cx)
-                    .children(self.claude_version.clone().map(|v| {
-                        icon_button("about-copy-cli", Icon::Copy, cx)
-                            .tooltip(Tooltip::text("Copy, for bug reports"))
-                            .on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(format!("Claude Code {v}")))
-                            })
-                    })),
-            )
+            .children(cli_info_rows)
             .child(info_row(
                 "Installed in",
                 exe_dir.as_ref().map_or("unknown".into(), |d| d.display().to_string()).into(),
@@ -126,6 +142,7 @@ impl KynexApp {
             .gap_5()
             .w(gpui::px(520.).min(vp.width - gpui::px(80.)))
             .max_h(vp.height - gpui::px(100.))
+            .overflow_y_scroll()
             .p_6()
             .rounded_lg()
             .border_1()
@@ -141,14 +158,7 @@ impl KynexApp {
                     }),
                 ),
             ))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(self.render_update_box(&t, cx))
-                    .child(self.render_cli_box(&t, cx)),
-            )
+            .child(div().flex().flex_col().gap_2().child(self.render_update_box(&t, cx)).children(cli_boxes))
             .child(rows)
             .child(
                 div()
@@ -253,64 +263,70 @@ impl KynexApp {
         status_box(lead, title, detail, action, self.update_waiting(), t)
     }
 
-    /// The Claude Code Kynex drives: its version, a check on demand, and the update.
-    fn render_cli_box(&mut self, t: &Palette, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let version = self.claude_version.clone().unwrap_or_else(|| "…".into());
-        let check_now = || {
-            outline_button("about-cli-check", "Check now", cx)
-                .on_click(cx.listener(|this, _, _, cx| this.check_cli_now(cx)))
+    /// One managed CLI (`claude`, `grok`, `agy`): its version, check on demand, and update.
+    fn render_cli_box(&mut self, cli: ManagedCli, t: &Palette, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let tr = self.cli_updates.get(cli);
+        let version = tr.version.clone().unwrap_or_else(|| "…".into());
+        let label = cli.label();
+        let cmd = cli.update_cmd();
+        let id = cli.id();
+        let check_now = |cx: &mut Context<Self>| {
+            outline_button(SharedString::from(format!("about-cli-check-{id}")), "Check now", cx)
+                .on_click(cx.listener(move |this, _, _, cx| this.check_cli_now(cli, cx)))
                 .into_any_element()
         };
         let ok = || icon(Icon::Check, t.success).size_3p5().into_any_element();
         let failed = || icon(Icon::Dot, t.error).size_3p5().into_any_element();
+        let waiting = matches!(tr.update, UpdateState::Available { .. });
         let (lead, title, detail, action): (AnyElement, String, Option<String>, Option<AnyElement>) =
-            match (&self.cli_update, &self.cli_check) {
+            match (&tr.update, &tr.check) {
                 (UpdateState::Updating { latest }, _) => (
-                    spinner("about-cli-update-spin", t.accent, px(14.)).into_any_element(),
-                    format!("Updating Claude Code to {latest}…"),
+                    spinner(SharedString::from(format!("about-cli-update-spin-{id}")), t.accent, px(14.))
+                        .into_any_element(),
+                    format!("Updating {label} to {latest}…"),
                     None,
                     None,
                 ),
                 (_, c) if c.checking => (
-                    spinner("about-cli-check-spin", t.accent, px(14.)).into_any_element(),
-                    "Checking for Claude Code updates…".into(),
+                    spinner(SharedString::from(format!("about-cli-check-spin-{id}")), t.accent, px(14.))
+                        .into_any_element(),
+                    format!("Checking for {label} updates…"),
                     None,
                     None,
                 ),
                 (UpdateState::Available { installed, latest }, _) => (
                     icon(Icon::ArrowUp, t.accent).size_3p5().into_any_element(),
-                    format!("Claude Code {installed} → {latest} available"),
-                    Some("Idle sessions restart on it; busy ones once they finish.".into()),
+                    format!("{label} {installed} → {latest} available"),
+                    Some(format!("Runs `{cmd}`; new panes pick up the updated CLI.")),
                     Some(
-                        primary_button("about-cli-update", "Update", cx)
-                            .tooltip(Tooltip::text("Runs `claude update`"))
-                            .on_click(cx.listener(|this, _, _, cx| this.update_cli(cx)))
+                        primary_button(SharedString::from(format!("about-cli-update-{id}")), "Update", cx)
+                            .tooltip(Tooltip::text(format!("Runs `{cmd}`")))
+                            .on_click(cx.listener(move |this, _, _, cx| this.update_cli(cli, cx)))
                             .into_any_element(),
                     ),
                 ),
                 (UpdateState::Updated { version }, _) => (
                     ok(),
-                    format!("Claude Code {version} is installed"),
-                    Some("Sessions pick it up with their next message.".into()),
+                    format!("{label} {version} is installed"),
+                    Some("New panes pick it up automatically.".into()),
                     None,
                 ),
                 (UpdateState::Failed(e), _) => {
-                    (failed(), "Couldn't update Claude Code".into(), Some(e.clone()), Some(check_now()))
+                    (failed(), format!("Couldn't update {label}"), Some(e.clone()), Some(check_now(cx)))
                 }
                 (_, c) if c.error.is_some() => {
-                    (failed(), "Couldn't check for Claude Code updates".into(), c.error.clone(), Some(check_now()))
+                    (failed(), format!("Couldn't check for {label} updates"), c.error.clone(), Some(check_now(cx)))
                 }
                 (_, c) => match c.at {
                     Some(at) => (
                         ok(),
-                        format!("Claude Code {version} is up to date"),
+                        format!("{label} {version} is up to date"),
                         Some(format!("Checked {}", ago(at))),
-                        Some(check_now()),
+                        Some(check_now(cx)),
                     ),
-                    None => (ok(), format!("Claude Code {version}"), Some("Not checked yet".into()), Some(check_now())),
+                    None => (ok(), format!("{label} {version}"), Some("Not checked yet".into()), Some(check_now(cx))),
                 },
             };
-        let waiting = matches!(self.cli_update, UpdateState::Available { .. });
         status_box(lead, title, detail, action, waiting, t)
     }
 }

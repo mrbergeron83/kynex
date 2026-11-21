@@ -1,6 +1,4 @@
-//! Settings → Providers → Grok: opting in to Grok Build as a provider, and
-//! setting it up without a terminal: installing it, signing in in the browser,
-//! signing out. Off until turned on; turned off, Grok leaves the provider picker.
+//! Settings → Providers → Grok Build: native CLI status, install, update, and sign-in.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -11,18 +9,14 @@ use kynex_core::cli::Login;
 use kynex_core::grok::setup::{self, Status};
 
 use super::KynexApp;
-use super::settings::heading;
+use super::app_settings::heading;
 use crate::theme::Palette;
 use crate::ui::{Tooltip, outline_button, primary_button};
 
-/// The Grok part of the Providers section.
 #[derive(Clone, Default)]
 pub struct GrokView {
-    /// Where Grok stands, once looked up.
     status: Option<Status>,
-    /// A `grok login` underway.
     login: Option<Rc<RefCell<Login>>>,
-    /// What's underway: "Installing Grok Build…".
     busy: Option<&'static str>,
     error: Option<String>,
 }
@@ -32,7 +26,6 @@ impl KynexApp {
         self.app_settings.as_mut().map(|s| &mut s.providers.grok)
     }
 
-    /// Looks up where Grok stands, off the UI thread.
     pub(super) fn load_grok_status(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let status = cx.background_spawn(async { setup::status() }).await;
@@ -47,18 +40,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Offers Grok for new sessions, or stops offering it.
-    fn set_grok_enabled(&mut self, on: bool, cx: &mut Context<Self>) {
-        self.saved.grok = on;
-        self.save();
-        self.refresh_new_sessions();
-        if on {
-            self.load_grok_status(cx);
-        }
-        cx.notify();
-    }
-
-    /// Runs `job` off the UI thread with `label` showing, then looks Grok up again.
     fn grok_job(
         &mut self,
         label: &'static str,
@@ -77,8 +58,7 @@ impl KynexApp {
                     g.error = result.err();
                 }
                 this.load_grok_status(cx);
-                // Installed now: the picker can offer it.
-                this.refresh_new_sessions();
+                this.refresh_provider_catalog(cx);
                 cx.notify();
             })
             .ok();
@@ -86,7 +66,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Starts `grok login` (it opens the browser) and watches it until it ends.
     fn grok_sign_in(&mut self, cx: &mut Context<Self>) {
         let login = match setup::login() {
             Ok(login) => Rc::new(RefCell::new(login)),
@@ -106,7 +85,6 @@ impl KynexApp {
             loop {
                 cx.background_executor().timer(Duration::from_millis(300)).await;
                 let done = this.update(cx, |this, cx| {
-                    // Settings closed, or cancelled: the login goes with it.
                     let Some(g) = this.grok_view().filter(|g| g.login.is_some()) else { return true };
                     cx.notify();
                     let Some(result) = login.borrow_mut().finished() else { return false };
@@ -126,19 +104,10 @@ impl KynexApp {
     pub(super) fn render_grok(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
         let Some(g) = self.app_settings.as_ref().map(|s| &s.providers.grok) else { return div() };
         let section = div().flex().flex_col().gap_2().child(heading(
-            "Grok",
-            "Opt in to run sessions on xAI's Grok Build, with its own sign-in, models and tools. It's a separate \
-             program; Kynex can install it for you.",
+            "Grok Build",
+            "xAI's native `grok` CLI. Runs interactively in a terminal pane with its own sign-in and auto-updates.",
             t,
         ));
-        if !self.saved.grok {
-            return section.child(
-                div().flex().child(
-                    primary_button("grok-enable", "Use Grok", cx)
-                        .on_click(cx.listener(|this, _, _, cx| this.set_grok_enabled(true, cx))),
-                ),
-            );
-        }
         let (line, color) = match (&g.status, &g.login) {
             (_, Some(login)) => (
                 login.borrow().url().map_or("Opening the browser to sign in…".into(), |url| {
@@ -152,10 +121,13 @@ impl KynexApp {
         };
         let idle = g.busy.is_none() && g.login.is_none();
         let status = g.status.clone();
+        let update = self.cli_update_control(super::setup::ManagedCli::Grok, t, cx);
         let buttons = div()
             .flex()
             .flex_wrap()
+            .items_center()
             .gap_2()
+            .children(update)
             .when(idle && status == Some(Status::Missing), |d| {
                 d.child(primary_button("grok-install", "Install Grok Build", cx).on_click(cx.listener(
                     |this, _, _, cx| this.grok_job("Installing Grok Build… (a minute or so)", setup::install, cx),
@@ -170,7 +142,7 @@ impl KynexApp {
             .when(idle && matches!(status, Some(Status::Ready(_))), |d| {
                 d.child(
                     outline_button("grok-sign-out", "Sign out", cx)
-                        .tooltip(Tooltip::text("Grok sessions stop working until you sign in again"))
+                        .tooltip(Tooltip::text("Run `grok logout`"))
                         .on_click(cx.listener(|this, _, _, cx| this.grok_job("Signing out…", setup::logout, cx))),
                 )
             })
@@ -181,13 +153,6 @@ impl KynexApp {
                     }
                     cx.notify();
                 })))
-            })
-            .when(idle, |d| {
-                d.child(
-                    outline_button("grok-disable", "Stop offering Grok", cx)
-                        .tooltip(Tooltip::text("New sessions can't pick Grok; Grok Build stays installed"))
-                        .on_click(cx.listener(|this, _, _, cx| this.set_grok_enabled(false, cx))),
-                )
             });
         section
             .child(

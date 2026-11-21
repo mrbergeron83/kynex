@@ -2,16 +2,12 @@
 //! `RenderOnce`-style builders over `div`, styled from the theme global.
 
 pub mod code;
-pub mod completions;
-pub mod ease_height;
-pub mod find_marks;
 pub mod image_viewer;
 pub mod input;
 pub mod mark;
 pub mod motion;
 pub mod pane_drag;
 pub mod scrollbar;
-pub mod selectable;
 pub mod smooth_scroll;
 pub mod wash;
 
@@ -40,7 +36,6 @@ pub enum Icon {
     Settings,
     PanelLeft,
     GitBranch,
-    Message,
     Folder,
     FolderPlus,
     Terminal,
@@ -48,11 +43,7 @@ pub enum Icon {
     Trash,
     ChevronDown,
     ChevronRight,
-    CollapseAll,
-    ExpandAll,
-    Paperclip,
     ArrowUp,
-    Stop,
     Loader,
     Check,
     Refresh,
@@ -62,13 +53,10 @@ pub enum Icon {
     Undo,
     ArrowDown,
     GitCommit,
-    Play,
     Shield,
     Bot,
-    Timeline,
     Search,
     File,
-    Files,
     /// The arms of the mark's K: a chevron on the mark's own grid.
     MarkChevron,
 }
@@ -84,7 +72,6 @@ impl Icon {
             Icon::Settings => "icons/settings.svg",
             Icon::PanelLeft => "icons/panel-left.svg",
             Icon::GitBranch => "icons/git-branch.svg",
-            Icon::Message => "icons/message.svg",
             Icon::Folder => "icons/folder.svg",
             Icon::FolderPlus => "icons/folder-plus.svg",
             Icon::Terminal => "icons/terminal.svg",
@@ -92,11 +79,7 @@ impl Icon {
             Icon::Trash => "icons/trash.svg",
             Icon::ChevronDown => "icons/chevron-down.svg",
             Icon::ChevronRight => "icons/chevron-right.svg",
-            Icon::CollapseAll => "icons/chevrons-down-up.svg",
-            Icon::ExpandAll => "icons/chevrons-up-down.svg",
-            Icon::Paperclip => "icons/paperclip.svg",
             Icon::ArrowUp => "icons/arrow-up.svg",
-            Icon::Stop => "icons/stop.svg",
             Icon::Loader => "icons/loader.svg",
             Icon::Check => "icons/check.svg",
             Icon::Refresh => "icons/refresh.svg",
@@ -106,13 +89,10 @@ impl Icon {
             Icon::Undo => "icons/undo.svg",
             Icon::ArrowDown => "icons/arrow-down.svg",
             Icon::GitCommit => "icons/git-commit.svg",
-            Icon::Play => "icons/play.svg",
             Icon::Shield => "icons/shield.svg",
             Icon::Bot => "icons/bot.svg",
-            Icon::Timeline => "icons/timeline.svg",
             Icon::Search => "icons/search.svg",
             Icon::File => "icons/file.svg",
-            Icon::Files => "icons/files.svg",
             Icon::MarkChevron => "icons/mark-chevron.svg",
         }
     }
@@ -445,18 +425,6 @@ pub enum Lamp {
 }
 
 impl Lamp {
-    pub fn of(busy: bool, waiting: bool, finished: bool) -> Self {
-        if waiting {
-            Lamp::NeedsYou
-        } else if busy {
-            Lamp::Working
-        } else if finished {
-            Lamp::Done
-        } else {
-            Lamp::Idle
-        }
-    }
-
     /// The one that most wants you, for a tell standing in for several lamps:
     /// needs you, then working, then done.
     pub fn most_urgent(lamps: impl IntoIterator<Item = Self>) -> Self {

@@ -10,33 +10,23 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// The session's uid in this run.
+/// The `agent_cli` pane's id in this run.
+pub const PANE_VAR: &str = "KYNEX_PANE";
+/// The session's uid in this run (legacy alias).
 pub const SESSION_VAR: &str = "KYNEX_SESSION";
 /// The workspace folder it runs in.
 pub const WORKSPACE_VAR: &str = "KYNEX_WORKSPACE_DIR";
 /// The control socket's address, as `control.addr` holds it.
 pub const CONTROL_VAR: &str = "KYNEX_CONTROL";
+/// Absolute path to this hook-capable Kynex binary, used by global hooks (e.g. `agy`) so they
+/// only run inside hook-capable Kynex panes and never invoke an older installed `knx` on `PATH`.
+pub const HOOK_BIN_VAR: &str = "KYNEX_HOOK_BIN";
 
-/// What the agent is told (`claude --append-system-prompt`).
-pub const NOTE: &str = "You are running inside Kynex, a desktop app for Claude Code. Its `knx` \
-command (on your PATH) can see and arrange the app from your shell: `knx session list`, \
-`knx session read <id>`, `knx session wait <id>`, `knx workspace list`, `knx pane list`, \
-`knx project list`, `knx notify <title> [body…] [--pane <id> | --session <id>]` (a notification, no OK needed); \
-for terminal and agent-CLI panes, `knx pane read <id> [--lines N]`, \
-`knx pane run <id> <command> [--wait]` and `knx pane prompt <id> <message> [--wait]`; to rearrange panes, `knx pane move <id> \
-left|right|up|down|new-tab|tab <n>`, `knx pane swap <id> <other>`, `knx pane resize <id> <dir> [--by <px>]` and \
-`knx pane zoom <id> [--off]`; for \
-sessions, `knx session new [--workspace <folder>] [--title <t>] [--pane right|down|tab|none] \
-[--why <reason>] [--prompt <message>]`, `knx session fork <id> [--at <message number>]`, `knx session open|close|archive \
-<id>`, `knx session rename <id> <title>`, `knx session pin <id> [--off]` and `knx workspace create \
-<branch> --session [--prompt <message>]`. Requests that change \
-something wait for the user's OK in Kynex; one not answered within 30 seconds says `pending` \
-with a request id, and `knx request wait <id>` gets its outcome (it also comes to you as a message). `knx api schema` \
-prints the whole protocol as JSON. A session you start is your child: when its turn ends, its answer comes to you as a <session-notification> message, so you needn't wait on it. Your session's id is in the \
-KYNEX_SESSION environment variable, your workspace folder in KYNEX_WORKSPACE_DIR. \
-Don't switch the branch of the workspace you're in; for issue or release work make a worktree \
-of its own with `knx workspace create <branch> --session`. \
-Use it only when the user's request calls for it.";
+/// Short summary of the `knx` CLI for reference.
+pub const NOTE: &str = "You are running inside Kynex. Its `knx` command (on your PATH) can inspect and arrange \
+the app: `knx project list`, `knx workspace list|create`, `knx session list|new|open|close|archive|rename|pin`, \
+`knx pane list|open|close|focus|move|swap|resize|zoom|read|run|prompt`, and `knx api schema`. \
+Your pane id is in KYNEX_PANE and your workspace folder is in KYNEX_WORKSPACE_DIR.";
 
 /// The folder of `data_dir` the shims go in.
 pub fn shim_dir(data_dir: &Path) -> PathBuf {
@@ -125,9 +115,26 @@ pub fn caller_from(value: Option<&OsStr>) -> Option<u64> {
     value?.to_str()?.trim().parse().ok()
 }
 
+/// The `agent_cli` pane id handed to a CLI process (`KYNEX_PANE`).
+pub fn pane() -> Option<u64> {
+    caller_from(std::env::var_os(PANE_VAR).as_deref())
+}
+
+/// The stable live-agent instance id handed to a CLI process (`KYNEX_SESSION`).
+pub fn session() -> Option<u64> {
+    caller_from(std::env::var_os(SESSION_VAR).as_deref())
+}
+
+/// The target id `knx hook` reports back to Kynex: prefers the stable live instance id
+/// (`KYNEX_SESSION`) so hooks still route accurately when instances swap panes, falling
+/// back to `KYNEX_PANE`.
+pub fn hook_target() -> Option<u64> {
+    session().or_else(pane)
+}
+
 /// [`caller_from`] this process's environment.
 pub fn caller() -> Option<u64> {
-    caller_from(std::env::var_os(SESSION_VAR).as_deref())
+    session().or_else(pane)
 }
 
 /// The address `knx` was handed, if any (`KYNEX_CONTROL`).
@@ -135,14 +142,12 @@ pub fn handed_address() -> Option<String> {
     std::env::var(CONTROL_VAR).ok().map(|a| a.trim().to_string()).filter(|a| !a.is_empty())
 }
 
-/// Forgets the variables of a session this app may have been started from (a Kynex run
-/// from a session's shell): they name that session and that app, and would reach this
-/// one's terminals and own `knx` calls otherwise.
+/// Forgets the variables of an `agent_cli` pane this app may have been started from.
 ///
 /// # Safety
 /// Changes the process environment: call it before any other thread starts.
 pub unsafe fn forget_inherited() {
-    for var in [SESSION_VAR, WORKSPACE_VAR, CONTROL_VAR] {
+    for var in [PANE_VAR, SESSION_VAR, WORKSPACE_VAR, CONTROL_VAR, HOOK_BIN_VAR, "KYNEX_PROVIDER"] {
         // SAFETY: the caller guarantees no other thread runs yet.
         unsafe { std::env::remove_var(var) };
     }

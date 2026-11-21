@@ -1,21 +1,17 @@
-//! Settings → Providers → Antigravity: opting in to Google's `agy` agent as a provider,
-//! and installing it without a terminal. It runs on the saved OpenRouter key, so there's
-//! no sign-in. Off until turned on; turned off, Antigravity leaves the provider picker.
+//! Settings → Providers → Antigravity: native `agy` CLI status and install.
+//! Available both natively (with `agy`'s own sign-in) and via OpenRouter override.
 
 use gpui::{Context, div, prelude::*};
 use kynex_core::antigravity::setup::{self, Status};
 
 use super::KynexApp;
-use super::settings::heading;
+use super::app_settings::heading;
 use crate::theme::Palette;
-use crate::ui::{Tooltip, outline_button, primary_button};
+use crate::ui::primary_button;
 
-/// The Antigravity part of the Providers section.
 #[derive(Clone, Default)]
 pub struct AntigravityView {
-    /// Where Antigravity stands, once looked up.
     status: Option<Status>,
-    /// What's underway: "Installing Antigravity…".
     busy: Option<&'static str>,
     error: Option<String>,
 }
@@ -25,7 +21,6 @@ impl KynexApp {
         self.app_settings.as_mut().map(|s| &mut s.providers.antigravity)
     }
 
-    /// Looks up where Antigravity stands, off the UI thread.
     pub(super) fn load_antigravity_status(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let status = cx.background_spawn(async { setup::status() }).await;
@@ -40,18 +35,6 @@ impl KynexApp {
         .detach();
     }
 
-    /// Offers Antigravity for new sessions, or stops offering it.
-    fn set_antigravity_enabled(&mut self, on: bool, cx: &mut Context<Self>) {
-        self.saved.antigravity = on;
-        self.save();
-        self.refresh_new_sessions();
-        if on {
-            self.load_antigravity_status(cx);
-        }
-        cx.notify();
-    }
-
-    /// Installs `agy` off the UI thread with a label showing, then looks it up again.
     fn install_antigravity(&mut self, cx: &mut Context<Self>) {
         let Some(a) = self.antigravity_view().filter(|a| a.busy.is_none()) else { return };
         a.busy = Some("Installing Antigravity… (a minute or so)");
@@ -71,8 +54,7 @@ impl KynexApp {
                     a.error = result.err();
                 }
                 this.load_antigravity_status(cx);
-                // Installed now: the picker can offer it.
-                this.refresh_new_sessions();
+                this.refresh_provider_catalog(cx);
                 cx.notify();
             })
             .ok();
@@ -84,18 +66,9 @@ impl KynexApp {
         let Some(a) = self.app_settings.as_ref().map(|s| &s.providers.antigravity) else { return div() };
         let section = div().flex().flex_col().gap_2().child(heading(
             "Antigravity",
-            "Opt in to run sessions on Google's Antigravity agent, with its tools, on your OpenRouter key: Gemini \
-             works without a Google subscription. It's a separate program; Kynex can install it for you.",
+            "Google's native `agy` CLI. Runs natively or through your OpenRouter key via Antigravity (OpenRouter).",
             t,
         ));
-        if !self.saved.antigravity {
-            return section.child(
-                div().flex().child(
-                    primary_button("antigravity-enable", "Use Antigravity", cx)
-                        .on_click(cx.listener(|this, _, _, cx| this.set_antigravity_enabled(true, cx))),
-                ),
-            );
-        }
         let (line, color) = match &a.status {
             None => ("Checking…".to_string(), t.text_placeholder),
             Some(s @ Status::Ready(_)) => (s.describe(), t.text_muted),
@@ -103,24 +76,7 @@ impl KynexApp {
         };
         let idle = a.busy.is_none();
         let missing = a.status == Some(Status::Missing);
-        let no_key = self.openrouter_key.is_none();
-        let buttons = div()
-            .flex()
-            .flex_wrap()
-            .gap_2()
-            .when(idle && missing, |d| {
-                d.child(
-                    primary_button("antigravity-install", "Install Antigravity", cx)
-                        .on_click(cx.listener(|this, _, _, cx| this.install_antigravity(cx))),
-                )
-            })
-            .when(idle, |d| {
-                d.child(
-                    outline_button("antigravity-disable", "Stop offering Antigravity", cx)
-                        .tooltip(Tooltip::text("New sessions can't pick Antigravity; it stays installed"))
-                        .on_click(cx.listener(|this, _, _, cx| this.set_antigravity_enabled(false, cx))),
-                )
-            });
+        let update = self.cli_update_control(super::setup::ManagedCli::Antigravity, t, cx);
         section
             .child(
                 div()
@@ -134,15 +90,14 @@ impl KynexApp {
                     .text_color(color)
                     .child(line),
             )
-            .when(no_key, |d| {
-                d.child(
-                    div()
-                        .text_xs()
-                        .text_color(t.warning)
-                        .child("Antigravity runs on your OpenRouter key: save one above first."),
-                )
+            .when((idle && missing) || update.is_some(), |d| {
+                d.child(div().flex().flex_wrap().items_center().gap_2().children(update).when(idle && missing, |d| {
+                    d.child(
+                        primary_button("antigravity-install", "Install Antigravity", cx)
+                            .on_click(cx.listener(|this, _, _, cx| this.install_antigravity(cx))),
+                    )
+                }))
             })
-            .child(buttons)
             .children(a.busy.map(|b| div().text_xs().text_color(t.text_placeholder).child(b)))
             .children(a.error.clone().map(|e| div().text_xs().text_color(t.error).child(e)))
     }

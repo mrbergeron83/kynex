@@ -1,4 +1,4 @@
-//! Moving a pane inside its tab: dragged by its handle onto another pane (an edge puts it
+//! Moving a pane in the workspace: dragged by its handle onto another pane (an edge puts it
 //! on that side, the middle swaps the two, and the target shows where it will land), or
 //! the pane menu's "Move left / right / up / down". The move itself is
 //! `kynex_core::tiling::Tiling::move_pane`.
@@ -8,8 +8,8 @@ use kynex_core::layout::{Direction, PaneId, Rect};
 use kynex_core::tiling::drop_side;
 
 use super::KynexApp;
-use super::pane_tabs::DraggedPane;
 use crate::theme::theme;
+use crate::ui::pane_drag::DraggedPane;
 use crate::ui::px;
 
 /// The pane menu's moves, with their labels.
@@ -67,7 +67,7 @@ impl KynexApp {
         if d.pane == target {
             return;
         }
-        let Some((_, ws, _)) = self.tiling_scope() else { return };
+        let Some((_, ws)) = self.tiling_scope() else { return };
         let bounds = self.layout_bounds(cx);
         let moved = self.tiles.get_mut(&ws).is_some_and(|t| t.move_pane(d.pane, target, side, bounds));
         self.after_move(moved, window, cx);
@@ -75,7 +75,7 @@ impl KynexApp {
 
     /// The pane menu's "Move left" and the rest: `pane` past its neighbour on the `dir` side.
     pub(super) fn move_pane_dir(&mut self, pane: PaneId, dir: Direction, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((_, ws, _)) = self.tiling_scope() else { return };
+        let Some((_, ws)) = self.tiling_scope() else { return };
         let bounds = self.layout_bounds(cx);
         let moved = self.tiles.get_mut(&ws).is_some_and(|t| t.move_dir(pane, dir, bounds));
         self.after_move(moved, window, cx);

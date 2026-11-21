@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     Animation, AnimationElement, AnimationExt, AnyElement, App, AppContext, Bounds, ContentMask, Element, ElementId,
-    GlobalElementId, IntoElement, LayoutId, Pixels, Styled, Window, px,
+    GlobalElementId, IntoElement, LayoutId, Pixels, Styled, Window,
 };
 use kynex_core::motion::{Level, Motion, System};
 
@@ -42,15 +42,6 @@ pub fn fade_in<E: IntoElement + Styled + 'static>(
 /// Fades in while settling `rise` up into place: menus, modals, toasts.
 pub fn pop_in<E: IntoElement + Styled + 'static>(id: impl Into<ElementId>, el: E, rise: Pixels) -> AnimationElement<E> {
     el.with_animation(id, ease_out(), move |el, t| el.opacity(t).mt(rise * (1. - t)))
-}
-
-/// Grows from nothing to `width`: a side panel opening.
-pub fn grow_width<E: IntoElement + Styled + 'static>(
-    id: impl Into<ElementId>,
-    el: E,
-    width: f32,
-) -> AnimationElement<E> {
-    el.with_animation(id, ease_out(), move |el, t| el.w(px(width * t)).opacity(t))
 }
 
 /// How far an exit has gone, eased: 0 still open, 1 gone.
@@ -81,19 +72,6 @@ pub fn pop<E: IntoElement + Styled + 'static>(
     match leaving {
         Some(t) => inert(el.opacity(1. - out(t)).mt(rise * out(t))).into_any_element(),
         None => pop_in(id, el, rise).into_any_element(),
-    }
-}
-
-/// [`grow_width`] while opening; shrinking back to nothing while it closes.
-pub fn grow<E: IntoElement + Styled + 'static>(
-    id: impl Into<ElementId>,
-    el: E,
-    width: f32,
-    leaving: Option<f32>,
-) -> AnyElement {
-    match leaving {
-        Some(t) => inert(el.w(px(width * (1. - out(t)))).opacity(1. - out(t))).into_any_element(),
-        None => grow_width(id, el, width).into_any_element(),
     }
 }
 

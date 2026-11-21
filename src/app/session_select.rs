@@ -5,8 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::ui::px;
-use gpui::{AnyElement, Context, Modifiers, div, prelude::*};
-use kynex_core::session::{self, Kind, Session};
+use gpui::{AnyElement, Context, Modifiers, Window, div, prelude::*};
+use kynex_core::sessions;
 use kynex_core::toasts::Toast;
 
 use super::KynexApp;
@@ -23,7 +23,6 @@ impl KynexApp {
         if !(m.shift || m.secondary(cx) || o.selection.on) {
             return false;
         }
-        // Picks stay in one workspace: picking in another starts again there.
         if o.selection_cwd.as_deref() != Some(cwd) {
             o.selection.ids.clear();
             o.selection_cwd = Some(cwd.to_path_buf());
@@ -70,34 +69,28 @@ impl KynexApp {
         o.selection.keep_only(listed);
     }
 
-    /// Takes past session `id` out of Kynex before its transcript is deleted:
-    /// shows a new session in its place if it's shown, closes it if it's open,
-    /// and drops its draft and its place in the groups.
-    pub(super) fn forget_past_session(&mut self, kind: Kind, cwd: &Path, id: &str) {
-        if self.focused_key().and_then(|k| self.session_by_key(k)).and_then(|s| s.session_id.as_deref()) == Some(id) {
-            self.open_session(Session::new(kind, cwd.to_path_buf()));
+    /// Takes past session `id` out of Kynex before its files are deleted:
+    /// stops any live instance running it, resets any pane holding it back to the picker,
+    /// and forgets it in groups.
+    pub(super) fn forget_past_session(&mut self, cwd: &Path, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let live: Vec<_> =
+            self.agent_instances.values().filter(|a| a.meta.session_id.as_deref() == Some(id)).map(|a| a.id).collect();
+        for agent_id in live {
+            self.stop_agent(agent_id, window, cx);
         }
-        let open = self
-            .live_mut()
-            .and_then(|l| l.sessions.iter().find(|s| s.session_id.as_deref() == Some(id)).map(|s| s.uid));
-        if let Some(uid) = open {
-            self.close_open(uid);
-        }
-        self.drafts.remove(id);
-        if self.saved.drafts.remove(id).is_some() {
-            self.save();
+        let panes: Vec<_> = self.tiles.values().filter_map(|t| t.pane_of_session(id)).collect();
+        for pane in panes {
+            self.reset_agent_pane_to_picker(pane, window, cx);
         }
         self.edit_groups(cwd, |g| g.forget(id));
-        // What it started moves up a level.
-        self.unlink_session(id);
     }
 
     /// Deletes every picked session but those still working, off the UI thread.
-    fn delete_picked(&mut self, kind: Kind, cwd: PathBuf, busy: &[String], cx: &mut Context<Self>) {
+    fn delete_picked(&mut self, cwd: PathBuf, busy: &[String], window: &mut Window, cx: &mut Context<Self>) {
         let picked = std::mem::take(&mut self.organize.selection.ids);
         let (ids, kept): (Vec<String>, Vec<String>) = picked.into_iter().partition(|id| !busy.contains(id));
         for id in &ids {
-            self.forget_past_session(kind, &cwd, id);
+            self.forget_past_session(&cwd, id, window, cx);
         }
         self.stop_picking();
         self.relist_sessions(&ids);
@@ -105,7 +98,7 @@ impl KynexApp {
             let n = ids.len();
             let errors: Vec<String> = cx
                 .background_spawn(async move {
-                    ids.iter().filter_map(|id| session::delete_session(&cwd, id).err()).collect()
+                    ids.iter().filter_map(|id| sessions::delete_session(&cwd, id).err()).collect()
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -130,12 +123,15 @@ impl KynexApp {
     fn archive_picked(&mut self, cwd: &Path, cx: &mut Context<Self>) {
         let ids = std::mem::take(&mut self.organize.selection.ids);
         let all = ids.iter().all(|id| self.groups_for(cwd).is_archived(id));
-        if all {
-            self.unarchive_nest(cwd, &ids);
-        } else {
-            // Each with the sessions it started.
-            self.archive_nest(cwd, &ids);
-        }
+        self.edit_groups(cwd, |g| {
+            for id in &ids {
+                if all {
+                    g.unarchive(id);
+                } else {
+                    g.archive(id);
+                }
+            }
+        });
         self.stop_picking();
         cx.notify();
     }
@@ -156,12 +152,9 @@ impl KynexApp {
             .into_any_element()
     }
 
-    /// The bar under the list while picking: how many, pick all, archive,
-    /// delete (asking once, with the count), done. `shown` are the rows as
-    /// drawn; `busy` the sessions still working, which aren't deleted.
+    /// The bar under the list while picking: how many, pick all, archive, delete, done.
     pub(super) fn render_pick_bar(
         &mut self,
-        kind: Kind,
         cwd: PathBuf,
         shown: Vec<String>,
         busy: Vec<String>,
@@ -189,7 +182,7 @@ impl KynexApp {
         if o.confirm_bulk_delete && n > 0 {
             let working = o.selection.ids.iter().filter(|id| busy.contains(id)).count();
             let question = match working {
-                0 => format!("Delete {}? Their transcripts can't be brought back.", count(n, "session")),
+                0 => format!("Delete {}? Their files can't be brought back.", count(n, "session")),
                 w => format!(
                     "Delete {}? {w} still working {} kept.",
                     count(n - w, "session"),
@@ -202,7 +195,7 @@ impl KynexApp {
                     .child(div().flex_1())
                     .when(n > working, |d| {
                         d.child(outline_button("pick-yes", "Yes, delete", cx).text_color(t.error).on_click(
-                            cx.listener(move |this, _, _, cx| this.delete_picked(kind, cwd.clone(), &busy, cx)),
+                            cx.listener(move |this, _, window, cx| this.delete_picked(cwd.clone(), &busy, window, cx)),
                         ))
                     })
                     .child(outline_button("pick-no", "Cancel", cx).on_click(cx.listener(|this, _, _, cx| {

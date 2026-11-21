@@ -1,103 +1,64 @@
-//! The window's layout pieces `render` stacks: the conversation or the panes, the
-//! overlays over them, and the drag that resizes the sessions panel and the terminal.
+//! Top-level workspace layout: toolbar, tiled panes (or an empty-state
+//! prompt to open a project), overlays, shortcuts, and divider resize drags.
 
-use gpui::{AnyElement, Context, MouseButton, MouseMoveEvent, Stateful, Window, div, prelude::*};
-
-use kynex_core::live::Key;
+use gpui::{AnyElement, Context, FontWeight, MouseButton, MouseMoveEvent, Stateful, Window, div, prelude::*};
 
 use super::KynexApp;
-use super::keys::{self, CopySelection, copy_selection};
-use super::transcript::Scroll;
+use super::keys;
 use crate::theme::theme;
+use crate::ui::mark::mark;
+use crate::ui::{Lamp, primary_button, px};
 
 impl KynexApp {
-    /// The conversation: header, transcript, composer and timeline, or the workspace's panes.
+    /// The main area below the title bar: either an empty-state welcome screen when no
+    /// projects are open, or the active project's toolbar and tiled panes.
     pub(super) fn render_code_main(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
-        let key = self.focused_key();
-        // Several panes: each draws its own header and conversation.
-        let pane_tabs = self.render_pane_tabs(cx);
-        let tiled = self.render_panes(window, cx);
-        let single = tiled.is_none();
-        // A project's single pane has the pane menu on its header; chat doesn't.
-        let header = match key.filter(|_| single) {
-            Some(key) if self.tiling_scope().is_some() => self.render_tile_header(self.pane_id, Some(key), false, cx),
-            Some(key) => self.render_session_header(key, cx),
-            None => None,
-        };
-        let body = match tiled {
-            Some(tiles) => tiles,
-            None => {
-                let body = self.render_pane_body(key, true, window, cx);
-                self.single_pane_drop(body, cx)
-            }
-        };
+        if self.active_project().is_none() {
+            return self.render_no_projects(cx);
+        }
+        let body = self.render_panes(window, cx).unwrap_or_else(|| div().flex_1().into_any_element());
         div()
             .flex()
+            .flex_col()
             .flex_1()
             .min_h_0()
-            // A project's panes have the sessions and workspaces as panes of their own.
-            .children(if self.tiling_scope().is_none() { self.render_sessions_column(window, cx) } else { None })
+            .min_w_0()
+            .bg(t.editor)
+            .child(self.render_toolbar(cx))
+            .child(body)
+            .into_any_element()
+    }
+
+    fn render_no_projects(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme(cx).clone();
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .items_center()
+            .justify_center()
+            .gap_4()
+            .bg(t.editor)
+            .child(mark("welcome-mark", gpui::px(56.), Lamp::Idle, cx))
+            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Open a project folder"))
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .bg(t.editor)
-                    .child(self.render_toolbar(cx))
-                    .children(pane_tabs)
-                    .children(header)
-                    .child(body),
+                    .max_w(px(400.))
+                    .text_center()
+                    .text_sm()
+                    .text_color(t.text_muted)
+                    .child("Kynex runs Claude Code, Antigravity, Grok, and other agent CLIs side by side in GPU-accelerated terminal panes."),
+            )
+            .child(
+                primary_button("welcome-open-project", "Open project…", cx)
+                    .on_click(cx.listener(|this, _, _, cx| this.pick_project(cx))),
             )
             .into_any_element()
     }
 
-    /// One pane's conversation: transcript and composer, and in chat the timeline running
-    /// the full height beside them. `focused` panes also draw the find bar.
-    pub(super) fn render_pane_body(
-        &mut self,
-        key: Option<Key>,
-        focused: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        div()
-            .key_context("Pane")
-            .flex()
-            .flex_1()
-            .min_h_0()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .relative()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_h_0()
-                            .child(match key {
-                                Some(key) => self.render_thread(key, window, cx),
-                                None => self.render_empty_thread(cx),
-                            })
-                            .children(focused.then(|| self.render_find(cx)).flatten())
-                            .child(self.toast_room_probe()),
-                    )
-                    .child(self.render_composer(key, window, cx)),
-            )
-            // A project's timeline is a pane of its own.
-            .children(
-                key.filter(|_| self.saved.timeline_open && self.tiling_scope().is_none())
-                    .and_then(|key| self.render_timeline(key, false, cx)),
-            )
-            .into_any_element()
-    }
-
-    /// `root` with the toasts, modals, palette and menu over it.
+    /// `root` with toasts, popups, modals, palette, and context menus over it.
     pub(super) fn with_overlays(
         &mut self,
         root: Stateful<gpui::Div>,
@@ -106,73 +67,43 @@ impl KynexApp {
         cx: &mut Context<Self>,
     ) -> Stateful<gpui::Div> {
         let menu = self.draw_leaving(|s| &mut s.menu, |e| &mut e.menu, window, cx, |s, l, _, cx| s.render_menu(l, cx));
-        let settings = self.draw_leaving(|s| &mut s.settings, |e| &mut e.settings, window, cx, Self::render_settings);
         let app_settings =
             self.draw_leaving(|s| &mut s.app_settings, |e| &mut e.app_settings, window, cx, Self::render_app_settings);
-        let extensions =
-            self.draw_leaving(|s| &mut s.extensions, |e| &mut e.extensions, window, cx, Self::render_extensions);
         let about = self.render_about(window, cx);
         let palette = self.draw_leaving(|s| &mut s.palette, |e| &mut e.palette, window, cx, Self::render_palette);
-        let git_modal =
-            self.draw_leaving(|s| &mut s.git_modal, |e| &mut e.git_modal, window, cx, Self::render_git_modal);
         let git_file =
             self.draw_leaving(|s| &mut s.git_file, |e| &mut e.git_file, window, cx, Self::render_git_file_modal);
-        let scratch = self.draw_leaving(|s| &mut s.scratch, |e| &mut e.scratch, window, cx, Self::render_scratch_modal);
-        let viewer =
-            self.draw_leaving(|s| &mut s.viewer, |e| &mut e.viewer, window, cx, |s, l, _, _| s.render_image_viewer(l));
         let popup = self.render_command_popup(cx);
         root.children(toasts)
             .children(popup)
-            .children(git_modal)
             .children(git_file)
-            .children(scratch)
-            .children(settings)
             .children(app_settings)
-            .children(extensions)
             .children(about)
             .children(palette)
             .children(menu)
-            .children(viewer)
     }
 
-    /// `root` while the sessions panel's or the terminal's edge is dragged:
-    /// the pointer moves it, letting go keeps it.
     pub(super) fn with_resize_drag(&self, root: Stateful<gpui::Div>, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
-        root.when(self.resizing_sessions, |d| {
-            d.cursor_col_resize()
-                .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
-                    this.saved.sessions_width = (f32::from(ev.position.x) / this.saved.zoom).clamp(180., 480.);
-                    cx.notify();
-                }))
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.resizing_sessions = false;
-                        this.save();
-                        cx.notify();
-                    }),
-                )
-        })
-        .when(self.tile_drag.is_some(), |d| {
+        root.when(self.tile_drag.is_some(), |d| {
             d.on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| this.drag_tiles(ev.position, cx)))
                 .on_mouse_up(
                     MouseButton::Left,
                     cx.listener(|this, _, _, cx| {
                         this.tile_drag = None;
+                        this.save_layouts(cx);
                         cx.notify();
                     }),
                 )
         })
     }
 
-    /// `root` with the window's shortcuts: each action to the method that runs it.
+    /// `root` with the window's shortcuts.
     pub(super) fn with_actions(&self, root: Stateful<gpui::Div>, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
         let root = root
             .on_action(
                 cx.listener(|this, a: &keys::OpenFileLink, w, cx| this.open_file_view(a.path.clone(), a.line, w, cx)),
             )
             .on_action(cx.listener(Self::toggle_palette))
-            .on_action(cx.listener(Self::open_find))
             .on_action(cx.listener(Self::open_project))
             .on_action(cx.listener(Self::open_settings_action))
             .on_action(cx.listener(|_, _: &keys::Quit, _, cx| cx.quit()))
@@ -190,58 +121,22 @@ impl KynexApp {
             .on_action(cx.listener(Self::move_tab_left))
             .on_action(cx.listener(Self::move_tab_right))
             .on_action(cx.listener(Self::toggle_sessions))
-            .on_action(cx.listener(Self::cycle_mode))
-            .on_action(cx.listener(Self::toggle_thinking))
             .on_action(cx.listener(Self::interrupt_action))
             .on_action(cx.listener(Self::toggle_terminal))
-            .on_action(cx.listener(Self::search_history))
-            .on_action(cx.listener(Self::stash_action))
-            .on_action(cx.listener(Self::pick_model))
-            .on_action(cx.listener(Self::expand_tools))
-            .on_action(cx.listener(Self::edit_in_editor_action))
-            .on_action(cx.listener(Self::rewind_action))
-            .on_action(cx.listener(Self::toggle_timeline))
             .on_action(cx.listener(Self::toggle_git))
             .on_action(cx.listener(Self::toggle_agents))
-            .on_action(cx.listener(Self::run_command_action))
-            .on_action(cx.listener(Self::prev_turn))
-            .on_action(cx.listener(Self::next_turn))
-            .on_action(cx.listener(|this, _: &keys::PageUp, _, cx| this.scroll_keys(Scroll::Page(-1.), cx)))
-            .on_action(cx.listener(|this, _: &keys::PageDown, _, cx| this.scroll_keys(Scroll::Page(1.), cx)))
-            .on_action(cx.listener(|this, _: &keys::LineUp, _, cx| this.scroll_keys(Scroll::Line(-1.), cx)))
-            .on_action(cx.listener(|this, _: &keys::LineDown, _, cx| this.scroll_keys(Scroll::Line(1.), cx)))
-            .on_action(cx.listener(|this, _: &keys::ScrollTop, _, cx| this.scroll_keys(Scroll::Top, cx)))
-            .on_action(cx.listener(|this, _: &keys::ScrollBottom, _, cx| this.scroll_keys(Scroll::Bottom, cx)))
-            .on_action(cx.listener(|_, _: &CopySelection, _, cx| copy_selection(cx)))
-            // The composer's Ctrl+C, passed on when nothing is selected in it.
-            .on_action(cx.listener(|_, _: &crate::ui::input::Copy, _, cx| copy_selection(cx)));
+            .on_action(cx.listener(Self::run_command_action));
         self.with_pane_actions(root, cx)
     }
 
     /// What each frame settles before drawing.
     pub(super) fn sync_before_render(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Create (or resume) the project's session as soon as its tab is shown,
-        // so a restored transcript is visible before the first message.
-        // Showing it counts as seeing it finish, while Kynex is in front.
-        let active = window.is_window_active();
-        if let Some(s) = self.session_mut()
-            && active
-        {
-            s.finished = false;
-        }
         self.sync_tiles(window, cx);
         self.sync_git_pane(window, cx);
         self.sync_resize_mode();
-        self.sync_attention(cx);
         self.sync_awake();
-        let key = self.focused_key();
-        self.sync_draft(key, cx);
-        self.close_unused_sessions();
-        self.sync_prompt(key, window, cx);
         self.sync_toasts(window, cx);
         self.load_project_settings();
-        // Shortcuts (Esc, Ctrl+B…) only reach the workspace through the focused
-        // element, so never leave the window with nothing focused.
         if window.focused(cx).is_none() {
             self.focus.focus(window, cx);
         }

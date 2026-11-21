@@ -34,7 +34,60 @@ pub use search::{CopyMotion, Match};
 pub use shell::{ShellKind, ShellSpec, elevated, resolve as resolve_shell, which};
 pub use snapshot::{Cursor, CursorStyle, Palette, Rgb, Row, Run, Snapshot};
 
-use crate::session::Wake;
+/// Callback invoked from a background thread when new terminal output or events arrive.
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// Internal trampoline flag used by [`Terminal::spawn`] when inherited environment variables
+/// must be unset before executing a CLI inside a PTY (only invoked when conflicting vars exist).
+const PTY_EXEC_FLAG: &str = "--pty-exec";
+
+/// Runs the requested program with specified env vars removed if invoked with `--pty-exec`.
+/// Call at the start of `main()`. Returns `None` for normal app invocations.
+pub fn pty_exec_if_asked() -> Option<i32> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) != Some(PTY_EXEC_FLAG) {
+        return None;
+    }
+    let mut unset: Vec<String> = Vec::new();
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--unset"
+            && let Some(name) = args.get(i + 1)
+        {
+            unset.push(name.clone());
+            i += 2;
+        } else if args[i] == "--" {
+            i += 1;
+            break;
+        } else {
+            break;
+        }
+    }
+    let Some(program) = args.get(i) else { return Some(1) };
+    let rest = &args[i + 1..];
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(rest);
+    for name in &unset {
+        cmd.env_remove(name);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = cmd.exec();
+        eprintln!("kynex: failed to exec {program}: {err}");
+        Some(127)
+    }
+    #[cfg(not(unix))]
+    {
+        match cmd.status() {
+            Ok(status) => Some(status.code().unwrap_or(1)),
+            Err(err) => {
+                eprintln!("kynex: failed to start {program}: {err}");
+                Some(127)
+            }
+        }
+    }
+}
 
 /// Lines kept above the screen.
 const SCROLLBACK: usize = 10_000;
@@ -169,9 +222,45 @@ impl Terminal {
             ("COLORTERM".to_string(), "truecolor".to_string()),
             ("TERM_PROGRAM".to_string(), "kynex".to_string()),
         ]);
-        env.extend(shell.env.iter().cloned());
+        // Replace existing keys case-insensitively on Windows so `"PATH"` cleanly overrides
+        // `"Path"` instead of leaving duplicate entries in the environment block.
+        merge_env(&mut env, &shell.env);
+        // Check whether any variable in `env_remove` is actually set in the environment we'd
+        // inherit (excluding variables we explicitly re-set in `shell.env`).
+        let conflicts: Vec<String> = shell
+            .env_remove
+            .iter()
+            .filter(|name| {
+                let overridden = shell.env.iter().any(|(k, _)| same_env_name(k, name));
+                if overridden {
+                    return false;
+                }
+                let in_fresh = env.keys().any(|k| same_env_name(k, name));
+                let in_parent = std::env::vars_os().any(|(k, _)| k.to_str().is_some_and(|s| same_env_name(s, name)));
+                in_fresh || in_parent
+            })
+            .cloned()
+            .collect();
+        for name in &conflicts {
+            env.retain(|k, _| !same_env_name(k, name));
+        }
+        let tty_shell = if !conflicts.is_empty()
+            && let Ok(exe) = std::env::current_exe()
+        {
+            let mut argv = vec![PTY_EXEC_FLAG.to_string()];
+            for name in &conflicts {
+                argv.push("--unset".into());
+                argv.push(name.clone());
+            }
+            argv.push("--".into());
+            argv.push(shell.program.to_string_lossy().into_owned());
+            argv.extend(shell.args.iter().cloned());
+            tty::Shell::new(exe.to_string_lossy().into_owned(), argv)
+        } else {
+            tty::Shell::new(shell.program.to_string_lossy().into_owned(), shell.args.clone())
+        };
         let options = tty::Options {
-            shell: Some(tty::Shell::new(shell.program.to_string_lossy().into_owned(), shell.args.clone())),
+            shell: Some(tty_shell),
             working_directory: Some(cwd.to_path_buf()),
             drain_on_exit: true,
             env,
@@ -420,6 +509,20 @@ impl Drop for Terminal {
     }
 }
 
+/// Variable names compare without case on Windows, exactly elsewhere.
+fn same_env_name(a: &str, b: &str) -> bool {
+    if cfg!(windows) { a.eq_ignore_ascii_case(b) } else { a == b }
+}
+
+/// Inserts `overrides` into `env`, removing any existing key that matches [`same_env_name`]
+/// so `"PATH"` cleanly replaces Windows `"Path"` instead of producing duplicate entries.
+fn merge_env(env: &mut HashMap<String, String>, overrides: &[(String, String)]) {
+    for (k, v) in overrides {
+        env.retain(|existing, _| !same_env_name(existing, k));
+        env.insert(k.clone(), v.clone());
+    }
+}
+
 fn window_size(size: Size) -> WindowSize {
     WindowSize { num_lines: size.lines as u16, num_cols: size.columns as u16, cell_width: 1, cell_height: 1 }
 }
@@ -440,6 +543,17 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    #[test]
+    fn merge_env_replaces_case_insensitively_on_windows() {
+        let mut env = HashMap::from([("Path".into(), "old".into()), ("KEEP".into(), "1".into())]);
+        merge_env(&mut env, &[("PATH".into(), "new".into())]);
+        assert_eq!(env.get("PATH").map(String::as_str), Some("new"));
+        assert_eq!(env.get("KEEP").map(String::as_str), Some("1"));
+        if cfg!(windows) {
+            assert!(!env.contains_key("Path"));
+        }
+    }
 
     /// Starts the real default shell, runs a command and waits for its output.
     #[test]

@@ -1,29 +1,25 @@
 //! Settings → Storage's list of sessions: filtered by title or project, sorted
-//! by size, last use or name. Each row goes to its session (opening its
-//! project's tab if needed), shows where its log, scratchpad and checkpoints
-//! are with a way to each folder, and frees them after asking.
+//! by size, last use or name. Each row opens its session in an `agent_cli` pane,
+//! shows where its log, scratchpad and checkpoints are, and frees them after asking.
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui::{Context, SharedString, div, prelude::*};
+use gpui::{Context, SharedString, Window, div, prelude::*};
 use kynex_core::fmt::{ago, bytes};
 use kynex_core::open::Opener;
 use kynex_core::paths::project_name;
-use kynex_core::session::Kind;
 use kynex_core::storage::{self, Part, Roots, SessionUse, Sort, Usage};
 
 use super::KynexApp;
-use super::state::Active;
 use super::storage::{PAGE, count};
 use crate::theme::{Palette, mono};
 use crate::ui::{Icon, Tooltip, ghost_button, icon};
 
 impl KynexApp {
-    /// What a session is known by: its title and its project.
     fn stored_label(&self, u: &SessionUse) -> (String, String) {
         let info = self.storage.as_ref().and_then(|v| v.info.get(&u.id));
-        let title = info.and_then(|i| i.title.clone()).unwrap_or_else(|| u.id[..8].to_string());
+        let title = info.and_then(|i| i.title.clone()).unwrap_or_else(|| u.id[..8.min(u.id.len())].to_string());
         let place = self
             .project_for_slug(&u.slug)
             .or_else(|| info.and_then(|i| i.cwd.clone()))
@@ -31,8 +27,6 @@ impl KynexApp {
         (title, place)
     }
 
-    /// The folder to open a session in: its open project, else the folder its
-    /// log says it ran in, if that's still there.
     fn stored_folder(&self, u: &SessionUse) -> Option<PathBuf> {
         self.project_for_slug(&u.slug).or_else(|| {
             let cwd = self.storage.as_ref()?.info.get(&u.id)?.cwd.clone()?;
@@ -40,9 +34,7 @@ impl KynexApp {
         })
     }
 
-    /// Shows a session from the list: its project's tab (opened if it isn't),
-    /// the session in it.
-    fn go_to_stored(&mut self, path: PathBuf, id: String, cx: &mut Context<Self>) {
+    fn go_to_stored(&mut self, path: PathBuf, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let i = match self.saved.projects.iter().position(|p| p.path == path) {
             Some(i) => i,
             None => {
@@ -51,9 +43,8 @@ impl KynexApp {
             }
         };
         self.app_settings = None;
-        self.saved.active = Active::Project(i);
-        self.save();
-        self.switch_session(Kind::Code, path, id);
+        self.select_project(i, window, cx);
+        self.switch_session(path, id, window, cx);
         cx.notify();
     }
 
@@ -154,10 +145,9 @@ impl KynexApp {
         let go = match folder {
             Some(path) => {
                 let id = u.id.clone();
-                ghost_button(("storage-go", n), cx)
-                    .text_xs()
-                    .child("Go to session")
-                    .on_click(cx.listener(move |this, _, _, cx| this.go_to_stored(path.clone(), id.clone(), cx)))
+                ghost_button(("storage-go", n), cx).text_xs().child("Go to session").on_click(
+                    cx.listener(move |this, _, window, cx| this.go_to_stored(path.clone(), id.clone(), window, cx)),
+                )
             }
             None => ghost_button(("storage-go", n), cx)
                 .text_xs()
@@ -226,7 +216,6 @@ impl KynexApp {
                             ghost_button(("storage-checkpoints", n), cx)
                                 .text_xs()
                                 .child("Clear checkpoints")
-                                .tooltip(Tooltip::text("Rewind won't be able to restore files in this session"))
                                 .on_click(clear_checkpoints),
                         )
                     })
@@ -249,7 +238,6 @@ impl KynexApp {
             .into_any_element()
     }
 
-    /// Where a session's parts are: size, path, and a way to each folder.
     fn render_stored_files(&mut self, u: &SessionUse, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
         let Some(roots) = Roots::local() else { return div() };
         let n = id_hash(&u.id);
@@ -259,7 +247,6 @@ impl KynexApp {
                 Part::Scratch => ("Scratchpad", u.sizes.scratch),
                 Part::Checkpoints => ("Checkpoints", u.sizes.checkpoints),
             };
-            // The log is a file: its folder opens, where the log's own folder sits beside it.
             let folder = if path.is_file() { path.parent().map(Path::to_path_buf) } else { Some(path.clone()) };
             let folder = folder.filter(|f| f.is_dir());
             div()
@@ -290,7 +277,6 @@ impl KynexApp {
         div().flex().flex_col().gap_1().pt_1().mt_1().border_t_1().border_color(t.border_variant).children(rows)
     }
 
-    /// A click that asks before freeing `parts` of session `u`.
     fn ask_on_click(
         u: &SessionUse,
         parts: &'static [Part],
@@ -305,7 +291,6 @@ impl KynexApp {
     }
 }
 
-/// A number for an element id from a session id.
 fn id_hash(id: &str) -> usize {
     id.bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize))
 }

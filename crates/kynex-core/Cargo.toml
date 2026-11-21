@@ -17,7 +17,6 @@ gix.workspace = true
 image.workspace = true
 jiff.workspace = true
 notify.workspace = true
-pulldown-cmark.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -33,7 +32,7 @@ resvg = { version = "0.46", default-features = false, features = ["text", "syste
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = "1"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Media_Audio", "Win32_Security", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Power", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 # The same as gpui's, for the shell's COM interfaces: the taskbar badge and shortcut app IDs (attention.rs).
 windows = { version = "0.62", features = [
     "Win32_Foundation",
@@ -50,10 +49,6 @@ windows = { version = "0.62", features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1", features = ["keychain"] }
-# The same as gpui's, for the Dock badge (attention.rs).
-objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSResponder", "NSSound"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
 
 [target.'cfg(unix)'.dependencies]
 # poll / recv for the control socket (control/server.rs), and Linux's own calls.

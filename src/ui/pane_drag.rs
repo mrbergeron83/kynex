@@ -1,6 +1,6 @@
-//! What follows the pointer while a pane is dragged by its handle: onto another pane to
-//! move it there, or onto a pane tab. Here rather than in the app so views with a bar of
-//! their own (the Git pane, terminals) can make that bar the handle.
+//! What follows the pointer while a pane is dragged by its handle onto another pane to
+//! move or swap it. Here rather than in the app so views with a bar of their own (the Git
+//! pane, terminals) can make that bar the handle.
 
 use gpui::{Context, SharedString, Window, prelude::*};
 use kynex_core::layout::PaneId;

@@ -7,12 +7,11 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use gpui::{AnyElement, Context, Window, div, prelude::*};
-use kynex_core::session::Kind;
 use kynex_core::toasts::Toast;
 
 use super::KynexApp;
 use super::keys::{ListArchive, ListDelete, ListDown, ListOpen, ListRename, ListUp};
-use super::session_rows::key_uid;
+use super::session_rows::key_agent;
 use crate::theme::theme;
 use crate::ui::{divider, menu_item};
 
@@ -23,16 +22,16 @@ type Action = Box<dyn Fn(&mut KynexApp, &mut Window, &mut Context<KynexApp>)>;
 pub(super) const TIDY_AGES: [(u32, &str); 3] = [(30, "30 days"), (90, "90 days"), (365, "a year")];
 
 impl KynexApp {
-    /// The folder and kind of the shown session: the workspace on show.
-    pub(super) fn panel_folder(&self) -> Option<(Kind, std::path::PathBuf)> {
-        self.focused_key().and_then(|k| self.session_by_key(k)).map(|s| (s.kind, s.cwd.clone()))
+    /// The folder of the active workspace on show.
+    pub(super) fn panel_folder(&self) -> Option<PathBuf> {
+        self.workspace_cwd()
     }
 
     /// The right-click menu for several picked sessions.
     pub(super) fn sessions_menu_items(&mut self, ids: &[String], cx: &mut Context<Self>) -> Vec<AnyElement> {
         let folder = self.organize.selection_cwd.clone();
         let folder = folder.or_else(|| ids.first().and_then(|id| self.folder_of_listed(id)));
-        let Some(cwd) = folder.or_else(|| self.panel_folder().map(|(_, c)| c)) else { return Vec::new() };
+        let Some(cwd) = folder.or_else(|| self.panel_folder()) else { return Vec::new() };
         let groups = self.groups_for(&cwd).clone();
         let n = ids.len();
         let t = theme(cx).clone();
@@ -130,12 +129,11 @@ impl KynexApp {
         items
     }
 
-    /// The panel header's menu: grouping by provider, and with no workspace rows to carry
-    /// it, tidying the shown workspace's sessions.
+    /// The panel header's menu: grouping by provider and showing archived sessions.
     pub(super) fn sessions_panel_menu_items(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let by_provider = self.saved.sessions_by_provider;
         let show_archived = self.saved.sessions_show_archived;
-        let mut items = vec![
+        vec![
             menu_item("sessions-by-provider", "Group by provider", by_provider, cx)
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.menu = None;
@@ -152,18 +150,10 @@ impl KynexApp {
                     cx.notify();
                 }))
                 .into_any_element(),
-        ];
-        // A project's workspaces have rows, whose menus tidy; chat has none.
-        let rows = self.workspace_project().is_some();
-        if let Some((_, cwd)) = self.panel_folder().filter(|_| !rows) {
-            items.push(div().my_1().child(divider(cx)).into_any_element());
-            items.extend(self.tidy_menu_items(&cwd, cx));
-        }
-        items
+        ]
     }
 
-    /// Tidying a workspace's sessions: archiving the ones not used for a while, and purging
-    /// the archived ones (on a workspace's menu, or the panel's with no workspace rows).
+    /// Tidying a workspace's sessions: archiving old ones and purging archived ones.
     pub(super) fn tidy_menu_items(&mut self, cwd: &Path, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut items: Vec<AnyElement> = TIDY_AGES
             .iter()
@@ -182,7 +172,6 @@ impl KynexApp {
         items
     }
 
-    /// When each listed session of `cwd` was last used, in unix seconds.
     fn listed_times(&self, cwd: &Path) -> Vec<(String, i64)> {
         let secs = |t: std::time::SystemTime| t.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
         self.sessions
@@ -195,8 +184,6 @@ impl KynexApp {
         std::time::SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
     }
 
-    /// Archives the listed sessions of `cwd` not used in `days`; pinned and grouped ones
-    /// stay. Says how many went. A folded workspace's list is read first.
     pub(super) fn archive_older_than(&mut self, cwd: &Path, days: u32, cx: &mut Context<Self>) {
         let dir = cwd.to_path_buf();
         self.with_list(cwd, cx, move |this, cx| this.archive_listed_older_than(&dir, days, cx));
@@ -215,9 +202,6 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Purging: asks to delete the archived sessions of `cwd` (those not used in `days`,
-    /// if given); open ones are kept. A folded workspace's list is read first, and the
-    /// workspace opens in the tree so the sessions to delete show.
     pub(super) fn purge_archived(&mut self, cwd: &Path, days: Option<u32>, cx: &mut Context<Self>) {
         let dir = cwd.to_path_buf();
         self.with_list(cwd, cx, move |this, cx| this.purge_listed_archived(&dir, days, cx));
@@ -227,9 +211,12 @@ impl KynexApp {
         let listed = self.listed_times(cwd);
         let cutoff = days.map(|d| Self::now_secs() - i64::from(d) * 86_400);
         let open: Vec<String> = self
-            .live_mut()
-            .map(|l| l.sessions.iter().filter_map(|s| s.session_id.clone()).collect())
-            .unwrap_or_default();
+            .tiles
+            .values()
+            .flat_map(|t| t.agent_panes())
+            .filter_map(|(_, m)| m.session_id.clone())
+            .chain(self.agent_instances.values().filter_map(|a| a.meta.session_id.clone()))
+            .collect();
         let (ids, skipped) = self.groups_for(cwd).purge_candidates(&listed, cutoff, &open);
         let kept = match skipped {
             0 => String::new(),
@@ -246,12 +233,11 @@ impl KynexApp {
             }
             self.toast(Toast::info(msg));
         } else {
-            // The sessions to delete show while it asks.
             if !self.saved.sessions_show_archived {
                 self.saved.sessions_show_archived = true;
                 self.save();
             }
-            let shown = self.panel_folder().is_some_and(|(_, c)| kynex_core::workspace::same_folder(&c, cwd));
+            let shown = self.panel_folder().is_some_and(|c| kynex_core::workspace::same_folder(&c, cwd));
             if !shown {
                 self.edit_groups(cwd, |g| g.tree_open = true);
             }
@@ -263,7 +249,6 @@ impl KynexApp {
         cx.notify();
     }
 
-    /// Purging a workspace's archive: all of it, or the older ones.
     pub(super) fn purge_menu_items(&mut self, cwd: &Path, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let all_cwd = cwd.to_path_buf();
         let mut items = vec![
@@ -286,8 +271,6 @@ impl KynexApp {
         items
     }
 
-    /// Picks `ids` of the workspace at `cwd` and asks to delete them, with the panel's one
-    /// confirmation.
     pub(super) fn ask_delete_sessions(&mut self, cwd: &Path, ids: &[String]) {
         self.organize.selection.clear();
         self.organize.selection.on = true;
@@ -296,16 +279,13 @@ impl KynexApp {
         self.organize.confirm_bulk_delete = true;
     }
 
-    /// The workspace the list's cursor is in, and the row it's on.
     fn cursor_row(&self) -> Option<(PathBuf, String)> {
         let id = self.organize.cursor.as_ref()?;
         self.organize.shown.iter().find(|(_, s)| s == id).cloned()
     }
 
-    /// The sessions the list's keys act on, and their workspace: the picked ones, else the
-    /// one under the cursor. New sessions (not listed yet) can't be archived or deleted.
     fn list_targets(&self) -> Option<(PathBuf, Vec<String>)> {
-        let listed = |id: &String| key_uid(id).is_none();
+        let listed = |id: &String| key_agent(id).is_none();
         let picked = &self.organize.selection.ids;
         match &self.organize.selection_cwd {
             Some(cwd) if !picked.is_empty() => {
@@ -338,29 +318,25 @@ impl KynexApp {
         self.list_step(1, cx);
     }
 
-    /// Enter: opens the session under the cursor, in its workspace.
+    /// Enter: opens the session or live instance under the cursor, in its workspace.
     pub(super) fn list_open(&mut self, _: &ListOpen, window: &mut Window, cx: &mut Context<Self>) {
         let Some((cwd, id)) = self.cursor_row() else { return };
-        if let Some(uid) = key_uid(&id) {
-            return self.focus_open_session(uid, window, cx);
+        if let Some(agent_id) = key_agent(&id) {
+            return self.go_to_agent(agent_id, window, cx);
         }
-        let Some((kind, here)) = self.panel_folder() else { return };
-        if kind == Kind::Code && !kynex_core::workspace::same_folder(&here, &cwd) {
-            return self.show_in_workspace(&cwd, &id, window, cx);
+        let Some(here) = self.panel_folder() else { return };
+        if !kynex_core::workspace::same_folder(&here, &cwd) {
+            self.select_workspace(&cwd, cx);
         }
-        if self.focused_key().and_then(|k| self.session_by_key(k)).and_then(|s| s.session_id.as_deref())
-            != Some(id.as_str())
-        {
-            self.switch_session(kind, cwd, id);
-        }
+        self.switch_session(cwd, id, window, cx);
         self.focus_input(window, cx);
         cx.notify();
     }
 
     /// F2: renames the session under the cursor.
     pub(super) fn list_rename(&mut self, _: &ListRename, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((cwd, id)) = self.cursor_row().filter(|(_, id)| key_uid(id).is_none()) else { return };
-        self.start_session_rename(cwd, id, false, window, cx);
+        let Some((cwd, id)) = self.cursor_row().filter(|(_, id)| key_agent(id).is_none()) else { return };
+        self.start_session_rename(cwd, id, window, cx);
     }
 
     /// Delete: archives the picked sessions (or the one under the cursor);
