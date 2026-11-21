@@ -134,6 +134,8 @@ fn run_hook(provider: &str, event: Option<&str>) -> i32 {
             state: report.state,
             session_id: report.session_id,
             detail: report.detail,
+            subagent: report.subagent,
+            background: report.background,
         };
         let _ = call(&req, |_| {});
     }
