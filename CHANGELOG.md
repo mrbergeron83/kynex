@@ -5,12 +5,17 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.36] - 2026-11-20
+
+### Fixed
+
+- Antigravity sessions no longer prompt for read-only PowerShell script blocks (`ForEach-Object { ... }`, `Where-Object { ... }`), chained commands combining read-only and allowed rules, `fetch` tools, or in `Auto` mode; chained commands now also offer "Allow for session" suggestions.
+
 ## [0.0.35] - 2026-11-20
 
 ### Fixed
 
 - Sessions that ran on OpenRouter or Antigravity reopen on it after an update or restart, instead of falling back to Anthropic for good.
-- Antigravity sessions no longer prompt for read-only PowerShell script blocks (`ForEach-Object { ... }`, `Where-Object { ... }`), chained commands combining read-only and allowed rules, `fetch` tools, or in `Auto` mode; chained commands now also offer "Allow for session" suggestions.
 - Antigravity sessions no longer prompt for read-only shell commands with `2>&1` / `2>$null`, quoted `|` patterns (like `git grep "a\|b"`), read-only `gh` commands, or `read` / `search` tools.
 - Suppress "Go to session" and background task completion toasts when the Agents pane is open in the current workspace (#511).
 - Permission prompts no longer duplicate a `Bash` command in the description or overflow the bottom of the pane on long descriptions.
@@ -1045,7 +1050,9 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.34...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.36...HEAD
+[0.0.36]: https://github.com/mrbergeron83/kynex/compare/v0.0.35...v0.0.36
+[0.0.35]: https://github.com/mrbergeron83/kynex/compare/v0.0.34...v0.0.35
 [0.0.34]: https://github.com/mrbergeron83/kynex/compare/v0.0.33...v0.0.34
 [0.0.33]: https://github.com/mrbergeron83/kynex/compare/v0.0.32...v0.0.33
 [0.0.32]: https://github.com/mrbergeron83/kynex/compare/v0.0.31...v0.0.32
