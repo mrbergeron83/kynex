@@ -28,6 +28,11 @@ pub struct HookReport {
     pub state: Option<HookState>,
     pub session_id: Option<String>,
     pub detail: Option<String>,
+    /// True when the CLI explicitly indicates this hook came from a child/subagent session.
+    pub subagent: bool,
+    /// True when a `Stop` hook ended a turn while background tasks (such as subagents) are still
+    /// running (`fullyIdle: false`).
+    pub background: bool,
 }
 
 /// Parses the JSON payload a CLI wrote to stdin when running `knx hook <provider> [event]`.
@@ -68,13 +73,15 @@ fn parse_claude(event_hint: Option<&str>, v: &Value) -> HookReport {
         "SessionEnd" => (Some(HookState::Idle), None),
         _ => (None, None),
     };
-    HookReport { state, session_id, detail }
+    HookReport { state, session_id, detail, subagent: false, background: false }
 }
 
 fn parse_agy(event_hint: Option<&str>, v: &Value) -> HookReport {
     let event = v["hookEventName"].as_str().or(event_hint).unwrap_or("");
     let session_id = clean_id(v["conversationId"].as_str());
     let tool = clean_text(v["toolCall"]["name"].as_str());
+    let subagent = is_subagent_payload(v);
+    let mut background = false;
     let (state, detail) = match event {
         "SessionStart" => (Some(HookState::Idle), None),
         "PreInvocation" => (Some(HookState::Working), Some("Thinking".into())),
@@ -82,16 +89,21 @@ fn parse_agy(event_hint: Option<&str>, v: &Value) -> HookReport {
         "PostInvocation" => (Some(HookState::Working), None),
         "Stop" => {
             let reason = v["terminationReason"].as_str().unwrap_or("");
-            let detail = match reason {
-                "ERROR" => "Stopped on an error",
-                "USER_CANCELED" => "Stopped",
-                _ => "Finished",
-            };
-            (Some(HookState::Done), Some(detail.into()))
+            if v["fullyIdle"].as_bool() == Some(false) && !matches!(reason, "ERROR" | "USER_CANCELED") {
+                background = true;
+                (Some(HookState::Working), Some("Working in background".into()))
+            } else {
+                let detail = match reason {
+                    "ERROR" => "Stopped on an error",
+                    "USER_CANCELED" => "Stopped",
+                    _ => "Finished",
+                };
+                (Some(HookState::Done), Some(detail.into()))
+            }
         }
         _ => (None, None),
     };
-    HookReport { state, session_id, detail }
+    HookReport { state, session_id, detail, subagent, background }
 }
 
 fn parse_generic(event_hint: Option<&str>, v: &Value) -> HookReport {
@@ -105,7 +117,16 @@ fn parse_generic(event_hint: Option<&str>, v: &Value) -> HookReport {
         _ => None,
     };
     let detail = clean_text(v["detail"].as_str().or_else(|| v["message"].as_str()));
-    HookReport { state, session_id, detail }
+    HookReport { state, session_id, detail, subagent: is_subagent_payload(v), background: false }
+}
+
+fn is_subagent_payload(v: &Value) -> bool {
+    v["isSubagent"].as_bool() == Some(true)
+        || v["is_subagent"].as_bool() == Some(true)
+        || v["nestingDepth"].as_u64().is_some_and(|d| d > 0)
+        || v["nesting_depth"].as_u64().is_some_and(|d| d > 0)
+        || v["parentConversationId"].as_str().is_some_and(|s| !s.trim().is_empty())
+        || v["parent_conversation_id"].as_str().is_some_and(|s| !s.trim().is_empty())
 }
 
 fn clean_id(s: Option<&str>) -> Option<String> {
@@ -295,7 +316,13 @@ mod tests {
         let start = parse_payload("claude", None, r#"{"hook_event_name":"SessionStart","session_id":"abc-123"}"#);
         assert_eq!(
             start,
-            HookReport { state: Some(HookState::Idle), session_id: Some("abc-123".into()), detail: None }
+            HookReport {
+                state: Some(HookState::Idle),
+                session_id: Some("abc-123".into()),
+                detail: None,
+                subagent: false,
+                background: false,
+            }
         );
 
         let prompt = parse_payload("claude", None, r#"{"hook_event_name":"UserPromptSubmit","session_id":"abc-123"}"#);
@@ -350,6 +377,40 @@ mod tests {
         );
         assert_eq!(stop.state, Some(HookState::Done));
         assert_eq!(stop.detail.as_deref(), Some("Finished"));
+        assert!(!stop.background);
+
+        let bg_stop = parse_payload(
+            "agy",
+            None,
+            r#"{"hookEventName":"Stop","conversationId":"conv-9","terminationReason":"NO_TOOL_CALL","fullyIdle":false}"#,
+        );
+        assert_eq!(bg_stop.state, Some(HookState::Working));
+        assert_eq!(bg_stop.detail.as_deref(), Some("Working in background"));
+        assert!(bg_stop.background);
+
+        let canceled_stop = parse_payload(
+            "agy",
+            None,
+            r#"{"hookEventName":"Stop","conversationId":"conv-9","terminationReason":"USER_CANCELED","fullyIdle":false}"#,
+        );
+        assert_eq!(canceled_stop.state, Some(HookState::Done));
+        assert_eq!(canceled_stop.detail.as_deref(), Some("Stopped"));
+        assert!(!canceled_stop.background);
+
+        let child = parse_payload(
+            "agy",
+            None,
+            r#"{"hookEventName":"SessionStart","conversationId":"sub-1","parentConversationId":"conv-9"}"#,
+        );
+        assert!(child.subagent);
+        assert_eq!(child.session_id.as_deref(), Some("sub-1"));
+
+        let nested = parse_payload(
+            "agy",
+            None,
+            r#"{"hookEventName":"PreInvocation","conversationId":"sub-2","nestingDepth":1}"#,
+        );
+        assert!(nested.subagent);
 
         assert_eq!(stdout_response("agy"), Some("{}"));
         assert_eq!(stdout_response("claude"), None);

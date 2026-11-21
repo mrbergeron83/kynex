@@ -99,8 +99,8 @@ impl KynexApp {
     ) -> Result<Value, Option<String>> {
         let said = |e: &str| Some(e.to_string());
         match request {
-            Request::Hook { pane, provider, state, session_id, detail } => {
-                let report = HookReport { state, session_id, detail };
+            Request::Hook { pane, provider, state, session_id, detail, subagent, background } => {
+                let report = HookReport { state, session_id, detail, subagent, background };
                 self.handle_hook_event(pane, &provider, report, cx);
                 Ok(json!({ "ok": true }))
             }

@@ -24,6 +24,10 @@ pub enum Request {
         session_id: Option<String>,
         #[serde(default)]
         detail: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        subagent: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        background: bool,
     },
     ProjectList,
     ProjectCreate {
@@ -275,6 +279,8 @@ pub(crate) mod tests {
                 state: Some(HookState::Working),
                 session_id: Some("s1".into()),
                 detail: Some("Using Bash".into()),
+                subagent: false,
+                background: false,
             },
             Request::ProjectList,
             Request::ProjectCreate { path: "/a".into() },

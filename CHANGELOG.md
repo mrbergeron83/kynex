@@ -16,6 +16,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Improved terminal rendering performance under heavy TUI output with O(1) snapshot run accounting, 125 Hz burst pacing, per-row shaped-line caching, and real cell pixel dimensions on resize.
 - Reduced idle CPU, polling, and per-frame work: looping animations pause completely while unfocused/minimized, the resources footer and git/worktree pollers park when hidden or unfocused, the toast timer stops when nothing is aging (and only ticks at 60 Hz while animating out), the sessions tree caches indexed sections instead of rebuilding every frame, and startup probes only the bundled label font instead of enumerating all system fonts (#333).
 
+### Fixed
+
+- Antigravity (`agy`) subagents no longer hijack the parent pane's session ID or add separate entries to session history, while keeping the parent agent marked as working in the Agents pane until its subagents and background tasks finish (#528).
+
 ## [0.0.37] - 2026-11-21
 
 ### Added

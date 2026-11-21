@@ -347,6 +347,10 @@ impl KynexApp {
             model: default_model.clone(),
             title: None,
         };
+        let mut tracker = Tracker::default();
+        if let Some(sid) = &resume_session {
+            tracker.set_primary_session(sid.clone());
+        }
         self.agent_instances.insert(
             agent_id,
             LiveAgent {
@@ -356,7 +360,7 @@ impl KynexApp {
                 view: None,
                 starting: true,
                 error: None,
-                tracker: Tracker::default(),
+                tracker,
             },
         );
         self.pane_agents.insert(pane, agent_id);
@@ -571,18 +575,17 @@ impl KynexApp {
         let mut layout_dirty = false;
         let (ws, prov_id, was, now, meta_snapshot, session_changed) = {
             let Some(inst) = self.agent_instances.get_mut(&agent_id) else { return };
+            let prov_id = inst.meta.provider.clone().unwrap_or_else(|| agent_cli::normalize_provider_id(provider));
+            let was = inst.tracker.state();
+            let outcome = inst.tracker.on_hook_for(&prov_id, &report, looking);
             let mut session_changed = None;
-            if let Some(sid) = &report.session_id
+            if let Some(sid) = outcome.session_id
                 && inst.meta.session_id.as_deref() != Some(sid.as_str())
             {
                 inst.meta.session_id = Some(sid.clone());
-                let prov = inst.meta.provider.clone().unwrap_or_else(|| agent_cli::normalize_provider_id(provider));
-                session_changed = Some((sid.clone(), prov));
+                session_changed = Some((sid, prov_id.clone()));
             }
-            let was = inst.tracker.state();
-            let now = inst.tracker.on_hook(&report, looking);
-            let prov_id = inst.meta.provider.clone().unwrap_or_else(|| provider.to_string());
-            (inst.cwd.clone(), prov_id, was, now, inst.meta.clone(), session_changed)
+            (inst.cwd.clone(), prov_id, was, outcome.state, inst.meta.clone(), session_changed)
         };
 
         if let Some((sid, prov)) = session_changed {
@@ -679,6 +682,7 @@ impl KynexApp {
                     let now = inst.tracker.update(detected, looking);
                     if let Some(r) = &resume {
                         inst.meta.session_id = Some(r.clone());
+                        inst.tracker.set_primary_session(r.clone());
                     }
                     (was, now, inst.meta.clone())
                 };
