@@ -2,12 +2,14 @@
 //! quads, each styled run as one shaped line pinned to the cell grid, then the
 //! cursor. Sizing happens here too: the grid follows the element's bounds.
 
+use std::sync::Arc;
+
 use gpui::{
     App, Bounds, Element, ElementId, ElementInputHandler, Entity, FocusHandle, Font, FontStyle, FontWeight,
     GlobalElementId, Hsla, IntoElement, LayoutId, PaintQuad, Pixels, Rgba, ShapedLine, SharedString,
     StrikethroughStyle, Style, TextRun, UnderlineStyle, Window, fill, font, outline, point, px, relative, size,
 };
-use kynex_core::terminal::{CursorStyle, Palette, Rgb, Size};
+use kynex_core::terminal::{CursorStyle, Palette, Rgb, Row, Size};
 
 use super::view::TerminalView;
 use crate::theme::{Palette as Theme, mono, theme};
@@ -20,6 +22,19 @@ const PADDING: gpui::Rems = gpui::Rems(10. / 16.);
 
 fn font_size(window: &Window) -> Pixels {
     FONT_SIZE.to_pixels(window.rem_size())
+}
+
+struct CachedRow {
+    row: Row,
+    runs: Vec<(usize, Arc<ShapedLine>)>,
+}
+
+/// Per-row cache of shaped lines so unchanged rows skip text shaping on heavy TUI updates.
+#[derive(Default)]
+pub(super) struct ShapeCache {
+    font_size: Pixels,
+    cell_width: Pixels,
+    rows: Vec<CachedRow>,
 }
 
 pub struct TerminalElement {
@@ -36,7 +51,8 @@ impl TerminalElement {
 
 pub struct Prepaint {
     backgrounds: Vec<PaintQuad>,
-    lines: Vec<(gpui::Point<Pixels>, ShapedLine)>,
+    lines: Vec<(gpui::Point<Pixels>, Arc<ShapedLine>)>,
+    underlines: Vec<PaintQuad>,
     cursor: Option<PaintQuad>,
     line_height: Pixels,
 }
@@ -99,67 +115,116 @@ impl Element for TerminalElement {
             columns: (inner.width / cell.width).floor().max(2.) as usize,
             lines: (inner.height / cell.height).floor().max(1.) as usize,
         };
+        let cell_w = f32::from(cell.width).round().max(1.) as u16;
+        let cell_h = f32::from(cell.height).round().max(1.) as u16;
         let origin = bounds.origin + point(padding, padding);
         let t = theme(cx).clone();
         let palette = palette(&t);
-        let snapshot = self.view.update(cx, |view, _| {
-            view.layout = Some((origin, cell));
-            view.resize(grid);
-            view.snapshot(&palette)
-        });
-        let Some(snapshot) = snapshot else {
-            return Prepaint { backgrounds: Vec::new(), lines: Vec::new(), cursor: None, line_height: cell.height };
-        };
-
         let base = font(mono());
+
         let mut backgrounds = Vec::new();
         let mut lines = Vec::new();
-        for (row_ix, row) in snapshot.rows.iter().enumerate() {
-            let y = origin.y + cell.height * row_ix as f32;
-            let mut at = 0;
-            for run in &row.runs {
-                let text = &row.text[at..at + run.len];
-                at += run.len;
-                let x = origin.x + cell.width * run.column as f32;
-                if let Some(bg) = run.bg {
-                    backgrounds.push(fill(
-                        Bounds::new(point(x, y), size(cell.width * run.cells as f32, cell.height)),
-                        hsla(bg),
-                    ));
-                }
-                if text.trim().is_empty() && !run.underline && !run.strike {
-                    continue;
-                }
-                let color = hsla(run.fg);
-                let style = TextRun {
-                    len: text.len(),
-                    font: Font {
-                        weight: if run.bold { FontWeight::BOLD } else { FontWeight::NORMAL },
-                        style: if run.italic { FontStyle::Italic } else { FontStyle::Normal },
-                        ..base.clone()
-                    },
-                    color,
-                    background_color: None,
-                    underline: run.underline.then_some(UnderlineStyle {
-                        color: Some(color),
-                        thickness: px(1.),
-                        wavy: false,
-                    }),
-                    strikethrough: run.strike.then_some(StrikethroughStyle { color: Some(color), thickness: px(1.) }),
-                };
-                // Pin every glyph to the grid; a wide character spans two cells.
-                let width = if run.wide { cell.width * 2. } else { cell.width };
-                let shaped = window.text_system().shape_line(
-                    SharedString::from(text.to_string()),
-                    font_size,
-                    &[style],
-                    Some(width),
-                );
-                lines.push((point(x, y), shaped));
-            }
-        }
+        let mut underlines = Vec::new();
 
-        let cursor = snapshot.cursor.map(|c| {
+        let cursor_info = self.view.update(cx, |view, _| {
+            view.layout = Some((origin, cell));
+            view.resize_with_cell(grid, cell_w, cell_h);
+            let snapshot = view.snapshot(&palette)?;
+            let cache = &mut view.shape_cache;
+            if cache.font_size != font_size || cache.cell_width != cell.width {
+                cache.font_size = font_size;
+                cache.cell_width = cell.width;
+                cache.rows.clear();
+            }
+            cache.rows.truncate(snapshot.rows.len());
+
+            for (row_ix, row) in snapshot.rows.into_iter().enumerate() {
+                let y = origin.y + cell.height * row_ix as f32;
+                for run in &row.runs {
+                    if let Some(bg) = run.bg {
+                        let x = origin.x + cell.width * run.column as f32;
+                        backgrounds.push(fill(
+                            Bounds::new(point(x, y), size(cell.width * run.cells as f32, cell.height)),
+                            hsla(bg),
+                        ));
+                    }
+                }
+                let cached = cache.rows.get(row_ix).is_some_and(|prev| prev.row == row);
+                if !cached {
+                    let mut shaped_row = Vec::new();
+                    let mut at = 0;
+                    for run in &row.runs {
+                        let text = &row.text[at..at + run.len];
+                        at += run.len;
+                        if text.trim().is_empty() && !run.underline && !run.strike {
+                            continue;
+                        }
+                        let color = hsla(run.fg);
+                        let style = TextRun {
+                            len: text.len(),
+                            font: Font {
+                                weight: if run.bold { FontWeight::BOLD } else { FontWeight::NORMAL },
+                                style: if run.italic { FontStyle::Italic } else { FontStyle::Normal },
+                                ..base.clone()
+                            },
+                            color,
+                            background_color: None,
+                            underline: run.underline.then_some(UnderlineStyle {
+                                color: Some(color),
+                                thickness: px(1.),
+                                wavy: false,
+                            }),
+                            strikethrough: run
+                                .strike
+                                .then_some(StrikethroughStyle { color: Some(color), thickness: px(1.) }),
+                        };
+                        // Pin every glyph to the grid; a wide character spans two cells.
+                        let width = if run.wide { cell.width * 2. } else { cell.width };
+                        let shaped = Arc::new(window.text_system().shape_line(
+                            SharedString::from(text.to_string()),
+                            font_size,
+                            &[style],
+                            Some(width),
+                        ));
+                        shaped_row.push((run.column, shaped));
+                    }
+                    let entry = CachedRow { row, runs: shaped_row };
+                    if row_ix < cache.rows.len() {
+                        cache.rows[row_ix] = entry;
+                    } else {
+                        cache.rows.push(entry);
+                    }
+                }
+                for (column, shaped) in &cache.rows[row_ix].runs {
+                    let x = origin.x + cell.width * *column as f32;
+                    lines.push((point(x, y), Arc::clone(shaped)));
+                }
+            }
+
+            if let Some(link) = &view.hovered_link {
+                let bar = device_px(1., window);
+                for span in &link.spans {
+                    let x = origin.x + cell.width * span.start_col as f32;
+                    let y = origin.y + cell.height * (span.line + 1) as f32 - bar;
+                    let w = cell.width * span.end_col.saturating_sub(span.start_col) as f32;
+                    underlines.push(fill(Bounds::new(point(x, y), size(w, bar)), t.accent));
+                }
+            }
+
+            Some(snapshot.cursor)
+        });
+
+        let Some(cursor_opt) = cursor_info else {
+            return Prepaint {
+                backgrounds: Vec::new(),
+                lines: Vec::new(),
+                underlines: Vec::new(),
+                cursor: None,
+                line_height: cell.height,
+            };
+        };
+
+        let cursor = cursor_opt.map(|c| {
             let at = origin + point(cell.width * c.column as f32, cell.height * c.line as f32);
             let color = hsla(palette.cursor);
             let block = Bounds::new(at, cell);
@@ -173,7 +238,7 @@ impl Element for TerminalElement {
                 _ => outline(block, color, gpui::BorderStyle::Solid),
             }
         });
-        Prepaint { backgrounds, lines, cursor, line_height: cell.height }
+        Prepaint { backgrounds, lines, underlines, cursor, line_height: cell.height }
     }
 
     fn paint(
@@ -197,6 +262,9 @@ impl Element for TerminalElement {
             }
             for (origin, line) in &prepaint.lines {
                 let _ = line.paint(*origin, prepaint.line_height, gpui::TextAlign::Left, None, window, cx);
+            }
+            for quad in prepaint.underlines.drain(..) {
+                window.paint_quad(quad);
             }
         });
     }

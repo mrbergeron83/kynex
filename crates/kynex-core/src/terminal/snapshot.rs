@@ -232,11 +232,12 @@ pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette, find
         let extend = row.runs.last().is_some_and(|last| {
             !run.wide && !last.wide && last.column + last.cells == run.column && same_style(last, &run)
         });
+        let before = row.text.len();
         row.text.push(c);
         if let Some(extra) = cell.zerowidth() {
             row.text.extend(extra);
         }
-        let added = row.text.len() - row.runs.iter().map(|r| r.len).sum::<usize>();
+        let added = row.text.len() - before;
         if extend {
             let last = row.runs.last_mut().unwrap();
             last.len += added;

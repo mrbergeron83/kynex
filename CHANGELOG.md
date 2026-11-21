@@ -5,6 +5,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Native terminal support for the Kitty keyboard protocol (`CSI u` / `Shift+Enter`, `Ctrl+Enter`, `Ctrl+Alt`, `F1`–`F4` modifiers), focus reporting (`DECSET 1004`), alternate-screen mouse & wheel forwarding, and `Ctrl+Click` (`Cmd+Click` on macOS) for URLs, OSC 8 hyperlinks, and local file paths (opening in Kynex's file viewer at the line).
+
+### Changed
+
+- Improved terminal rendering performance under heavy TUI output with O(1) snapshot run accounting, 125 Hz burst pacing, per-row shaped-line caching, and real cell pixel dimensions on resize.
+
 ## [0.0.37] - 2026-11-21
 
 ### Added
