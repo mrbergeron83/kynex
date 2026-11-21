@@ -38,10 +38,30 @@ const READERS: &[&str] = &[
     "grep",
     "findstr",
     "find",
-    "where.exe",
+    "where",
     "get-command",
     "gcm",
     "which",
+    "stat",
+    "file",
+    "tree",
+    "du",
+    "df",
+    "uname",
+    "id",
+    "realpath",
+    "readlink",
+    "dirname",
+    "basename",
+    "diff",
+    "uniq",
+    "cut",
+    "tr",
+    "nl",
+    "bat",
+    "jq",
+    "sha256sum",
+    "md5sum",
     // Shaping output.
     "select-object",
     "select",
@@ -107,18 +127,108 @@ pub fn is_read_only(command: &str) -> bool {
     if command.is_empty() || command.len() > 2000 {
         return false;
     }
-    // Writing to a file, running a subexpression or a script block, escaping
-    // (PowerShell's backtick, a newline that starts another command).
-    if command.contains(['>', '`', '\n', '\r', '{', '}']) || command.contains("$(") || command.contains("@(") {
+    let command = strip_stderr_redirects(command);
+    // Running a subexpression or a script block, escaping (PowerShell's backtick,
+    // a newline that starts another command).
+    if command.contains(['`', '\n', '\r', '{', '}']) || command.contains("$(") || command.contains("@(") {
         return false;
     }
-    // `&&` and `||` chain commands; a lone `&` is PowerShell's call operator (or
-    // bash's background), which runs whatever follows.
-    let chained = command.replace("&&", ";").replace("||", ";");
-    if chained.contains('&') {
+    let Some(parts) = split_parts(&command) else {
         return false;
+    };
+    !parts.is_empty() && parts.iter().all(|part| part_reads(part))
+}
+
+/// Splits `command` on `|`, `;`, `&&`, and `||` outside quotes.
+/// Returns `None` on unclosed quotes, redirection (`>`), or a lone `&` outside quotes.
+fn split_parts(command: &str) -> Option<Vec<&str>> {
+    let mut parts = Vec::new();
+    let bytes = command.as_bytes();
+    let mut quote: Option<u8> = None;
+    let mut start = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match (quote, b) {
+            (Some(q), c) if c == q => {
+                quote = None;
+                i += 1;
+            }
+            (Some(_), _) => {
+                i += 1;
+            }
+            (None, b'"' | b'\'') => {
+                quote = Some(b);
+                i += 1;
+            }
+            (None, b'>') => return None,
+            (None, b'|') => {
+                let part = command[start..i].trim();
+                if !part.is_empty() {
+                    parts.push(part);
+                }
+                i += if bytes.get(i + 1) == Some(&b'|') { 2 } else { 1 };
+                start = i;
+            }
+            (None, b';') => {
+                let part = command[start..i].trim();
+                if !part.is_empty() {
+                    parts.push(part);
+                }
+                i += 1;
+                start = i;
+            }
+            (None, b'&') => {
+                if bytes.get(i + 1) != Some(&b'&') {
+                    return None;
+                }
+                let part = command[start..i].trim();
+                if !part.is_empty() {
+                    parts.push(part);
+                }
+                i += 2;
+                start = i;
+            }
+            (None, _) => {
+                i += 1;
+            }
+        }
     }
-    chained.split(['|', ';']).filter(|p| !p.trim().is_empty()).all(|part| part_reads(part.trim()))
+    if quote.is_some() {
+        return None;
+    }
+    let tail = command[start..].trim();
+    if !tail.is_empty() {
+        parts.push(tail);
+    }
+    Some(parts)
+}
+
+/// Removes harmless stderr-only redirections (`2>&1`, `2>$null`, `2>/dev/null`)
+/// when they stand as their own tokens, so they don't trip the `>`/`&` check.
+fn strip_stderr_redirects(command: &str) -> String {
+    let mut out = String::with_capacity(command.len());
+    let bytes = command.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let at_boundary = i == 0 || bytes[i - 1].is_ascii_whitespace();
+        if at_boundary {
+            let rest = &command[i..];
+            let matched = ["2>&1", "2>$null", "2>/dev/null"].iter().find(|pat| {
+                rest.len() >= pat.len()
+                    && rest[..pat.len()].eq_ignore_ascii_case(pat)
+                    && rest.as_bytes().get(pat.len()).is_none_or(|b| matches!(b, b' ' | b'\t' | b'|' | b';' | b'&'))
+            });
+            if let Some(pat) = matched {
+                i += pat.len();
+                continue;
+            }
+        }
+        let ch = command[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
 }
 
 /// Whether one command, with no separators in it, only reads.
@@ -126,6 +236,7 @@ fn part_reads(part: &str) -> bool {
     let words = words(part);
     let Some(first) = words.first() else { return false };
     let first = first.to_ascii_lowercase();
+    let first = first.strip_suffix(".exe").unwrap_or(&first);
     // Anything that runs other code, writes as it goes, or never ends.
     let risky = |w: &String| {
         let w = w.to_ascii_lowercase();
@@ -144,7 +255,25 @@ fn part_reads(part: &str) -> bool {
     if first == "git" {
         return git_reads(&words[1..]);
     }
-    READERS.contains(&first.as_str())
+    if first == "gh" {
+        return gh_reads(&words[1..]);
+    }
+    READERS.contains(&first)
+}
+
+/// Whether `gh <args>` only reads.
+fn gh_reads(args: &[String]) -> bool {
+    let Some(first) = args.first().map(|s| s.to_ascii_lowercase()) else { return false };
+    let second = args.get(1).map(|s| s.to_ascii_lowercase());
+    match (first.as_str(), second.as_deref()) {
+        ("status" | "version" | "--version", _) => true,
+        ("search", Some(_)) => true,
+        ("auth", Some("status")) => true,
+        ("pr", Some("list" | "view" | "status" | "diff" | "checks")) => true,
+        ("issue", Some("list" | "view" | "status")) => true,
+        ("repo" | "run" | "release" | "workflow", Some("list" | "view")) => true,
+        _ => false,
+    }
 }
 
 /// Whether `git <args>` only reads.
@@ -226,6 +355,18 @@ mod tests {
             "echo done",
             "rg -e foo -c src",
             "git --version",
+            "git.exe status 2>&1",
+            "rg -n foo src 2>$null",
+            "rg -n foo src 2>/dev/null | head -20",
+            "gh pr list --state open",
+            "gh issue view 511 --json title",
+            "gh status",
+            "gh auth status",
+            "gh run view 123",
+            "gh search issues foo",
+            "where.exe git",
+            r#"git grep -n "agents_pane\|AgentsPane\|Pane::Agents" -- src/; echo "---475---"; git grep -n "fn shell_of\|pwsh" -- crates/ src/"#,
+            r#"rg "foo|bar" src"#,
         ] {
             assert!(is_read_only(c), "{c}");
         }
@@ -238,6 +379,10 @@ mod tests {
             "Remove-Item foo",
             "Get-ChildItem | Remove-Item",
             "Get-Content a.txt > b.txt",
+            "git status 2>err.txt",
+            "gh pr create --title x",
+            "gh issue close 1",
+            "gh api -X POST /repos/a/b",
             "Get-ChildItem | Out-File list.txt",
             "Get-Content a.txt | Set-Content b.txt",
             "powershell -Command Get-ChildItem",
@@ -273,7 +418,8 @@ mod tests {
     #[test]
     fn quotes_keep_words_together() {
         assert_eq!(words(r#"Select-String -Pattern "a b" 'c d'"#), ["Select-String", "-Pattern", "a b", "c d"]);
-        // A separator inside quotes still splits: asking is the safe side.
-        assert!(!is_read_only("echo 'a; Remove-Item x'"));
+        // A separator inside quotes stays inside the argument; unclosed quotes still ask.
+        assert!(is_read_only("echo 'a; Remove-Item x'"));
+        assert!(!is_read_only("echo 'a; Remove-Item x"));
     }
 }

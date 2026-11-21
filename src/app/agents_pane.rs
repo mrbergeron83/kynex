@@ -265,6 +265,13 @@ impl KynexApp {
             .collect()
     }
 
+    /// Whether the Agents pane is open in the shown workspace tab.
+    pub(super) fn agents_pane_open(&self) -> bool {
+        self.tiling_scope()
+            .and_then(|(_, ws, _)| self.tiles.get(&ws))
+            .is_some_and(|t| !t.tab_panes_of(Content::Agents).is_empty())
+    }
+
     /// The Agents pane on the right of pane `target`, or focused if the workspace has it.
     pub(super) fn show_agents_pane(&mut self, target: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         self.open_tool(target, Tool::Agents, 0.7, window, cx);
