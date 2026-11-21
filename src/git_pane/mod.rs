@@ -86,7 +86,9 @@ pub struct GitPane {
     /// A read is running; `again` asks for another once it's done.
     busy: bool,
     again: bool,
-    /// When the pane last drew; polling waits while it isn't on screen.
+    /// Whether the periodic poll task is running (stops when hidden or unfocused).
+    poll_running: bool,
+    /// When the pane last drew; polling stops while it isn't on screen.
     drawn: Option<Instant>,
     scroll: UniformListScrollHandle,
     /// A row's right-click menu.
@@ -121,15 +123,6 @@ impl GitPane {
             cx.notify();
         })
         .detach();
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(POLL_EVERY).await;
-                if this.update(cx, |this, cx| this.poll(cx)).is_err() {
-                    break;
-                }
-            }
-        })
-        .detach();
         let mut pane = Self {
             selected: root.clone(),
             root,
@@ -142,6 +135,7 @@ impl GitPane {
             closed: HashMap::new(),
             busy: false,
             again: false,
+            poll_running: false,
             drawn: None,
             scroll: UniformListScrollHandle::new(),
             menu: None,
@@ -217,10 +211,31 @@ impl GitPane {
         view
     }
 
-    fn poll(&mut self, cx: &mut Context<Self>) {
+    fn ensure_polling(&mut self, cx: &mut Context<Self>) {
+        if self.poll_running || cx.active_window().is_none() {
+            return;
+        }
+        self.poll_running = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(POLL_EVERY).await;
+                let keep = this.update(cx, |this, cx| this.poll(cx));
+                if !matches!(keep, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn poll(&mut self, cx: &mut Context<Self>) -> bool {
         let on_screen = self.drawn.is_some_and(|t| t.elapsed() < POLL_EVERY * 2);
         if on_screen && cx.active_window().is_some() {
             self.load(cx);
+            true
+        } else {
+            self.poll_running = false;
+            false
         }
     }
 
@@ -285,6 +300,7 @@ impl GitPane {
 impl Render for GitPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.drawn = Some(Instant::now());
+        self.ensure_polling(cx);
         let t = theme(cx).clone();
         let view = self.view(cx);
         let compact = self.width < COMPACT_UNDER;

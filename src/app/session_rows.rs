@@ -1,6 +1,6 @@
 //! A session's row in the Sessions tree: active `agent_cli` pane or past session on disk.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::ui::px;
 use gpui::{Anchor, AnyElement, App, Context, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*};
@@ -118,16 +118,17 @@ fn live_lamp(
 }
 
 pub(super) struct RowCtx<'a> {
-    pub cwd: PathBuf,
+    pub cwd: &'a Path,
     pub here: bool,
-    pub current: Option<String>,
+    pub current: Option<&'a str>,
     pub current_agent: Option<AgentId>,
     pub picking: bool,
-    pub cursor: Option<String>,
+    pub cursor: Option<&'a str>,
     pub picked_ids: Vec<String>,
-    pub default_branch: Option<String>,
+    pub default_branch: Option<&'a str>,
+    pub groups: &'a kynex_core::groups::SessionGroups,
     pub open: &'a [OpenSession],
-    pub t: Palette,
+    pub t: &'a Palette,
 }
 
 impl RowCtx<'_> {
@@ -144,7 +145,7 @@ impl KynexApp {
     }
 
     pub(super) fn fresh_row(&mut self, o: &OpenSession, ctx: &RowCtx, cx: &mut Context<Self>) -> AnyElement {
-        let t = &ctx.t;
+        let t = ctx.t;
         let agent_id = o.agent_id;
         let is_current = ctx.here && ctx.current_agent == Some(agent_id);
         let key = o.key();
@@ -152,7 +153,7 @@ impl KynexApp {
         let n = agent_id as usize;
         session_row(("open", n), o.title.clone().into(), is_current, t)
             .group("session-row")
-            .when(ctx.cursor.as_deref() == Some(key.as_str()), |row| row.bg(t.hover))
+            .when(ctx.cursor == Some(key.as_str()), |row| row.bg(t.hover))
             .when(show_badge, |r| {
                 r.child(provider_mark(
                     ("open-provider", n),
@@ -195,13 +196,14 @@ impl KynexApp {
         ctx: &RowCtx,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let RowCtx { cwd, here, current, picking, cursor, picked_ids, default_branch, t, .. } = ctx;
-        let (picking, here) = (*picking, *here);
-        let is_current = here && current.as_deref() == Some(info.id.as_str());
+        let RowCtx { cwd, here, current, picking, cursor, picked_ids, default_branch, groups, t, .. } = ctx;
+        let (cwd, picking, here, current, cursor, default_branch, groups, t) =
+            (*cwd, *picking, *here, *current, *cursor, *default_branch, *groups, *t);
+        let is_current = here && current == Some(info.id.as_str());
         let confirming = self.confirm_delete.as_deref() == Some(info.id.as_str());
         let id = info.id.clone();
         let (open_id, del_id) = (id.clone(), id.clone());
-        let (cwd2, cwd3) = (cwd.clone(), cwd.clone());
+        let (cwd2, cwd3) = (cwd.to_path_buf(), cwd.to_path_buf());
         let picked = self.organize.selection.contains(&id);
         let open_match = ctx.open_match(&id);
         let is_live = open_match.is_some();
@@ -225,9 +227,9 @@ impl KynexApp {
         };
         let with_picks = picked && picked_ids.len() > 1;
         let group_ids = if with_picks { picked_ids.clone() } else { vec![id.clone()] };
-        let drag = DraggedSession { cwd: cwd.clone(), ids: group_ids.clone(), title: info.title.clone().into() };
+        let drag = DraggedSession { cwd: cwd.to_path_buf(), ids: group_ids.clone(), title: info.title.clone().into() };
         let menu = if with_picks { Menu::Sessions(group_ids) } else { Menu::Session(id.clone()) };
-        let elsewhere = info.ran_elsewhere(cwd, default_branch.as_deref()).map(str::to_string);
+        let elsewhere = info.ran_elsewhere(cwd, default_branch).map(str::to_string);
 
         let title = match self.session_name_field(&id, cx) {
             Some(field) => field.flex_1().into_any_element(),
@@ -276,8 +278,7 @@ impl KynexApp {
                 .into_any_element(),
             false => title,
         };
-        let provider_id = self
-            .groups_for(cwd)
+        let provider_id = groups
             .providers
             .get(&id)
             .map(|p| agent_cli::normalize_provider_id(p))
@@ -297,7 +298,7 @@ impl KynexApp {
                     None => ago(info.modified),
                 },
             ))
-            .when(cursor.as_deref() == Some(id.as_str()), |row| row.bg(t.hover))
+            .when(cursor == Some(id.as_str()), |row| row.bg(t.hover))
             .children(live_lamp(("session-status", n), is_live, state, cx))
             .on_drag(drag, |d, _, _, cx| cx.new(|_| d.clone()))
             .on_mouse_down(
@@ -359,9 +360,9 @@ impl KynexApp {
                         })),
                 )
             });
-        let row = match self.groups_for(cwd).is_pinned(&id) {
+        let row = match groups.is_pinned(&id) {
             true => {
-                let (pin_id, pin_cwd, hover) = (id.clone(), cwd.clone(), t.hover);
+                let (pin_id, pin_cwd, hover) = (id.clone(), cwd.to_path_buf(), t.hover);
                 row.drag_over::<DraggedSession>(move |s, _, _, _| s.bg(hover)).on_drop(cx.listener(
                     move |this, d: &DraggedSession, _, cx| {
                         cx.stop_propagation();

@@ -107,7 +107,7 @@ pub fn openrouter(text: &str) {
     }
 }
 
-/// An agent rule file (`agent_panes`), and its patterns run over screen text.
+/// An agent rule file (`agent_panes`), its patterns, and terminal link scanners over screen text.
 pub fn agent_rule(text: &str) {
     if let Ok(rule) = crate::agent_panes::parse(text) {
         let _ = crate::agent_panes::detect(&rule, text);
@@ -115,6 +115,13 @@ pub fn agent_rule(text: &str) {
         let _ = crate::agent_panes::resume_argv(&rule, id.as_deref());
         let _ = rule.submit_bytes();
     }
+    for r in crate::terminal::find_urls(text) {
+        assert!(text.is_char_boundary(r.start) && text.is_char_boundary(r.end));
+    }
+    for f in crate::links::find(text) {
+        assert!(text.is_char_boundary(f.range.start) && text.is_char_boundary(f.range.end));
+    }
+    let _ = crate::links::file_url(text);
 }
 
 /// Control protocol line parser (`control::protocol`).

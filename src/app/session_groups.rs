@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use crate::ui::px;
 use gpui::{
@@ -26,7 +27,9 @@ enum Editing {
 }
 
 pub(super) struct Organize {
-    by_folder: HashMap<PathBuf, SessionGroups>,
+    by_folder: HashMap<PathBuf, Rc<SessionGroups>>,
+    /// Bumped whenever any folder's `SessionGroups` changes, to invalidate cached tree sections.
+    pub(super) generation: u64,
     editing: Option<Editing>,
     name: Entity<TextInput>,
     pub(super) selection: Selection,
@@ -40,6 +43,7 @@ impl Organize {
     pub(super) fn new(name: Entity<TextInput>) -> Self {
         Self {
             by_folder: HashMap::new(),
+            generation: 0,
             editing: None,
             name,
             selection: Selection::default(),
@@ -90,18 +94,24 @@ impl Render for DraggedSession {
 
 impl KynexApp {
     pub(super) fn groups_for(&mut self, cwd: &Path) -> &SessionGroups {
-        self.organize.by_folder.entry(cwd.to_path_buf()).or_insert_with(|| SessionGroups::load(cwd))
+        self.organize.by_folder.entry(cwd.to_path_buf()).or_insert_with(|| Rc::new(SessionGroups::load(cwd)))
+    }
+
+    pub(super) fn groups_rc(&mut self, cwd: &Path) -> Rc<SessionGroups> {
+        self.organize.by_folder.entry(cwd.to_path_buf()).or_insert_with(|| Rc::new(SessionGroups::load(cwd))).clone()
     }
 
     pub(super) fn edit_groups(&mut self, cwd: &Path, f: impl FnOnce(&mut SessionGroups)) {
         self.groups_for(cwd);
-        let Some(groups) = self.organize.by_folder.get_mut(cwd) else { return };
-        let before = groups.clone();
+        let Some(entry) = self.organize.by_folder.get_mut(cwd) else { return };
+        let before = (**entry).clone();
+        let groups = Rc::make_mut(entry);
         f(groups);
-        if *groups != before
-            && let Err(e) = groups.save(cwd)
-        {
-            self.toast(Toast::error(e));
+        if *groups != before {
+            self.organize.generation = self.organize.generation.wrapping_add(1);
+            if let Err(e) = groups.save(cwd) {
+                self.toast(Toast::error(e));
+            }
         }
     }
 

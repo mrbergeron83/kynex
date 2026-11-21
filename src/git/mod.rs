@@ -94,7 +94,9 @@ pub struct GitView {
     error: Option<String>,
     /// A status read is running.
     polling: bool,
-    /// When the view last drew; polling waits while it isn't on screen.
+    /// Whether the periodic poll task is currently scheduled (stops when hidden or unfocused).
+    poll_running: bool,
+    /// When the view last drew; polling stops while it isn't on screen.
     drawn: Option<Instant>,
     message: Entity<TextInput>,
     amend: bool,
@@ -138,15 +140,6 @@ impl GitView {
             }
         })
         .detach();
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(POLL_EVERY).await;
-                if this.update(cx, |this, cx| this.poll(cx)).is_err() {
-                    break;
-                }
-            }
-        })
-        .detach();
         let mut view = Self {
             root,
             status: None,
@@ -163,6 +156,7 @@ impl GitView {
             cancel: None,
             error: None,
             polling: false,
+            poll_running: false,
             drawn: None,
             message,
             amend: false,
@@ -215,11 +209,35 @@ impl GitView {
         .detach();
     }
 
-    /// The cheap periodic check: status only, and everything else if HEAD moved.
-    fn poll(&mut self, cx: &mut Context<Self>) {
-        let on_screen = self.drawn.is_some_and(|t| t.elapsed() < POLL_EVERY * 2);
-        if self.polling || self.busy.is_some() || !on_screen || cx.active_window().is_none() {
+    /// Starts the periodic status poller while this view is visible and focused;
+    /// the task exits on its own as soon as the view goes off-screen or unfocused.
+    pub(crate) fn ensure_polling(&mut self, cx: &mut Context<Self>) {
+        if self.poll_running || cx.active_window().is_none() {
             return;
+        }
+        self.poll_running = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(POLL_EVERY).await;
+                let keep = this.update(cx, |this, cx| this.poll(cx));
+                if !matches!(keep, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// The cheap periodic check: status only, and everything else if HEAD moved.
+    /// Returns `false` when the view is off-screen or unfocused so the poll loop stops.
+    fn poll(&mut self, cx: &mut Context<Self>) -> bool {
+        let on_screen = self.drawn.is_some_and(|t| t.elapsed() < POLL_EVERY * 2);
+        if !on_screen || cx.active_window().is_none() {
+            self.poll_running = false;
+            return false;
+        }
+        if self.polling || self.busy.is_some() {
+            return true;
         }
         self.polling = true;
         let root = self.root.clone();
@@ -238,6 +256,7 @@ impl GitView {
             .ok();
         })
         .detach();
+        true
     }
 
     fn set_status(&mut self, status: Status, cx: &mut Context<Self>) {
@@ -451,7 +470,7 @@ impl GitView {
 
 impl Render for GitView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.drawn = Some(Instant::now());
+        self.touch(cx);
         let t = theme(cx).clone();
         let top = self.render_top_bar(false, true, window, cx);
 

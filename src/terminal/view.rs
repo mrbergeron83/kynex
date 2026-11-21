@@ -3,15 +3,19 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle as MouseCursor, EntityInputHandler, EventEmitter, FocusHandle,
-    Focusable, KeyBinding, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point,
-    ScrollDelta, ScrollEvent, Size as PxSize, UTF16Selection, Window, div, prelude::*,
+    Focusable, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels,
+    Point, ScrollDelta, ScrollEvent, Size as PxSize, UTF16Selection, Window, div, prelude::*,
 };
-use kynex_core::terminal::{self, Key, Palette, SelectBy, ShellSpec, Size, Snapshot, Terminal};
+use kynex_core::terminal::{
+    self, Key, LinkTarget, MouseBtn, MouseEventKind, Palette, SelectBy, ShellSpec, Size, Snapshot, Terminal,
+    TerminalLink,
+};
 
-use super::element::{TerminalElement, background};
+use super::element::{ShapeCache, TerminalElement, background};
 use crate::theme::theme;
 
 const CONTEXT: &str = "Terminal";
@@ -71,6 +75,13 @@ pub struct TerminalView {
     starts: u64,
     /// The find bar, while it's open (`search.rs`).
     pub(super) find: Option<super::search::FindBar>,
+    /// Link currently highlighted under Ctrl+Hover (Cmd+Hover on macOS).
+    pub(super) hovered_link: Option<TerminalLink>,
+    hover_gen: u64,
+    /// Left button was forwarded to a mouse-reporting TUI rather than starting selection.
+    mouse_captured: bool,
+    was_focused: bool,
+    pub(super) shape_cache: ShapeCache,
 }
 
 impl TerminalView {
@@ -92,6 +103,11 @@ impl TerminalView {
             quiet: true,
             starts: 0,
             find: None,
+            hovered_link: None,
+            hover_gen: 0,
+            mouse_captured: false,
+            was_focused: false,
+            shape_cache: ShapeCache::default(),
         };
         view.start(cx);
         view
@@ -99,13 +115,21 @@ impl TerminalView {
 
     /// Starts (or restarts) the shell.
     fn start(&mut self, cx: &mut Context<Self>) {
-        // Output rings this from the PTY thread; one task redraws, coalescing bursts.
+        // Output rings this from the PTY thread; one task redraws, pacing bursts at <= 125 Hz
+        // while keeping the first wakeup after idle at zero latency.
         let (tx, rx) = async_channel::bounded::<()>(1);
         let wake: kynex_core::terminal::Wake = Arc::new(move || {
             let _ = tx.try_send(());
         });
         cx.spawn(async move |this, cx| {
+            let mut last: Option<Instant> = None;
             while rx.recv().await.is_ok() {
+                if let Some(prev) = last
+                    && let Some(wait) = Duration::from_millis(8).checked_sub(prev.elapsed())
+                {
+                    cx.background_executor().timer(wait).await;
+                }
+                last = Some(Instant::now());
                 if this.update(cx, |this, cx| this.on_output(cx)).is_err() {
                     break;
                 }
@@ -271,9 +295,9 @@ impl TerminalView {
         self.terminal.as_ref()?.wrapped_output(n)
     }
 
-    pub(super) fn resize(&mut self, size: Size) {
+    pub(super) fn resize_with_cell(&mut self, size: Size, cell_width: u16, cell_height: u16) {
         if let Some(t) = &mut self.terminal {
-            t.resize(size);
+            t.resize_with_cell(size, cell_width, cell_height);
         }
     }
 
@@ -342,7 +366,7 @@ impl TerminalView {
 
     fn send_keystroke(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
         let Some(t) = &self.terminal else { return false };
-        let app_cursor = t.app_cursor();
+        let mode = t.key_mode();
         let key = Key {
             key: &ks.key,
             text: ks.key_char.as_deref(),
@@ -350,11 +374,12 @@ impl TerminalView {
             alt: ks.modifiers.alt,
             shift: ks.modifiers.shift,
         };
-        match terminal::key_bytes(&key, app_cursor) {
+        match terminal::key_bytes(&key, mode) {
             Some(bytes) => {
                 if !key.ctrl {
                     self.swallow = ks.key_char.clone();
                 }
+                self.hovered_link = None;
                 t.clear_selection();
                 t.write(bytes);
                 cx.notify();
@@ -404,6 +429,59 @@ impl TerminalView {
     fn mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.focus.focus(window, cx);
         let (Some(t), Some((line, column, right))) = (&self.terminal, self.cell_at(ev.position)) else { return };
+        if link_mod(ev.modifiers) && ev.click_count == 1 {
+            let hovered = self.hovered_link.clone();
+            let hit = hovered.clone().or_else(|| t.link_at(line, column));
+            if let Some(link) = hit {
+                match link.target {
+                    LinkTarget::Url(url) => {
+                        cx.open_url(&url);
+                        cx.stop_propagation();
+                        return;
+                    }
+                    LinkTarget::File { path, line: file_line, .. } => {
+                        let verified = hovered
+                            .as_ref()
+                            .is_some_and(|h| matches!(&h.target, LinkTarget::File { path: p, .. } if *p == path));
+                        if verified {
+                            window.dispatch_action(
+                                Box::new(crate::app::keys::OpenFileLink { path, line: file_line }),
+                                cx,
+                            );
+                        } else {
+                            let check = path.clone();
+                            cx.spawn_in(window, async move |_, cx| {
+                                if cx.background_spawn(async move { check.is_file() }).await {
+                                    cx.update(|window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(crate::app::keys::OpenFileLink { path, line: file_line }),
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                                }
+                            })
+                            .detach();
+                        }
+                        cx.stop_propagation();
+                        return;
+                    }
+                }
+            }
+        }
+        if t.mouse_mode() && !ev.modifiers.shift && !self.in_copy_mode() {
+            t.send_mouse(
+                MouseEventKind::Press(MouseBtn::Left),
+                line,
+                column,
+                ev.modifiers.shift,
+                ev.modifiers.alt,
+                ev.modifiers.control,
+            );
+            self.mouse_captured = true;
+            cx.stop_propagation();
+            return;
+        }
         let by = match ev.click_count {
             2 => SelectBy::Word,
             n if n >= 3 => SelectBy::Line,
@@ -415,17 +493,98 @@ impl TerminalView {
     }
 
     fn mouse_move(&mut self, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.selecting || ev.pressed_button != Some(MouseButton::Left) {
-            self.selecting = false;
+        if self.mouse_captured {
+            if ev.pressed_button == Some(MouseButton::Left) {
+                if let (Some(t), Some((line, column, _))) = (&self.terminal, self.cell_at(ev.position)) {
+                    t.send_mouse(
+                        MouseEventKind::Drag(MouseBtn::Left),
+                        line,
+                        column,
+                        ev.modifiers.shift,
+                        ev.modifiers.alt,
+                        ev.modifiers.control,
+                    );
+                }
+            } else {
+                self.mouse_captured = false;
+            }
             return;
         }
-        if let (Some(t), Some((line, column, right))) = (&self.terminal, self.cell_at(ev.position)) {
-            t.select_to(line, column, right);
-            cx.notify();
+        if self.selecting {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.selecting = false;
+                return;
+            }
+            if let (Some(t), Some((line, column, right))) = (&self.terminal, self.cell_at(ev.position)) {
+                t.select_to(line, column, right);
+                cx.notify();
+            }
+            return;
+        }
+        if !link_mod(ev.modifiers) {
+            if self.hovered_link.take().is_some() {
+                self.hover_gen += 1;
+                cx.notify();
+            }
+            return;
+        }
+        let hit = self
+            .terminal
+            .as_ref()
+            .and_then(|t| self.cell_at(ev.position).and_then(|(line, col, _)| t.link_at(line, col)));
+        if hit == self.hovered_link {
+            return;
+        }
+        self.hover_gen += 1;
+        let seq = self.hover_gen;
+        match hit {
+            None => {
+                if self.hovered_link.take().is_some() {
+                    cx.notify();
+                }
+            }
+            Some(link) => match &link.target {
+                LinkTarget::Url(_) => {
+                    self.hovered_link = Some(link);
+                    cx.notify();
+                }
+                LinkTarget::File { path, .. } => {
+                    let check = path.clone();
+                    cx.spawn(async move |this, cx| {
+                        let ok = cx.background_spawn(async move { check.is_file() }).await;
+                        this.update(cx, |this, cx| {
+                            if this.hover_gen != seq {
+                                return;
+                            }
+                            let next = ok.then_some(link);
+                            if this.hovered_link != next {
+                                this.hovered_link = next;
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    })
+                    .detach();
+                }
+            },
         }
     }
 
-    fn mouse_up(&mut self, _: &gpui::MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn mouse_up(&mut self, ev: &gpui::MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.mouse_captured {
+            self.mouse_captured = false;
+            if let (Some(t), Some((line, column, _))) = (&self.terminal, self.cell_at(ev.position)) {
+                t.send_mouse(
+                    MouseEventKind::Release(MouseBtn::Left),
+                    line,
+                    column,
+                    ev.modifiers.shift,
+                    ev.modifiers.alt,
+                    ev.modifiers.control,
+                );
+            }
+            return;
+        }
         self.selecting = false;
         // A click without a drag selects nothing.
         if let Some(t) = &self.terminal
@@ -454,11 +613,34 @@ impl TerminalView {
         } + self.scroll_rest;
         let whole = lines.trunc();
         self.scroll_rest = lines - whole;
-        if whole != 0. {
-            t.scroll(whole as i32);
-            cx.notify();
+        if whole == 0. {
+            return;
         }
+        self.hovered_link = None;
+        let steps = (whole.abs() as usize).clamp(1, 10);
+        if t.mouse_mode() && !ev.modifiers.shift && !self.in_copy_mode() {
+            let (line, col, _) = self.cell_at(ev.position).unwrap_or((0, 0, false));
+            let kind = if whole > 0. { MouseEventKind::ScrollUp } else { MouseEventKind::ScrollDown };
+            for _ in 0..steps {
+                t.send_mouse(kind, line, col, ev.modifiers.shift, ev.modifiers.alt, ev.modifiers.control);
+            }
+        } else if t.alt_screen() && t.alternate_scroll() && !self.in_copy_mode() {
+            let mode = t.key_mode();
+            let key = Key { key: if whole > 0. { "up" } else { "down" }, ..Default::default() };
+            if let Some(bytes) = terminal::key_bytes(&key, mode) {
+                for _ in 0..steps {
+                    t.write(bytes.clone());
+                }
+            }
+        } else {
+            t.scroll(whole as i32);
+        }
+        cx.notify();
     }
+}
+
+fn link_mod(m: Modifiers) -> bool {
+    if cfg!(target_os = "macos") { m.platform } else { m.control }
 }
 
 /// Text typed through the platform's input path (IME, dead keys, AltGr): sent
@@ -538,8 +720,15 @@ impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = theme(cx).clone();
         let focused = self.focus.is_focused(window);
+        if focused != self.was_focused {
+            self.was_focused = focused;
+            if let Some(term) = &self.terminal {
+                term.focus_changed(focused);
+            }
+        }
         let exited = !self.starting && self.terminal.as_ref().is_some_and(Terminal::exited);
         let starting = self.starting || (self.quiet && self.terminal.is_some());
+        let cursor = if self.hovered_link.is_some() { MouseCursor::PointingHand } else { MouseCursor::IBeam };
         div()
             .id("terminal")
             .key_context(CONTEXT)
@@ -547,7 +736,7 @@ impl Render for TerminalView {
             .relative()
             .size_full()
             .bg(background(&t))
-            .cursor(MouseCursor::IBeam)
+            .cursor(cursor)
             .on_action(cx.listener(Self::send_key))
             .on_action(cx.listener(Self::send_prefix))
             .on_action(cx.listener(Self::open_find))
