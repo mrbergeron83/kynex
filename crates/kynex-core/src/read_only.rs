@@ -68,6 +68,9 @@ const READERS: &[&str] = &[
     "where-object",
     "where",
     "?",
+    "foreach-object",
+    "foreach",
+    "%",
     "sort-object",
     "sort",
     "measure-object",
@@ -121,6 +124,27 @@ const GIT_READERS: &[&str] = &[
     "--version",
 ];
 
+/// PowerShell shaping cmdlets that accept a `{ ... }` script block or
+/// `@{ ... }` calculated-property hashtable.
+const BLOCK_SHAPERS: &[&str] = &[
+    "foreach-object",
+    "foreach",
+    "%",
+    "where-object",
+    "where",
+    "?",
+    "select-object",
+    "select",
+    "sort-object",
+    "sort",
+    "group-object",
+    "measure-object",
+    "format-table",
+    "ft",
+    "format-list",
+    "fl",
+];
+
 /// Whether `command` only reads.
 pub fn is_read_only(command: &str) -> bool {
     let command = command.trim();
@@ -128,9 +152,9 @@ pub fn is_read_only(command: &str) -> bool {
         return false;
     }
     let command = strip_stderr_redirects(command);
-    // Running a subexpression or a script block, escaping (PowerShell's backtick,
-    // a newline that starts another command).
-    if command.contains(['`', '\n', '\r', '{', '}']) || command.contains("$(") || command.contains("@(") {
+    // Running a subexpression, escaping (PowerShell's backtick), or a newline
+    // that starts another command.
+    if command.contains(['`', '\n', '\r']) || command.contains("$(") || command.contains("@(") {
         return false;
     }
     let Some(parts) = split_parts(&command) else {
@@ -139,12 +163,13 @@ pub fn is_read_only(command: &str) -> bool {
     !parts.is_empty() && parts.iter().all(|part| part_reads(part))
 }
 
-/// Splits `command` on `|`, `;`, `&&`, and `||` outside quotes.
-/// Returns `None` on unclosed quotes, redirection (`>`), or a lone `&` outside quotes.
-fn split_parts(command: &str) -> Option<Vec<&str>> {
+/// Splits `command` on `|`, `;`, `&&`, and `||` outside quotes and `{ ... }` blocks.
+/// Returns `None` on unclosed quotes/braces, redirection (`>`), or a lone `&` outside quotes.
+pub(crate) fn split_parts(command: &str) -> Option<Vec<&str>> {
     let mut parts = Vec::new();
     let bytes = command.as_bytes();
     let mut quote: Option<u8> = None;
+    let mut brace_depth: usize = 0;
     let mut start = 0;
     let mut i = 0;
     while i < bytes.len() {
@@ -162,7 +187,15 @@ fn split_parts(command: &str) -> Option<Vec<&str>> {
                 i += 1;
             }
             (None, b'>') => return None,
-            (None, b'|') => {
+            (None, b'{') => {
+                brace_depth += 1;
+                i += 1;
+            }
+            (None, b'}') => {
+                brace_depth = brace_depth.checked_sub(1)?;
+                i += 1;
+            }
+            (None, b'|') if brace_depth == 0 => {
                 let part = command[start..i].trim();
                 if !part.is_empty() {
                     parts.push(part);
@@ -170,7 +203,7 @@ fn split_parts(command: &str) -> Option<Vec<&str>> {
                 i += if bytes.get(i + 1) == Some(&b'|') { 2 } else { 1 };
                 start = i;
             }
-            (None, b';') => {
+            (None, b';') if brace_depth == 0 => {
                 let part = command[start..i].trim();
                 if !part.is_empty() {
                     parts.push(part);
@@ -178,7 +211,7 @@ fn split_parts(command: &str) -> Option<Vec<&str>> {
                 i += 1;
                 start = i;
             }
-            (None, b'&') => {
+            (None, b'&') if brace_depth == 0 => {
                 if bytes.get(i + 1) != Some(&b'&') {
                     return None;
                 }
@@ -189,12 +222,19 @@ fn split_parts(command: &str) -> Option<Vec<&str>> {
                 i += 2;
                 start = i;
             }
+            (None, b'&') => {
+                // Inside `{ ... }`, reject bare `&` call operator; allow `&&`.
+                if bytes.get(i + 1) != Some(&b'&') {
+                    return None;
+                }
+                i += 2;
+            }
             (None, _) => {
                 i += 1;
             }
         }
     }
-    if quote.is_some() {
+    if quote.is_some() || brace_depth != 0 {
         return None;
     }
     let tail = command[start..].trim();
@@ -206,7 +246,7 @@ fn split_parts(command: &str) -> Option<Vec<&str>> {
 
 /// Removes harmless stderr-only redirections (`2>&1`, `2>$null`, `2>/dev/null`)
 /// when they stand as their own tokens, so they don't trip the `>`/`&` check.
-fn strip_stderr_redirects(command: &str) -> String {
+pub(crate) fn strip_stderr_redirects(command: &str) -> String {
     let mut out = String::with_capacity(command.len());
     let bytes = command.as_bytes();
     let mut i = 0;
@@ -237,6 +277,12 @@ fn part_reads(part: &str) -> bool {
     let Some(first) = words.first() else { return false };
     let first = first.to_ascii_lowercase();
     let first = first.strip_suffix(".exe").unwrap_or(&first);
+    if part.contains('{') || part.contains('}') {
+        if !BLOCK_SHAPERS.contains(&first) {
+            return false;
+        }
+        return blocks_read_only(part);
+    }
     // Anything that runs other code, writes as it goes, or never ends.
     let risky = |w: &String| {
         let w = w.to_ascii_lowercase();
@@ -259,6 +305,149 @@ fn part_reads(part: &str) -> bool {
         return gh_reads(&words[1..]);
     }
     READERS.contains(&first)
+}
+
+/// Validates every `{ ... }` script block in a PowerShell shaping cmdlet.
+/// Allows property/expression access, `[PSCustomObject]@{ ... }` hashtables,
+/// and read-only subexpressions like `(Get-Content $_.FullName).Count`, while
+/// rejecting mutating commands or .NET write methods.
+fn blocks_read_only(part: &str) -> bool {
+    let bytes = part.as_bytes();
+    let mut quote: Option<u8> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        match (quote, bytes[i]) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, b'"' | b'\'') => quote = Some(bytes[i]),
+            (None, b'{') => {
+                let Some(end) = matching_delim(part, i, b'{', b'}') else {
+                    return false;
+                };
+                if !script_block_reads(&part[i + 1..end]) {
+                    return false;
+                }
+                i = end + 1;
+                continue;
+            }
+            (None, b'}') => return false,
+            (None, _) => {}
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Whether the body of a `{ ... }` PowerShell block only reads/shapes data.
+fn script_block_reads(body: &str) -> bool {
+    let body = body.trim();
+    if body.is_empty() {
+        return true;
+    }
+    let lower = body.to_ascii_lowercase();
+    // Reject mutating .NET static/instance calls.
+    for bad in
+        ["::delete", "::write", "::create", "::move", "::copy", "::remove", "::set", ".delete(", ".move(", ".copy("]
+    {
+        if lower.contains(bad) {
+            return false;
+        }
+    }
+    let Some(stmts) = split_parts(body) else {
+        return false;
+    };
+    stmts.into_iter().all(block_stmt_reads)
+}
+
+/// Whether one statement inside a `{ ... }` block is read-only.
+fn block_stmt_reads(stmt: &str) -> bool {
+    let stmt = stmt.trim();
+    if stmt.is_empty() {
+        return true;
+    }
+    // Check any parenthesized subexpressions `(Get-Location)` / `(Get-Content ...)`.
+    if !parens_read_only(stmt) {
+        return false;
+    }
+    // Expression starting with `$`, `[`, `(`, `'`, `"`, `@`, or a digit:
+    // e.g. `$_.Length -gt 10`, `[PSCustomObject]@{ Path = ...; Lines = ... }`.
+    let first = stmt.as_bytes()[0];
+    if matches!(first, b'$' | b'[' | b'(' | b'\'' | b'"' | b'@' | b'0'..=b'9') {
+        // Validate any nested `{ ... }` (e.g. `@{ ... }` hashtable entries).
+        return blocks_read_only(stmt);
+    }
+    // Inside `@{ Key = Expr; Key2 = Expr2 }`, an entry looks like `Name = <expr>`.
+    if let Some((lhs, rhs)) = stmt.split_once('=')
+        && !lhs
+            .contains(|c: char| c.is_whitespace() && !lhs.trim().chars().all(|k| k.is_ascii_alphanumeric() || k == '_'))
+        && lhs.trim().chars().all(|k| k.is_ascii_alphanumeric() || k == '_')
+        && !lhs.trim().is_empty()
+    {
+        return block_stmt_reads(rhs);
+    }
+    // Otherwise it's a command invocation: must pass `part_reads`.
+    part_reads(stmt)
+}
+
+/// Checks every top-level `(...)` group in `expr`: if it starts with a command
+/// name (not a variable, literal, or nested expr), it must pass `is_read_only`.
+fn parens_read_only(expr: &str) -> bool {
+    let bytes = expr.as_bytes();
+    let mut quote: Option<u8> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        match (quote, bytes[i]) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, b'"' | b'\'') => quote = Some(bytes[i]),
+            (None, b'(') => {
+                let Some(end) = matching_delim(expr, i, b'(', b')') else {
+                    return false;
+                };
+                let inner = expr[i + 1..end].trim();
+                // Skip method call argument lists like `.Replace(a, b)`: preceded by an identifier char.
+                let is_call_args = i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+                if !is_call_args && !inner.is_empty() {
+                    let b0 = inner.as_bytes()[0];
+                    if b0.is_ascii_alphabetic() {
+                        if !is_read_only(inner) {
+                            return false;
+                        }
+                    } else if !parens_read_only(inner) {
+                        return false;
+                    }
+                }
+                i = end + 1;
+                continue;
+            }
+            (None, _) => {}
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Finds the matching closing delimiter for `open` at `start`, respecting quotes.
+fn matching_delim(s: &str, start: usize, open: u8, close: u8) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut quote: Option<u8> = None;
+    let mut depth = 0usize;
+    for (i, &b) in bytes.iter().enumerate().skip(start) {
+        match (quote, b) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, b'"' | b'\'') => quote = Some(b),
+            (None, c) if c == open => depth += 1,
+            (None, c) if c == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            (None, _) => {}
+        }
+    }
+    None
 }
 
 /// Whether `gh <args>` only reads.
@@ -367,6 +556,9 @@ mod tests {
             "where.exe git",
             r#"git grep -n "agents_pane\|AgentsPane\|Pane::Agents" -- src/; echo "---475---"; git grep -n "fn shell_of\|pwsh" -- crates/ src/"#,
             r#"rg "foo|bar" src"#,
+            r#"Get-ChildItem -Path src, crates\kynex-core\src -Recurse -File -Filter *.rs | ForEach-Object { [PSCustomObject]@{ Path = $_.FullName.Replace((Get-Location).Path + '\', ''); Lines = (Get-Content $_.FullName).Count } } | Sort-Object Lines -Descending | Select-Object -First 20 | Format-Table -AutoSize"#,
+            r#"Get-ChildItem src | Where-Object { $_.Length -gt 1000 } | Select-Object Name, Length"#,
+            r#"Get-ChildItem src | % { $_.Name }"#,
         ] {
             assert!(is_read_only(c), "{c}");
         }
@@ -388,6 +580,9 @@ mod tests {
             "powershell -Command Get-ChildItem",
             "Get-ChildItem $(Remove-Item x)",
             "Get-ChildItem | ForEach-Object { Remove-Item $_ }",
+            "Get-ChildItem | ForEach-Object { [System.IO.File]::Delete($_.FullName) }",
+            "Get-ChildItem | ForEach-Object { (Remove-Item $_) }",
+            "Get-ChildItem | Where-Object { $_.Delete() }",
             "Invoke-Expression 'ls'",
             "iex ls",
             "& ls",

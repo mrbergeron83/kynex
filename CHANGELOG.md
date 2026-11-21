@@ -10,6 +10,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - Sessions that ran on OpenRouter or Antigravity reopen on it after an update or restart, instead of falling back to Anthropic for good.
+- Antigravity sessions no longer prompt for read-only PowerShell script blocks (`ForEach-Object { ... }`, `Where-Object { ... }`), chained commands combining read-only and allowed rules, `fetch` tools, or in `Auto` mode; chained commands now also offer "Allow for session" suggestions.
 - Antigravity sessions no longer prompt for read-only shell commands with `2>&1` / `2>$null`, quoted `|` patterns (like `git grep "a\|b"`), read-only `gh` commands, or `read` / `search` tools.
 - Suppress "Go to session" and background task completion toasts when the Agents pane is open in the current workspace (#511).
 - Permission prompts no longer duplicate a `Bash` command in the description or overflow the bottom of the pane on long descriptions.

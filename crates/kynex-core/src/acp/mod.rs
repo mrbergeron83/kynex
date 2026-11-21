@@ -596,7 +596,7 @@ impl Acp {
             match self.decide(&name, &input) {
                 Some(true) => return vec![Out::Write(choose(v["id"].clone(), &options, &["allow_once"]))],
                 Some(false) => return vec![Out::Write(choose(v["id"].clone(), &options, &["reject_once"]))],
-                None if matches!(kind, "read" | "search") => {
+                None if self.mode == Mode::Auto || matches!(kind, "read" | "search" | "fetch") => {
                     return vec![Out::Write(choose(v["id"].clone(), &options, &["allow_once"]))];
                 }
                 None => suggestions = suggestion(&name, &input),
@@ -630,12 +630,36 @@ impl Acp {
             if command.is_empty() {
                 return None;
             }
-            return match crate::rules::test(&rules, command).decision {
-                Some(Kind::Deny) => Some(false),
-                Some(Kind::Allow) => Some(true),
-                Some(Kind::Ask) => None,
-                None => crate::read_only::is_read_only(command).then_some(true),
-            };
+            match crate::rules::test(&rules, command).decision {
+                Some(Kind::Deny) => return Some(false),
+                Some(Kind::Allow) => return Some(true),
+                Some(Kind::Ask) => return None,
+                None => {}
+            }
+            if crate::read_only::is_read_only(command) {
+                return Some(true);
+            }
+            // A chained command passes when every part is either allowed by a rule
+            // or read-only, and no part is denied or marked Ask.
+            let cleaned = crate::read_only::strip_stderr_redirects(command);
+            if let Some(parts) = crate::read_only::split_parts(&cleaned)
+                && parts.len() > 1
+            {
+                let mut all_ok = true;
+                for part in parts {
+                    match crate::rules::test(&rules, part).decision {
+                        Some(Kind::Deny) => return Some(false),
+                        Some(Kind::Allow) => {}
+                        Some(Kind::Ask) => all_ok = false,
+                        None if crate::read_only::is_read_only(part) => {}
+                        None => all_ok = false,
+                    }
+                }
+                if all_ok {
+                    return Some(true);
+                }
+            }
+            return None;
         }
         // Other tools: a rule naming the tool alone, like `Write`.
         let named = |kind: Kind| rules.iter().any(|r| r.kind == kind && r.text.trim() == name);
@@ -653,29 +677,40 @@ impl Acp {
 /// a command's program (with its subcommand for tools that have them, like
 /// `git log`) as `Bash(git log:*)`, any other tool by its name.
 fn suggestion(name: &str, input: &Value) -> Value {
-    let (tool, content) = if name == "Bash" {
+    if name == "Bash" {
         let command = input["command"].as_str().unwrap_or("");
-        let words: Vec<&str> = command.split_whitespace().collect();
-        let Some(first) = words.first() else { return Value::Null };
-        // A chained or redirected command gets no rule: one for its first program would say too much.
-        if command.contains(['|', ';', '&', '>', '`', '\n']) || command.contains("$(") {
+        if command.contains(['>', '`', '\n']) || command.contains("$(") {
             return Value::Null;
         }
-        let with_sub = ["git", "npm", "pnpm", "yarn", "cargo", "dotnet", "gh", "go", "docker", "kubectl"];
-        let prefix = match words.get(1) {
-            Some(sub) if with_sub.contains(&first.to_ascii_lowercase().as_str()) && !sub.starts_with('-') => {
-                format!("{first} {sub}")
-            }
-            _ => first.to_string(),
+        let cleaned = crate::read_only::strip_stderr_redirects(command);
+        let Some(parts) = crate::read_only::split_parts(&cleaned) else {
+            return Value::Null;
         };
-        ("Bash", Some(format!("{prefix}:*")))
-    } else {
-        (name, None)
-    };
-    let mut rule = json!({ "toolName": tool });
-    if let Some(c) = content {
-        rule["ruleContent"] = json!(c);
+        let with_sub = ["git", "npm", "pnpm", "yarn", "cargo", "dotnet", "gh", "go", "docker", "kubectl"];
+        let mut out_rules = Vec::new();
+        for part in parts {
+            if crate::read_only::is_read_only(part) {
+                continue;
+            }
+            let words: Vec<&str> = part.split_whitespace().collect();
+            let Some(first) = words.first() else { continue };
+            let prefix = match words.get(1) {
+                Some(sub) if with_sub.contains(&first.to_ascii_lowercase().as_str()) && !sub.starts_with('-') => {
+                    format!("{first} {sub}")
+                }
+                _ => first.to_string(),
+            };
+            let content = format!("{prefix}:*");
+            if !out_rules.iter().any(|r: &Value| r["ruleContent"] == content) {
+                out_rules.push(json!({ "toolName": "Bash", "ruleContent": content }));
+            }
+        }
+        if out_rules.is_empty() {
+            return Value::Null;
+        }
+        return json!([{ "type": "addRules", "rules": out_rules, "behavior": "allow", "destination": "session" }]);
     }
+    let rule = json!({ "toolName": name });
     json!([{ "type": "addRules", "rules": [rule], "behavior": "allow", "destination": "session" }])
 }
 
@@ -1166,9 +1201,13 @@ mod tests {
             Some(json!("allow"))
         );
         assert_eq!(picked(&a.incoming(ask(2, "cargo test -p core"))), Some(json!("allow")));
+        // A chain of read-only + allowed rule goes without prompting.
+        assert_eq!(picked(&a.incoming(ask(20, "git status && cargo test -p core"))), Some(json!("allow")));
         assert_eq!(picked(&a.incoming(ask(3, "git push origin main"))), Some(json!("deny")));
-        // Anything else asks, offering to keep its program's rule.
-        let out = a.incoming(ask(4, "npm run build"));
+        // A chain containing a denied part is still refused.
+        assert_eq!(picked(&a.incoming(ask(21, "git status && git push origin main"))), Some(json!("deny")));
+        // Anything else asks, offering to keep its non-read-only program's rule.
+        let out = a.incoming(ask(4, "git status && npm run build"));
         let req = handles(&out).into_iter().find(|h| h["type"] == "control_request").unwrap().clone();
         let rules = crate::project::suggested_rules(&req["request"]["permission_suggestions"]);
         assert_eq!(rules, ["Bash(npm run:*)"]);
