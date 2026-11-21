@@ -49,6 +49,8 @@ windows = { version = "0.62", features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1", features = ["keychain"] }
+# The same as gpui's, for the IOKit sleep assertion (awake.rs).
+objc2-foundation.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 # poll / recv for the control socket (control/server.rs), and Linux's own calls.

@@ -21,6 +21,8 @@ gix = { version = "0.90", default-features = false, features = ["status", "revis
 # Watching a session's scratch folder for the file explorer (ReadDirectoryChangesW, inotify, FSEvents).
 jiff = "0.2.42"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+# The same as gpui's, for the macOS IOKit sleep assertion (kynex-core/src/awake.rs).
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
 kynex-core = { path = "crates/kynex-core" }
 # The control protocol's JSON schema (`knx api schema`); already in the tree through gpui.
 schemars = "1"
