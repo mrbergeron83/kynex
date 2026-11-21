@@ -283,7 +283,7 @@ mod tests {
         let t = term(b"foo bar foo");
         let p = test_palette();
         let state = FindState { matches: find(&t, "foo"), current: 1 };
-        let s = snapshot(&t, &p, Some(&state));
+        let s = snapshot(&t, &p, Some(&state), None);
         let bg_at =
             |col: usize| s.rows[0].runs.iter().find(|r| r.column <= col && col < r.column + r.cells).unwrap().bg;
         assert_eq!(bg_at(1), Some(p.find));
@@ -293,7 +293,7 @@ mod tests {
         let mut t = numbered();
         let state = FindState { matches: find(&t, "line 2"), current: 0 };
         reveal(&mut t, &state.matches[0]);
-        let s = snapshot(&t, &p, Some(&state));
+        let s = snapshot(&t, &p, Some(&state), None);
         let row = s.rows.iter().position(|r| r.text.starts_with("line 2")).unwrap();
         assert_eq!(s.rows[row].runs[0].bg, Some(p.find_current));
     }
@@ -328,7 +328,7 @@ mod tests {
         assert!(t.grid().display_offset() > 0);
         assert_eq!(t.vi_mode_cursor.point.line.0, -(t.history_size() as i32));
         // The cursor is drawn on the viewport's first row.
-        let s = snapshot(&t, &test_palette(), None);
+        let s = snapshot(&t, &test_palette(), None, None);
         assert_eq!(s.cursor.map(|c| (c.line, c.column)), Some((0, 0)));
         copy_select(&mut t, SelectBy::Cell);
         copy_motion(&mut t, CopyMotion::LineEnd);

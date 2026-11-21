@@ -22,7 +22,7 @@ const EXTENSIONS: &str = "rs toml lock md markdown txt json jsonc json5 yml yaml
     ts tsx js jsx mjs cjs mts cts vue svelte css scss sass less html htm py pyi ipynb rb go mod sum \
     c h cc cpp cxx hpp hh cs csproj sln fs java kt kts gradle swift m mm scala clj ex exs erl hs ml \
     lua php pl r dart zig nim jl sql graphql proto sh bash zsh fish ps1 psm1 psd1 bat cmd nix tf hcl \
-    dockerfile make mk cmake svg png jpg jpeg gif webp ico pdf csv tsv log diff patch wgsl glsl hlsl \
+    dockerfile make mk cmake svg png jpg jpeg gif webp bmp ico pdf csv tsv log diff patch wgsl glsl hlsl \
     metal wasm rst tex adoc org plist props targets vcxproj editorconfig gitignore gitattributes";
 
 /// Bare names without an extension that are still clearly files.
@@ -30,11 +30,22 @@ const NAMES: &[&str] = &["Makefile", "Dockerfile", "Justfile", "Rakefile", "Gemf
 
 /// Candidate file paths in `text` (prose, an inline code span, a tool row
 /// summary). Pure; doesn't touch the disk. Ranges are sorted, don't overlap
-/// and sit on char boundaries. Paths with spaces aren't found.
+/// and sit on char boundaries. Quoted paths (`"..."`, `'...'`) may contain spaces.
 pub fn find(text: &str) -> Vec<FileRef> {
     let mut out = Vec::new();
     let mut start = None;
-    for (i, c) in text.char_indices().chain(std::iter::once((text.len(), ' '))) {
+    let mut iter = text.char_indices().peekable();
+    while let Some((i, c)) = iter.next() {
+        if start.is_none()
+            && (c == '"' || c == '\'')
+            && let Some((inner_end, r)) = quoted_path(text, i, c)
+        {
+            out.push(r);
+            while iter.peek().is_some_and(|&(j, _)| j <= inner_end) {
+                iter.next();
+            }
+            continue;
+        }
         if is_delimiter(c) {
             if let Some(s) = start.take()
                 && let Some(r) = token(text, s, i)
@@ -45,7 +56,34 @@ pub fn find(text: &str) -> Vec<FileRef> {
             start = Some(i);
         }
     }
+    if let Some(s) = start
+        && let Some(r) = token(text, s, text.len())
+    {
+        out.push(r);
+    }
     out
+}
+
+/// Matches a quoted path with spaces (`"C:\My Files\a.png"`, `'/Users/me/Application Support/x.png'`).
+/// Returns `(closing_quote_byte_index, FileRef)`.
+fn quoted_path(text: &str, open_at: usize, quote: char) -> Option<(usize, FileRef)> {
+    let inner_start = open_at + quote.len_utf8();
+    let rest = &text[inner_start..];
+    let rel_end = rest.find(quote)?;
+    if rel_end == 0 || rel_end > 1024 {
+        return None;
+    }
+    let inner = &rest[..rel_end];
+    if !inner.chars().any(char::is_whitespace) || inner.chars().any(char::is_control) || inner.contains("://") {
+        return None;
+    }
+    let (path, line, col, path_end) = split_suffix(inner);
+    if !is_path(path) {
+        return None;
+    }
+    let inner_end = inner_start + rel_end;
+    let range_end = if line.is_some() || path_end == inner.len() { inner_end } else { inner_start + path_end };
+    Some((inner_end, FileRef { range: inner_start..range_end, path: path.to_string(), line, col }))
 }
 
 /// `path` against `cwd`: absolute paths as they are, `~/` from the home folder.
@@ -351,6 +389,22 @@ mod tests {
             assert_eq!(&t[r.range], "src/a.rs", "{t}");
         }
         assert_eq!(paths("(src/a.rs:4)."), [("src/a.rs".into(), Some(4), None)]);
+    }
+
+    #[test]
+    fn finds_quoted_paths_with_spaces() {
+        let win = r#"see "C:\Users\Jane Doe\AppData\Roaming\kynex\pasted\paste-1.png" ok"#;
+        let r = one(win);
+        assert_eq!(r.path, r"C:\Users\Jane Doe\AppData\Roaming\kynex\pasted\paste-1.png");
+        assert_eq!(&win[r.range], r"C:\Users\Jane Doe\AppData\Roaming\kynex\pasted\paste-1.png");
+
+        let mac = "open '/Users/me/Library/Application Support/kynex/pasted/paste-2.png'";
+        let r = one(mac);
+        assert_eq!(r.path, "/Users/me/Library/Application Support/kynex/pasted/paste-2.png");
+        assert_eq!(&mac[r.range], "/Users/me/Library/Application Support/kynex/pasted/paste-2.png");
+
+        // Regular quoted prose isn't treated as a path.
+        assert!(paths(r#"she said "hello world" today"#).is_empty());
     }
 
     #[test]

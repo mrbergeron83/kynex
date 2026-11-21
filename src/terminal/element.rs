@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    App, Bounds, Element, ElementId, ElementInputHandler, Entity, FocusHandle, Font, FontStyle, FontWeight,
-    GlobalElementId, Hsla, IntoElement, LayoutId, PaintQuad, Pixels, Rgba, ShapedLine, SharedString,
+    App, Bounds, Corners, Element, ElementId, ElementInputHandler, Entity, FocusHandle, Font, FontStyle, FontWeight,
+    GlobalElementId, Hsla, IntoElement, LayoutId, PaintQuad, Pixels, RenderImage, Rgba, ShapedLine, SharedString,
     StrikethroughStyle, Style, TextRun, UnderlineStyle, Window, fill, font, outline, point, px, relative, size,
 };
 use kynex_core::terminal::{CursorStyle, Palette, Rgb, Row, Size};
@@ -51,8 +51,10 @@ impl TerminalElement {
 
 pub struct Prepaint {
     backgrounds: Vec<PaintQuad>,
+    under_images: Vec<(Bounds<Pixels>, Arc<RenderImage>)>,
     lines: Vec<(gpui::Point<Pixels>, Arc<ShapedLine>)>,
     underlines: Vec<PaintQuad>,
+    over_images: Vec<(Bounds<Pixels>, Arc<RenderImage>)>,
     cursor: Option<PaintQuad>,
     line_height: Pixels,
 }
@@ -123,10 +125,13 @@ impl Element for TerminalElement {
         let base = font(mono());
 
         let mut backgrounds = Vec::new();
+        let mut under_images = Vec::new();
         let mut lines = Vec::new();
         let mut underlines = Vec::new();
+        let mut over_images = Vec::new();
 
         let cursor_info = self.view.update(cx, |view, _| {
+            view.image_cache.flush_retired(window);
             view.layout = Some((origin, cell));
             view.resize_with_cell(grid, cell_w, cell_h);
             let snapshot = view.snapshot(&palette)?;
@@ -201,6 +206,23 @@ impl Element for TerminalElement {
                 }
             }
 
+            for placed in &snapshot.images {
+                let tex = view.image_cache.get_or_insert(&placed.data, placed.src_rect);
+                let x = origin.x + cell.width * placed.col as f32 + px(placed.offset_x as f32);
+                let y = origin.y + cell.height * placed.line as f32 + px(placed.offset_y as f32);
+                let box_w = cell.width * placed.cols as f32;
+                let box_h = cell.height * placed.rows as f32;
+                // Preserve image aspect ratio within the target cell box (`contain`).
+                let (src_w, src_h) =
+                    placed.src_rect.map_or((placed.data.width, placed.data.height), |(_, _, w, h)| (w, h));
+                let img_bounds = fit_contain(point(x, y), size(box_w, box_h), src_w, src_h);
+                if placed.z_index < 0 {
+                    under_images.push((img_bounds, tex));
+                } else {
+                    over_images.push((img_bounds, tex));
+                }
+            }
+
             if let Some(link) = &view.hovered_link {
                 let bar = device_px(1., window);
                 for span in &link.spans {
@@ -217,8 +239,10 @@ impl Element for TerminalElement {
         let Some(cursor_opt) = cursor_info else {
             return Prepaint {
                 backgrounds: Vec::new(),
+                under_images: Vec::new(),
                 lines: Vec::new(),
                 underlines: Vec::new(),
+                over_images: Vec::new(),
                 cursor: None,
                 line_height: cell.height,
             };
@@ -238,7 +262,7 @@ impl Element for TerminalElement {
                 _ => outline(block, color, gpui::BorderStyle::Solid),
             }
         });
-        Prepaint { backgrounds, lines, underlines, cursor, line_height: cell.height }
+        Prepaint { backgrounds, under_images, lines, underlines, over_images, cursor, line_height: cell.height }
     }
 
     fn paint(
@@ -256,6 +280,9 @@ impl Element for TerminalElement {
             for quad in prepaint.backgrounds.drain(..) {
                 window.paint_quad(quad);
             }
+            for (img_bounds, img) in prepaint.under_images.drain(..) {
+                let _ = window.paint_image(bounds, img_bounds, Corners::default(), img, 0, false);
+            }
             // The block cursor sits under the text so the character stays readable.
             if let Some(cursor) = prepaint.cursor.take() {
                 window.paint_quad(cursor);
@@ -266,8 +293,21 @@ impl Element for TerminalElement {
             for quad in prepaint.underlines.drain(..) {
                 window.paint_quad(quad);
             }
+            for (img_bounds, img) in prepaint.over_images.drain(..) {
+                let _ = window.paint_image(bounds, img_bounds, Corners::default(), img, 0, false);
+            }
         });
     }
+}
+
+fn fit_contain(origin: gpui::Point<Pixels>, box_size: gpui::Size<Pixels>, src_w: u32, src_h: u32) -> Bounds<Pixels> {
+    let (bw, bh) = (f32::from(box_size.width), f32::from(box_size.height));
+    let (sw, sh) = (src_w.max(1) as f32, src_h.max(1) as f32);
+    if bw <= 0. || bh <= 0. {
+        return Bounds::new(origin, box_size);
+    }
+    let scale = (bw / sw).min(bh / sh);
+    Bounds::new(origin, size(px(sw * scale), px(sh * scale)))
 }
 
 fn hsla(c: Rgb) -> Hsla {

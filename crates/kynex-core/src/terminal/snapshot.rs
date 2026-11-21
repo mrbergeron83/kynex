@@ -2,6 +2,10 @@
 //! the selection and cursor applied. Built under the terminal lock, drawn
 //! without it.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use super::kitty::{self, KittyStore, PlacedImage};
 use super::search::FindState;
 use alacritty_terminal::Term;
 use alacritty_terminal::event::EventListener;
@@ -83,7 +87,7 @@ pub struct Cursor {
     pub style: CursorStyle,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct Snapshot {
     pub rows: Vec<Row>,
     pub columns: usize,
@@ -94,6 +98,8 @@ pub struct Snapshot {
     pub mode_app_cursor: bool,
     pub mode_bracketed_paste: bool,
     pub mode_mouse: bool,
+    /// Visible inline Kitty graphics placements for this frame, ordered by z-index.
+    pub images: Vec<PlacedImage>,
 }
 
 /// The text on the screen as the program left it (not scrolled back): a line per row,
@@ -172,13 +178,21 @@ pub(super) fn linked_text<T: EventListener>(term: &Term<T>, uri: &str) -> Option
     found.then_some(out)
 }
 
-pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette, find: Option<&FindState>) -> Snapshot {
+pub(super) fn snapshot<T: EventListener>(
+    term: &Term<T>,
+    palette: &Palette,
+    find: Option<&FindState>,
+    kitty: Option<&Arc<Mutex<KittyStore>>>,
+) -> Snapshot {
     let content = term.renderable_content();
     let offset = content.display_offset as i32;
     let columns = term.grid().columns();
     let lines = term.grid().screen_lines();
+    let history_size = term.grid().history_size();
+    let alt_screen = content.mode.contains(TermMode::ALT_SCREEN);
     let mut rows: Vec<Row> = vec![Row::default(); lines];
     let selection = content.selection;
+    let mut anchored_pos: HashMap<u64, (i32, usize)> = HashMap::new();
     // Matches by screen row: (first column, end column, is the current one).
     let mut tints: Vec<Vec<(usize, usize, bool)>> = vec![Vec::new(); lines];
     if let Some(f) = find {
@@ -196,6 +210,13 @@ pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette, find
         }
         let line = (indexed.point.line.0 + offset) as usize;
         let Some(row) = rows.get_mut(line) else { continue };
+        let col = indexed.point.column.0;
+        if kitty.is_some()
+            && let Some(h) = cell.hyperlink()
+            && let Some((key, row_i)) = kitty::parse_anchor_uri(h.uri())
+        {
+            anchored_pos.entry(key).or_insert((line as i32 - row_i as i32, col));
+        }
         let mut fg = resolve(cell.fg, content.colors, palette);
         let mut bg = resolve(cell.bg, content.colors, palette);
         if cell.flags.contains(Flags::INVERSE) {
@@ -207,7 +228,6 @@ pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette, find
         if cell.flags.contains(Flags::HIDDEN) {
             fg = bg;
         }
-        let col = indexed.point.column.0;
         if let Some(&(.., current)) = tints[line].iter().find(|&&(s, e, _)| s <= col && col < e) {
             bg = if current { palette.find_current } else { palette.find };
         }
@@ -261,6 +281,11 @@ pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette, find
             _ => CursorStyle::Block,
         },
     });
+    let images = kitty
+        .map(|k| {
+            k.lock().unwrap().visible_images(&anchored_pos, alt_screen, history_size, content.display_offset, lines)
+        })
+        .unwrap_or_default();
     Snapshot {
         rows,
         columns,
@@ -269,6 +294,7 @@ pub(super) fn snapshot<T: EventListener>(term: &Term<T>, palette: &Palette, find
         mode_app_cursor: content.mode.contains(TermMode::APP_CURSOR),
         mode_bracketed_paste: content.mode.contains(TermMode::BRACKETED_PASTE),
         mode_mouse: content.mode.intersects(TermMode::MOUSE_MODE),
+        images,
     }
 }
 
@@ -371,7 +397,7 @@ pub(crate) mod tests {
 
     #[test]
     fn plain_text_is_one_run() {
-        let s = snapshot(&term(b"hello"), &palette(), None);
+        let s = snapshot(&term(b"hello"), &palette(), None, None);
         assert_eq!(s.rows.len(), 4);
         assert!(s.rows[0].text.starts_with("hello"));
         assert_eq!(s.rows[0].runs.len(), 1);
@@ -382,7 +408,7 @@ pub(crate) mod tests {
 
     #[test]
     fn colours_split_runs() {
-        let s = snapshot(&term(b"a\x1b[31;1mb\x1b[0m\x1b[48;2;1;2;3mc\x1b[38;5;196md"), &palette(), None);
+        let s = snapshot(&term(b"a\x1b[31;1mb\x1b[0m\x1b[48;2;1;2;3mc\x1b[38;5;196md"), &palette(), None, None);
         let runs = &s.rows[0].runs;
         assert_eq!(runs[0].fg, Rgb::hex(0xcccccc));
         assert_eq!((runs[1].fg, runs[1].bold, runs[1].column), (Rgb::hex(0xcd3131), true, 1));
@@ -394,7 +420,7 @@ pub(crate) mod tests {
 
     #[test]
     fn wide_characters_take_two_cells() {
-        let s = snapshot(&term("a日b".as_bytes()), &palette(), None);
+        let s = snapshot(&term("a日b".as_bytes()), &palette(), None, None);
         let runs = &s.rows[0].runs;
         assert_eq!((runs[1].column, runs[1].cells), (1, 2));
         assert_eq!(runs[2].column, 3);
@@ -406,7 +432,7 @@ pub(crate) mod tests {
         let mut sel = Selection::new(SelectionType::Simple, Point::new(Line(0), Column(0)), Side::Left);
         sel.update(Point::new(Line(0), Column(5)), Side::Right);
         t.selection = Some(sel);
-        let s = snapshot(&t, &palette(), None);
+        let s = snapshot(&t, &palette(), None, None);
         assert_eq!(s.rows[0].runs[0].bg, Some(palette().selection));
         assert_eq!(s.rows[0].runs[0].cells, 6);
         assert_eq!(t.selection_to_string().as_deref(), Some("select"));

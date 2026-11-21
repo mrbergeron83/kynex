@@ -131,6 +131,11 @@ pub fn control_request(text: &str) {
     }
 }
 
+/// Kitty graphics protocol stream filter and command parser (`terminal::kitty`).
+pub fn kitty_graphics(bytes: &[u8]) {
+    crate::terminal::kitty::fuzz(bytes);
+}
+
 /// Syntax highlighting in every language: ranges must stay in bounds, on char boundaries,
 /// sorted and non-overlapping.
 pub fn highlight(text: &str) {
