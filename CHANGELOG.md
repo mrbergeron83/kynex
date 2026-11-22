@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.38] - 2026-11-21
+
 ### Added
 
 - Native terminal support for the Kitty keyboard protocol (`CSI u` / `Shift+Enter`, `Ctrl+Enter`, `Ctrl+Alt`, `F1`–`F4` modifiers), focus reporting (`DECSET 1004`), alternate-screen mouse & wheel forwarding, and `Ctrl+Click` (`Cmd+Click` on macOS) for URLs, OSC 8 hyperlinks, and local file paths (opening in Kynex's file viewer at the line).
@@ -1080,7 +1082,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.37...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.38...HEAD
+[0.0.38]: https://github.com/mrbergeron83/kynex/compare/v0.0.37...v0.0.38
 [0.0.37]: https://github.com/mrbergeron83/kynex/compare/v0.0.36...v0.0.37
 [0.0.36]: https://github.com/mrbergeron83/kynex/compare/v0.0.35...v0.0.36
 [0.0.35]: https://github.com/mrbergeron83/kynex/compare/v0.0.34...v0.0.35
