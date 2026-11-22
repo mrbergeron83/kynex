@@ -3,6 +3,7 @@
 //! when a CLI supports them (`claude`, `agy`) and falls back to screen-pattern detection for
 //! CLIs without hooks (`grok`, `codex`, `copilot`, `cursor`, `opencode`, custom rules).
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -173,6 +174,15 @@ pub fn resume_argv(rule: &AgentRule, id: Option<&str>) -> Vec<String> {
     }
 }
 
+/// Result of applying a native CLI hook to [`Tracker`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HookOutcome {
+    pub state: AgentState,
+    /// The pane's primary (top-level) session ID when newly learned or switched to another
+    /// top-level session; `None` when unchanged or when the hook came from a subagent.
+    pub session_id: Option<String>,
+}
+
 /// Follows an `agent_cli` pane's state via native hooks (when available) and screen fallback.
 #[derive(Clone, Debug, Default)]
 pub struct Tracker {
@@ -185,10 +195,31 @@ pub struct Tracker {
     screen_blocked: bool,
     /// Looks in a row with no sign of work since it was working (for screen-only tracking).
     quiet: u8,
+    /// The pane's top-level session ID, used to separate parent hooks from child/subagent hooks
+    /// on CLIs like Antigravity where subagents open separate `conversationId`s.
+    primary_session: Option<String>,
+    /// Whether the primary session itself is currently inside an active turn.
+    parent_working: bool,
+    /// Whether the primary session paused its turn with background tasks still running (`fullyIdle: false`).
+    parent_waiting_bg: bool,
+    /// Subagent session IDs seen under `primary_session` so late or re-woken subagent hooks never
+    /// hijack the primary session.
+    known_subagents: HashSet<String>,
+    /// Subagent session IDs currently running (between start/work and their `Stop`).
+    active_subagents: HashSet<String>,
 }
 
 /// Looks in a row without the working text before a turn counts as over on screen-only CLIs.
 pub const QUIET_LOOKS: u8 = 3;
+
+fn subagent_summary(count: usize, action: Option<&str>) -> String {
+    match (count, action) {
+        (0 | 1, Some(a)) => format!("Subagent · {a}"),
+        (0 | 1, None) => "Running subagent".into(),
+        (n, Some(a)) => format!("{n} subagents · {a}"),
+        (n, None) => format!("Running {n} subagents"),
+    }
+}
 
 impl Tracker {
     pub fn state(&self) -> AgentState {
@@ -201,6 +232,17 @@ impl Tracker {
 
     pub fn is_hooked(&self) -> bool {
         self.hooked
+    }
+
+    /// Records the pane's known top-level session ID (e.g. when resuming or scraped from screen).
+    pub fn set_primary_session(&mut self, id: String) {
+        if self.primary_session.as_deref() != Some(id.as_str()) {
+            self.primary_session = Some(id);
+            self.known_subagents.clear();
+            self.active_subagents.clear();
+            self.parent_working = false;
+            self.parent_waiting_bg = false;
+        }
     }
 
     /// Marks the pane as seen by the user (focusing it clears `Done` → `Idle`).
@@ -217,24 +259,161 @@ impl Tracker {
     /// Applies an authoritative native hook event. `looking` is whether the user is currently
     /// focused on this pane in the active window.
     pub fn on_hook(&mut self, report: &HookReport, looking: bool) -> AgentState {
+        self.on_hook_for("", report, looking).state
+    }
+
+    /// Applies a native hook event for `provider`, distinguishing Antigravity subagent sessions
+    /// from the pane's primary top-level session so subagents never overwrite session history
+    /// while still keeping the agent marked as working in the Agents pane.
+    pub fn on_hook_for(&mut self, provider: &str, report: &HookReport, looking: bool) -> HookOutcome {
         self.hooked = true;
         self.quiet = 0;
-        self.screen_blocked = false;
-        if let Some(next) = report.state {
-            self.state = match next {
-                HookState::Working => AgentState::Working,
-                HookState::NeedsYou => AgentState::NeedsYou,
-                HookState::Done if looking => AgentState::Idle,
-                HookState::Done => AgentState::Done,
-                HookState::Idle => AgentState::Idle,
-            };
+
+        let separate_subagent_sessions = matches!(crate::agent_cli::rule_id(provider), crate::agent_cli::AGY);
+        let sid = report.session_id.as_deref();
+
+        let from_subagent = if report.subagent {
+            if let Some(id) = sid {
+                self.known_subagents.insert(id.to_string());
+            }
+            true
+        } else if separate_subagent_sessions {
+            match (self.primary_session.as_deref(), sid) {
+                (Some(primary), Some(id)) if id != primary => {
+                    let is_child = self.known_subagents.contains(id)
+                        || self.parent_working
+                        || self.parent_waiting_bg
+                        || !self.active_subagents.is_empty()
+                        || matches!(self.state, AgentState::Working | AgentState::NeedsYou)
+                        || report.state == Some(HookState::Done);
+                    if is_child {
+                        self.known_subagents.insert(id.to_string());
+                    }
+                    is_child
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+
+        if from_subagent {
+            self.apply_subagent_hook(sid, report, looking);
+            return HookOutcome { state: self.state, session_id: None };
         }
-        if let Some(d) = &report.detail {
+
+        self.screen_blocked = false;
+        let mut session_id = None;
+        if let Some(id) = sid
+            && self.primary_session.as_deref() != Some(id)
+        {
+            self.primary_session = Some(id.to_string());
+            self.known_subagents.clear();
+            self.active_subagents.clear();
+            self.parent_working = false;
+            self.parent_waiting_bg = false;
+            session_id = Some(id.to_string());
+        }
+
+        if let Some(next) = report.state {
+            match next {
+                HookState::Working => {
+                    if report.background {
+                        self.parent_working = false;
+                        self.parent_waiting_bg = true;
+                    } else {
+                        self.parent_working = true;
+                        self.parent_waiting_bg = false;
+                    }
+                    self.state = AgentState::Working;
+                }
+                HookState::NeedsYou => {
+                    self.state = AgentState::NeedsYou;
+                }
+                HookState::Done => {
+                    self.parent_working = false;
+                    self.parent_waiting_bg = false;
+                    self.active_subagents.clear();
+                    self.state = if looking { AgentState::Idle } else { AgentState::Done };
+                }
+                HookState::Idle => {
+                    self.parent_working = false;
+                    self.parent_waiting_bg = false;
+                    self.active_subagents.clear();
+                    self.state = AgentState::Idle;
+                }
+            }
+        }
+
+        if report.background && !self.active_subagents.is_empty() {
+            if !self.detail.contains("ubagent") {
+                self.detail = subagent_summary(self.active_subagents.len(), None);
+            }
+        } else if let Some(d) = &report.detail {
             self.detail = d.clone();
         } else if self.state == AgentState::Idle {
             self.detail.clear();
         }
-        self.state
+
+        HookOutcome { state: self.state, session_id }
+    }
+
+    fn apply_subagent_hook(&mut self, sid: Option<&str>, report: &HookReport, looking: bool) {
+        match report.state {
+            Some(HookState::Idle) => {
+                // Subagent `SessionStart`: it just spawned; keep the pane Working and count it.
+                if let Some(id) = sid {
+                    self.active_subagents.insert(id.to_string());
+                }
+                if self.state != AgentState::NeedsYou {
+                    self.state = AgentState::Working;
+                    self.detail = subagent_summary(self.active_subagents.len().max(1), None);
+                }
+            }
+            Some(HookState::Working) => {
+                if let Some(id) = sid {
+                    self.active_subagents.insert(id.to_string());
+                }
+                if self.state != AgentState::NeedsYou {
+                    self.state = AgentState::Working;
+                    let action = report.detail.as_deref().filter(|d| !d.is_empty());
+                    self.detail = subagent_summary(self.active_subagents.len().max(1), action);
+                }
+            }
+            Some(HookState::NeedsYou) => {
+                if let Some(id) = sid {
+                    self.active_subagents.insert(id.to_string());
+                }
+                self.state = AgentState::NeedsYou;
+                if let Some(d) = &report.detail {
+                    self.detail = d.clone();
+                }
+            }
+            Some(HookState::Done) => {
+                if let Some(id) = sid {
+                    self.active_subagents.remove(id);
+                }
+                if self.state == AgentState::NeedsYou {
+                    return;
+                }
+                if !self.active_subagents.is_empty() {
+                    self.state = AgentState::Working;
+                    self.detail = subagent_summary(self.active_subagents.len(), None);
+                } else if self.parent_working || self.parent_waiting_bg {
+                    self.state = AgentState::Working;
+                    self.detail = "Thinking".into();
+                } else if self.state == AgentState::Working {
+                    // A background subagent ran while the parent was idle and has now finished.
+                    self.state = if looking { AgentState::Idle } else { AgentState::Done };
+                    if self.state == AgentState::Idle {
+                        self.detail.clear();
+                    } else {
+                        self.detail = report.detail.clone().unwrap_or_else(|| "Finished".into());
+                    }
+                }
+            }
+            None => {}
+        }
     }
 
     /// Updates state from a periodic screen scan. When native hooks have reported for this
@@ -376,8 +555,12 @@ mod tests {
     #[test]
     fn hybrid_tracker_trusts_hooks_while_allowing_screen_blocked() {
         let mut t = Tracker::default();
-        let working =
-            HookReport { state: Some(HookState::Working), session_id: None, detail: Some("Using Bash".into()) };
+        let working = HookReport {
+            state: Some(HookState::Working),
+            session_id: None,
+            detail: Some("Using Bash".into()),
+            ..HookReport::default()
+        };
         assert_eq!(t.on_hook(&working, false), AgentState::Working);
         assert_eq!(t.detail(), "Using Bash");
         // Quiet screen ticks must not prematurely end a hooked working turn.
@@ -389,10 +572,134 @@ mod tests {
         // Clearing blocked screen restores working.
         assert_eq!(t.update(Seen::Working, false), AgentState::Working);
         // Hook Stop finishes the turn.
-        let done = HookReport { state: Some(HookState::Done), session_id: None, detail: Some("Finished".into()) };
+        let done = HookReport {
+            state: Some(HookState::Done),
+            session_id: None,
+            detail: Some("Finished".into()),
+            ..HookReport::default()
+        };
         assert_eq!(t.on_hook(&done, false), AgentState::Done);
         assert!(t.mark_seen());
         assert_eq!(t.state(), AgentState::Idle);
+    }
+
+    #[test]
+    fn agy_subagents_never_replace_primary_session_and_keep_agent_working() {
+        let mut t = Tracker::default();
+        let hook = |json: &str| crate::hooks::parse_payload("agy", None, json);
+
+        // Parent starts and claims the pane's primary session.
+        let out = t.on_hook_for("agy", &hook(r#"{"hookEventName":"SessionStart","conversationId":"parent"}"#), true);
+        assert_eq!(out, HookOutcome { state: AgentState::Idle, session_id: Some("parent".into()) });
+
+        // Parent starts working.
+        let out = t.on_hook_for("agy", &hook(r#"{"hookEventName":"PreInvocation","conversationId":"parent"}"#), true);
+        assert_eq!(out, HookOutcome { state: AgentState::Working, session_id: None });
+
+        // Two subagents open their own conversations while parent is working.
+        let out = t.on_hook_for("agy", &hook(r#"{"hookEventName":"SessionStart","conversationId":"sub-1"}"#), true);
+        assert_eq!(out, HookOutcome { state: AgentState::Working, session_id: None });
+        assert_eq!(t.detail(), "Running subagent");
+
+        let out = t.on_hook_for("agy", &hook(r#"{"hookEventName":"SessionStart","conversationId":"sub-2"}"#), true);
+        assert_eq!(out, HookOutcome { state: AgentState::Working, session_id: None });
+        assert_eq!(t.detail(), "Running 2 subagents");
+
+        let out = t.on_hook_for(
+            "agy",
+            &hook(r#"{"hookEventName":"PostToolUse","conversationId":"sub-1","toolCall":{"name":"generate_image"}}"#),
+            true,
+        );
+        assert_eq!(out, HookOutcome { state: AgentState::Working, session_id: None });
+        assert_eq!(t.detail(), "2 subagents · Used generate_image");
+
+        // Parent yields while subagents are still running (`fullyIdle: false`).
+        let out = t.on_hook_for(
+            "agy",
+            &hook(r#"{"hookEventName":"Stop","conversationId":"parent","terminationReason":"NO_TOOL_CALL","fullyIdle":false}"#),
+            true,
+        );
+        assert_eq!(out, HookOutcome { state: AgentState::Working, session_id: None });
+        assert_eq!(t.detail(), "2 subagents · Used generate_image");
+
+        // Subagent 1 stops while subagent 2 is still running: stays Working.
+        let out = t.on_hook_for(
+            "agy",
+            &hook(r#"{"hookEventName":"Stop","conversationId":"sub-1","terminationReason":"NO_TOOL_CALL","fullyIdle":true}"#),
+            false,
+        );
+        assert_eq!(out, HookOutcome { state: AgentState::Working, session_id: None });
+        assert_eq!(t.detail(), "Running subagent");
+
+        // Subagent 2 stops while parent is waiting to wake up: stays Working.
+        let out = t.on_hook_for(
+            "agy",
+            &hook(r#"{"hookEventName":"Stop","conversationId":"sub-2","terminationReason":"NO_TOOL_CALL","fullyIdle":true}"#),
+            false,
+        );
+        assert_eq!(out, HookOutcome { state: AgentState::Working, session_id: None });
+        assert_eq!(t.detail(), "Thinking");
+
+        // Parent wakes up and finally completes with `fullyIdle: true`.
+        let out = t.on_hook_for("agy", &hook(r#"{"hookEventName":"PreInvocation","conversationId":"parent"}"#), false);
+        assert_eq!(out, HookOutcome { state: AgentState::Working, session_id: None });
+        let out = t.on_hook_for(
+            "agy",
+            &hook(r#"{"hookEventName":"Stop","conversationId":"parent","terminationReason":"NO_TOOL_CALL","fullyIdle":true}"#),
+            false,
+        );
+        assert_eq!(out, HookOutcome { state: AgentState::Done, session_id: None });
+        assert_eq!(t.detail(), "Finished");
+
+        // Late out-of-order Stop from a subagent after the user viewed the pane leaves it Idle.
+        assert!(t.mark_seen());
+        let out = t.on_hook_for(
+            "agy",
+            &hook(r#"{"hookEventName":"Stop","conversationId":"sub-1","terminationReason":"NO_TOOL_CALL"}"#),
+            true,
+        );
+        assert_eq!(out, HookOutcome { state: AgentState::Idle, session_id: None });
+    }
+
+    #[test]
+    fn agy_new_session_while_idle_switches_primary_but_subagent_never_does() {
+        let mut t = Tracker::default();
+        t.set_primary_session("parent-1".into());
+        let hook = |json: &str| crate::hooks::parse_payload("agy-openrouter", None, json);
+
+        // Starting a fresh top-level conversation (/new) while idle switches primary session.
+        let out = t.on_hook_for(
+            "agy-openrouter",
+            &hook(r#"{"hookEventName":"SessionStart","conversationId":"parent-2"}"#),
+            true,
+        );
+        assert_eq!(out, HookOutcome { state: AgentState::Idle, session_id: Some("parent-2".into()) });
+
+        // An explicit subagent payload while idle still never replaces primary session.
+        let out = t.on_hook_for(
+            "agy-openrouter",
+            &hook(r#"{"hookEventName":"PreInvocation","conversationId":"sub-a","parentConversationId":"parent-2"}"#),
+            false,
+        );
+        assert_eq!(out, HookOutcome { state: AgentState::Working, session_id: None });
+        let out = t.on_hook_for(
+            "agy-openrouter",
+            &hook(r#"{"hookEventName":"Stop","conversationId":"sub-a","terminationReason":"NO_TOOL_CALL"}"#),
+            false,
+        );
+        assert_eq!(out, HookOutcome { state: AgentState::Done, session_id: None });
+    }
+
+    #[test]
+    fn subagent_activity_does_not_hide_a_permission_prompt() {
+        let mut t = Tracker::default();
+        t.set_primary_session("parent".into());
+        let hook = |json: &str| crate::hooks::parse_payload("agy", None, json);
+        t.on_hook_for("agy", &hook(r#"{"hookEventName":"PreInvocation","conversationId":"parent"}"#), false);
+        assert_eq!(t.update(Seen::Blocked, false), AgentState::NeedsYou);
+
+        let out = t.on_hook_for("agy", &hook(r#"{"hookEventName":"PreInvocation","conversationId":"sub-1"}"#), false);
+        assert_eq!(out, HookOutcome { state: AgentState::NeedsYou, session_id: None });
     }
 
     #[test]

@@ -9,6 +9,7 @@ alacritty_terminal = "0.26"
 async-channel = "2"
 base64 = "0.23.1"
 dirs = "7.0.0"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 gpui = { package = "gpui-pre", version = "=0.3.10" }
 # gpui-pre 0.3.10 only gives macOS a text system (and therefore any text at
 # all) when its `font-kit` feature is on; without it `MacPlatform` installs
@@ -21,6 +22,7 @@ gix = { version = "0.90", default-features = false, features = ["status", "revis
 # Watching a session's scratch folder for the file explorer (ReadDirectoryChangesW, inotify, FSEvents).
 jiff = "0.2.42"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
+polling = "3"
 # The same as gpui's, for the macOS IOKit sleep assertion (kynex-core/src/awake.rs).
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
 kynex-core = { path = "crates/kynex-core" }

@@ -9,11 +9,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 - Native terminal support for the Kitty keyboard protocol (`CSI u` / `Shift+Enter`, `Ctrl+Enter`, `Ctrl+Alt`, `F1`–`F4` modifiers), focus reporting (`DECSET 1004`), alternate-screen mouse & wheel forwarding, and `Ctrl+Click` (`Cmd+Click` on macOS) for URLs, OSC 8 hyperlinks, and local file paths (opening in Kynex's file viewer at the line).
 - Sticky keyboard navigate mode (`prefix n`, `Ctrl+B` then `N`): move focus (`h j k l` / arrows, `Tab` / `Shift+Tab`), swap (`Shift+H/J/K/L`), split (`v` / `-`), zoom (`z`), close (`x`), switch project tabs (`[` / `]` / `1`–`9`), switch workspaces (`{` / `}` or `p` / `n`), or enter resize mode (`r`) on single keys until `Esc`, with a toolbar mode pill (#451).
+- Terminal image support: paste clipboard screenshots/images (saved under `<data dir>/pasted/` and inserted as paths) and drag-and-drop files or images onto any terminal pane, `Ctrl+Hover` (`Cmd+Hover` on macOS) floating thumbnail previews for image paths in terminal output, and inline terminal images via the Kitty graphics protocol (#453).
 
 ### Changed
 
 - Improved terminal rendering performance under heavy TUI output with O(1) snapshot run accounting, 125 Hz burst pacing, per-row shaped-line caching, and real cell pixel dimensions on resize.
 - Reduced idle CPU, polling, and per-frame work: looping animations pause completely while unfocused/minimized, the resources footer and git/worktree pollers park when hidden or unfocused, the toast timer stops when nothing is aging (and only ticks at 60 Hz while animating out), the sessions tree caches indexed sections instead of rebuilding every frame, and startup probes only the bundled label font instead of enumerating all system fonts (#333).
+
+### Fixed
+
+- Antigravity (`agy`) subagents no longer hijack the parent pane's session ID or add separate entries to session history, while keeping the parent agent marked as working in the Agents pane until its subagents and background tasks finish (#528).
 
 ## [0.0.37] - 2026-11-21
 

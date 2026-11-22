@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle as MouseCursor, EntityInputHandler, EventEmitter, FocusHandle,
-    Focusable, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels,
-    Point, ScrollDelta, ScrollEvent, Size as PxSize, UTF16Selection, Window, div, prelude::*,
+    App, Bounds, ClipboardItem, Context, CursorStyle as MouseCursor, EntityInputHandler, EventEmitter, ExternalPaths,
+    FocusHandle, Focusable, KeyBinding, KeyDownEvent, Keystroke, Modifiers, MouseButton, MouseDownEvent,
+    MouseMoveEvent, Pixels, Point, ScrollDelta, ScrollEvent, Size as PxSize, UTF16Selection, Window, div, prelude::*,
 };
 use kynex_core::terminal::{
     self, Key, LinkTarget, MouseBtn, MouseEventKind, Palette, SelectBy, ShellSpec, Size, Snapshot, Terminal,
@@ -16,6 +16,7 @@ use kynex_core::terminal::{
 };
 
 use super::element::{ShapeCache, TerminalElement, background};
+use super::preview::{HoveredImage, ImageTextureCache};
 use crate::theme::theme;
 
 const CONTEXT: &str = "Terminal";
@@ -77,11 +78,14 @@ pub struct TerminalView {
     pub(super) find: Option<super::search::FindBar>,
     /// Link currently highlighted under Ctrl+Hover (Cmd+Hover on macOS).
     pub(super) hovered_link: Option<TerminalLink>,
-    hover_gen: u64,
+    /// Floating thumbnail preview when `Ctrl+Hover`ing an image file link.
+    pub(super) hovered_image: Option<HoveredImage>,
+    pub(super) hover_gen: u64,
     /// Left button was forwarded to a mouse-reporting TUI rather than starting selection.
     mouse_captured: bool,
     was_focused: bool,
     pub(super) shape_cache: ShapeCache,
+    pub(super) image_cache: ImageTextureCache,
 }
 
 impl TerminalView {
@@ -104,10 +108,12 @@ impl TerminalView {
             starts: 0,
             find: None,
             hovered_link: None,
+            hovered_image: None,
             hover_gen: 0,
             mouse_captured: false,
             was_focused: false,
             shape_cache: ShapeCache::default(),
+            image_cache: ImageTextureCache::default(),
         };
         view.start(cx);
         view
@@ -143,6 +149,9 @@ impl TerminalView {
         self.starting = true;
         self.quiet = true;
         self.error = None;
+        self.hovered_link = None;
+        self.hovered_image = None;
+        self.image_cache.clear();
         cx.spawn(async move |this, cx| {
             // Starting a shell can take a while (ConPTY, a profile, an antivirus scan).
             let result = cx.background_spawn(async move { Terminal::spawn(shell, &cwd, size, wake) }).await;
@@ -321,10 +330,8 @@ impl TerminalView {
         }
     }
 
-    fn paste_clipboard(&self, cx: &mut Context<Self>) {
-        if let (Some(t), Some(text)) = (&self.terminal, cx.read_from_clipboard().and_then(|c| c.text())) {
-            t.paste(&text);
-        }
+    fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
+        self.paste_from_clipboard(cx);
     }
 
     fn send_key(&mut self, action: &SendKey, window: &mut Window, cx: &mut Context<Self>) {
@@ -380,6 +387,7 @@ impl TerminalView {
                     self.swallow = ks.key_char.clone();
                 }
                 self.hovered_link = None;
+                self.hovered_image = None;
                 t.clear_selection();
                 t.write(bytes);
                 cx.notify();
@@ -522,7 +530,8 @@ impl TerminalView {
             return;
         }
         if !link_mod(ev.modifiers) {
-            if self.hovered_link.take().is_some() {
+            let had = self.hovered_link.take().is_some() | self.hovered_image.take().is_some();
+            if had {
                 self.hover_gen += 1;
                 cx.notify();
             }
@@ -539,13 +548,14 @@ impl TerminalView {
         let seq = self.hover_gen;
         match hit {
             None => {
-                if self.hovered_link.take().is_some() {
+                if self.hovered_link.take().is_some() | self.hovered_image.take().is_some() {
                     cx.notify();
                 }
             }
             Some(link) => match &link.target {
                 LinkTarget::Url(_) => {
                     self.hovered_link = Some(link);
+                    self.hovered_image = None;
                     cx.notify();
                 }
                 LinkTarget::File { path, .. } => {
@@ -558,6 +568,13 @@ impl TerminalView {
                             }
                             let next = ok.then_some(link);
                             if this.hovered_link != next {
+                                if let Some(l) = &next
+                                    && let LinkTarget::File { path, .. } = &l.target
+                                {
+                                    this.load_hovered_image(path.clone(), &l.spans, seq, cx);
+                                } else {
+                                    this.hovered_image = None;
+                                }
                                 this.hovered_link = next;
                                 cx.notify();
                             }
@@ -617,6 +634,7 @@ impl TerminalView {
             return;
         }
         self.hovered_link = None;
+        self.hovered_image = None;
         let steps = (whole.abs() as usize).clamp(1, 10);
         if t.mouse_mode() && !ev.modifiers.shift && !self.in_copy_mode() {
             let (line, col, _) = self.cell_at(ev.position).unwrap_or((0, 0, false));
@@ -729,6 +747,7 @@ impl Render for TerminalView {
         let exited = !self.starting && self.terminal.as_ref().is_some_and(Terminal::exited);
         let starting = self.starting || (self.quiet && self.terminal.is_some());
         let cursor = if self.hovered_link.is_some() { MouseCursor::PointingHand } else { MouseCursor::IBeam };
+        let accent = t.accent;
         div()
             .id("terminal")
             .key_context(CONTEXT)
@@ -737,6 +756,8 @@ impl Render for TerminalView {
             .size_full()
             .bg(background(&t))
             .cursor(cursor)
+            .drag_over::<ExternalPaths>(move |s, _, _, _| s.border_1().border_color(accent))
+            .on_drop(cx.listener(Self::drop_external_paths))
             .on_action(cx.listener(Self::send_key))
             .on_action(cx.listener(Self::send_prefix))
             .on_action(cx.listener(Self::open_find))
@@ -748,6 +769,7 @@ impl Render for TerminalView {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_scroll(cx.listener(Self::scroll))
             .child(TerminalElement::new(cx.entity(), self.focus.clone(), focused))
+            .children(self.render_hover_preview(&t))
             .when(self.in_copy_mode(), |d| d.child(self.render_copy_badge(cx)))
             .children(self.render_find(cx))
             .when_some(self.error.clone(), |d, e| {

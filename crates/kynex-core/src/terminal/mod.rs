@@ -7,16 +7,18 @@
 
 pub mod hooks;
 mod keys;
+pub(crate) mod kitty;
 mod links;
 pub mod marker;
+mod paste;
 mod search;
 mod shell;
 mod snapshot;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use alacritty_terminal::Term;
@@ -30,8 +32,10 @@ use alacritty_terminal::term::Config;
 use alacritty_terminal::tty;
 
 pub use keys::{Key, KeyMode, MouseBtn, MouseEventKind, key_bytes, mouse_bytes, paste_bytes};
+pub use kitty::{KittyImageData, PlacedImage};
 pub use links::{LinkSpan, LinkTarget, TerminalLink, find_urls};
 use marker::Mark;
+pub use paste::{format_paths_for_paste, is_image_path, pasted_dir, save_pasted_image, save_pasted_image_in};
 pub use search::{CopyMotion, Match};
 pub use shell::{ShellKind, ShellSpec, elevated, resolve as resolve_shell, which};
 pub use snapshot::{Cursor, CursorStyle, Palette, Rgb, Row, Run, Snapshot};
@@ -124,7 +128,6 @@ pub enum SelectBy {
 }
 
 /// What the terminal reports back, shared with its listener thread.
-#[derive(Default)]
 struct Shared {
     title: Mutex<Option<String>>,
     exited: AtomicBool,
@@ -134,6 +137,24 @@ struct Shared {
     done: Mutex<HashMap<u64, i32>>,
     /// What a hooked shell said last ([`marker`]).
     marks: Mutex<ShellMarks>,
+    /// Kitty graphics image cache and placements.
+    kitty: Arc<Mutex<kitty::KittyStore>>,
+    /// Pending Kitty cursor-position probe sequence numbers awaiting their `CSI row;colR` reply.
+    pending_cpr: Mutex<VecDeque<u64>>,
+}
+
+impl Shared {
+    fn new(kitty: Arc<Mutex<kitty::KittyStore>>) -> Self {
+        Self {
+            title: Mutex::new(None),
+            exited: AtomicBool::new(false),
+            clipboard: Mutex::new(None),
+            done: Mutex::new(HashMap::new()),
+            marks: Mutex::new(ShellMarks::default()),
+            kitty,
+            pending_cpr: Mutex::new(VecDeque::new()),
+        }
+    }
 }
 
 /// What a shell with Kynex's hooks said about its commands ([`marker`]).
@@ -161,25 +182,36 @@ impl EventListener for Listener {
     fn send_event(&self, event: Event) {
         match event {
             Event::Wakeup => {}
-            Event::Title(t) => match marker::parse(&t) {
-                Some(Mark::Done { n, code }) => {
-                    self.shared.done.lock().unwrap().insert(n, code);
+            Event::Title(t) => {
+                if let Some(seq) = t.strip_prefix(kitty::PROBE_PREFIX).and_then(|s| s.parse().ok()) {
+                    self.shared.pending_cpr.lock().unwrap().push_back(seq);
+                    return;
                 }
-                Some(Mark::Prompt { p, n, code }) => {
-                    let mut m = self.shared.marks.lock().unwrap();
-                    m.hooked = true;
-                    m.prompts = p;
-                    m.running = None;
-                    // `n` stays 0 in a shell that doesn't say when commands start.
-                    m.last = Some((n, code));
+                match marker::parse(&t) {
+                    Some(Mark::Done { n, code }) => {
+                        self.shared.done.lock().unwrap().insert(n, code);
+                    }
+                    Some(Mark::Prompt { p, n, code }) => {
+                        let mut m = self.shared.marks.lock().unwrap();
+                        m.hooked = true;
+                        m.prompts = p;
+                        m.running = None;
+                        // `n` stays 0 in a shell that doesn't say when commands start.
+                        m.last = Some((n, code));
+                    }
+                    Some(Mark::Exec { n }) => self.shared.marks.lock().unwrap().running = Some(n),
+                    None => *self.shared.title.lock().unwrap() = Some(t),
                 }
-                Some(Mark::Exec { n }) => self.shared.marks.lock().unwrap().running = Some(n),
-                None => *self.shared.title.lock().unwrap() = Some(t),
-            },
+            }
             Event::ResetTitle => *self.shared.title.lock().unwrap() = None,
-            // Answers to the program's queries (cursor position, colours…).
+            // Answers to the program's queries (cursor position, colours…), plus our own
+            // internal Kitty cursor-position probes (`knx-kg:<seq>` + `CSI 6n`).
             Event::PtyWrite(text) => {
-                if let Some(pty) = self.pty.get() {
+                if let Some((line, col)) = kitty::parse_cpr(&text)
+                    && let Some(seq) = self.shared.pending_cpr.lock().unwrap().pop_front()
+                {
+                    self.shared.kitty.lock().unwrap().resolve_cursor(seq, line, col);
+                } else if let Some(pty) = self.pty.get() {
                     let _ = pty.send(Msg::Input(Cow::Owned(text.into_bytes())));
                 }
             }
@@ -198,6 +230,8 @@ pub struct Terminal {
     /// The matches of the last find, tinted in snapshots.
     find: Mutex<Option<search::FindState>>,
     size: Size,
+    cell_px: Arc<AtomicU32>,
+    term_cols: Arc<AtomicU32>,
     pub shell: ShellSpec,
     pub cwd: PathBuf,
 }
@@ -206,7 +240,10 @@ impl Terminal {
     /// Starts `shell` in `cwd`. `wake` rings (from another thread) whenever
     /// there's new output to draw.
     pub fn spawn(shell: ShellSpec, cwd: &Path, size: Size, wake: Wake) -> Result<Self, String> {
-        let shared = Arc::new(Shared::default());
+        let cell_px = Arc::new(AtomicU32::new((8 << 16) | 16));
+        let term_cols = Arc::new(AtomicU32::new(size.columns.max(2) as u32));
+        let kitty = Arc::new(Mutex::new(kitty::KittyStore::new(cell_px.clone(), term_cols.clone())));
+        let shared = Arc::new(Shared::new(kitty.clone()));
         let pty_slot = Arc::new(OnceLock::new());
         let listener = Listener { wake: wake.clone(), shared: shared.clone(), pty: pty_slot.clone() };
         let term = Arc::new(FairMutex::new(Term::new(
@@ -282,6 +319,13 @@ impl Terminal {
         }
         let pty = tty::new(&options, window_size(size), 0)
             .map_err(|e| format!("Couldn't start {}: {e}", shell.program.display()))?;
+        let reply_pty = pty_slot.clone();
+        let reply: kitty::ReplyFn = Arc::new(move |bytes| {
+            if let Some(tx) = reply_pty.get() {
+                let _ = tx.send(Msg::Input(Cow::Owned(bytes)));
+            }
+        });
+        let pty = kitty::InterceptPty::new(pty, kitty, reply, wake.clone());
         let event_loop = EventLoop::new(term.clone(), listener, pty, true, false)
             .map_err(|e| format!("Couldn't start the terminal: {e}"))?;
         let sender = event_loop.channel();
@@ -293,7 +337,17 @@ impl Terminal {
             let _ = handle.join();
             wake_on_output();
         });
-        Ok(Self { term, pty: sender, shared, find: Mutex::new(None), size, shell, cwd: cwd.to_path_buf() })
+        Ok(Self {
+            term,
+            pty: sender,
+            shared,
+            find: Mutex::new(None),
+            size,
+            cell_px,
+            term_cols,
+            shell,
+            cwd: cwd.to_path_buf(),
+        })
     }
 
     /// Sends raw bytes to the shell, as if typed. Jumps back to the bottom.
@@ -413,6 +467,12 @@ impl Terminal {
     }
 
     pub fn resize_with_cell(&mut self, size: Size, cell_width: u16, cell_height: u16) {
+        let cw = cell_width.max(1);
+        let ch = cell_height.max(1);
+        self.cell_px.store((u32::from(cw) << 16) | u32::from(ch), Ordering::Relaxed);
+        if size.columns >= 2 {
+            self.term_cols.store(size.columns as u32, Ordering::Relaxed);
+        }
         if size == self.size || size.columns < 2 || size.lines < 1 {
             return;
         }
@@ -421,8 +481,8 @@ impl Terminal {
         let _ = self.pty.send(Msg::Resize(WindowSize {
             num_lines: size.lines as u16,
             num_cols: size.columns as u16,
-            cell_width: cell_width.max(1),
-            cell_height: cell_height.max(1),
+            cell_width: cw,
+            cell_height: ch,
         }));
     }
 
@@ -456,7 +516,7 @@ impl Terminal {
     }
 
     pub fn snapshot(&self, palette: &Palette) -> Snapshot {
-        snapshot::snapshot(&self.term.lock(), palette, self.find.lock().unwrap().as_ref())
+        snapshot::snapshot(&self.term.lock(), palette, self.find.lock().unwrap().as_ref(), Some(&self.shared.kitty))
     }
 
     /// Searches the scrollback and screen for `query` (ignoring case), tints the matches and

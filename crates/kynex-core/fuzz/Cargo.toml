@@ -127,3 +127,10 @@ path = "fuzz_targets/file_view.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "kitty_graphics"
+path = "fuzz_targets/kitty_graphics.rs"
+test = false
+doc = false
+bench = false

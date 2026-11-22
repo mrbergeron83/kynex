@@ -12,6 +12,7 @@
 //! The terminal itself (PTY, parser, shells) is `kynex_core::terminal`.
 
 mod element;
+mod preview;
 mod search;
 mod view;
 
