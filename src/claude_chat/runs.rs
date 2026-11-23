@@ -366,7 +366,9 @@ impl ClaudeChatView {
             Some(ListItem::Row(row)) => self.render_row(row, window, cx),
             Some(ListItem::Run(range)) => {
                 let live = ix + 1 == self.items.len() && self.turn_active;
+                let start = range.start;
                 let body = self.render_run(range, live, cx);
+                let body = crate::ui::ease_height::ease_height(("run-ease", start), body).into_any_element();
                 self.column_row(body, true, true).into_any_element()
             }
             None => div().into_any_element(),

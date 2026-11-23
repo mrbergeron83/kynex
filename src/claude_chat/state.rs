@@ -622,6 +622,21 @@ pub fn history_items_to_rows(
     for item in items {
         match item {
             HistoryItem::User { uuid, text, images } => {
+                // The CLI's own `!` commands log as tagged user messages: a command, then its output.
+                use kynex_core::claude::input::shell::{Part, parse};
+                match parse(&text) {
+                    Some(Part::Input(command)) => {
+                        out.push(LogRow::Shell { id: next_id(), command, output: None, sent: true });
+                        continue;
+                    }
+                    Some(Part::Output(o)) => {
+                        if let Some(LogRow::Shell { output, .. }) = out.last_mut() {
+                            *output = Some(o);
+                        }
+                        continue;
+                    }
+                    None => {}
+                }
                 let row_imgs = images
                     .into_iter()
                     .enumerate()

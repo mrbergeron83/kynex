@@ -88,32 +88,27 @@ impl ClaudeChatView {
             .child(list_el)
             .child(scrollbar::vertical("claude-transcript-sb", self.list_state.clone()))
             .when(show_latest, |d| {
+                // The floating "Jump to latest" over a transcript scrolled up.
+                let button = crate::ui::ghost_button("jump-to-latest", cx)
+                    .bg(t.elevated)
+                    .border_1()
+                    .border_color(t.border)
+                    .shadow_md()
+                    .text_xs()
+                    .text_color(t.text_muted)
+                    .child(icon(Icon::ArrowDown, t.text_muted).size(px(12.)))
+                    .child("Jump to latest")
+                    .occlude()
+                    .on_click(cx.listener(|this, _, _, cx| this.scroll_keys(super::runs::Scroll::Bottom, cx)));
                 d.child(
-                    div().absolute().bottom_3().right_4().child(
-                        div()
-                            .id("claude-jump-latest")
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .h(px(26.))
-                            .px_2p5()
-                            .rounded_full()
-                            .border_1()
-                            .border_color(t.border)
-                            .bg(t.elevated)
-                            .shadow_md()
-                            .text_xs()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(t.text)
-                            .cursor_pointer()
-                            .hover(|s| s.border_color(t.border_focused).bg(t.hover))
-                            .child(icon(Icon::ArrowDown, t.accent).size(px(12.)))
-                            .child("Latest")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.scroll_to_bottom();
-                                cx.notify();
-                            })),
-                    ),
+                    div()
+                        .absolute()
+                        .bottom_3()
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .child(crate::ui::motion::pop_in("jump-to-latest-in", button, gpui::px(6.))),
                 )
             })
     }
@@ -122,6 +117,12 @@ impl ClaudeChatView {
     pub(super) fn render_row(&mut self, ix: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let (compact, wide) = self.rows.get(ix).map_or((false, false), row_spacing);
         let inner = self.render_row_body(ix, cx);
+        // Tool blocks, thinking and results ease as they open or shut; messages,
+        // which stream, follow the reply's glide instead.
+        let inner = match compact {
+            true => crate::ui::ease_height::ease_height(("row-ease", ix), inner).into_any_element(),
+            false => inner,
+        };
         self.column_row(inner, compact, wide).into_any_element()
     }
 
