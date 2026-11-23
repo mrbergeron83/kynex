@@ -11,7 +11,7 @@ use gpui::{AnyElement, Context, FontWeight, SharedString, Window, div, prelude::
 use kynex_core::claude::runs::{self, ListItem, RowKind};
 
 use super::state::*;
-use super::{ClaudeChatView, centered_column};
+use super::{CHAT_COLUMN_MAX_WIDTH, ClaudeChatView, centered_column};
 use crate::theme::{mono, theme};
 use crate::ui::{Icon, icon, px, spinner};
 
@@ -120,6 +120,72 @@ impl ClaudeChatView {
         }
     }
 
+    /// A list row holding `body` in the reading column. Compact rows (tool
+    /// traffic) sit tight; messages get room. Wide rows start where prose
+    /// starts and may grow to the right, for tool output and diffs.
+    pub(super) fn column_row(&self, body: AnyElement, compact: bool, wide: bool) -> gpui::Div {
+        let row = div().w_full().px_4().map(|d| if compact { d.py_0p5() } else { d.py_2() });
+        let avail = self.column_width.get();
+        if !wide || avail <= 0. {
+            return row.child(centered_column(body));
+        }
+        let prose = avail.min(CHAT_COLUMN_MAX_WIDTH);
+        let left = (avail - prose) / 2.;
+        let width = (avail - left).min(CHAT_WIDE_MAX_WIDTH).max(prose);
+        row.child(div().ml(px(left)).w(px(width)).min_w_0().child(body))
+    }
+
+    /// One quiet line under the transcript while Claude works: what it's doing
+    /// and for how long ("Thinking… 5s"). Shown for the whole turn, so the
+    /// transcript doesn't hop as steps start and end.
+    pub(super) fn render_status_line(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let started = self.turn_started.filter(|_| self.turn_active)?;
+        let t = theme(cx).clone();
+        let detail = if self.status_detail.is_empty() { "Working…" } else { self.status_detail.as_str() };
+        let label = format!("{detail} {}s", started.elapsed().as_secs());
+        Some(
+            div()
+                .flex_none()
+                .w_full()
+                .px_4()
+                .child(centered_column(
+                    div()
+                        .h(px(22.))
+                        .flex()
+                        .items_center()
+                        .px_1()
+                        .text_xs()
+                        .italic()
+                        .text_color(t.text_placeholder)
+                        .child(label),
+                ))
+                .into_any_element(),
+        )
+    }
+
+    /// While a turn runs, repaints once a second so clocks count up ("Thinking… 4s",
+    /// the status line, a running call's time) even when no output comes.
+    pub(super) fn tick_clocks(&mut self, cx: &mut Context<Self>) {
+        if self.clock_ticking || !self.turn_active {
+            return;
+        }
+        self.clock_ticking = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(std::time::Duration::from_secs(1)).await;
+                let going = this.update(cx, |this, cx| {
+                    this.clock_ticking = this.turn_active;
+                    cx.notify();
+                    this.clock_ticking
+                });
+                if !matches!(going, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// Draws list item `ix`: a row, or a run under its summary.
     pub(super) fn render_item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.items.get(ix).cloned() {
@@ -127,7 +193,7 @@ impl ClaudeChatView {
             Some(ListItem::Run(range)) => {
                 let live = ix + 1 == self.items.len() && self.turn_active;
                 let body = self.render_run(range, live, cx);
-                div().w_full().px_4().py_1().child(centered_column(body)).into_any_element()
+                self.column_row(body, true, true).into_any_element()
             }
             None => div().into_any_element(),
         }
@@ -239,11 +305,15 @@ impl ClaudeChatView {
     }
 }
 
+/// How far tool output and diffs may widen the column, from prose's left edge.
+const CHAT_WIDE_MAX_WIDTH: f32 = 1040.0;
+
 /// How row `row` groups in the list.
 pub(super) fn row_kind(row: &LogRow) -> RowKind {
     match row {
         LogRow::ReadSearchRun { .. } | LogRow::EditRow { .. } | LogRow::ToolCall { .. } => RowKind::Tool,
-        LogRow::Thought { .. } => RowKind::Thought,
+        // A permission record stays with the call it was for.
+        LogRow::Thought { .. } | LogRow::PermissionNote { .. } => RowKind::Thought,
         _ => RowKind::Other,
     }
 }

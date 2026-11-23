@@ -15,9 +15,11 @@ mod runs;
 mod state;
 mod transcript;
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 use std::sync::{Arc, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent, ListAlignment, ListState,
@@ -77,7 +79,13 @@ pub struct ClaudeChatView {
     /// Runs opened to their calls, by their first row's id.
     pub(super) open_runs: HashSet<u64>,
     pub(super) list_state: ListState,
+    /// The transcript's usable width last drawn, for the wide tool lane (0 before the first frame).
+    pub(super) column_width: Rc<Cell<f32>>,
     pub(super) stick_to_bottom: bool,
+    /// When the current turn started, for the status line's clock.
+    pub(super) turn_started: Option<Instant>,
+    /// Whether the once-a-second repaint for clocks is running.
+    pub(super) clock_ticking: bool,
     pub(super) streaming_tool_json: HashMap<String, String>,
     pub(super) copied_key: Option<String>,
     copied_gen: u64,
@@ -332,7 +340,10 @@ impl ClaudeChatView {
             items: Vec::new(),
             open_runs: HashSet::new(),
             list_state: ListState::new(0, ListAlignment::Bottom, gpui::px(320.)),
+            column_width: Rc::new(Cell::new(0.)),
             stick_to_bottom: true,
+            turn_started: None,
+            clock_ticking: false,
             streaming_tool_json: HashMap::new(),
             copied_key: None,
             copied_gen: 0,
@@ -793,6 +804,7 @@ impl Render for ClaudeChatView {
 
         let find_bar = self.render_find_bar(cx);
         let transcript = self.render_transcript(cx);
+        let status_line = self.render_status_line(cx);
         let subagent_strip = self.render_subagent_strip(cx);
         let plan_strip = self.render_plan_strip(cx);
         let pending_card = self.render_pending_card(cx);
@@ -819,6 +831,7 @@ impl Render for ClaudeChatView {
             .child(self.render_header(cx))
             .children(find_bar)
             .child(transcript)
+            .children(status_line)
             .children(subagent_strip)
             .children(plan_strip)
             .children(pending_card)

@@ -426,10 +426,12 @@ impl ClaudeChatView {
         }
 
         // Persist incremental USD delta for Anthropic sessions so resumed sessions keep cumulative spend.
+        let mut turn_cost = None;
         if !self.is_openrouter() && result.total_cost_usd.is_finite() {
             let delta = (result.total_cost_usd - self.process_cost_usd).max(0.0);
             self.process_cost_usd = result.total_cost_usd.max(self.process_cost_usd);
             self.cumulative_cost_usd += delta;
+            turn_cost = Some(delta);
             if let Some(sid) = self.session_id.clone() {
                 cx.background_spawn(async move {
                     let _ = costs::add_delta(&sid, delta);
@@ -446,6 +448,7 @@ impl ClaudeChatView {
             };
             self.push_row(LogRow::Notice { text: msg, is_error: true });
         }
+        self.push_turn_end(result.duration_ms, turn_cost, result.is_error);
 
         cx.emit(ClaudeChatEvent::TurnFinished);
 
@@ -455,6 +458,30 @@ impl ClaudeChatView {
         } else {
             self.set_status(AgentState::Done, "Done", cx);
         }
+    }
+
+    /// Ends the turn in the transcript with its recap: tools used since the last
+    /// message sent, and the files edited.
+    fn push_turn_end(&mut self, duration_ms: u64, cost_usd: Option<f64>, is_error: bool) {
+        let from = self.rows.iter().rposition(LogRow::is_user_turn).map_or(0, |i| i + 1);
+        let mut tools = 0;
+        let mut files: Vec<String> = Vec::new();
+        for row in &self.rows[from..] {
+            match row {
+                LogRow::ReadSearchRun { entries, .. } => tools += entries.len(),
+                LogRow::ToolCall { .. } => tools += 1,
+                LogRow::EditRow { path, is_error: false, .. } => {
+                    tools += 1;
+                    if !files.contains(path) {
+                        files.push(path.clone());
+                    }
+                }
+                LogRow::EditRow { .. } => tools += 1,
+                _ => {}
+            }
+        }
+        self.turn_started = None;
+        self.push_row(LogRow::TurnEnd { duration_ms, tools, cost_usd, is_error, files });
     }
 
     pub(super) fn adopt_session_id(&mut self, sid: String, cx: &mut Context<Self>) {

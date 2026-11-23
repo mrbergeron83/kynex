@@ -670,6 +670,7 @@ impl ClaudeChatView {
         if let PermissionAnswer::ApprovePlan { next_mode } = answer {
             self.permission_mode = next_mode;
         }
+        self.note_permission(req_id, &answer);
         if let Some(client) = &self.client
             && let Err(e) = client.reply_permission(req_id, answer)
         {
@@ -688,6 +689,31 @@ impl ClaudeChatView {
             self.composer_input.read(cx).focus_handle(cx).focus(window, cx);
         }
         cx.notify();
+    }
+
+    /// Leaves a one-line record of the answer to request `req_id` in the transcript.
+    fn note_permission(&mut self, req_id: &str, answer: &PermissionAnswer) {
+        let card = self.pending_card.iter().chain(&self.queued_cards).find(|c| c.req_id() == req_id);
+        let title = match card {
+            Some(PendingCard::Permission { tool_name, input, .. }) => {
+                let what = super::state::tool_summary(&self.config.workspace, tool_name, input);
+                if what.is_empty() || what == *tool_name { tool_name.clone() } else { format!("{tool_name} {what}") }
+            }
+            Some(PendingCard::ExitPlanMode { .. }) => "Plan".to_string(),
+            _ => return,
+        };
+        let (allowed, note) = match answer {
+            PermissionAnswer::AllowOnce => (true, "allowed".to_string()),
+            PermissionAnswer::AllowSession(_) => (true, "allowed for this session".to_string()),
+            PermissionAnswer::ApprovePlan { .. } => (true, "approved".to_string()),
+            PermissionAnswer::Deny { message, .. } => match message.as_deref().map(str::trim).filter(|m| !m.is_empty())
+            {
+                Some(m) => (false, format!("denied: {}", super::state::truncate_chars(m, 120))),
+                None => (false, "denied".to_string()),
+            },
+            PermissionAnswer::Questions(_) => return,
+        };
+        self.push_row(LogRow::PermissionNote { title, allowed, note });
     }
 
     /// Handles `1` / `2` / `3` keyboard shortcuts on Permission & ExitPlanMode cards.

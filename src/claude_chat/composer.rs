@@ -724,7 +724,11 @@ impl ClaudeChatView {
             paste_labels,
         });
         self.update_title_from_first_prompt(cx);
+        if !self.turn_active {
+            self.turn_started = Some(std::time::Instant::now());
+        }
         self.turn_active = true;
+        self.tick_clocks(cx);
         self.scroll_to_bottom();
         self.set_status(AgentState::Working, if steer { "Steering…" } else { "Thinking…" }, cx);
         cx.notify();

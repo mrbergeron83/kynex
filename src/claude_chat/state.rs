@@ -163,6 +163,21 @@ pub enum LogRow {
     CompactionDivider {
         detail: String,
     },
+    /// The record a permission prompt leaves once answered: "Bash cargo test ✓ allowed".
+    PermissionNote {
+        title: String,
+        allowed: bool,
+        note: String,
+    },
+    /// The quiet rule that ends a turn: how long, how many tools, what it cost,
+    /// and the files it edited.
+    TurnEnd {
+        duration_ms: u64,
+        tools: usize,
+        cost_usd: Option<f64>,
+        is_error: bool,
+        files: Vec<String>,
+    },
     Notice {
         text: String,
         is_error: bool,
@@ -197,6 +212,8 @@ impl LogRow {
             Self::ToolCall { name, summary, output, .. } => format!("{name} {summary}\n{output}"),
             Self::Prose { plain, .. } => plain.clone(),
             Self::CompactionDivider { detail, .. } => detail.clone(),
+            Self::PermissionNote { title, note, .. } => format!("{title} {note}"),
+            Self::TurnEnd { files, .. } => files.join(" "),
             Self::Notice { text, .. } => text.clone(),
         }
     }
@@ -210,7 +227,10 @@ impl LogRow {
             | Self::EditRow { id, .. }
             | Self::ToolCall { id, .. }
             | Self::Prose { id, .. } => Some(*id),
-            Self::CompactionDivider { .. } | Self::Notice { .. } => None,
+            Self::CompactionDivider { .. }
+            | Self::PermissionNote { .. }
+            | Self::TurnEnd { .. }
+            | Self::Notice { .. } => None,
         }
     }
 
