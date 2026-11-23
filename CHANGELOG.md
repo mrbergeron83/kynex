@@ -5,11 +5,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.39] - 2026-11-23
+
+### Added
+
+- Native Claude Code chat and composer pane (`ClaudeChat`) for Claude Code and Claude Code (OpenRouter), replacing Claude Code's terminal pane with a centered reading column, rich markdown and syntax-highlighted code blocks with copy and one-click terminal execution, image paste/drag-drop/attach with lightbox zoom, collapsible inline file-edit diffs, interactive permission/question/plan cards, live model/effort/mode controls, `/` slash commands and `@` file mentions, prompt suggestions, subagent live peek, session cost and context meters, `/fork`, and instant `.jsonl` history replay.
+
 ## [0.0.38] - 2026-11-21
 
 ### Added
 
-- Native Claude Code chat and composer pane (`ClaudeChat`) for Claude Code and Claude Code (OpenRouter), featuring rich markdown and syntax-highlighted code blocks with copy and one-click terminal execution, image paste/drag-drop/attach with lightbox zoom, collapsible inline file-edit diffs, interactive permission/question/plan cards, live model/effort/mode controls, `/` slash commands and `@` file mentions, prompt suggestions, subagent live peek, session cost and context meters, `/fork`, and instant `.jsonl` history replay.
 - Native terminal support for the Kitty keyboard protocol (`CSI u` / `Shift+Enter`, `Ctrl+Enter`, `Ctrl+Alt`, `F1`–`F4` modifiers), focus reporting (`DECSET 1004`), alternate-screen mouse & wheel forwarding, and `Ctrl+Click` (`Cmd+Click` on macOS) for URLs, OSC 8 hyperlinks, and local file paths (opening in Kynex's file viewer at the line).
 - Sticky keyboard navigate mode (`prefix n`, `Ctrl+B` then `N`): move focus (`h j k l` / arrows, `Tab` / `Shift+Tab`), swap (`Shift+H/J/K/L`), split (`v` / `-`), zoom (`z`), close (`x`), switch project tabs (`[` / `]` / `1`–`9`), switch workspaces (`{` / `}` or `p` / `n`), or enter resize mode (`r`) on single keys until `Esc`, with a toolbar mode pill (#451).
 - Terminal image support: paste clipboard screenshots/images (saved under `<data dir>/pasted/` and inserted as paths) and drag-and-drop files or images onto any terminal pane, `Ctrl+Hover` (`Cmd+Hover` on macOS) floating thumbnail previews for image paths in terminal output, and inline terminal images via the Kitty graphics protocol (#453).
@@ -1083,7 +1088,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.38...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.39...HEAD
+[0.0.39]: https://github.com/mrbergeron83/kynex/compare/v0.0.38...v0.0.39
 [0.0.38]: https://github.com/mrbergeron83/kynex/compare/v0.0.37...v0.0.38
 [0.0.37]: https://github.com/mrbergeron83/kynex/compare/v0.0.36...v0.0.37
 [0.0.36]: https://github.com/mrbergeron83/kynex/compare/v0.0.35...v0.0.36
