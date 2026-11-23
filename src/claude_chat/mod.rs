@@ -16,6 +16,7 @@ mod media;
 mod overlays;
 mod runs;
 mod state;
+mod timeline;
 mod tool_rows;
 mod transcript;
 
@@ -144,6 +145,12 @@ pub struct ClaudeChatView {
     /// Ctrl+G: the draft is open in an editor.
     pub(super) editing_outside: bool,
     pub(super) open_popover: Option<OpenPopover>,
+
+    // Timeline (Ctrl+Shift+T), and the row flashed after a jump
+    pub(super) timeline_open: bool,
+    pub(super) timeline: kynex_core::claude::timeline::Turns,
+    pub(super) timeline_fold: kynex_core::claude::timeline::Fold,
+    pub(super) flash: Option<timeline::Flash>,
 
     // Media & Lightbox (all RenderImage textures deterministically dropped via cx.drop_image)
     pub(super) attachments: Vec<ComposerAttachment>,
@@ -417,6 +424,10 @@ impl ClaudeChatView {
             ultrathink: false,
             editing_outside: false,
             open_popover: None,
+            timeline_open: false,
+            timeline: Default::default(),
+            timeline_fold: Default::default(),
+            flash: None,
             attachments: Vec::new(),
             image_cache: media::ImageCache::default(),
             lightbox: None,
@@ -541,6 +552,7 @@ impl ClaudeChatView {
     pub(super) fn clear_transcript(&mut self, cx: &mut Context<Self>) {
         self.rows.clear();
         self.open_runs.clear();
+        (self.flash, self.timeline_fold) = Default::default();
         self.relayout();
         self.plan_steps.clear();
         self.subagents.clear();
@@ -727,6 +739,7 @@ impl Render for ClaudeChatView {
         let composer = self.render_composer(cx);
         let peek_modal = self.render_subagent_peek_modal(cx);
         let lightbox = self.render_lightbox_modal(cx);
+        let timeline = self.render_timeline(cx);
 
         div()
             .id("claude-chat-view")
@@ -741,17 +754,31 @@ impl Render for ClaudeChatView {
             .capture_key_down(cx.listener(Self::on_capture_key_down))
             .on_key_down(cx.listener(Self::on_key_down))
             .child(self.render_header(cx))
-            .children(find_bar)
-            .child(transcript)
-            .children(status_line)
-            .children(subagent_strip)
-            .children(plan_strip)
-            .children(pending_card)
-            .children(queued_strip)
-            .children(completion)
-            .children(mode_popup)
-            .children(popover)
-            .child(composer)
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .children(find_bar)
+                            .child(transcript)
+                            .children(status_line)
+                            .children(subagent_strip)
+                            .children(plan_strip)
+                            .children(pending_card)
+                            .children(queued_strip)
+                            .children(completion)
+                            .children(mode_popup)
+                            .children(popover)
+                            .child(composer),
+                    )
+                    .children(timeline),
+            )
             .children(peek_modal)
             .children(lightbox)
     }

@@ -54,18 +54,24 @@ impl ClaudeChatView {
 
     /// Scrolls to row `row`, opening the run it's folded in.
     pub(super) fn reveal_row(&mut self, row: usize) {
-        let Some(ix) = self.item_of_row(row) else { return };
+        let Some(ix) = self.open_run_of(row) else { return };
+        self.glide.stop();
+        self.follow_after = false;
+        self.list_state.pause_following_tail();
+        self.stick_to_bottom = false;
+        self.list_state.scroll_to_reveal_item(ix);
+    }
+
+    /// Opens the run row `row` is folded in, if any; the list item drawing it.
+    pub(super) fn open_run_of(&mut self, row: usize) -> Option<usize> {
+        let ix = self.item_of_row(row)?;
         if let ListItem::Run(r) = &self.items[ix]
             && let Some(id) = self.rows.get(r.start).and_then(LogRow::id)
             && self.open_runs.insert(id)
         {
             self.list_state.remeasure_items(ix..ix + 1);
         }
-        self.glide.stop();
-        self.follow_after = false;
-        self.list_state.pause_following_tail();
-        self.stick_to_bottom = false;
-        self.list_state.scroll_to_reveal_item(ix);
+        Some(ix)
     }
 
     /// Adds a row at the end. Following the tail (or trailing a reply) keeps
@@ -427,7 +433,13 @@ impl ClaudeChatView {
         } else {
             Vec::new()
         };
-        let body: Vec<AnyElement> = shown.into_iter().map(|r| self.render_row_body(r, cx)).collect();
+        let body: Vec<AnyElement> = shown
+            .into_iter()
+            .map(|r| {
+                let body = self.render_row_body(r, cx);
+                self.flash_rows(r..r + 1, div().child(body), &t)
+            })
+            .collect();
 
         div().flex().flex_col().child(head).child(div().pl_4().flex().flex_col().children(body)).into_any_element()
     }

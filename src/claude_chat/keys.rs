@@ -22,8 +22,7 @@ impl ClaudeChatView {
         } else {
             turns.iter().copied().find(|&i| i > top).unwrap_or(*turns.last().unwrap())
         };
-        self.reveal_row(target);
-        cx.notify();
+        self.jump_to_row(target, cx);
     }
 
     // -----------------------------------------------------------------------
@@ -51,6 +50,12 @@ impl ClaudeChatView {
             return;
         }
         let expand_key = if cfg!(target_os = "macos") { m.control && !m.shift } else { m.control && m.shift };
+        // Ctrl+Shift+T (Cmd+Shift+T): the timeline.
+        if secondary && m.shift && !m.alt && key == "t" {
+            cx.stop_propagation();
+            self.toggle_timeline(cx);
+            return;
+        }
         if expand_key && !m.alt && key == "o" {
             cx.stop_propagation();
             self.toggle_expand_tools(cx);

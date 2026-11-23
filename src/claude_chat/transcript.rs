@@ -125,9 +125,10 @@ impl ClaudeChatView {
         let is_current_hit = self.find.open && self.find.matches.get(self.find.current) == Some(&ix);
         let (compact, wide) = self.rows.get(ix).map_or((false, false), row_spacing);
         let inner = self.render_row_body(ix, cx);
-        self.column_row(inner, compact, wide)
-            .when(is_find_hit, |d| d.bg(if is_current_hit { t.selection } else { t.hover }))
-            .into_any_element()
+        let el = self
+            .column_row(inner, compact, wide)
+            .when(is_find_hit, |d| d.bg(if is_current_hit { t.selection } else { t.hover }));
+        self.flash_rows(ix..ix + 1, el, &t)
     }
 
     /// Row `ix`'s own content, without the column around it (runs draw their
