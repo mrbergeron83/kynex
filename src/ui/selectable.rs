@@ -237,6 +237,7 @@ impl Element for Selectable {
         if sel.group == self.group {
             sel.texts.insert(self.spot, self.content.clone());
         }
+        self.marks = super::find_marks::in_block(self.group, self.spot, &self.content, cx);
         window.insert_hitbox(bounds, HitboxBehavior::Normal)
     }
 

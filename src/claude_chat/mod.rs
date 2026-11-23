@@ -100,6 +100,8 @@ pub struct ClaudeChatView {
     pub(super) last_offset: f32,
     /// When the current turn started, for the status line's clock.
     pub(super) turn_started: Option<Instant>,
+    /// Claude has said or done something this turn (the status line stops "Waiting").
+    pub(super) turn_output_seen: bool,
     /// Whether the once-a-second repaint for clocks is running.
     pub(super) clock_ticking: bool,
     pub(super) streaming_tool_json: HashMap<String, String>,
@@ -255,7 +257,7 @@ impl ClaudeChatView {
             InputEvent::Changed => {
                 this.find.query = this.find_input.read(cx).text().to_string();
                 this.recompute_find_matches();
-                if let Some(&ix) = this.find.matches.first() {
+                if let Some(&(ix, _)) = this.find.matches.first() {
                     this.find.current = 0;
                     this.reveal_row(ix);
                 }
@@ -393,6 +395,7 @@ impl ClaudeChatView {
             turn_ended: false,
             last_offset: 0.,
             turn_started: None,
+            turn_output_seen: false,
             clock_ticking: false,
             streaming_tool_json: HashMap::new(),
             copied_key: None,
@@ -587,7 +590,7 @@ impl ClaudeChatView {
     // -----------------------------------------------------------------------
 
     pub(super) fn recompute_find_matches(&mut self) {
-        let q = self.find.query.trim().to_ascii_lowercase();
+        let q = self.find.query.trim();
         if q.is_empty() {
             self.find.matches.clear();
             self.find.current = 0;
@@ -597,7 +600,10 @@ impl ClaudeChatView {
             .rows
             .iter()
             .enumerate()
-            .filter_map(|(i, row)| row.searchable_text().to_ascii_lowercase().contains(&q).then_some(i))
+            .flat_map(|(i, row)| {
+                let n = kynex_core::claude::find::occurrences(&row.searchable_text(), q).len();
+                (0..n).map(move |nth| (i, nth))
+            })
             .collect();
         if self.find.current >= self.find.matches.len() {
             self.find.current = 0;
@@ -610,7 +616,7 @@ impl ClaudeChatView {
             return;
         }
         self.find.current = (self.find.current as isize + delta).rem_euclid(len as isize) as usize;
-        if let Some(&ix) = self.find.matches.get(self.find.current) {
+        if let Some(&(ix, _)) = self.find.matches.get(self.find.current) {
             self.reveal_row(ix);
         }
         cx.notify();
@@ -711,6 +717,15 @@ pub(super) fn centered_column(child: impl IntoElement) -> gpui::Div {
 impl Render for ClaudeChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.image_cache.flush_retired(cx);
+        // Find's matches, washed inside the transcript's text; the current one stronger.
+        let tw = theme(cx).warning;
+        if self.find.open && !self.find.query.trim().is_empty() {
+            let current = self.find.matches.get(self.find.current).copied();
+            let group = self.selection_group(cx);
+            crate::ui::find_marks::set(group, self.find.query.trim(), current, (tw.opacity(0.25), tw.opacity(0.6)), cx);
+        } else {
+            crate::ui::find_marks::clear(cx);
+        }
         // A peek whose track is gone would draw nothing yet still swallow Esc.
         if let Some(id) = &self.peek_subagent
             && !self.subagents.iter().any(|s| &s.tool_use_id == id)

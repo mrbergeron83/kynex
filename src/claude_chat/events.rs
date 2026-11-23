@@ -49,6 +49,15 @@ impl ClaudeChatView {
     }
 
     pub(super) fn apply_event(&mut self, ev: ClaudeEvent, cx: &mut Context<Self>) {
+        if matches!(
+            ev,
+            ClaudeEvent::ThoughtDelta(_)
+                | ClaudeEvent::TextDelta(_)
+                | ClaudeEvent::ToolInputDelta { .. }
+                | ClaudeEvent::ToolCallStart { .. }
+        ) {
+            self.turn_output_seen = true;
+        }
         match ev {
             ClaudeEvent::Initialized(info) => self.on_initialized(info, cx),
             ClaudeEvent::SystemInit(sys) => {

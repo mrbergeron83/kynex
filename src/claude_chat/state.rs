@@ -318,7 +318,8 @@ pub struct QueuedMessage {
 pub struct FindState {
     pub open: bool,
     pub query: String,
-    pub matches: Vec<usize>,
+    /// Every match: its row and which match it is within that row.
+    pub matches: Vec<(usize, usize)>,
     pub current: usize,
 }
 

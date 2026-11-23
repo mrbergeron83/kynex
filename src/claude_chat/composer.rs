@@ -752,6 +752,7 @@ impl ClaudeChatView {
         self.update_title_from_first_prompt(cx);
         if !self.turn_active {
             self.turn_started = Some(std::time::Instant::now());
+            self.turn_output_seen = false;
         }
         self.turn_active = true;
         self.tick_clocks(cx);

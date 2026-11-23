@@ -6,6 +6,7 @@ pub mod client;
 pub mod composer;
 pub mod costs;
 pub mod diff;
+pub mod find;
 pub mod history;
 pub mod input;
 pub mod markdown;

@@ -239,19 +239,26 @@ impl ClaudeChatView {
         row.child(div().ml(px(left)).w(px(width)).min_w_0().child(body))
     }
 
-    /// One quiet line under the transcript while Claude works: what it's doing
-    /// and for how long ("Thinking… 5s"). Shown for the whole turn, so the
-    /// transcript doesn't hop as steps start and end.
+    /// One quiet line under the transcript while Claude works, saying what's
+    /// going on when nothing above shows it: "Starting Claude…", "Waiting for
+    /// Claude… 3s", "Working… 5s". Text only, no spinner. Its room stays for the
+    /// whole turn, so the transcript doesn't hop as steps start and end.
     pub(super) fn render_status_line(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let started = self.turn_started.filter(|_| self.turn_active)?;
         let t = theme(cx).clone();
-        let detail = if self.status_detail.is_empty() { "Working…" } else { self.status_detail.as_str() };
-        let label = format!("{detail} {}s", started.elapsed().as_secs());
+        let secs = started.elapsed().as_secs();
+        let label = if !self.ready {
+            "Starting Claude…".to_string()
+        } else if !self.turn_output_seen {
+            format!("Waiting for Claude… {secs}s")
+        } else {
+            format!("Working… {secs}s")
+        };
         Some(
             div()
                 .flex_none()
                 .w_full()
-                .px_4()
+                .px(px(ROW_PADDING))
                 .child(centered_column(
                     div()
                         .h(px(22.))

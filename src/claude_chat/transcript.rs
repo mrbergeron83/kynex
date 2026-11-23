@@ -120,14 +120,9 @@ impl ClaudeChatView {
 
     /// Row `ix` drawn on its own in the list, in the reading column.
     pub(super) fn render_row(&mut self, ix: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let t = theme(cx).clone();
-        let is_find_hit = self.find.open && self.find.matches.contains(&ix);
-        let is_current_hit = self.find.open && self.find.matches.get(self.find.current) == Some(&ix);
         let (compact, wide) = self.rows.get(ix).map_or((false, false), row_spacing);
         let inner = self.render_row_body(ix, cx);
-        self.column_row(inner, compact, wide)
-            .when(is_find_hit, |d| d.bg(if is_current_hit { t.selection } else { t.hover }))
-            .into_any_element()
+        self.column_row(inner, compact, wide).into_any_element()
     }
 
     /// Row `ix`'s own content, without the column around it (runs draw their
