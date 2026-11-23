@@ -44,7 +44,7 @@ too_many_arguments = "allow"
 # The app: everything gpui. Logic without UI lives in crates/kynex-core.
 [package]
 name = "kynex"
-version = "0.0.40"
+version = "0.0.41"
 edition.workspace = true
 license = "GPL-3.0-or-later"
 publish = false

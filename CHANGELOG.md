@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.41] - 2026-11-23
+
 ### Changed
 
 - Claude chat brings back the old transcript's feel: consecutive tool calls fold under one summary row ("Edited app.rs ×3, ran 2 commands"); text selects and copies across rows (Ctrl+C); the view glides with a streaming reply and goes to the end when a turn finishes; tool rows sit tight and may widen for output and diffs; each turn ends with a recap line (time, tools, cost, edited-file chips); answered permission prompts leave a one-line note; a status line under the transcript counts the turn's time.
@@ -1107,7 +1109,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.40...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.41...HEAD
+[0.0.41]: https://github.com/mrbergeron83/kynex/compare/v0.0.40...v0.0.41
 [0.0.40]: https://github.com/mrbergeron83/kynex/compare/v0.0.39...v0.0.40
 [0.0.39]: https://github.com/mrbergeron83/kynex/compare/v0.0.38...v0.0.39
 [0.0.38]: https://github.com/mrbergeron83/kynex/compare/v0.0.37...v0.0.38
