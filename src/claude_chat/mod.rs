@@ -172,10 +172,7 @@ impl ClaudeChatView {
         };
 
         let composer_input = cx.new(|cx| {
-            TextInput::new(cx)
-                .multiline()
-                .intercept_long_paste()
-                .placeholder("Message Claude… (Enter to send, Shift+Enter for newline, / commands, @ files)")
+            TextInput::new(cx).multiline().intercept_long_paste().placeholder(composer::COMPOSER_PLACEHOLDER)
         });
         let card_input = cx.new(|cx| TextInput::new(cx).placeholder("Add note or feedback…"));
         let find_input = cx.new(|cx| TextInput::new(cx).placeholder("Find in transcript…"));
@@ -793,7 +790,7 @@ impl Render for ClaudeChatView {
         let plan_strip = self.render_plan_strip(cx);
         let pending_card = self.render_pending_card(cx);
         let queued_strip = self.render_queued_strip(cx);
-        let suggestion = self.render_prompt_suggestion(cx);
+        self.sync_composer_ghost(cx);
         let completion = self.render_completion_popup(cx);
         let popover = self.render_toolbar_popover(cx);
         let composer = self.render_composer(cx);
@@ -819,7 +816,6 @@ impl Render for ClaudeChatView {
             .children(plan_strip)
             .children(pending_card)
             .children(queued_strip)
-            .children(suggestion)
             .children(completion)
             .children(popover)
             .child(composer)

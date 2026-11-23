@@ -2,7 +2,7 @@
 //! - Multiline `TextInput` with `.intercept_long_paste()` (`PasteFold` atomic chips).
 //! - First-class image pasting (`Ctrl+V` `PasteImages`), drag-drop (`ExternalPaths`),
 //!   and `+` Attach button (`cx.prompt_for_paths`), with thumbnail chips + lightbox.
-//! - Prompt suggestion ghost pill (`Tab` to accept, click to send) when idle & empty.
+//! - Prompt suggestion as ghost text inside the empty composer (`Tab` to accept).
 //! - Dynamic toolbar: Model picker, Effort/Thinking picker, Permission Mode (`Shift+Tab`),
 //!   Fast Mode toggle, honest Context % + `$` Cost pill, `Steer` (`Alt+Enter`),
 //!   `Stop` (`Esc`), `Send` / `Queue` (`Enter`), plus queued-message strip.
@@ -23,6 +23,10 @@ use super::{ClaudeChatView, centered_column};
 use crate::theme::{mono, theme, ui_font};
 use crate::ui::input::Mark;
 use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, outline_button, primary_button, px, scrollbar};
+
+/// The composer's gray hint while empty and no suggestion is pending.
+pub(super) const COMPOSER_PLACEHOLDER: &str =
+    "Message Claude… (Enter to send, Shift+Enter for newline, / commands, @ files)";
 
 impl ClaudeChatView {
     /// Renders queued messages waiting for the current turn to complete.
@@ -87,66 +91,16 @@ impl ClaudeChatView {
         )
     }
 
-    /// Renders the clickable / `Tab`-to-accept prompt suggestion ghost pill when idle & empty.
-    pub(super) fn render_prompt_suggestion(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.turn_active || !self.composer_input.read(cx).text().trim().is_empty() || !self.attachments.is_empty() {
-            return None;
+    /// Shows the prompt suggestion as gray ghost text inside the empty composer
+    /// (`Tab` accepts it) in place of the usual placeholder.
+    pub(super) fn sync_composer_ghost(&self, cx: &mut Context<Self>) {
+        let ghost: SharedString = match &self.prompt_suggestion {
+            Some(sug) if !self.turn_active && self.attachments.is_empty() => format!("{sug}   ⇥ Tab").into(),
+            _ => COMPOSER_PLACEHOLDER.into(),
+        };
+        if self.composer_input.read(cx).placeholder_text() != &ghost {
+            self.composer_input.update(cx, |inp, _| inp.set_placeholder(ghost));
         }
-        let suggestion = self.prompt_suggestion.as_ref()?.clone();
-        let t = theme(cx).clone();
-        let click_text = suggestion.clone();
-
-        Some(
-            div()
-                .flex_none()
-                .px_4()
-                .pb_1()
-                .child(centered_column(
-                    div().flex().items_center().child(
-                        div()
-                            .id("claude-prompt-suggestion")
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .max_w_full()
-                            .px_2p5()
-                            .py_1()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(t.border_variant)
-                            .bg(t.panel)
-                            .cursor_pointer()
-                            .hover(|s| s.border_color(t.border_focused).bg(t.hover))
-                            .tooltip(Tooltip::with_meta("Click to send, or press Tab to fill", "Tab"))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_xs()
-                                    .text_color(t.text_muted)
-                                    .child(suggestion),
-                            )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .px_1()
-                                    .rounded_xs()
-                                    .bg(t.element)
-                                    .font_family(mono())
-                                    .text_size(px(10.))
-                                    .text_color(t.text_placeholder)
-                                    .child("Tab"),
-                            )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.prompt_suggestion = None;
-                                this.composer_input.update(cx, |inp, cx| inp.set_text(click_text.clone(), cx));
-                                this.submit_composer(false, window, cx);
-                            })),
-                    ),
-                ))
-                .into_any_element(),
-        )
     }
 
     /// Renders the docked composer card (attachments, multiline TextInput, dynamic toolbar).

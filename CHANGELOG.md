@@ -7,6 +7,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Claude chat: prompt suggestions show as gray ghost text inside the empty composer (Tab accepts) instead of a pill above it.
 - Claude chat panes start in Auto permission mode when the model supports it (a `defaultMode` from your Claude settings still wins).
 
 ### Fixed
