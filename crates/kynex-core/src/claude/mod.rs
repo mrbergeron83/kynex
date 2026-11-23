@@ -9,6 +9,7 @@ pub mod diff;
 pub mod history;
 pub mod markdown;
 pub mod protocol;
+pub mod runs;
 pub mod types;
 
 pub use client::ClaudeClient;

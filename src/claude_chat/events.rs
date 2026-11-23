@@ -727,12 +727,13 @@ impl ClaudeChatView {
             return;
         }
         let old_len = self.rows.len();
+        let old_items = self.items.len();
         let top = self.list_state.logical_scroll_top();
-        let added = rows.len();
         let existing = std::mem::take(&mut self.rows);
         self.rows = rows;
         self.rows.extend(existing);
-        self.list_state.splice(0..0, added);
+        self.relayout_prepended();
+        let added = self.items.len().saturating_sub(old_items);
         if is_recent && old_len == 0 {
             self.scroll_to_bottom();
         } else if !is_recent && !self.stick_to_bottom {

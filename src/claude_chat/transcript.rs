@@ -1,7 +1,7 @@
 //! Virtualized transcript (`gpui::list` + `scrollbar::vertical`), sticky bottom
 //! auto-scroll with floating "↓ Latest" button, `Ctrl+F` find bar, and every
 //! transcript row renderer (user prompt, auto-folded thought, grouped read/search
-//! runs, compact 1-line edit rows with collapsible syntax-colored inline diffs,
+//! entries, compact 1-line edit rows with collapsible syntax-colored inline diffs,
 //! shell & generic tool rows, prose markdown, compaction dividers, notices).
 
 use gpui::{AnyElement, Context, FontStyle, FontWeight, SharedString, StyledText, Window, div, list, prelude::*};
@@ -79,7 +79,7 @@ impl ClaudeChatView {
 
         let view = cx.entity().clone();
         let list_el = list(self.list_state.clone(), move |ix, window, cx| {
-            view.update(cx, |this, cx| this.render_row(ix, window, cx))
+            view.update(cx, |this, cx| this.render_item(ix, window, cx))
         })
         .size_full();
 
@@ -121,7 +121,24 @@ impl ClaudeChatView {
             })
     }
 
-    fn render_row(&mut self, ix: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// Row `ix` drawn on its own in the list, in the reading column.
+    pub(super) fn render_row(&mut self, ix: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let t = theme(cx).clone();
+        let is_find_hit = self.find.open && self.find.matches.contains(&ix);
+        let is_current_hit = self.find.open && self.find.matches.get(self.find.current) == Some(&ix);
+        let inner = self.render_row_body(ix, cx);
+        div()
+            .w_full()
+            .px_4()
+            .py_1()
+            .when(is_find_hit, |d| d.bg(if is_current_hit { t.selection } else { t.hover }))
+            .child(centered_column(inner))
+            .into_any_element()
+    }
+
+    /// Row `ix`'s own content, without the column around it (runs draw their
+    /// calls with this).
+    pub(super) fn render_row_body(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         if ix >= self.rows.len() {
             return div().into_any_element();
         }
@@ -130,17 +147,14 @@ impl ClaudeChatView {
         // diffs and tool output every frame.
         let placeholder = LogRow::CompactionDivider { detail: String::new() };
         let row = std::mem::replace(&mut self.rows[ix], placeholder);
-        let el = self.render_row_inner(ix, &row, cx);
+        let el = self.row_body(ix, &row, cx);
         self.rows[ix] = row;
         el
     }
 
-    fn render_row_inner(&mut self, ix: usize, row: &LogRow, cx: &mut Context<Self>) -> AnyElement {
+    fn row_body(&mut self, ix: usize, row: &LogRow, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
-        let is_find_hit = self.find.open && self.find.matches.contains(&ix);
-        let is_current_hit = self.find.open && self.find.matches.get(self.find.current) == Some(&ix);
-
-        let inner: AnyElement = match row {
+        match row {
             LogRow::UserPrompt { id, text, images, file_chips, paste_labels, .. } => {
                 self.render_user_prompt(*id, text, images, file_chips, paste_labels, &t, cx)
             }
@@ -231,15 +245,7 @@ impl ClaudeChatView {
                 .text_color(if *is_error { t.error } else { t.text_muted })
                 .child(text.clone())
                 .into_any_element(),
-        };
-
-        div()
-            .w_full()
-            .px_4()
-            .py_1()
-            .when(is_find_hit, |d| d.bg(if is_current_hit { t.selection } else { t.hover }))
-            .child(centered_column(inner))
-            .into_any_element()
+        }
     }
 
     fn render_user_prompt(
@@ -374,7 +380,7 @@ impl ClaudeChatView {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(LogRow::Thought { expanded: exp, .. }) = this.rows.get_mut(ix) {
                             *exp = !*exp;
-                            this.list_state.remeasure_items(ix..ix + 1);
+                            this.remeasure_row(ix);
                             cx.notify();
                         }
                     })),
@@ -499,7 +505,7 @@ impl ClaudeChatView {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(LogRow::ReadSearchRun { expanded: exp, .. }) = this.rows.get_mut(ix) {
                             *exp = !*exp;
-                            this.list_state.remeasure_items(ix..ix + 1);
+                            this.remeasure_row(ix);
                             cx.notify();
                         }
                     })),
@@ -606,7 +612,7 @@ impl ClaudeChatView {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(LogRow::EditRow { expanded: exp, .. }) = this.rows.get_mut(ix) {
                             *exp = !*exp;
-                            this.list_state.remeasure_items(ix..ix + 1);
+                            this.remeasure_row(ix);
                             cx.notify();
                         }
                     })),
@@ -734,7 +740,7 @@ impl ClaudeChatView {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(LogRow::ToolCall { expanded: exp, .. }) = this.rows.get_mut(ix) {
                             *exp = !*exp;
-                            this.list_state.remeasure_items(ix..ix + 1);
+                            this.remeasure_row(ix);
                             cx.notify();
                         }
                     })),
@@ -804,58 +810,5 @@ impl ClaudeChatView {
                 div().into_any_element()
             })
             .into_any_element()
-    }
-
-    /// Marks every still-running subagent finished; `keep_background` spares tracks
-    /// with a task id, which report their own end through a task notification.
-    pub(super) fn settle_subagents(&mut self, keep_background: bool) {
-        for s in self.subagents.iter_mut().filter(|s| s.running) {
-            if keep_background && s.task_id.is_some() {
-                continue;
-            }
-            s.running = false;
-            s.status = "Stopped".into();
-        }
-    }
-
-    pub(super) fn finalize_streaming_rows(&mut self) {
-        for (idx, row) in self.rows.iter_mut().enumerate().rev().take(4) {
-            match row {
-                LogRow::Thought { streaming, started_at, duration_ms, .. } if *streaming => {
-                    *streaming = false;
-                    if let Some(start) = started_at.take() {
-                        *duration_ms = Some(start.elapsed().as_millis() as u64);
-                    }
-                    self.list_state.remeasure_items(idx..idx + 1);
-                }
-                LogRow::Prose { streaming, .. } if *streaming => *streaming = false,
-                _ => {}
-            }
-        }
-    }
-
-    pub(super) fn push_row(&mut self, row: LogRow) {
-        let was_at_bottom = self.stick_to_bottom || self.list_state.is_scrolled_to_end().unwrap_or(true);
-        let idx = self.rows.len();
-        self.rows.push(row);
-        self.list_state.splice(idx..idx, 1);
-        if was_at_bottom {
-            self.stick_to_bottom = true;
-            self.list_state.scroll_to_end();
-        }
-    }
-
-    pub(super) fn remeasure_row(&self, idx: usize) {
-        if idx < self.rows.len() {
-            self.list_state.remeasure_items(idx..idx + 1);
-            if self.stick_to_bottom {
-                self.list_state.scroll_to_end();
-            }
-        }
-    }
-
-    pub(super) fn scroll_to_bottom(&mut self) {
-        self.stick_to_bottom = true;
-        self.list_state.scroll_to_end();
     }
 }

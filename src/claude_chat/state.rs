@@ -201,6 +201,19 @@ impl LogRow {
         }
     }
 
+    /// Its stable id; dividers and notices have none.
+    pub fn id(&self) -> Option<u64> {
+        match self {
+            Self::UserPrompt { id, .. }
+            | Self::Thought { id, .. }
+            | Self::ReadSearchRun { id, .. }
+            | Self::EditRow { id, .. }
+            | Self::ToolCall { id, .. }
+            | Self::Prose { id, .. } => Some(*id),
+            Self::CompactionDivider { .. } | Self::Notice { .. } => None,
+        }
+    }
+
     pub fn is_user_turn(&self) -> bool {
         matches!(self, Self::UserPrompt { .. })
     }

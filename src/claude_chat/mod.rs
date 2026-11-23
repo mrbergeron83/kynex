@@ -11,10 +11,11 @@ mod events;
 mod markdown_view;
 mod media;
 mod overlays;
+mod runs;
 mod state;
 mod transcript;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
@@ -71,6 +72,10 @@ pub struct ClaudeChatView {
 
     // Transcript
     pub(super) rows: Vec<LogRow>,
+    /// What the list draws: rows, and runs of tool calls (`runs.rs`).
+    pub(super) items: Vec<kynex_core::claude::runs::ListItem>,
+    /// Runs opened to their calls, by their first row's id.
+    pub(super) open_runs: HashSet<u64>,
     pub(super) list_state: ListState,
     pub(super) stick_to_bottom: bool,
     pub(super) streaming_tool_json: HashMap<String, String>,
@@ -202,7 +207,7 @@ impl ClaudeChatView {
                 this.recompute_find_matches();
                 if let Some(&ix) = this.find.matches.first() {
                     this.find.current = 0;
-                    this.list_state.scroll_to_reveal_item(ix);
+                    this.reveal_row(ix);
                 }
                 cx.notify();
             }
@@ -324,6 +329,8 @@ impl ClaudeChatView {
             cumulative_cost_usd: 0.0,
             cost_loaded,
             rows: Vec::new(),
+            items: Vec::new(),
+            open_runs: HashSet::new(),
             list_state: ListState::new(0, ListAlignment::Bottom, gpui::px(320.)),
             stick_to_bottom: true,
             streaming_tool_json: HashMap::new(),
@@ -467,9 +474,9 @@ impl ClaudeChatView {
     }
 
     pub(super) fn clear_transcript(&mut self, cx: &mut Context<Self>) {
-        let count = self.rows.len();
         self.rows.clear();
-        self.list_state.splice(0..count, 0);
+        self.open_runs.clear();
+        self.relayout();
         self.plan_steps.clear();
         self.subagents.clear();
         self.peek_subagent = None;
@@ -530,8 +537,7 @@ impl ClaudeChatView {
         }
         self.find.current = (self.find.current as isize + delta).rem_euclid(len as isize) as usize;
         if let Some(&ix) = self.find.matches.get(self.find.current) {
-            self.stick_to_bottom = false;
-            self.list_state.scroll_to_reveal_item(ix);
+            self.reveal_row(ix);
         }
         cx.notify();
     }
@@ -549,14 +555,15 @@ impl ClaudeChatView {
         if turns.is_empty() {
             return;
         }
-        let top = self.list_state.logical_scroll_top().item_ix;
+        // The top item's first row: turns are compared in rows, the list scrolls in items.
+        let top_item = self.list_state.logical_scroll_top().item_ix;
+        let top = self.items.get(top_item).map_or(0, |it| it.start());
         let target = if dir < 0 {
             turns.iter().rev().copied().find(|&i| i < top).unwrap_or(turns[0])
         } else {
             turns.iter().copied().find(|&i| i > top).unwrap_or(*turns.last().unwrap())
         };
-        self.stick_to_bottom = false;
-        self.list_state.scroll_to_reveal_item(target);
+        self.reveal_row(target);
         cx.notify();
     }
 
