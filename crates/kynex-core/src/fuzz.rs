@@ -172,6 +172,11 @@ pub fn claude_stream(text: &str) {
 }
 
 /// Claude Code Markdown parser, diff engine, and composer trigger scanner.
+/// The chat transcript's Markdown parser (`markdown::parse`).
+pub fn markdown(text: &str) {
+    let _ = crate::markdown::parse(text);
+}
+
 pub fn claude_markdown(text: &str) {
     let blocks = crate::claude::markdown::parse(text);
     let _ = crate::claude::markdown::extract_plain_text(&blocks);

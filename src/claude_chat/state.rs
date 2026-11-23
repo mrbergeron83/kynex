@@ -83,26 +83,6 @@ pub struct ComposerAttachment {
     pub label: String,
 }
 
-/// Kind of read/search call grouped into a [`LogRow::ReadSearchRun`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReadKind {
-    Read,
-    Search,
-    Fetch,
-}
-
-/// One entry inside a collapsed/expanded [`LogRow::ReadSearchRun`].
-#[derive(Clone, Debug)]
-pub struct ReadSearchEntry {
-    pub tool_use_id: String,
-    pub kind: ReadKind,
-    pub tool_name: String,
-    pub label: String,
-    pub path: Option<String>,
-    pub done: bool,
-    pub is_error: bool,
-}
-
 /// One virtualized row inside the transcript `gpui::list`.
 #[derive(Clone, Debug)]
 pub enum LogRow {
@@ -121,11 +101,6 @@ pub enum LogRow {
         duration_ms: Option<u64>,
         expanded: bool,
         streaming: bool,
-    },
-    ReadSearchRun {
-        id: u64,
-        entries: Vec<ReadSearchEntry>,
-        expanded: bool,
     },
     EditRow {
         id: u64,
@@ -163,6 +138,29 @@ pub enum LogRow {
     CompactionDivider {
         detail: String,
     },
+    /// A `!` command run in the workspace, and what it printed (`None` while it runs).
+    Shell {
+        id: u64,
+        command: String,
+        output: Option<kynex_core::claude::input::shell::Output>,
+        /// Its output went to Claude with a message.
+        sent: bool,
+    },
+    /// The record a permission prompt leaves once answered: "Bash cargo test ✓ allowed".
+    PermissionNote {
+        title: String,
+        allowed: bool,
+        note: String,
+    },
+    /// The quiet rule that ends a turn: how long, how many tools, what it cost,
+    /// and the files it edited.
+    TurnEnd {
+        duration_ms: u64,
+        tools: usize,
+        cost_usd: Option<f64>,
+        is_error: bool,
+        files: Vec<String>,
+    },
     Notice {
         text: String,
         is_error: bool,
@@ -181,9 +179,6 @@ impl LogRow {
                 }
             }
             Self::Thought { text, .. } => text.clone(),
-            Self::ReadSearchRun { entries, .. } => {
-                entries.iter().map(|e| e.label.as_str()).collect::<Vec<_>>().join(" ")
-            }
             Self::EditRow { path, diff, .. } => {
                 let mut out = path.clone();
                 for h in &diff.hunks {
@@ -197,7 +192,29 @@ impl LogRow {
             Self::ToolCall { name, summary, output, .. } => format!("{name} {summary}\n{output}"),
             Self::Prose { plain, .. } => plain.clone(),
             Self::CompactionDivider { detail, .. } => detail.clone(),
+            Self::PermissionNote { title, note, .. } => format!("{title} {note}"),
+            Self::Shell { command, output, .. } => match output {
+                Some(o) => format!("{command}\n{}\n{}", o.stdout, o.stderr),
+                None => command.clone(),
+            },
+            Self::TurnEnd { files, .. } => files.join(" "),
             Self::Notice { text, .. } => text.clone(),
+        }
+    }
+
+    /// Its stable id; dividers and notices have none.
+    pub fn id(&self) -> Option<u64> {
+        match self {
+            Self::UserPrompt { id, .. }
+            | Self::Thought { id, .. }
+            | Self::EditRow { id, .. }
+            | Self::ToolCall { id, .. }
+            | Self::Prose { id, .. }
+            | Self::Shell { id, .. } => Some(*id),
+            Self::CompactionDivider { .. }
+            | Self::PermissionNote { .. }
+            | Self::TurnEnd { .. }
+            | Self::Notice { .. } => None,
         }
     }
 
@@ -301,7 +318,8 @@ pub struct QueuedMessage {
 pub struct FindState {
     pub open: bool,
     pub query: String,
-    pub matches: Vec<usize>,
+    /// Every match: its row and which match it is within that row.
+    pub matches: Vec<(usize, usize)>,
     pub current: usize,
 }
 
@@ -316,8 +334,25 @@ pub enum OpenPopover {
 /// Active `/` command or `@` file completion popup above the composer.
 #[derive(Clone, Debug)]
 pub enum CompletionPopup {
-    Slash { start: usize, end: usize, items: Vec<CommandMatch>, selected: usize },
-    AtFile { start: usize, end: usize, items: Vec<FileMatch>, selected: usize },
+    Slash {
+        start: usize,
+        end: usize,
+        items: Vec<CommandMatch>,
+        selected: usize,
+    },
+    AtFile {
+        start: usize,
+        end: usize,
+        items: Vec<FileMatch>,
+        selected: usize,
+    },
+    /// Ctrl+R: earlier messages matching the composer's text, newest first,
+    /// and the draft to bring back on Esc.
+    History {
+        items: Vec<String>,
+        selected: usize,
+        draft: String,
+    },
 }
 
 /// Full-resolution image currently displayed in the lightbox modal.
@@ -334,15 +369,6 @@ pub struct LightboxImage {
 // Classification & formatting helpers
 // ---------------------------------------------------------------------------
 
-pub fn is_read_search_tool(name: &str) -> Option<ReadKind> {
-    match name {
-        "Read" | "LS" | "ListDir" | "NotebookRead" => Some(ReadKind::Read),
-        "Glob" | "Grep" | "Search" | "WebSearch" | "ToolSearch" => Some(ReadKind::Search),
-        "WebFetch" => Some(ReadKind::Fetch),
-        _ => None,
-    }
-}
-
 pub fn is_edit_tool(name: &str) -> bool {
     matches!(name, "Edit" | "MultiEdit" | "Write" | "NotebookEdit")
 }
@@ -353,10 +379,6 @@ pub fn is_todo_tool(name: &str) -> bool {
 
 pub fn is_subagent_tool(name: &str) -> bool {
     matches!(name, "Agent" | "Task")
-}
-
-pub fn is_shell_tool(name: &str) -> bool {
-    matches!(name, "Bash" | "PowerShell" | "Shell" | "Terminal")
 }
 
 pub fn extract_file_path(input: &Value) -> Option<String> {
@@ -600,6 +622,21 @@ pub fn history_items_to_rows(
     for item in items {
         match item {
             HistoryItem::User { uuid, text, images } => {
+                // The CLI's own `!` commands log as tagged user messages: a command, then its output.
+                use kynex_core::claude::input::shell::{Part, parse};
+                match parse(&text) {
+                    Some(Part::Input(command)) => {
+                        out.push(LogRow::Shell { id: next_id(), command, output: None, sent: true });
+                        continue;
+                    }
+                    Some(Part::Output(o)) => {
+                        if let Some(LogRow::Shell { output, .. }) = out.last_mut() {
+                            *output = Some(o);
+                        }
+                        continue;
+                    }
+                    None => {}
+                }
                 let row_imgs = images
                     .into_iter()
                     .enumerate()
@@ -638,22 +675,7 @@ pub fn history_items_to_rows(
                 if is_todo_tool(&name) {
                     continue;
                 }
-                if let Some(kind) = is_read_search_tool(&name) {
-                    let entry = ReadSearchEntry {
-                        tool_use_id: tid,
-                        kind,
-                        tool_name: name.clone(),
-                        label: tool_summary(workspace, &name, &input),
-                        path: extract_file_path(&input),
-                        done: true,
-                        is_error,
-                    };
-                    if let Some(LogRow::ReadSearchRun { entries, .. }) = out.last_mut() {
-                        entries.push(entry);
-                    } else {
-                        out.push(LogRow::ReadSearchRun { id: next_id(), entries: vec![entry], expanded: false });
-                    }
-                } else if is_edit_tool(&name) {
+                if is_edit_tool(&name) {
                     let path = extract_file_path(&input).unwrap_or_else(|| name.clone());
                     let diff = diff_from_tool_input(&name, &input).unwrap_or_default();
                     out.push(LogRow::EditRow {

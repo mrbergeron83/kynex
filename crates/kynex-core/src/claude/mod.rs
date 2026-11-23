@@ -6,9 +6,15 @@ pub mod client;
 pub mod composer;
 pub mod costs;
 pub mod diff;
+pub mod find;
 pub mod history;
+pub mod input;
 pub mod markdown;
+pub mod prompt_history;
 pub mod protocol;
+pub mod rewind;
+pub mod runs;
+pub mod timeline;
 pub mod types;
 
 pub use client::ClaudeClient;

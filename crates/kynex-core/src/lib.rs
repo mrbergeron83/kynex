@@ -27,6 +27,7 @@ pub mod hooks;
 pub mod layout;
 pub mod links;
 pub mod lru;
+pub mod markdown;
 pub mod migrate;
 pub mod motion;
 pub mod named_layouts;

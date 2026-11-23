@@ -52,7 +52,21 @@ impl ClaudeChatView {
                     .rounded_sm()
                     .bg(t.element)
                     .child(div().flex_none().text_size(px(10.5)).text_color(t.text_placeholder).child("Queued"))
-                    .child(div().flex_1().min_w_0().truncate().text_xs().text_color(t.text).child(preview))
+                    .child(
+                        div()
+                            .id(("queued-text", i))
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(t.text)
+                            .cursor_pointer()
+                            .tooltip(Tooltip::with_meta("Take back to edit", "↑"))
+                            .child(preview)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.take_back_queued(Some(qid), cx);
+                            })),
+                    )
                     .child(
                         ghost_button(("queued-steer", i), cx)
                             .h(px(18.))
@@ -95,6 +109,9 @@ impl ClaudeChatView {
     /// (`Tab` accepts it) in place of the usual placeholder.
     pub(super) fn sync_composer_ghost(&self, cx: &mut Context<Self>) {
         let ghost: SharedString = match &self.prompt_suggestion {
+            _ if self.input_mode != kynex_core::claude::input::input_mode::InputMode::Prompt => {
+                self.input_mode.placeholder().into()
+            }
             Some(sug) if !self.turn_active && self.attachments.is_empty() => format!("{sug}   ⇥ Tab").into(),
             _ => COMPOSER_PLACEHOLDER.into(),
         };
@@ -217,6 +234,7 @@ impl ClaudeChatView {
                             .children(attach_chips),
                     )
                 })
+                .children(self.render_mode_badge(cx))
                 .child(scrollbar::vertical_over(
                     "claude-composer-sb",
                     input_scroll.clone(),
@@ -307,6 +325,7 @@ impl ClaudeChatView {
                                     })),
                             )
                         })
+                        .child(self.render_thinking_chip(cx))
                         .child(div().flex_1())
                         // Right toolbar cluster
                         .children(ctx_pill)
@@ -452,6 +471,7 @@ impl ClaudeChatView {
             }
             pos += part.len();
         }
+        marks.extend(self.ultrathink_marks(&text, &t));
         marks.sort_by_key(|m| m.range.start);
         self.composer_input.update(cx, |inp, cx| inp.set_marks(marks, cx));
     }
@@ -604,6 +624,9 @@ impl ClaudeChatView {
 
     /// Submits the current composer contents (normal send, queue when busy, or mid-turn steer).
     pub(super) fn submit_composer(&mut self, steer: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.submit_in_mode(cx) {
+            return;
+        }
         let raw_text = self.composer_input.read(cx).text().to_string();
         let trimmed = raw_text.trim();
         if trimmed.is_empty() && self.attachments.is_empty() {
@@ -645,6 +668,8 @@ impl ClaudeChatView {
             );
             row_images.push(RowImage { key: ImageKey::Inline(att.id), logged_ref: None, label: att.label });
         }
+        // `!` commands run since the last message: Claude sees them with this one.
+        blocks.extend(self.take_shell_blocks().into_iter().map(PromptBlock::Text));
         if !expanded.is_empty() {
             blocks.push(PromptBlock::Text(expanded.clone()));
         }
@@ -656,6 +681,7 @@ impl ClaudeChatView {
         self.completion = None;
         self.open_popover = None;
         self.prompt_suggestion = None;
+        self.remember_sent(&expanded, cx);
 
         // If a turn is running and user didn't request Steer, enqueue cleanly.
         if self.turn_active && !steer {
@@ -724,7 +750,12 @@ impl ClaudeChatView {
             paste_labels,
         });
         self.update_title_from_first_prompt(cx);
+        if !self.turn_active {
+            self.turn_started = Some(std::time::Instant::now());
+            self.turn_output_seen = false;
+        }
         self.turn_active = true;
+        self.tick_clocks(cx);
         self.scroll_to_bottom();
         self.set_status(AgentState::Working, if steer { "Steering…" } else { "Thinking…" }, cx);
         cx.notify();

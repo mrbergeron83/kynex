@@ -49,9 +49,19 @@ impl ClaudeChatView {
     }
 
     pub(super) fn apply_event(&mut self, ev: ClaudeEvent, cx: &mut Context<Self>) {
+        if matches!(
+            ev,
+            ClaudeEvent::ThoughtDelta(_)
+                | ClaudeEvent::TextDelta(_)
+                | ClaudeEvent::ToolInputDelta { .. }
+                | ClaudeEvent::ToolCallStart { .. }
+        ) {
+            self.turn_output_seen = true;
+        }
         match ev {
             ClaudeEvent::Initialized(info) => self.on_initialized(info, cx),
             ClaudeEvent::SystemInit(sys) => {
+                self.ultrathink = sys.ultrathink_available;
                 if !sys.session_id.is_empty() {
                     self.adopt_session_id(sys.session_id, cx);
                 }
@@ -268,9 +278,13 @@ impl ClaudeChatView {
                 self.push_row(LogRow::Notice { text: format!("MCP · {summary}"), is_error: false });
             }
             ClaudeEvent::TurnFinished(result) => self.on_turn_finished(result, cx),
-            ClaudeEvent::ControlAck { .. } => {}
-            ClaudeEvent::ControlError { error, .. } => {
-                self.push_row(LogRow::Notice { text: format!("Control error: {error}"), is_error: true });
+            ClaudeEvent::ControlAck { request_id, .. } => {
+                self.rewind_answered(&request_id, None, cx);
+            }
+            ClaudeEvent::ControlError { request_id, error } => {
+                if !self.rewind_answered(&request_id, Some(error.clone()), cx) {
+                    self.push_row(LogRow::Notice { text: format!("Control error: {error}"), is_error: true });
+                }
             }
             ClaudeEvent::Error(err) => {
                 self.push_row(LogRow::Notice { text: err, is_error: true });
@@ -404,6 +418,7 @@ impl ClaudeChatView {
 
     fn on_turn_finished(&mut self, result: TurnResult, cx: &mut Context<Self>) {
         self.turn_active = false;
+        self.turn_ended = true;
         self.finalize_streaming_rows();
         // Foreground subagents can't outlive their turn (after an interrupt no tool
         // result arrives); background tasks end with their own notification.
@@ -426,10 +441,12 @@ impl ClaudeChatView {
         }
 
         // Persist incremental USD delta for Anthropic sessions so resumed sessions keep cumulative spend.
+        let mut turn_cost = None;
         if !self.is_openrouter() && result.total_cost_usd.is_finite() {
             let delta = (result.total_cost_usd - self.process_cost_usd).max(0.0);
             self.process_cost_usd = result.total_cost_usd.max(self.process_cost_usd);
             self.cumulative_cost_usd += delta;
+            turn_cost = Some(delta);
             if let Some(sid) = self.session_id.clone() {
                 cx.background_spawn(async move {
                     let _ = costs::add_delta(&sid, delta);
@@ -446,15 +463,39 @@ impl ClaudeChatView {
             };
             self.push_row(LogRow::Notice { text: msg, is_error: true });
         }
+        self.push_turn_end(result.duration_ms, turn_cost, result.is_error);
 
         cx.emit(ClaudeChatEvent::TurnFinished);
 
         // If user queued messages while Claude was busy, dispatch the next one immediately.
-        if let Some(next) = self.queued.pop_front() {
+        if let Some(next) = self.take_queue_batch() {
             self.dispatch_queued(next, cx);
         } else {
             self.set_status(AgentState::Done, "Done", cx);
         }
+    }
+
+    /// Ends the turn in the transcript with its recap: tools used since the last
+    /// message sent, and the files edited.
+    fn push_turn_end(&mut self, duration_ms: u64, cost_usd: Option<f64>, is_error: bool) {
+        let from = self.rows.iter().rposition(LogRow::is_user_turn).map_or(0, |i| i + 1);
+        let mut tools = 0;
+        let mut files: Vec<String> = Vec::new();
+        for row in &self.rows[from..] {
+            match row {
+                LogRow::ToolCall { .. } => tools += 1,
+                LogRow::EditRow { path, is_error: false, .. } => {
+                    tools += 1;
+                    if !files.contains(path) {
+                        files.push(path.clone());
+                    }
+                }
+                LogRow::EditRow { .. } => tools += 1,
+                _ => {}
+            }
+        }
+        self.turn_started = None;
+        self.push_row(LogRow::TurnEnd { duration_ms, tools, cost_usd, is_error, files });
     }
 
     pub(super) fn adopt_session_id(&mut self, sid: String, cx: &mut Context<Self>) {
@@ -504,34 +545,6 @@ impl ClaudeChatView {
                     rows: Vec::new(),
                 });
             }
-        }
-
-        // 1. Read/Search grouping
-        if let Some(kind) = is_read_search_tool(&name) {
-            let path = extract_file_path(&input);
-            let label = tool_summary(&self.config.workspace, &name, &input);
-            // Update existing entry if present.
-            for (idx, row) in self.rows.iter_mut().enumerate().rev() {
-                if let LogRow::ReadSearchRun { entries, .. } = row
-                    && let Some(e) = entries.iter_mut().find(|e| e.tool_use_id == tool_use_id)
-                {
-                    e.label = label;
-                    e.path = path;
-                    self.remeasure_row(idx);
-                    return;
-                }
-            }
-            let entry =
-                ReadSearchEntry { tool_use_id, kind, tool_name: name, label, path, done: false, is_error: false };
-            if let Some(LogRow::ReadSearchRun { entries, .. }) = self.rows.last_mut() {
-                entries.push(entry);
-                let idx = self.rows.len() - 1;
-                self.remeasure_row(idx);
-            } else {
-                let id = self.next_id();
-                self.push_row(LogRow::ReadSearchRun { id, entries: vec![entry], expanded: false });
-            }
-            return;
         }
 
         // 2. Edit / MultiEdit / Write compact 1-line rows with collapsible inline diff
@@ -648,14 +661,6 @@ impl ClaudeChatView {
 
         for (idx, row) in self.rows.iter_mut().enumerate().rev() {
             match row {
-                LogRow::ReadSearchRun { entries, .. } => {
-                    if let Some(e) = entries.iter_mut().find(|e| e.tool_use_id == tool_use_id) {
-                        e.done = true;
-                        e.is_error = is_error;
-                        self.remeasure_row(idx);
-                        return;
-                    }
-                }
                 LogRow::EditRow { tool_use_id: tid, done, is_error: err, error_text, .. } if tid == tool_use_id => {
                     *done = true;
                     *err = is_error;
@@ -727,12 +732,13 @@ impl ClaudeChatView {
             return;
         }
         let old_len = self.rows.len();
+        let old_items = self.items.len();
         let top = self.list_state.logical_scroll_top();
-        let added = rows.len();
         let existing = std::mem::take(&mut self.rows);
         self.rows = rows;
         self.rows.extend(existing);
-        self.list_state.splice(0..0, added);
+        self.relayout_prepended();
+        let added = self.items.len().saturating_sub(old_items);
         if is_recent && old_len == 0 {
             self.scroll_to_bottom();
         } else if !is_recent && !self.stick_to_bottom {

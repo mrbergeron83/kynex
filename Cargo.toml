@@ -23,6 +23,8 @@ gix = { version = "0.90", default-features = false, features = ["status", "revis
 jiff = "0.2.42"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 polling = "3"
+# Markdown in Claude chat replies (kynex-core/src/markdown.rs).
+pulldown-cmark = { version = "0.13", default-features = false }
 # The same as gpui's, for the macOS IOKit sleep assertion (kynex-core/src/awake.rs).
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
 kynex-core = { path = "crates/kynex-core" }

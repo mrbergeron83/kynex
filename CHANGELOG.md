@@ -5,6 +5,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Claude chat brings back the old transcript's feel: consecutive tool calls fold under one summary row ("Edited app.rs ×3, ran 2 commands"); text selects and copies across rows (Ctrl+C); the view glides with a streaming reply and goes to the end when a turn finishes; tool rows sit tight and may widen for output and diffs; each turn ends with a recap line (time, tools, cost, edited-file chips); answered permission prompts leave a one-line note; a status line under the transcript counts the turn's time.
+- Claude chat composer: ↑ / ↓ recall earlier messages (queued ones first), Ctrl+R searches them, Ctrl+S stashes a draft, Esc Esc clears one, and unsent drafts survive a restart. Queued messages go out together when the turn ends; Ctrl+Enter sends them now and Alt+Enter steers them into the turn; click a queued message to take it back.
+- Claude chat has the timeline back (Ctrl+Shift+T): one entry per message with its recap and the edits, commands, subagents, prompts and errors under it; clicking one glides the transcript there and flashes it, and Alt+↑ / Alt+↓ glide between turns the same way.
+- Claude chat looks and reads as before 0.0.37: replies use the old markdown renderer, tool calls are flat disclosure lines, rows ease open and shut, Ctrl+F washes matches inside the text, and Page Up / Down, Home / End and Ctrl+Shift+O (expand every tool call) are back.
+- Claude chat composer modes are back: `!` runs a command in the workspace (its output goes with your next message), `#` adds a note to a memory file, `?` lists the keys; Alt+T switches thinking, `ultrathink` is highlighted, Ctrl+G edits the draft in your editor, and Esc Esc on an empty message box rewinds to an earlier message (conversation, files or both).
+
 ## [0.0.40] - 2026-11-23
 
 ### Changed

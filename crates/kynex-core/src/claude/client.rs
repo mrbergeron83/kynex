@@ -184,6 +184,13 @@ impl ClaudeClient {
         Ok(id)
     }
 
+    /// Alt+T: thinking on or off for the rest of the session.
+    pub fn set_thinking(&self, on: bool) -> Result<String, String> {
+        let id = self.next_request_id("think");
+        self.send_raw(protocol::build_set_thinking(&id, on))?;
+        Ok(id)
+    }
+
     pub fn set_fast_mode(&self, enabled: bool) -> Result<String, String> {
         let id = self.next_request_id("fast");
         self.send_raw(protocol::build_set_fast_mode(&id, enabled))?;
@@ -317,6 +324,9 @@ pub(crate) fn build_command(config: &SpawnConfig) -> Command {
         SessionStart::New => {}
         SessionStart::Resume(id) if !id.trim().is_empty() => {
             cmd.args(["--resume", id.trim()]);
+        }
+        SessionStart::ResumeAt { id, at } if !id.trim().is_empty() && !at.trim().is_empty() => {
+            cmd.args(["--resume", id.trim(), "--resume-session-at", at.trim()]);
         }
         SessionStart::Fork(id) if !id.trim().is_empty() => {
             cmd.args(["--resume", id.trim(), "--fork-session"]);

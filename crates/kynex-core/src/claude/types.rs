@@ -21,6 +21,12 @@ pub enum SessionStart {
     New,
     Resume(String),
     Fork(String),
+    /// Session `id` continued from entry `at` (rewind): the next message starts
+    /// a new branch there.
+    ResumeAt {
+        id: String,
+        at: String,
+    },
 }
 
 /// Permission mode supported by `claude --permission-mode` and
@@ -219,6 +225,8 @@ pub struct SystemInitInfo {
     pub slash_commands: Vec<String>,
     pub cwd: Option<String>,
     pub claude_code_version: Option<String>,
+    /// `ultrathink` in a prompt raises that turn's effort on this model.
+    pub ultrathink_available: bool,
 }
 
 /// Outgoing content block sent inside a `user` turn or mid-turn steer message.
