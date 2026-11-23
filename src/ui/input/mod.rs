@@ -220,6 +220,16 @@ impl TextInput {
         self
     }
 
+    /// Swaps the gray text shown while empty, e.g. for an inline suggestion. Doesn't
+    /// notify: callers change it from their own render, before this input draws.
+    pub fn set_placeholder(&mut self, text: impl Into<SharedString>) {
+        self.placeholder = text.into();
+    }
+
+    pub fn placeholder_text(&self) -> &SharedString {
+        &self.placeholder
+    }
+
     pub fn text(&self) -> &str {
         &self.content
     }

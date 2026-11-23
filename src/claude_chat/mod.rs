@@ -172,10 +172,7 @@ impl ClaudeChatView {
         };
 
         let composer_input = cx.new(|cx| {
-            TextInput::new(cx)
-                .multiline()
-                .intercept_long_paste()
-                .placeholder("Message Claude… (Enter to send, Shift+Enter for newline, / commands, @ files)")
+            TextInput::new(cx).multiline().intercept_long_paste().placeholder(composer::COMPOSER_PLACEHOLDER)
         });
         let card_input = cx.new(|cx| TextInput::new(cx).placeholder("Add note or feedback…"));
         let find_input = cx.new(|cx| TextInput::new(cx).placeholder("Find in transcript…"));
@@ -432,6 +429,7 @@ impl ClaudeChatView {
         self.exited = true;
         self.pending_card = None;
         self.queued_cards.clear();
+        self.settle_subagents(false);
         self.set_status(AgentState::Idle, "Stopped", cx);
         cx.notify();
     }
@@ -778,6 +776,12 @@ pub(super) fn centered_column(child: impl IntoElement) -> gpui::Div {
 impl Render for ClaudeChatView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.image_cache.flush_retired(cx);
+        // A peek whose track is gone would draw nothing yet still swallow Esc.
+        if let Some(id) = &self.peek_subagent
+            && !self.subagents.iter().any(|s| &s.tool_use_id == id)
+        {
+            self.peek_subagent = None;
+        }
         let t = theme(cx).clone();
 
         let find_bar = self.render_find_bar(cx);
@@ -786,7 +790,7 @@ impl Render for ClaudeChatView {
         let plan_strip = self.render_plan_strip(cx);
         let pending_card = self.render_pending_card(cx);
         let queued_strip = self.render_queued_strip(cx);
-        let suggestion = self.render_prompt_suggestion(cx);
+        self.sync_composer_ghost(cx);
         let completion = self.render_completion_popup(cx);
         let popover = self.render_toolbar_popover(cx);
         let composer = self.render_composer(cx);
@@ -812,7 +816,6 @@ impl Render for ClaudeChatView {
             .children(plan_strip)
             .children(pending_card)
             .children(queued_strip)
-            .children(suggestion)
             .children(completion)
             .children(popover)
             .child(composer)
