@@ -14,6 +14,7 @@ mod keys;
 mod markdown_view;
 mod media;
 mod overlays;
+mod rewind;
 mod runs;
 mod state;
 mod tool_rows;
@@ -143,6 +144,11 @@ pub struct ClaudeChatView {
     pub(super) ultrathink: bool,
     /// Ctrl+G: the draft is open in an editor.
     pub(super) editing_outside: bool,
+    /// Esc Esc's popup, and a file restore waiting for the CLI.
+    pub(super) rewind: Option<rewind::RewindMenu>,
+    pub(super) pending_rewind: Option<rewind::PendingRewind>,
+    /// Wakes the view when the CLI has events; a restarted client gets it too.
+    pub(super) wake: kynex_core::claude::Wake,
     pub(super) open_popover: Option<OpenPopover>,
 
     // Media & Lightbox (all RenderImage textures deterministically dropped via cx.drop_image)
@@ -416,6 +422,9 @@ impl ClaudeChatView {
             thinking_on: true,
             ultrathink: false,
             editing_outside: false,
+            rewind: None,
+            pending_rewind: None,
+            wake: Arc::clone(&wake),
             open_popover: None,
             attachments: Vec::new(),
             image_cache: media::ImageCache::default(),
@@ -723,6 +732,7 @@ impl Render for ClaudeChatView {
         self.sync_composer_ghost(cx);
         let completion = self.render_completion_popup(cx);
         let mode_popup = self.render_mode_popup(cx);
+        let rewind_popup = self.render_rewind(cx);
         let popover = self.render_toolbar_popover(cx);
         let composer = self.render_composer(cx);
         let peek_modal = self.render_subagent_peek_modal(cx);
@@ -750,6 +760,7 @@ impl Render for ClaudeChatView {
             .children(queued_strip)
             .children(completion)
             .children(mode_popup)
+            .children(rewind_popup)
             .children(popover)
             .child(composer)
             .children(peek_modal)

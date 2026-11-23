@@ -21,6 +21,12 @@ pub enum SessionStart {
     New,
     Resume(String),
     Fork(String),
+    /// Session `id` continued from entry `at` (rewind): the next message starts
+    /// a new branch there.
+    ResumeAt {
+        id: String,
+        at: String,
+    },
 }
 
 /// Permission mode supported by `claude --permission-mode` and

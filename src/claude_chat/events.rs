@@ -269,9 +269,13 @@ impl ClaudeChatView {
                 self.push_row(LogRow::Notice { text: format!("MCP · {summary}"), is_error: false });
             }
             ClaudeEvent::TurnFinished(result) => self.on_turn_finished(result, cx),
-            ClaudeEvent::ControlAck { .. } => {}
-            ClaudeEvent::ControlError { error, .. } => {
-                self.push_row(LogRow::Notice { text: format!("Control error: {error}"), is_error: true });
+            ClaudeEvent::ControlAck { request_id, .. } => {
+                self.rewind_answered(&request_id, None, cx);
+            }
+            ClaudeEvent::ControlError { request_id, error } => {
+                if !self.rewind_answered(&request_id, Some(error.clone()), cx) {
+                    self.push_row(LogRow::Notice { text: format!("Control error: {error}"), is_error: true });
+                }
             }
             ClaudeEvent::Error(err) => {
                 self.push_row(LogRow::Notice { text: err, is_error: true });

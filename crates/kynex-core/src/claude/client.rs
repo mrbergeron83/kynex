@@ -325,6 +325,9 @@ pub(crate) fn build_command(config: &SpawnConfig) -> Command {
         SessionStart::Resume(id) if !id.trim().is_empty() => {
             cmd.args(["--resume", id.trim()]);
         }
+        SessionStart::ResumeAt { id, at } if !id.trim().is_empty() && !at.trim().is_empty() => {
+            cmd.args(["--resume", id.trim(), "--resume-session-at", at.trim()]);
+        }
         SessionStart::Fork(id) if !id.trim().is_empty() => {
             cmd.args(["--resume", id.trim(), "--fork-session"]);
         }

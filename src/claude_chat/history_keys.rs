@@ -159,17 +159,22 @@ impl ClaudeChatView {
     }
 
     /// Esc with Claude idle: a second Esc soon after clears the draft (it stays
-    /// in ↑'s list). False if this Esc wasn't for the draft.
+    /// in ↑'s list), or on an empty composer opens rewind. False if this Esc
+    /// wasn't one of those.
     pub(super) fn double_esc(&mut self, cx: &mut Context<Self>) -> bool {
         let text = self.composer_input.read(cx).text().to_string();
-        if text.trim().is_empty() || self.turn_active {
+        if self.turn_active || (text.trim().is_empty() && self.session_id.is_none()) {
             self.last_esc = None;
             return false;
         }
         if self.last_esc.take().is_some_and(|t| t.elapsed() < DOUBLE_ESC) {
-            self.prompt_history.push(&text);
-            self.save_prompt_history(cx);
-            self.set_composer(String::new(), cx);
+            if text.trim().is_empty() {
+                self.open_rewind(cx);
+            } else {
+                self.prompt_history.push(&text);
+                self.save_prompt_history(cx);
+                self.set_composer(String::new(), cx);
+            }
         } else {
             self.last_esc = Some(Instant::now());
         }

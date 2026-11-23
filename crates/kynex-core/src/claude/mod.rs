@@ -11,6 +11,7 @@ pub mod input;
 pub mod markdown;
 pub mod prompt_history;
 pub mod protocol;
+pub mod rewind;
 pub mod runs;
 pub mod types;
 

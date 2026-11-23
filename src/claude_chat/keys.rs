@@ -36,6 +36,11 @@ impl ClaudeChatView {
         let m = &ev.keystroke.modifiers;
         let secondary = if cfg!(target_os = "macos") { m.platform } else { m.control };
         let key = ev.keystroke.key.as_str();
+        // The rewind popup has the plain keys while it's open.
+        if self.rewind.is_some() && !secondary && !m.alt && !m.shift && self.rewind_key(key, cx) {
+            cx.stop_propagation();
+            return;
+        }
         // Transcript keys that work even while typing: Page Up / Down, Ctrl+Home / End, Ctrl+O.
         let plain = !secondary && !m.alt && !m.shift;
         let scroll = match key {
