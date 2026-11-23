@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.40] - 2026-11-23
+
 ### Changed
 
 - Claude chat: prompt suggestions show as gray ghost text inside the empty composer (Tab accepts) instead of a pill above it.
@@ -1097,7 +1099,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.39...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.40...HEAD
+[0.0.40]: https://github.com/mrbergeron83/kynex/compare/v0.0.39...v0.0.40
 [0.0.39]: https://github.com/mrbergeron83/kynex/compare/v0.0.38...v0.0.39
 [0.0.38]: https://github.com/mrbergeron83/kynex/compare/v0.0.37...v0.0.38
 [0.0.37]: https://github.com/mrbergeron83/kynex/compare/v0.0.36...v0.0.37
