@@ -90,13 +90,10 @@ impl KynexApp {
     }
 
     fn open_agent_sessions(&self, ws: &Path) -> Vec<OpenSession> {
-        let mut list: Vec<&super::agent_cli::LiveAgent> = self
+        let mut list: Vec<OpenSession> = self
             .agent_instances
             .values()
             .filter(|a| workspace::same_folder(&a.cwd, ws) && a.meta.provider.is_some())
-            .collect();
-        list.sort_by_key(|a| a.id);
-        list.into_iter()
             .filter_map(|inst| {
                 let provider = inst.meta.provider.as_deref()?;
                 let lamp = self.instance_lamp(inst.id);
@@ -110,7 +107,27 @@ impl KynexApp {
                     lamp,
                 })
             })
-            .collect()
+            .chain(
+                self.claude_chats
+                    .values()
+                    .filter(|c| workspace::same_folder(&c.cwd, ws) && c.meta.provider.is_some())
+                    .filter_map(|chat| {
+                        let provider = chat.meta.provider.as_deref()?;
+                        let lamp = self.instance_lamp(chat.id);
+                        Some(OpenSession {
+                            agent_id: chat.id,
+                            id: chat.meta.session_id.clone(),
+                            title: self.agent_title(&chat.cwd, &chat.meta),
+                            provider_badge: self.provider_badge(provider),
+                            provider_name: self.provider_display_name(provider),
+                            busy: lamp == Lamp::Working,
+                            lamp,
+                        })
+                    }),
+            )
+            .collect();
+        list.sort_by_key(|o| o.agent_id);
+        list
     }
 
     fn render_place(

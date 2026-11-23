@@ -112,6 +112,7 @@ impl Tool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Content {
     AgentCli,
+    ClaudeChat,
     Terminal,
     Git,
     Tree,
@@ -359,7 +360,15 @@ impl Tiling {
 
     /// What pane `pane` holds.
     pub fn content(&self, pane: PaneId) -> Option<Content> {
-        if self.agents.contains_key(&pane) { Some(Content::AgentCli) } else { self.tools.get(&pane).map(Tool::content) }
+        if let Some(agent) = self.agents.get(&pane) {
+            if agent.provider.as_deref().is_some_and(crate::agent_cli::is_claude_chat) {
+                Some(Content::ClaudeChat)
+            } else {
+                Some(Content::AgentCli)
+            }
+        } else {
+            self.tools.get(&pane).map(Tool::content)
+        }
     }
 
     pub fn is_agent(&self, pane: PaneId) -> bool {
@@ -659,10 +668,10 @@ impl Tiling {
         self.layout.toggle_zoom();
     }
 
-    /// Closes `pane` when the workspace keeps at least one `agent_cli` pane (and >1 pane total).
+    /// Closes `pane` when the workspace keeps at least one agent pane (and >1 pane total).
     pub fn close_pane(&mut self, pane: PaneId) -> Option<Content> {
         let content = self.content(pane)?;
-        let last_agent = content == Content::AgentCli && self.agents.len() < 2;
+        let last_agent = matches!(content, Content::AgentCli | Content::ClaudeChat) && self.agents.len() < 2;
         if last_agent || self.layout.panes().len() < 2 {
             return None;
         }

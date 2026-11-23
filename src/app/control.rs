@@ -278,26 +278,50 @@ impl KynexApp {
     }
 
     fn session_list(&self) -> Value {
-        let mut instances: Vec<_> = self.agent_instances.values().collect();
-        instances.sort_by(|a, b| a.cwd.cmp(&b.cwd).then(a.id.cmp(&b.id)));
-        let sessions: Vec<Value> = instances
-            .into_iter()
+        let mut sessions: Vec<(PathBuf, u64, Value)> = self
+            .agent_instances
+            .values()
             .map(|inst| {
                 let state = inst.tracker.state();
                 let detail = (!inst.tracker.detail().is_empty()).then(|| inst.tracker.detail().to_string());
-                json!({
-                    "instance": inst.id,
-                    "pane": self.pane_showing_agent(inst.id),
-                    "provider": inst.meta.provider,
-                    "id": inst.meta.session_id,
-                    "model": inst.meta.model,
-                    "title": self.agent_title(&inst.cwd, &inst.meta),
-                    "cwd": inst.cwd,
-                    "state": format!("{state:?}").to_lowercase(),
-                    "detail": detail,
-                })
+                (
+                    inst.cwd.clone(),
+                    inst.id,
+                    json!({
+                        "instance": inst.id,
+                        "pane": self.pane_showing_agent(inst.id),
+                        "provider": inst.meta.provider,
+                        "id": inst.meta.session_id,
+                        "model": inst.meta.model,
+                        "title": self.agent_title(&inst.cwd, &inst.meta),
+                        "cwd": inst.cwd,
+                        "state": format!("{state:?}").to_lowercase(),
+                        "detail": detail,
+                    }),
+                )
             })
+            .chain(self.claude_chats.values().map(|chat| {
+                let state = chat.state;
+                let detail = (!chat.detail.is_empty()).then(|| chat.detail.clone());
+                (
+                    chat.cwd.clone(),
+                    chat.id,
+                    json!({
+                        "instance": chat.id,
+                        "pane": self.pane_showing_agent(chat.id),
+                        "provider": chat.meta.provider,
+                        "id": chat.meta.session_id,
+                        "model": chat.meta.model,
+                        "title": self.agent_title(&chat.cwd, &chat.meta),
+                        "cwd": chat.cwd,
+                        "state": format!("{state:?}").to_lowercase(),
+                        "detail": detail,
+                    }),
+                )
+            }))
             .collect();
+        sessions.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        let sessions: Vec<Value> = sessions.into_iter().map(|(_, _, v)| v).collect();
         json!({ "sessions": sessions })
     }
 }

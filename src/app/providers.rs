@@ -393,7 +393,7 @@ impl KynexApp {
             .gap_2()
             .child(heading(
                 "Claude Code",
-                "Runs the native `claude` CLI directly in a terminal pane with its own sign-in and auto-updates.",
+                "Native Claude Code chat & composer powered by your installed `claude` CLI, sign-in, and auto-updates.",
                 t,
             ))
             .child(boxed(t).child(div().text_sm().text_color(color).child(line)))

@@ -6,6 +6,7 @@
 
 mod app;
 mod chrome;
+mod claude_chat;
 mod file_links;
 mod git;
 mod git_pane;

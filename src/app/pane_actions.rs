@@ -92,7 +92,7 @@ impl KynexApp {
         if let Some(agent_id) = self.live_agent_of_session(&cwd, &id) {
             self.mount_agent_in_pane(pane, &ws, agent_id, window, cx);
         } else {
-            self.launch_agent_cli(pane, cwd, provider, Some(id), model, window, cx);
+            self.launch_agent(pane, cwd, provider, Some(id), model, window, cx);
         }
     }
 
@@ -124,7 +124,7 @@ impl KynexApp {
             Some(Content::Git | Content::Tree | Content::Agents) => {
                 return self.close_tool_pane(id, window, cx);
             }
-            Some(Content::AgentCli) => {}
+            Some(Content::AgentCli | Content::ClaudeChat) => {}
             None => return,
         }
         let closed = self.tiles.get_mut(&ws).and_then(|t| t.close_pane(id));
@@ -134,6 +134,7 @@ impl KynexApp {
             return;
         }
         self.drop_gone_agents(cx);
+        self.drop_gone_claude_chats(cx);
         self.show_focused_pane(window, cx);
         self.save_layouts(cx);
     }
@@ -184,7 +185,7 @@ impl KynexApp {
                 p
             }
         };
-        self.launch_agent_cli(pane, ws, provider_id, None, None, window, cx);
+        self.launch_agent(pane, ws, provider_id, None, None, window, cx);
     }
 
     fn menu_action(n: usize, label: String, cx: &mut Context<Self>, f: Action) -> AnyElement {
@@ -226,9 +227,11 @@ impl KynexApp {
             items.push(Self::menu_action(1, "Split down".into(), cx, split(Axis::Column)));
         }
         if is_agent && has_provider {
+            let restart_label =
+                if t.content(pane) == Some(Content::ClaudeChat) { "Restart session" } else { "Restart CLI" };
             items.push(Self::menu_action(
                 50,
-                "Restart CLI".into(),
+                restart_label.into(),
                 cx,
                 Box::new(move |this, window, cx| this.restart_agent_cli(pane, window, cx)),
             ));

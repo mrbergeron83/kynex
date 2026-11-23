@@ -216,6 +216,7 @@ impl KynexApp {
             .flat_map(|t| t.agent_panes())
             .filter_map(|(_, m)| m.session_id.clone())
             .chain(self.agent_instances.values().filter_map(|a| a.meta.session_id.clone()))
+            .chain(self.claude_chats.values().filter_map(|c| c.meta.session_id.clone()))
             .collect();
         let (ids, skipped) = self.groups_for(cwd).purge_candidates(&listed, cutoff, &open);
         let kept = match skipped {

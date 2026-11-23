@@ -45,7 +45,7 @@ pub(super) struct LiveAgent {
 
 impl KynexApp {
     /// Allocates a fresh [`AgentId`] disjoint from all [`PaneId`]s.
-    fn alloc_agent_id(&mut self) -> AgentId {
+    pub(super) fn alloc_agent_id(&mut self) -> AgentId {
         let id = self.next_pane;
         self.next_pane += 1;
         id
@@ -91,7 +91,7 @@ impl KynexApp {
 
     /// The pane currently displaying `agent_id`, if it is mounted in any workspace.
     pub(super) fn pane_showing_agent(&self, agent_id: AgentId) -> Option<PaneId> {
-        self.pane_agents.iter().find_map(|(&pane, &id)| (id == agent_id).then_some(pane))
+        self.pane_agents.iter().chain(self.pane_claude.iter()).find_map(|(&pane, &id)| (id == agent_id).then_some(pane))
     }
 
     /// The live instance in `ws` currently running session `session_id`, if any (mounted or parked).
@@ -100,11 +100,23 @@ impl KynexApp {
             .values()
             .find(|a| same_folder(&a.cwd, ws) && a.meta.session_id.as_deref() == Some(session_id))
             .map(|a| a.id)
+            .or_else(|| {
+                self.claude_chats
+                    .values()
+                    .find(|c| same_folder(&c.cwd, ws) && c.meta.session_id.as_deref() == Some(session_id))
+                    .map(|c| c.id)
+            })
     }
 
     /// Current status lamp of live instance `id`.
     pub(super) fn instance_lamp(&self, id: AgentId) -> Lamp {
-        match self.agent_instances.get(&id).map(|a| a.tracker.state()).unwrap_or_default() {
+        let state = self
+            .agent_instances
+            .get(&id)
+            .map(|a| a.tracker.state())
+            .or_else(|| self.claude_chats.get(&id).map(|c| c.state))
+            .unwrap_or_default();
+        match state {
             AgentState::Idle => Lamp::Idle,
             AgentState::Working => Lamp::Working,
             AgentState::NeedsYou => Lamp::NeedsYou,
@@ -114,41 +126,50 @@ impl KynexApp {
 
     /// Current status lamp of the instance mounted in `pane` (or `Idle` if pending).
     pub(super) fn agent_lamp(&self, pane: PaneId) -> Lamp {
-        self.pane_agents.get(&pane).map_or(Lamp::Idle, |&id| self.instance_lamp(id))
+        self.pane_agents
+            .get(&pane)
+            .or_else(|| self.pane_claude.get(&pane))
+            .map_or(Lamp::Idle, |&id| self.instance_lamp(id))
     }
 
-    /// Whether any live `agent_cli` instance (visible or parked) is currently working.
+    /// Whether any live agent instance (CLI or Claude Chat, visible or parked) is currently working.
     pub(super) fn any_agent_working(&self) -> bool {
         self.agent_instances.values().any(|a| a.tracker.state() == AgentState::Working)
+            || self.claude_chats.values().any(|c| c.state == AgentState::Working)
     }
 
     /// Whether any live instance inside `project` (or its workspaces) is working.
     pub(super) fn project_has_working_agent(&self, project: &Path) -> bool {
-        self.agent_instances.values().any(|a| {
-            let belongs =
-                same_folder(&a.cwd, project) || self.tile_projects.get(&a.cwd).is_some_and(|p| same_folder(p, project));
-            belongs && a.tracker.state() == AgentState::Working
-        })
+        let belongs = |cwd: &Path| {
+            same_folder(cwd, project) || self.tile_projects.get(cwd).is_some_and(|p| same_folder(p, project))
+        };
+        self.agent_instances.values().any(|a| belongs(&a.cwd) && a.tracker.state() == AgentState::Working)
+            || self.claude_chats.values().any(|c| belongs(&c.cwd) && c.state == AgentState::Working)
     }
 
     /// Rolled-up lamp for all live instances in `project` (across its workspaces, visible or parked).
     pub(super) fn project_lamp(&self, project: &Path) -> Lamp {
-        let lamps = self.agent_instances.values().filter_map(|a| {
-            let belongs =
-                same_folder(&a.cwd, project) || self.tile_projects.get(&a.cwd).is_some_and(|p| same_folder(p, project));
-            belongs.then(|| self.instance_lamp(a.id))
-        });
-        Lamp::most_urgent(lamps)
+        let belongs = |cwd: &Path| {
+            same_folder(cwd, project) || self.tile_projects.get(cwd).is_some_and(|p| same_folder(p, project))
+        };
+        let cli_lamps = self.agent_instances.values().filter(|a| belongs(&a.cwd)).map(|a| self.instance_lamp(a.id));
+        let claude_lamps = self.claude_chats.values().filter(|c| belongs(&c.cwd)).map(|c| self.instance_lamp(c.id));
+        Lamp::most_urgent(cli_lamps.chain(claude_lamps))
     }
 
-    /// Live `agent_cli` instances in workspace `ws` (visible and parked): `(id, session_id, label, lamp)`.
+    /// Live agent instances (CLI and Claude Chat) in workspace `ws`: `(id, session_id, label, lamp)`.
     pub(super) fn live_agents_in(&self, ws: &Path) -> Vec<(AgentId, Option<String>, String, Lamp)> {
-        let mut list: Vec<&LiveAgent> =
-            self.agent_instances.values().filter(|a| same_folder(&a.cwd, ws) && a.meta.provider.is_some()).collect();
-        list.sort_by_key(|a| a.id);
-        list.into_iter()
+        let mut list: Vec<(AgentId, Option<String>, String, Lamp)> = self
+            .agent_instances
+            .values()
+            .filter(|a| same_folder(&a.cwd, ws) && a.meta.provider.is_some())
             .map(|a| (a.id, a.meta.session_id.clone(), self.agent_title(&a.cwd, &a.meta), self.instance_lamp(a.id)))
-            .collect()
+            .chain(self.claude_chats.values().filter(|c| same_folder(&c.cwd, ws) && c.meta.provider.is_some()).map(
+                |c| (c.id, c.meta.session_id.clone(), self.agent_title(&c.cwd, &c.meta), self.instance_lamp(c.id)),
+            ))
+            .collect();
+        list.sort_by_key(|(id, _, _, _)| *id);
+        list
     }
 
     /// Human-readable title for an `agent_cli` instance / pane.
@@ -195,6 +216,9 @@ impl KynexApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.claude_chats.contains_key(&agent_id) {
+            return self.mount_claude_chat_in_pane(pane, ws, agent_id, window, cx);
+        }
         if self.pane_agents.get(&pane) == Some(&agent_id) {
             if let Some(t) = self.tiles.get_mut(ws) {
                 t.focus_pane(pane);
@@ -216,6 +240,7 @@ impl KynexApp {
             }
         }
         self.detach_pane_agent(pane, cx);
+        self.detach_pane_claude_chat(pane);
         let Some(meta) = self.agent_instances.get(&agent_id).map(|a| a.meta.clone()) else { return };
         self.pane_agents.insert(pane, agent_id);
         self.agent_pickers.remove(&pane);
@@ -233,15 +258,25 @@ impl KynexApp {
 
     /// Clears `Done` → `Idle` on `agent_id` and dismisses any stale OS notification.
     pub(super) fn mark_agent_seen(&mut self, agent_id: AgentId, cx: &Context<Self>) {
-        if let Some(inst) = self.agent_instances.get_mut(&agent_id)
-            && inst.tracker.mark_seen()
+        if let Some(inst) = self.agent_instances.get_mut(&agent_id) {
+            if inst.tracker.mark_seen() {
+                self.clear_agent_alert(agent_id, cx);
+            }
+            return;
+        }
+        if let Some(chat) = self.claude_chats.get_mut(&agent_id)
+            && chat.state == AgentState::Done
         {
+            chat.state = AgentState::Idle;
             self.clear_agent_alert(agent_id, cx);
         }
     }
 
     /// Stops and removes live instance `agent_id` (and resets its pane to the picker if mounted).
     pub(super) fn stop_agent(&mut self, agent_id: AgentId, window: &mut Window, cx: &mut Context<Self>) {
+        if self.claude_chats.contains_key(&agent_id) {
+            return self.stop_claude_chat(agent_id, window, cx);
+        }
         let mounted = self.pane_showing_agent(agent_id);
         let cwd = self.agent_instances.remove(&agent_id).map(|a| a.cwd);
         self.clear_agent_alert(agent_id, cx);
@@ -264,10 +299,15 @@ impl KynexApp {
     }
 
     /// Brings live instance `agent_id` into view: switches to its project & workspace,
-    /// focuses its pane if already visible, or swaps it into the focused/main `agent_cli` pane
+    /// focuses its pane if already visible, or swaps it into the focused/main agent pane
     /// (parking whatever was there).
     pub(super) fn go_to_agent(&mut self, agent_id: AgentId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(cwd) = self.agent_instances.get(&agent_id).map(|a| a.cwd.clone()) else {
+        let cwd = self
+            .agent_instances
+            .get(&agent_id)
+            .map(|a| a.cwd.clone())
+            .or_else(|| self.claude_chats.get(&agent_id).map(|c| c.cwd.clone()));
+        let Some(cwd) = cwd else {
             // Backwards fallback if a caller passed a PaneId directly.
             if let Some((ws, _)) = self.agent_pane_location(agent_id) {
                 let project = self.tile_projects.get(&ws).cloned().unwrap_or_else(|| ws.clone());
@@ -314,8 +354,29 @@ impl KynexApp {
         self.mount_agent_in_pane(pane, &cwd, agent_id, window, cx);
     }
 
+    /// Launches either a native Claude Chat instance or a terminal CLI instance depending on `provider_id`.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn launch_agent(
+        &mut self,
+        pane: PaneId,
+        ws: PathBuf,
+        provider_id: String,
+        resume_session: Option<String>,
+        model: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let provider_id = agent_cli::normalize_provider_id(&provider_id);
+        if agent_cli::is_claude_chat(&provider_id) {
+            self.launch_claude_chat(pane, ws, provider_id, resume_session, None, model, window, cx);
+        } else {
+            self.launch_agent_cli(pane, ws, provider_id, resume_session, model, window, cx);
+        }
+    }
+
     /// Launches a fresh native CLI [`LiveAgent`] and mounts it in `pane` of workspace `ws`
     /// (parking whatever live instance was previously in `pane`).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn launch_agent_cli(
         &mut self,
         pane: PaneId,
@@ -339,6 +400,7 @@ impl KynexApp {
 
         // Detach/park any previous instance occupying `pane`.
         self.detach_pane_agent(pane, cx);
+        self.detach_pane_claude_chat(pane);
 
         let agent_id = self.alloc_agent_id();
         let meta = AgentCliPane {
@@ -437,6 +499,7 @@ impl KynexApp {
     pub(super) fn show_picker_in_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         let Some((ws, _)) = self.agent_pane_location(pane) else { return };
         self.detach_pane_agent(pane, cx);
+        self.detach_pane_claude_chat(pane);
         if let Some(t) = self.tiles.get_mut(&ws) {
             t.set_agent(pane, AgentCliPane::pending());
             t.focus_pane(pane);
@@ -449,14 +512,14 @@ impl KynexApp {
 
     /// Resets `pane` back to the inline provider picker and stops the instance that was in it.
     pub(super) fn reset_agent_pane_to_picker(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = self.pane_agents.get(&pane).copied() {
+        if let Some(id) = self.pane_agents.get(&pane).or_else(|| self.pane_claude.get(&pane)).copied() {
             self.stop_agent(id, window, cx);
             return;
         }
         self.show_picker_in_pane(pane, window, cx);
     }
 
-    /// Restarts an `agent_cli` pane (stopping its current instance and resuming its `session_id`).
+    /// Restarts an agent pane (stopping its current CLI or Claude Chat instance and resuming its `session_id`).
     pub(super) fn restart_agent_cli(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         let Some((ws, meta)) = self.agent_pane_location(pane) else { return };
         let Some(provider) = meta.provider else {
@@ -466,7 +529,8 @@ impl KynexApp {
             self.agent_instances.remove(&old_id);
             self.clear_agent_alert(old_id, cx);
         }
-        self.launch_agent_cli(pane, ws, provider, meta.session_id, meta.model, window, cx);
+        self.stop_pane_claude_chat(pane, cx);
+        self.launch_agent(pane, ws, provider, meta.session_id, meta.model, window, cx);
     }
 
     /// Ensures a restored `agent_cli` pane that already has a provider has a mounted [`LiveAgent`].
@@ -482,6 +546,9 @@ impl KynexApp {
         }
         let Some(meta) = self.tiles.get(ws).and_then(|t| t.agent(pane)).cloned() else { return };
         let Some(provider) = meta.provider else { return };
+        if agent_cli::is_claude_chat(&provider) {
+            return self.ensure_claude_chat_started(pane, ws, window, cx);
+        }
         // If a parked live instance already exists for this session (e.g. after layout undo/redo),
         // re-mount it instead of spawning a duplicate CLI process.
         if let Some(sid) = meta.session_id.as_deref()
@@ -512,6 +579,9 @@ impl KynexApp {
         if let Some(inst) = self.agent_instances.get(&id) {
             return Some((inst.cwd.clone(), inst.meta.clone()));
         }
+        if let Some(chat) = self.claude_chats.get(&id) {
+            return Some((chat.cwd.clone(), chat.meta.clone()));
+        }
         for (ws, t) in &self.tiles {
             if let Some(meta) = t.agent(id) {
                 return Some((ws.clone(), meta.clone()));
@@ -541,17 +611,18 @@ impl KynexApp {
             self.clear_agent_alert(id, cx);
             self.pane_agents.retain(|_, v| *v != id);
         }
+        self.drop_claude_chats_in(cwd, cx);
     }
 
     /// Whether the user is actively looking at live instance `agent_id` right now.
-    fn is_looking_at(&self, agent_id: AgentId) -> bool {
+    pub(super) fn is_looking_at(&self, agent_id: AgentId) -> bool {
         if !self.window_active {
             return false;
         }
         let Some(focus) = self.tiling_scope().and_then(|(_, w)| self.tiles.get(&w)).and_then(|t| t.focus()) else {
             return false;
         };
-        self.pane_agents.get(&focus) == Some(&agent_id)
+        self.pane_agents.get(&focus) == Some(&agent_id) || self.pane_claude.get(&focus) == Some(&agent_id)
     }
 
     /// Handles a native CLI hook callback arriving over the control socket (`knx hook`).

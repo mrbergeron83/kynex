@@ -154,7 +154,7 @@ impl KynexApp {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         let picker = this.agent_pickers.entry(pane).or_default();
                         if picker.selected == i && ready {
-                            this.launch_agent_cli(
+                            this.launch_agent(
                                 pane,
                                 ws_click.clone(),
                                 id.clone(),
@@ -169,7 +169,7 @@ impl KynexApp {
                             // For OpenRouter providers, first click highlights them so you can pick a
                             // model from the strip below; second click (or Enter / Start) launches.
                             if ready && !uses_or {
-                                this.launch_agent_cli(pane, ws_click.clone(), id.clone(), None, None, window, cx);
+                                this.launch_agent(pane, ws_click.clone(), id.clone(), None, None, window, cx);
                             }
                             cx.notify();
                         }
@@ -313,7 +313,7 @@ impl KynexApp {
                                     cx,
                                 )
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.launch_agent_cli(
+                                    this.launch_agent(
                                         pane,
                                         launch_ws.clone(),
                                         launch_id.clone(),
@@ -378,7 +378,7 @@ impl KynexApp {
                                     .get(&pane)
                                     .and_then(|p| p.model.clone())
                                     .or(active_model_key.clone());
-                                this.launch_agent_cli(pane, ws_key.clone(), entry.id.clone(), None, model, window, cx);
+                                this.launch_agent(pane, ws_key.clone(), entry.id.clone(), None, model, window, cx);
                             } else if entry.uses_openrouter && this.openrouter_key.is_none() {
                                 this.open_settings_on(super::app_settings::PROVIDERS_SECTION, cx);
                             }
@@ -393,7 +393,7 @@ impl KynexApp {
                             let ready = entry.installed && (!entry.uses_openrouter || this.openrouter_key.is_some());
                             this.agent_pickers.entry(pane).or_default().selected = idx;
                             if ready {
-                                this.launch_agent_cli(pane, ws_key.clone(), entry.id.clone(), None, None, window, cx);
+                                this.launch_agent(pane, ws_key.clone(), entry.id.clone(), None, None, window, cx);
                             }
                             cx.stop_propagation();
                             cx.notify();
@@ -423,7 +423,7 @@ impl KynexApp {
                         div()
                             .text_xs()
                             .text_color(t.text_muted)
-                            .child("Choose a provider CLI to launch in this terminal pane (↑/↓ and Enter, or 1–9)."),
+                            .child("Choose a provider to launch — Claude Code opens in native chat; other CLIs open in a terminal pane (↑/↓ and Enter, or 1–9)."),
                     )
                     .child(div().flex().flex_col().gap_1p5().children(rows))
                     .children(extra),

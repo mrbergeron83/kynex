@@ -37,7 +37,7 @@ impl KynexApp {
         if !t.focus_pane(id) {
             return;
         }
-        if let Some(&agent_id) = self.pane_agents.get(&id) {
+        if let Some(&agent_id) = self.pane_agents.get(&id).or_else(|| self.pane_claude.get(&id)) {
             self.mark_agent_seen(agent_id, cx);
         }
         self.focus_input(window, cx);
@@ -128,6 +128,7 @@ impl KynexApp {
         }
         self.keep_shape(&cwd);
         self.drop_gone_agents(cx);
+        self.drop_gone_claude_chats(cx);
         self.drop_gone_terminals(cx);
     }
 
@@ -227,6 +228,7 @@ impl KynexApp {
                 let focused = Some(id) == focus;
                 let body = match content {
                     Content::AgentCli => self.render_agent_cli_pane(id, &ws, several, focused, window, cx),
+                    Content::ClaudeChat => self.render_claude_chat_pane(id, &ws, several, focused, window, cx),
                     _ => {
                         let panel = self.render_tool_pane(id, window, cx);
                         div()

@@ -53,6 +53,16 @@ impl KynexApp {
                 let needs = inst.tracker.state() == AgentState::NeedsYou;
                 rows.push(((pi, place, inst.id), (inst.id, needs)));
             }
+            for chat in self.claude_chats.values() {
+                let belongs = same_folder(&chat.cwd, project)
+                    || self.tile_projects.get(&chat.cwd).is_some_and(|p| same_folder(p, project));
+                if !belongs {
+                    continue;
+                }
+                let place = list.iter().position(|(c, _)| c.at(&chat.cwd)).map_or(usize::MAX, |i| places[i]);
+                let needs = chat.state == AgentState::NeedsYou;
+                rows.push(((pi, place, chat.id), (chat.id, needs)));
+            }
         }
         rows.sort_by_key(|(at, _)| *at);
         rows.into_iter().map(|(_, r)| r).collect()

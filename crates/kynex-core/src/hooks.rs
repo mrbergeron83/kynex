@@ -1,7 +1,7 @@
 //! Native CLI lifecycle hooks for reporting agent state and session IDs back to Kynex.
 //!
-//! Supported CLIs (`claude`, `agy`) invoke `knx hook <provider> <event>` with a JSON payload
-//! on stdin. Kynex parses the payload with [`parse_payload`], sends a lightweight
+//! Supported CLIs (`agy` and generic hook scripts) invoke `knx hook <provider> <event>` with a
+//! JSON payload on stdin. Kynex parses the payload with [`parse_payload`], sends a lightweight
 //! [`crate::control::Request::Hook`] over the local socket, and exits 0 immediately so a hook
 //! never blocks or breaks the CLI.
 
@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 
 /// The lifecycle state a CLI hook reports for its `agent_cli` pane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -163,41 +162,6 @@ pub fn stdout_response(provider: &str) -> Option<&'static str> {
     }
 }
 
-/// Builds the session-only `--settings` JSON object for Claude Code: lifecycle hooks plus
-/// optional non-secret `env` overrides (e.g. OpenRouter URL/model/cap, never API keys).
-pub fn claude_settings_json(provider_id: &str, env_overrides: Option<Map<String, Value>>) -> String {
-    let hook = |event: &str, with_matcher: bool| -> Value {
-        let cmd = format!("knx hook {provider_id} {event}");
-        let entry = json!({ "type": "command", "command": cmd });
-        if with_matcher { json!([{ "matcher": "*", "hooks": [entry] }]) } else { json!([{ "hooks": [entry] }]) }
-    };
-    let mut root = Map::new();
-    root.insert(
-        "hooks".into(),
-        json!({
-            "SessionStart": hook("SessionStart", false),
-            "UserPromptSubmit": hook("UserPromptSubmit", false),
-            "PreToolUse": hook("PreToolUse", true),
-            "PermissionRequest": hook("PermissionRequest", true),
-            "Notification": hook("Notification", false),
-            "Stop": hook("Stop", false),
-            "SessionEnd": hook("SessionEnd", false),
-        }),
-    );
-    if let Some(env) = env_overrides.filter(|m| !m.is_empty()) {
-        root.insert("env".into(), Value::Object(env));
-    }
-    Value::Object(root).to_string()
-}
-
-/// Writes `claude_settings_json` to a content-addressed file under `<data_dir>/hooks/` so
-/// Claude Code can load it via `--settings <path>` without hitting Windows command-line
-/// quoting limits. Blocks on file write only the first time a given config is needed.
-pub fn write_claude_settings(provider_id: &str, env_overrides: Option<Map<String, Value>>) -> Option<PathBuf> {
-    let text = claude_settings_json(provider_id, env_overrides);
-    write_cached("claude", &text)
-}
-
 /// The shell command for one Antigravity (`agy`) hook event: runs `"%KYNEX_HOOK_BIN%" hook agy <event>`
 /// only when `KYNEX_HOOK_BIN` is set (inside a hook-capable Kynex pane), and immediately prints `{}`
 /// otherwise so standalone `agy`, Antigravity 2.0/IDE, and older Kynex versions pay zero overhead
@@ -287,24 +251,6 @@ fn merge_agy_hooks_file(path: &Path, entry: Value) -> Result<(), String> {
         std::fs::write(path, &text).map_err(|w| format!("couldn't update {}: {e}; {w}", path.display()))?;
     }
     Ok(())
-}
-
-/// Writes `text` into `<data_dir>/hooks/<prefix>-<hash>.json` atomically.
-fn write_cached(prefix: &str, text: &str) -> Option<PathBuf> {
-    let hash: String = Sha256::digest(text.as_bytes()).iter().take(6).map(|b| format!("{b:02x}")).collect();
-    let dir = crate::paths::data_dir().join("hooks");
-    let file = dir.join(format!("{prefix}-{hash}.json"));
-    if std::fs::read_to_string(&file).is_ok_and(|t| t == text) {
-        return Some(file);
-    }
-    std::fs::create_dir_all(&dir).ok()?;
-    let part = dir.join(format!("{prefix}-{hash}.json.{}", std::process::id()));
-    std::fs::write(&part, text).ok()?;
-    if std::fs::rename(&part, &file).is_err() {
-        let _ = std::fs::remove_file(&part);
-        return std::fs::read_to_string(&file).is_ok_and(|t| t == text).then_some(file);
-    }
-    Some(file)
 }
 
 #[cfg(test)]
@@ -421,22 +367,6 @@ mod tests {
         assert_eq!(parse_payload("claude", Some("Stop"), "not json").state, Some(HookState::Done));
         let bad_id = parse_payload("claude", None, r#"{"hook_event_name":"SessionStart","session_id":"../evil"}"#);
         assert_eq!(bad_id.session_id, None);
-    }
-
-    #[test]
-    fn claude_settings_merges_hooks_and_non_secret_env() {
-        let mut env = Map::new();
-        env.insert("ANTHROPIC_BASE_URL".into(), json!("https://openrouter.ai/api"));
-        let text = claude_settings_json("claude-openrouter", Some(env));
-        let v: Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(v["env"]["ANTHROPIC_BASE_URL"], "https://openrouter.ai/api");
-        assert!(
-            v["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-                .as_str()
-                .unwrap()
-                .contains("knx hook claude-openrouter")
-        );
-        assert!(v["hooks"]["PermissionRequest"].is_array());
     }
 
     #[test]

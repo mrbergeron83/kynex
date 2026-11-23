@@ -62,6 +62,28 @@ impl KynexApp {
                 doing,
             });
         }
+        for chat in self.claude_chats.values() {
+            let Some(provider_id) = chat.meta.provider.as_deref() else { continue };
+            let Some(state) = State::of_agent(chat.state) else { continue };
+            let project = self.tile_projects.get(&chat.cwd).cloned().unwrap_or_else(|| chat.cwd.clone());
+            let doing = if !chat.detail.is_empty() && state == State::Working {
+                chat.detail.clone()
+            } else {
+                match state {
+                    State::Waiting => "Needs you".into(),
+                    State::Finished => "Finished".into(),
+                    State::Working => "Working".into(),
+                }
+            };
+            rows.push(Row {
+                pane: chat.id,
+                state,
+                name: self.agent_title(&chat.cwd, &chat.meta),
+                provider_badge: self.provider_badge(provider_id),
+                place: self.place(&project, &chat.cwd),
+                doing,
+            });
+        }
         running::arrange(rows)
     }
 
@@ -176,12 +198,15 @@ impl KynexApp {
                 .into_any_element(),
         ];
         if self.instance_lamp(agent_id) == Lamp::Working {
+            let label = if self.claude_chats.contains_key(&agent_id) { "Stop turn" } else { "Send Ctrl+C" };
             items.push(
-                menu_item("running-stop", "Send Ctrl+C", false, cx)
+                menu_item("running-stop", label, false, cx)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.menu = None;
                         if let Some(view) = this.agent_instances.get(&agent_id).and_then(|a| a.view.clone()) {
                             view.update(cx, |v, _| v.write(vec![0x03]));
+                        } else if let Some(view) = this.claude_chats.get(&agent_id).map(|c| c.view.clone()) {
+                            view.update(cx, |v, cx| v.cancel_turn(cx));
                         }
                         cx.notify();
                     }))
