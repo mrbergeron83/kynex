@@ -145,6 +145,7 @@ impl KynexApp {
                         .flat_map(|t| t.agent_panes())
                         .filter_map(|(_, m)| m.session_id.clone())
                         .chain(this.agent_instances.values().filter_map(|a| a.meta.session_id.clone()))
+                        .chain(this.claude_chats.values().filter_map(|c| c.meta.session_id.clone()))
                         .collect();
                     this.edit_groups(&read.cwd, |g| {
                         g.drop_gone(|id| !gone.iter().any(|x| x == id), &open);

@@ -262,6 +262,7 @@ impl KynexApp {
         // Close all agent CLIs and plain terminals standing in `path` so Windows unlocks the folder.
         self.drop_tiles_of(&path, cx);
         self.drop_gone_agents(cx);
+        self.drop_gone_claude_chats(cx);
         self.drop_gone_terminals(cx);
         self.terminals.retain(|(f, _)| !workspace::same_folder(f, &path));
         self.git_panes.retain(|f, _| !workspace::same_folder(f, &path));

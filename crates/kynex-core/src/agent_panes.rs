@@ -1,7 +1,7 @@
 //! Agent CLIs in terminal panes: screen-pattern rules (`agent_rules/*.json`, user overrides in
 //! `<data dir>/agents/`) plus a hybrid [`Tracker`] that takes authoritative native hook events
-//! when a CLI supports them (`claude`, `agy`) and falls back to screen-pattern detection for
-//! CLIs without hooks (`grok`, `codex`, `copilot`, `cursor`, `opencode`, custom rules).
+//! when a CLI supports them (`agy`) and falls back to screen-pattern detection for CLIs without
+//! hooks (`grok`, `codex`, `copilot`, `cursor`, `opencode`, custom rules).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -11,8 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::hooks::{HookReport, HookState};
 use crate::paths::data_dir;
 
-const BUILT_IN: [&str; 7] = [
-    include_str!("agent_rules/claude.json"),
+const BUILT_IN: [&str; 6] = [
     include_str!("agent_rules/grok.json"),
     include_str!("agent_rules/agy.json"),
     include_str!("agent_rules/codex.json"),
@@ -485,9 +484,10 @@ mod tests {
         let (all, errors) = rules(Path::new("/no/such/dir"));
         assert!(errors.is_empty());
         let ids: Vec<&str> = all.iter().map(|r| r.id.as_str()).collect();
-        for id in ["claude", "grok", "agy", "codex", "copilot", "cursor", "opencode"] {
+        for id in ["grok", "agy", "codex", "copilot", "cursor", "opencode"] {
             assert!(ids.contains(&id), "{id}");
         }
+        assert!(!ids.contains(&"claude"));
     }
 
     #[test]

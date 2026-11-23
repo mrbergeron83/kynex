@@ -55,7 +55,7 @@ impl KynexApp {
         };
         let pane = self.place_agent_pane(&project, &folder, AgentCliPane::pending(), new.place, caller)?;
         if let Some(provider) = new.provider {
-            self.launch_agent_cli(pane, folder.clone(), provider.clone(), None, new.model, window, cx);
+            self.launch_agent(pane, folder.clone(), provider.clone(), None, new.model, window, cx);
             Ok(json!({ "pane": pane, "workspace": folder, "provider": provider }))
         } else {
             self.agent_pickers.insert(pane, Default::default());
@@ -116,9 +116,18 @@ impl KynexApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Answer {
-        if let Some(inst) = self.agent_instances.values().find(|a| a.meta.session_id.as_deref() == Some(id.as_str())) {
-            let agent_id = inst.id;
-            let ws = inst.cwd.clone();
+        let live = self
+            .agent_instances
+            .values()
+            .find(|a| a.meta.session_id.as_deref() == Some(id.as_str()))
+            .map(|a| (a.id, a.cwd.clone()))
+            .or_else(|| {
+                self.claude_chats
+                    .values()
+                    .find(|c| c.meta.session_id.as_deref() == Some(id.as_str()))
+                    .map(|c| (c.id, c.cwd.clone()))
+            });
+        if let Some((agent_id, ws)) = live {
             if let Some(pane) = self.pane_showing_agent(agent_id) {
                 return Ok(
                     json!({ "pane": pane, "instance": agent_id, "workspace": ws, "session_id": id, "already_open": true }),
@@ -147,7 +156,7 @@ impl KynexApp {
             .unwrap_or_else(|| self.groups_for(&cwd).provider_of(&id));
         let model = self.groups_for(&cwd).model_of(&id).map(str::to_string);
         let pane = self.place_agent_pane(&project, &cwd, AgentCliPane::pending(), place, caller)?;
-        self.launch_agent_cli(pane, cwd.clone(), provider.clone(), Some(id.clone()), model, window, cx);
+        self.launch_agent(pane, cwd.clone(), provider.clone(), Some(id.clone()), model, window, cx);
         Ok(json!({ "pane": pane, "workspace": cwd, "session_id": id, "provider": provider }))
     }
 

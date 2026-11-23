@@ -162,3 +162,29 @@ pub fn config_files(text: &str) {
     let _ = update::expected_sum(text, "kynex-x86_64-pc-windows-msvc.zip");
     let _ = crate::migrate::migrate(text);
 }
+
+/// Claude Code bidirectional `stream-json` NDJSON parser (`claude::protocol`).
+pub fn claude_stream(text: &str) {
+    let mut state = crate::claude::protocol::StreamParseState::default();
+    for line in text.lines() {
+        let _ = crate::claude::protocol::parse_line(line, &mut state);
+    }
+}
+
+/// Claude Code Markdown parser, diff engine, and composer trigger scanner.
+pub fn claude_markdown(text: &str) {
+    let blocks = crate::claude::markdown::parse(text);
+    let _ = crate::claude::markdown::extract_plain_text(&blocks);
+    let _ = crate::claude::markdown::parse_inline(text);
+    let mid = text.len() / 2;
+    let split = text.floor_char_boundary(mid);
+    let _ = crate::claude::diff::diff_edit(&text[..split], &text[split..]);
+    let _ = crate::claude::diff::diff_write(text);
+    let _ = crate::claude::composer::active_trigger(text, mid);
+}
+
+/// Claude Code `.jsonl` branch-aware transcript history replayer (`claude::history`).
+pub fn claude_history(text: &str) {
+    let (items, _meta) = crate::claude::history::parse_str(text, None);
+    let _ = crate::claude::history::split_recent_turns(items, crate::claude::history::RECENT_TURNS);
+}

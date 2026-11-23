@@ -1,0 +1,15 @@
+//! Pure-Rust native interface to the user's `claude` CLI over its bidirectional
+//! NDJSON `stream-json` control protocol, plus session cost persistence and
+//! transcript/composer helpers. Zero UI/gpui dependency.
+
+pub mod client;
+pub mod composer;
+pub mod costs;
+pub mod diff;
+pub mod history;
+pub mod markdown;
+pub mod protocol;
+pub mod types;
+
+pub use client::ClaudeClient;
+pub use types::*;

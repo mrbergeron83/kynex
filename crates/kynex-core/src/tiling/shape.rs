@@ -17,7 +17,7 @@ enum Kind {
 impl Tiling {
     fn kind(&self, pane: PaneId) -> Option<Kind> {
         Some(match self.content(pane)? {
-            Content::AgentCli => Kind::AgentCli,
+            Content::AgentCli | Content::ClaudeChat => Kind::AgentCli,
             Content::Terminal => Kind::Terminal,
             Content::Git => Kind::Git,
             Content::Tree => Kind::Tree,

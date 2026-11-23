@@ -21,20 +21,23 @@ impl KynexApp {
         self.tiles.get(&cwd)?.focus()
     }
 
-    /// The live instance id currently shown in the focused/main `agent_cli` pane, if any.
+    /// The live instance id currently shown in the focused/main agent pane, if any.
     pub(super) fn focused_agent_id(&self) -> Option<super::agent_cli::AgentId> {
         let (_, cwd) = self.tiling_scope()?;
         let t = self.tiles.get(&cwd)?;
         let pane = t.agent_focus()?;
-        self.pane_agents.get(&pane).copied()
+        self.pane_agents.get(&pane).or_else(|| self.pane_claude.get(&pane)).copied()
     }
 
-    /// The session id of the currently focused `agent_cli` pane, if any.
+    /// The session id of the currently focused agent pane, if any.
     pub(super) fn focused_session_id(&self) -> Option<String> {
         let (_, cwd) = self.tiling_scope()?;
         let t = self.tiles.get(&cwd)?;
         let pane = t.agent_focus()?;
-        self.pane_agent(pane).and_then(|a| a.meta.session_id.clone()).or_else(|| t.agent(pane)?.session_id.clone())
+        self.pane_agent(pane)
+            .and_then(|a| a.meta.session_id.clone())
+            .or_else(|| self.pane_claude_chat(pane).and_then(|c| c.meta.session_id.clone()))
+            .or_else(|| t.agent(pane)?.session_id.clone())
     }
 
     /// Replaces the current/main `agent_cli` pane with the inline provider picker so you can
@@ -105,11 +108,12 @@ impl KynexApp {
                 p
             }
         };
-        self.launch_agent_cli(pane, cwd, provider, Some(id), model, window, cx);
+        self.launch_agent(pane, cwd, provider, Some(id), model, window, cx);
     }
 
     /// Moves keyboard focus into the focused pane: `TerminalView` for running `agent_cli`
-    /// panes, `picker_focus` for pending provider pickers, or the tool pane's focus handle.
+    /// panes, `ClaudeChatView` for Claude Chat panes, `picker_focus` for pending provider
+    /// pickers, or the tool pane's focus handle.
     pub(super) fn focus_input(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus_tool_input(window, cx) {
             return;
@@ -120,12 +124,22 @@ impl KynexApp {
         };
         let Some(t) = self.tiles.get(&ws) else { return };
         let Some(focus) = t.focus() else { return };
-        if t.content(focus) == Some(Content::AgentCli) {
-            if let Some(view) = self.pane_agent(focus).and_then(|a| a.view.as_ref()) {
-                view.read(cx).focus_handle(cx).focus(window, cx);
-            } else {
-                self.picker_focus.focus(window, cx);
+        match t.content(focus) {
+            Some(Content::AgentCli) => {
+                if let Some(view) = self.pane_agent(focus).and_then(|a| a.view.as_ref()) {
+                    view.read(cx).focus_handle(cx).focus(window, cx);
+                } else {
+                    self.picker_focus.focus(window, cx);
+                }
             }
+            Some(Content::ClaudeChat) => {
+                if let Some(chat) = self.pane_claude_chat(focus) {
+                    chat.view.read(cx).focus_handle(cx).focus(window, cx);
+                } else {
+                    self.picker_focus.focus(window, cx);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -167,6 +181,7 @@ impl KynexApp {
             .unwrap_or_default();
         self.drop_project_tiles(&p.path, cx);
         self.drop_gone_agents(cx);
+        self.drop_gone_claude_chats(cx);
         self.drop_gone_terminals(cx);
         self.worktrees.remove(&p.path);
         self.drop_workspace_views(&p.path, &known);

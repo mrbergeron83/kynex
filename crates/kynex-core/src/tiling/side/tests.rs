@@ -28,7 +28,7 @@ fn both_old_panes_open_as_one_tree_in_the_sessions_place() {
     assert!(r.pane(tree).unwrap().w < 0.25 * BIG.w);
     assert!(r.pane(tree).unwrap().h > 0.99 * BIG.h, "the full height");
     let agent = t.panes().into_iter().find(|p| *p != tree).unwrap();
-    assert_eq!(t.content(agent), Some(Content::AgentCli));
+    assert_eq!(t.content(agent), Some(Content::ClaudeChat));
     assert_eq!(t.agent(agent).unwrap().session_id.as_deref(), Some("abc"));
 }
 

@@ -11,6 +11,7 @@ mod app_settings;
 mod app_update;
 mod appearance;
 mod attention;
+mod claude_chat;
 mod control;
 mod control_pane_layout;
 mod control_panes;
@@ -130,6 +131,10 @@ pub struct KynexApp {
     agent_instances: HashMap<agent_cli::AgentId, agent_cli::LiveAgent>,
     /// Which [`agent_cli::LiveAgent`] is currently mounted in each non-pending `agent_cli` pane.
     pane_agents: HashMap<PaneId, agent_cli::AgentId>,
+    /// All live native Claude Code chat instances across open workspaces (visible OR parked).
+    claude_chats: HashMap<agent_cli::AgentId, claude_chat::LiveClaudeChat>,
+    /// Which [`claude_chat::LiveClaudeChat`] is currently mounted in each `ClaudeChat` pane.
+    pane_claude: HashMap<PaneId, agent_cli::AgentId>,
     /// Inline provider picker state for pending `agent_cli` panes.
     agent_pickers: HashMap<PaneId, agent_picker::AgentPickerState>,
     /// Whether the 500ms agent screen/hook watcher loop is running.
@@ -372,6 +377,8 @@ impl KynexApp {
             provider_catalog: Vec::new(),
             agent_instances: HashMap::new(),
             pane_agents: HashMap::new(),
+            claude_chats: HashMap::new(),
+            pane_claude: HashMap::new(),
             agent_pickers: HashMap::new(),
             agent_watch: false,
             agent_installing: None,

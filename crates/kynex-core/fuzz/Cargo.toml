@@ -134,3 +134,24 @@ path = "fuzz_targets/kitty_graphics.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "claude_stream"
+path = "fuzz_targets/claude_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "claude_markdown"
+path = "fuzz_targets/claude_markdown.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "claude_history"
+path = "fuzz_targets/claude_history.rs"
+test = false
+doc = false
+bench = false

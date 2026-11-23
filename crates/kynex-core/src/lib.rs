@@ -8,6 +8,7 @@ pub mod antigravity;
 pub mod attention;
 pub mod awake;
 pub mod binding;
+pub mod claude;
 pub mod cli;
 pub mod control;
 pub mod dates;

@@ -67,7 +67,10 @@ impl KynexApp {
 
     /// Starts `pane`'s program if it was never drawn (a tab not shown since Kynex started).
     pub(super) fn start_pane(&mut self, pane: PaneId, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pane_agent(pane).is_some_and(|a| a.view.is_some()) || self.term_panes.contains_key(&pane) {
+        if self.pane_agent(pane).is_some_and(|a| a.view.is_some())
+            || self.pane_claude_chat(pane).is_some()
+            || self.term_panes.contains_key(&pane)
+        {
             return;
         }
         if let Some((ws, _)) = self.agent_pane_location(pane) {
@@ -82,6 +85,9 @@ impl KynexApp {
 
     /// `knx pane read`: the screen, or the last `lines` of scrollback and screen.
     pub(super) fn pane_read(&self, pane: PaneId, lines: Option<usize>, cx: &Context<Self>) -> Result<Value, String> {
+        if let Some(chat) = self.pane_claude_chat(pane) {
+            return Ok(claude_chat_answer(pane, chat, &format!("{:?}", chat.state).to_lowercase()));
+        }
         let (view, _) = self.terminal_of(pane, cx)?;
         let view = view.read(cx);
         let text = match lines {
@@ -189,8 +195,8 @@ impl KynexApp {
         Ok(id)
     }
 
-    /// `knx pane prompt`: types a message into an `agent_cli` pane and sends it with the agent's
-    /// key; with `wait`, answers when it's done or blocked.
+    /// `knx pane prompt`: types a message into an `agent_cli` or `ClaudeChat` pane;
+    /// with `wait`, answers when it's done or blocked.
     pub(super) fn pane_prompt(
         &mut self,
         pane: PaneId,
@@ -199,6 +205,15 @@ impl KynexApp {
         timeout: Option<u64>,
         cx: &mut Context<Self>,
     ) -> Result<Value, Option<String>> {
+        if let Some(view) = self.pane_claude_chat(pane).map(|c| c.view.clone()) {
+            let prompt = text.to_string();
+            view.update(cx, |v, cx| v.send_external_prompt(prompt, cx));
+            if wait {
+                self.hold(Target::Agent { pane, start_within: Duration::from_secs(30) }, false, timeout, cx);
+                return Err(None);
+            }
+            return Ok(json!({ "pane": pane, "sent": true }));
+        }
         let (view, id) = self.agent_terminal(pane, cx).map_err(Some)?;
         let rule_id = kynex_core::agent_cli::rule_id(&id);
         let rule = self.agent_rules.iter().find(|r| r.id == rule_id).cloned();
@@ -223,13 +238,23 @@ impl KynexApp {
         Ok(json!({ "pane": pane, "sent": true }))
     }
 
-    /// `knx pane wait`: answers when an `agent_cli` pane isn't working any more.
+    /// `knx pane wait`: answers when an `agent_cli` or `ClaudeChat` pane isn't working any more.
     pub(super) fn pane_wait(
         &mut self,
         pane: PaneId,
         timeout: Option<u64>,
         cx: &mut Context<Self>,
     ) -> Result<Value, Option<String>> {
+        if let Some(chat) = self.pane_claude_chat(pane) {
+            return match chat.state {
+                AgentState::Working => {
+                    self.hold(Target::Agent { pane, start_within: Duration::ZERO }, true, timeout, cx);
+                    Err(None)
+                }
+                AgentState::NeedsYou => Ok(claude_chat_answer(pane, chat, "blocked")),
+                AgentState::Idle | AgentState::Done => Ok(claude_chat_answer(pane, chat, "done")),
+            };
+        }
         let (view, _) = self.agent_terminal(pane, cx).map_err(Some)?;
         match self.agent_state(pane) {
             AgentState::Working => {
@@ -295,6 +320,24 @@ impl KynexApp {
             }
             Target::Agent { pane, start_within } => {
                 let (pane, start_within) = (*pane, *start_within);
+                if let Some(chat) = self.pane_claude_chat(pane) {
+                    let state = chat.state;
+                    w.started |= state == AgentState::Working;
+                    return if state == AgentState::NeedsYou && (w.started || w.since.elapsed() > STILL_ASKING) {
+                        Some(Ok(claude_chat_answer(pane, chat, "blocked")))
+                    } else if w.started && state != AgentState::Working {
+                        Some(Ok(claude_chat_answer(pane, chat, "done")))
+                    } else if !w.started && w.since.elapsed() > start_within {
+                        let id = chat.meta.provider.as_deref().unwrap_or(kynex_core::agent_cli::CLAUDE);
+                        let name = self.provider_display_name(id);
+                        Some(Err(format!(
+                            "{name} in pane {pane} didn't start working within {}s",
+                            start_within.as_secs()
+                        )))
+                    } else {
+                        None
+                    };
+                }
                 let Ok((view, id)) = self.agent_terminal(pane, cx) else {
                     return Some(Err(format!("pane {pane} closed")));
                 };
@@ -342,9 +385,14 @@ impl KynexApp {
     /// Broadcasts `AgentState`, `NeedsYou`, and `TurnEnd` events over the control socket.
     pub(super) fn agent_event(&self, pane: PaneId, provider: &str, was: AgentState, now: AgentState) {
         let Some(server) = &self.control else { return };
-        let inst = self.agent_instances.get(&pane).or_else(|| self.pane_agent(pane));
-        let session_id = inst.and_then(|a| a.meta.session_id.clone());
-        let detail = inst.map(|a| a.tracker.detail()).filter(|d| !d.is_empty()).map(str::to_string);
+        let (session_id, detail) = if let Some(inst) = self.agent_instances.get(&pane).or_else(|| self.pane_agent(pane))
+        {
+            (inst.meta.session_id.clone(), Some(inst.tracker.detail()).filter(|d| !d.is_empty()).map(str::to_string))
+        } else if let Some(chat) = self.claude_chats.get(&pane).or_else(|| self.pane_claude_chat(pane)) {
+            (chat.meta.session_id.clone(), (!chat.detail.is_empty()).then(|| chat.detail.clone()))
+        } else {
+            (None, None)
+        };
         server.broadcast(
             Event::AgentState,
             json!({
@@ -365,7 +413,11 @@ impl KynexApp {
     }
 
     fn agent_state(&self, pane: PaneId) -> AgentState {
-        self.pane_agent(pane).or_else(|| self.agent_instances.get(&pane)).map(|a| a.tracker.state()).unwrap_or_default()
+        self.pane_agent(pane)
+            .or_else(|| self.agent_instances.get(&pane))
+            .map(|a| a.tracker.state())
+            .or_else(|| self.pane_claude_chat(pane).or_else(|| self.claude_chats.get(&pane)).map(|c| c.state))
+            .unwrap_or_default()
     }
 
     /// An `agent_cli` pane's terminal and its provider id.
@@ -401,6 +453,14 @@ impl KynexApp {
                     .ok_or_else(|| format!("pane {pane} is starting: try again in a moment"))?;
                 Ok((view, runs))
             }
+            Some(Content::ClaudeChat) => {
+                let meta = tiles.agent(pane);
+                let name = meta
+                    .and_then(|m| m.provider.as_deref())
+                    .map(|p| self.provider_display_name(p))
+                    .unwrap_or_else(|| "Claude Code".to_string());
+                Err(format!("pane {pane} runs {name} in native chat: use `knx pane prompt {pane}`"))
+            }
             _ => Err(format!("pane {pane} isn't a terminal or agent pane")),
         }
     }
@@ -418,6 +478,20 @@ fn pane_entry(t: &Tiling, p: PaneId) -> Value {
             let mut v = json!({
                 "pane": p,
                 "kind": "agent_cli",
+                "provider": meta.and_then(|m| m.provider.as_deref()),
+                "session_id": meta.and_then(|m| m.session_id.as_deref()),
+                "focused": Some(p) == t.focus(),
+            });
+            if let Some(model) = meta.and_then(|m| m.model.as_deref()) {
+                v["model"] = json!(model);
+            }
+            v
+        }
+        Some(Content::ClaudeChat) => {
+            let meta = t.agent(p);
+            let mut v = json!({
+                "pane": p,
+                "kind": "claude_chat",
                 "provider": meta.and_then(|m| m.provider.as_deref()),
                 "session_id": meta.and_then(|m| m.session_id.as_deref()),
                 "focused": Some(p) == t.focus(),
@@ -449,4 +523,13 @@ fn run_answer(pane: PaneId, code: i32, output: Option<String>) -> Value {
 
 fn agent_answer(pane: PaneId, state: &str, view: &Entity<TerminalView>, cx: &Context<KynexApp>) -> Value {
     json!({ "pane": pane, "state": state, "text": view.read(cx).screen_text().unwrap_or_default().trim_end() })
+}
+
+fn claude_chat_answer(pane: PaneId, chat: &super::claude_chat::LiveClaudeChat, state: &str) -> Value {
+    json!({
+        "pane": pane,
+        "state": state,
+        "session_id": chat.meta.session_id,
+        "detail": (!chat.detail.is_empty()).then_some(chat.detail.as_str()),
+    })
 }

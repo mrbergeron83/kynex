@@ -35,7 +35,7 @@ impl KynexApp {
             }
             Content::Tree => Some(self.render_sessions_pane(pane, window, cx)),
             Content::Agents => Some(self.render_agents_pane(pane, cx)),
-            Content::AgentCli => None,
+            Content::AgentCli | Content::ClaudeChat => None,
         }
     }
 

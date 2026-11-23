@@ -91,6 +91,13 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
+/// Line threshold at which a pasted block is emitted as [`InputEvent::PasteText`] when
+/// [`TextInput::intercept_long_paste`] is enabled.
+pub const LONG_PASTE_LINES: usize = 10;
+/// Character threshold at which a pasted block is emitted as [`InputEvent::PasteText`] when
+/// [`TextInput::intercept_long_paste`] is enabled.
+pub const LONG_PASTE_CHARS: usize = 1_000;
+
 pub enum InputEvent {
     Changed,
     /// Enter in a field that sends (Shift+Enter adds a line instead).
@@ -98,6 +105,9 @@ pub enum InputEvent {
     /// Paste with an image on the clipboard: the owner decides what to do with it.
     #[allow(dead_code)]
     PasteImages(Vec<Image>),
+    /// Paste of long text (>= 10 lines or >= 1,000 chars) when `intercept_long_paste` is enabled.
+    #[allow(dead_code)]
+    PasteText(String),
     /// A click on an atomic [`Mark`] (these bytes of the text).
     #[allow(dead_code)]
     MarkClicked(Range<usize>),
@@ -124,6 +134,8 @@ pub struct TextInput {
     mono: bool,
     /// Shows `*`s instead of the text, and won't copy or cut it: for secrets.
     masked: bool,
+    /// Emit `InputEvent::PasteText` instead of inserting raw text when a paste is long.
+    intercept_long_paste: bool,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -150,6 +162,7 @@ impl TextInput {
             multiline: false,
             mono: false,
             masked: false,
+            intercept_long_paste: false,
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -189,6 +202,14 @@ impl TextInput {
         self
     }
 
+    /// Emits [`InputEvent::PasteText`] instead of inserting raw text when a paste has
+    /// at least [`LONG_PASTE_LINES`] lines or [`LONG_PASTE_CHARS`] characters.
+    #[allow(dead_code)]
+    pub fn intercept_long_paste(mut self) -> Self {
+        self.intercept_long_paste = true;
+        self
+    }
+
     /// The text as drawn: the content, or `*`s for it when masked.
     fn shown(&self) -> String {
         if self.masked { "*".repeat(self.content.len()) } else { self.content.clone() }
@@ -201,6 +222,49 @@ impl TextInput {
 
     pub fn text(&self) -> &str {
         &self.content
+    }
+
+    #[allow(dead_code)]
+    pub fn selected_range(&self) -> Range<usize> {
+        self.selected_range.clone()
+    }
+
+    #[allow(dead_code)]
+    pub fn set_marks(&mut self, marks: Vec<Mark>, cx: &mut Context<Self>) {
+        if self.marks != marks {
+            self.marks = marks;
+            cx.notify();
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn scroll_handle(&self) -> &ScrollHandle {
+        &self.scroll
+    }
+
+    /// Replaces UTF-8 byte `range` in the field with `new_text` and moves the cursor to its end.
+    #[allow(dead_code)]
+    pub fn replace_range(&mut self, range: Range<usize>, new_text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let len = self.content.len();
+        let mut start = range.start.min(len);
+        let mut end = range.end.min(len).max(start);
+        while start > 0 && !self.content.is_char_boundary(start) {
+            start -= 1;
+        }
+        while end < len && !self.content.is_char_boundary(end) {
+            end += 1;
+        }
+        let new_text =
+            if self.multiline { new_text.replace("\r\n", "\n") } else { new_text.replace(['\r', '\n'], " ") };
+        self.content.replace_range(start..end, &new_text);
+        let cursor = start + new_text.len();
+        self.selected_range = cursor..cursor;
+        self.selection_reversed = false;
+        self.marked_range.take();
+        self.goal_x = None;
+        window.notify_text_input_changed(&self.focus_handle);
+        cx.emit(InputEvent::Changed);
+        cx.notify();
     }
 
     pub fn set_text(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
@@ -428,6 +492,10 @@ impl TextInput {
         if let Some(text) = item.text() {
             let text = text.replace("\r\n", "\n");
             let text = if self.multiline { text } else { text.replace('\n', " ") };
+            if self.intercept_long_paste && is_long_paste(&text) {
+                cx.emit(InputEvent::PasteText(text));
+                return;
+            }
             self.replace_text_in_range(None, &text, window, cx);
         }
     }
@@ -459,7 +527,7 @@ impl TextInput {
         cx.notify()
     }
 
-    fn cursor_offset(&self) -> usize {
+    pub fn cursor_offset(&self) -> usize {
         if self.selection_reversed { self.selected_range.start } else { self.selected_range.end }
     }
 
@@ -736,5 +804,25 @@ impl Render for TextInput {
 impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+fn is_long_paste(text: &str) -> bool {
+    text.lines().count() >= LONG_PASTE_LINES || text.chars().count() >= LONG_PASTE_CHARS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_paste_threshold_matches_lines_and_chars() {
+        assert!(!is_long_paste("hello\nworld"));
+        assert!(!is_long_paste(&"a\n".repeat(9)));
+        assert!(is_long_paste(&"a\n".repeat(10)));
+        assert!(!is_long_paste(&"x".repeat(999)));
+        assert!(is_long_paste(&"x".repeat(1_000)));
+        assert!(is_long_paste(&"é".repeat(1_000)));
+        assert!(!is_long_paste(&"é".repeat(999)));
     }
 }

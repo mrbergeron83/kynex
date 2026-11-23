@@ -163,6 +163,32 @@ impl KynexApp {
         self.toggle_terminal(&ToggleTerminal, window, cx);
     }
 
+    /// Runs `command` in an open plain shell terminal pane in the active workspace,
+    /// splitting one open below if none is currently open.
+    pub(super) fn run_in_workspace_terminal(&mut self, command: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((_, ws)) = self.tiling_scope() else { return };
+        let existing = self.tiles.get(&ws).and_then(|t| t.shell_terminals().first().copied());
+        let panel = match existing {
+            Some(pane) => {
+                let panel = self.start_terminal_pane(pane, &ws, window, cx);
+                panel.update(cx, |p, cx| p.ensure_open(window, cx));
+                self.focus_pane(pane, window, cx);
+                panel
+            }
+            None => {
+                let Some(panel) = self.show_terminal(window, cx) else { return };
+                panel
+            }
+        };
+        if let Some(view) = panel.read(cx).active_view() {
+            if view.read(cx).exited() {
+                view.update(cx, |v, cx| v.restart(cx));
+            }
+            view.update(cx, |v, cx| v.run(&command, cx));
+        }
+        cx.notify();
+    }
+
     pub(super) fn render_terminal_pane(
         &mut self,
         pane: PaneId,

@@ -73,8 +73,13 @@ impl KynexApp {
     /// stops any live instance running it, resets any pane holding it back to the picker,
     /// and forgets it in groups.
     pub(super) fn forget_past_session(&mut self, cwd: &Path, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let live: Vec<_> =
-            self.agent_instances.values().filter(|a| a.meta.session_id.as_deref() == Some(id)).map(|a| a.id).collect();
+        let live: Vec<_> = self
+            .agent_instances
+            .values()
+            .filter(|a| a.meta.session_id.as_deref() == Some(id))
+            .map(|a| a.id)
+            .chain(self.claude_chats.values().filter(|c| c.meta.session_id.as_deref() == Some(id)).map(|c| c.id))
+            .collect();
         for agent_id in live {
             self.stop_agent(agent_id, window, cx);
         }

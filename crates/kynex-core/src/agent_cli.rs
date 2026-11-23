@@ -1,18 +1,19 @@
-//! Pure interactive CLI providers for `agent_cli` panes.
+//! Pure interactive CLI providers for `agent_cli` terminal panes, plus the shared provider catalog.
 //!
-//! Every provider runs its own native interactive CLI directly inside Kynex's GPU terminal
-//! (preserving each CLI's TUI, permissions, slash commands, MCP servers, and auto-updater).
-//! OpenRouter overrides are supported specifically for **Claude Code** (`claude-openrouter`)
-//! and **Antigravity** (`agy-openrouter`), using the API key stored in the OS keychain.
+//! Claude Code (`claude`, `claude-openrouter`) runs in Kynex's native `ClaudeChat` pane rather
+//! than a terminal PTY. Every other provider (`agy`, `agy-openrouter`, `grok`, and `agent_rules`
+//! CLIs) runs its own native interactive CLI directly inside Kynex's GPU terminal (preserving each
+//! CLI's TUI, permissions, slash commands, MCP servers, and auto-updater). OpenRouter overrides are
+//! supported for **Claude Code** (`claude-openrouter`) and **Antigravity** (`agy-openrouter`),
+//! using the API key stored in the OS keychain.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::agent_panes::{self, AgentRule};
 use crate::control::agent as control_agent;
 use crate::hooks;
 use crate::layout::PaneId;
-use crate::provider::{DEFAULT_ANTIGRAVITY_MODEL, DEFAULT_OPENROUTER_MODEL, Launch, OpenRouterSettings};
+use crate::provider::DEFAULT_ANTIGRAVITY_MODEL;
 use crate::terminal::{ShellKind, ShellSpec};
 use crate::user_commands;
 
@@ -59,6 +60,11 @@ pub fn normalize_provider_id(raw: &str) -> String {
         "grok" => GROK.into(),
         other => other.to_string(),
     }
+}
+
+/// Whether `provider` runs in Kynex's native `ClaudeChat` pane instead of a terminal PTY.
+pub fn is_claude_chat(provider: &str) -> bool {
+    matches!(provider, CLAUDE | CLAUDE_OPENROUTER)
 }
 
 /// Whether `provider` uses the saved OpenRouter key (Claude or Antigravity override).
@@ -112,7 +118,7 @@ pub fn catalog(rules: &[AgentRule], has_openrouter_key: bool) -> Vec<ProviderEnt
             id: CLAUDE.into(),
             label: "Claude Code".into(),
             short_badge: "Claude".into(),
-            description: "Pure `claude` CLI with your Anthropic login".into(),
+            description: "Native Claude Code chat & composer with your Anthropic login".into(),
             uses_openrouter: false,
             installed: claude_ok,
             builtin: true,
@@ -122,7 +128,7 @@ pub fn catalog(rules: &[AgentRule], has_openrouter_key: bool) -> Vec<ProviderEnt
             label: "Claude Code (OpenRouter)".into(),
             short_badge: "Claude · OR".into(),
             description: if has_openrouter_key {
-                "`claude` CLI routed through your OpenRouter key".into()
+                "Native Claude Code chat & composer routed through your OpenRouter key".into()
             } else {
                 "Add an OpenRouter key in Settings → Providers".into()
             },
@@ -190,48 +196,8 @@ pub fn build_spec(req: &LaunchRequest<'_>) -> Result<ShellSpec, String> {
     let title = label(&provider, req.rules);
 
     let (program, args) = match provider.as_str() {
-        CLAUDE => {
-            let program = resolve_claude()?;
-            let launch = Launch::Anthropic;
-            let diff = launch.env(std::env::vars_os());
-            env.extend(diff.set.into_iter().map(|(k, v)| (k.to_string(), v)));
-            env_remove.extend(os_strings(diff.remove));
-            let mut args = Vec::new();
-            if let Some(settings_path) = hooks::write_claude_settings(CLAUDE, None) {
-                args.push("--settings".into());
-                args.push(settings_path.to_string_lossy().into_owned());
-            }
-            if let Some(id) = req.resume_id.filter(|s| !s.trim().is_empty()) {
-                args.push("--resume".into());
-                args.push(id.to_string());
-            }
-            (program, args)
-        }
-        CLAUDE_OPENROUTER => {
-            let key = req
-                .openrouter_key
-                .map(str::trim)
-                .filter(|k| !k.is_empty())
-                .ok_or("No OpenRouter key is saved. Add one in Settings → Providers.")?;
-            let program = resolve_claude()?;
-            let model = req.model.map(str::trim).filter(|m| !m.is_empty()).unwrap_or(DEFAULT_OPENROUTER_MODEL);
-            let launch = Launch::OpenRouter {
-                key: key.to_string(),
-                settings: OpenRouterSettings { model: model.to_string(), max_output_tokens: req.openrouter_cap },
-            };
-            let diff = launch.env(std::env::vars_os());
-            env.extend(diff.set.into_iter().map(|(k, v)| (k.to_string(), v)));
-            env_remove.extend(os_strings(diff.remove));
-            let mut args = Vec::new();
-            if let Some(settings_path) = hooks::write_claude_settings(CLAUDE_OPENROUTER, launch.settings_env()) {
-                args.push("--settings".into());
-                args.push(settings_path.to_string_lossy().into_owned());
-            }
-            if let Some(id) = req.resume_id.filter(|s| !s.trim().is_empty()) {
-                args.push("--resume".into());
-                args.push(id.to_string());
-            }
-            (program, args)
+        CLAUDE | CLAUDE_OPENROUTER => {
+            return Err("Claude Code runs in Kynex's native ClaudeChat pane, not in a terminal PTY.".into());
         }
         AGY => {
             let program = resolve_agy()?;
@@ -300,16 +266,6 @@ pub fn build_spec(req: &LaunchRequest<'_>) -> Result<ShellSpec, String> {
         title: Some(title),
         history: None,
     })
-}
-
-fn resolve_claude() -> Result<PathBuf, String> {
-    let p = crate::cli::program();
-    if p.is_file() {
-        Ok(p)
-    } else {
-        user_commands::find_program("claude", Path::new("."))
-            .map_err(|_| "Claude Code isn't installed. Install it from Settings → Providers.".into())
-    }
 }
 
 fn resolve_agy() -> Result<PathBuf, String> {
@@ -384,10 +340,6 @@ fn base_kynex_env_with(
     env
 }
 
-fn os_strings(list: Vec<OsString>) -> Vec<String> {
-    list.into_iter().filter_map(|s| s.into_string().ok()).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,11 +356,50 @@ mod tests {
     }
 
     #[test]
-    fn openrouter_overrides_require_key() {
+    fn detects_claude_chat_providers() {
+        assert!(is_claude_chat(CLAUDE));
+        assert!(is_claude_chat(CLAUDE_OPENROUTER));
+        assert!(!is_claude_chat(AGY));
+        assert!(!is_claude_chat(AGY_OPENROUTER));
+        assert!(!is_claude_chat(GROK));
+        assert!(!is_claude_chat("codex"));
+    }
+
+    #[test]
+    fn claude_providers_reject_terminal_pty_launch() {
         let req = LaunchRequest {
             pane_id: 7,
             instance_id: 42,
-            provider: CLAUDE_OPENROUTER,
+            provider: CLAUDE,
+            cwd: Path::new("."),
+            resume_id: None,
+            model: None,
+            openrouter_key: Some("sk-or-test"),
+            openrouter_cap: 8000,
+            control_addr: None,
+            rules: &[],
+        };
+        assert!(build_spec(&req).unwrap_err().contains("ClaudeChat"));
+
+        let or_req = LaunchRequest { provider: CLAUDE_OPENROUTER, ..req };
+        assert!(build_spec(&or_req).unwrap_err().contains("ClaudeChat"));
+    }
+
+    #[test]
+    fn catalog_describes_claude_as_native_chat() {
+        let entries = catalog(&[], true);
+        let claude = entries.iter().find(|e| e.id == CLAUDE).unwrap();
+        assert!(claude.description.contains("chat & composer"));
+        let claude_or = entries.iter().find(|e| e.id == CLAUDE_OPENROUTER).unwrap();
+        assert!(claude_or.description.contains("chat & composer"));
+    }
+
+    #[test]
+    fn openrouter_overrides_require_key() {
+        let agy_req = LaunchRequest {
+            pane_id: 7,
+            instance_id: 42,
+            provider: AGY_OPENROUTER,
             cwd: Path::new("."),
             resume_id: None,
             model: Some("qwen/qwen3-coder"),
@@ -417,9 +408,6 @@ mod tests {
             control_addr: None,
             rules: &[],
         };
-        assert!(build_spec(&req).unwrap_err().contains("No OpenRouter key"));
-
-        let agy_req = LaunchRequest { provider: AGY_OPENROUTER, ..req };
         assert!(build_spec(&agy_req).unwrap_err().contains("OpenRouter key"));
     }
 
