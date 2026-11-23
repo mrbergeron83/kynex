@@ -14,6 +14,7 @@ pub mod prompt_history;
 pub mod protocol;
 pub mod rewind;
 pub mod runs;
+pub mod timeline;
 pub mod types;
 
 pub use client::ClaudeClient;

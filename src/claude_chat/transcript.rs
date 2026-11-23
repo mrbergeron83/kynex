@@ -123,7 +123,9 @@ impl ClaudeChatView {
             true => crate::ui::ease_height::ease_height(("row-ease", ix), inner).into_any_element(),
             false => inner,
         };
-        self.column_row(inner, compact, wide).into_any_element()
+        let t = theme(cx).clone();
+        let el = self.column_row(inner, compact, wide);
+        self.flash_rows(ix..ix + 1, el, &t)
     }
 
     /// Row `ix`'s own content, without the column around it (runs draw their

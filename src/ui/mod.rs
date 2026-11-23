@@ -61,6 +61,8 @@ pub enum Icon {
     Search,
     File,
     Play,
+    CollapseAll,
+    ExpandAll,
     /// The arms of the mark's K: a chevron on the mark's own grid.
     MarkChevron,
 }
@@ -70,6 +72,8 @@ impl Icon {
         match self {
             Icon::Close => "icons/close.svg",
             Icon::Play => "icons/play.svg",
+            Icon::CollapseAll => "icons/chevrons-down-up.svg",
+            Icon::ExpandAll => "icons/chevrons-up-down.svg",
             Icon::Minimize => "icons/minimize.svg",
             Icon::Maximize => "icons/maximize.svg",
             Icon::Restore => "icons/restore.svg",
@@ -104,7 +108,7 @@ impl Icon {
 }
 
 /// Line icons drawn on a 24px grid, Lucide style.
-const ICONS: [(&str, &str); 38] = [
+const ICONS: [(&str, &str); 40] = [
     // Steps on a line, for the session timeline.
     (
         "timeline",
@@ -167,6 +171,8 @@ const ICONS: [(&str, &str); 38] = [
         "bot",
         r#"<path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/>"#,
     ),
+    ("chevrons-down-up", r#"<path d="m7 20 5-5 5 5M7 4l5 5 5-5"/>"#),
+    ("chevrons-up-down", r#"<path d="m7 15 5 5 5-5M7 9l5-5 5 5"/>"#),
     ("search", r#"<circle cx="11" cy="11" r="7"/><path d="m20 20-4.35-4.35"/>"#),
     ("file", r#"<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>"#),
     (
