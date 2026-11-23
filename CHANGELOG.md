@@ -5,6 +5,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Claude chat panes start in Auto permission mode when the model supports it (a `defaultMode` from your Claude settings still wins).
+
+### Fixed
+
+- Claude chat: the subagent strip now shows only while subagents run (finished ones open from their transcript row's Peek button), finished plans and interrupted subagents no longer linger, and transcript scrolling and the subagent peek do less work per frame.
+
 ## [0.0.39] - 2026-11-23
 
 ### Added

@@ -218,8 +218,18 @@ pub struct PlanStep {
 #[derive(Clone, Debug)]
 pub enum SubagentRow {
     Thought(String),
-    Prose(String),
-    Tool { id: String, name: String, summary: String, output: Option<String>, is_error: bool },
+    /// Raw Markdown plus its parse, kept in step so the peek modal never re-parses per frame.
+    Prose {
+        text: String,
+        blocks: Vec<Block>,
+    },
+    Tool {
+        id: String,
+        name: String,
+        summary: String,
+        output: Option<String>,
+        is_error: bool,
+    },
 }
 
 /// Live state for one active or recent subagent (`Agent` / `Task` tool call).
@@ -555,10 +565,12 @@ pub fn apply_subagent_msg(
             }
         }
         SubagentMessage::Text(t) => {
-            if let Some(SubagentRow::Prose(prev)) = track.rows.last_mut() {
-                prev.push_str(&t);
+            if let Some(SubagentRow::Prose { text, blocks }) = track.rows.last_mut() {
+                text.push_str(&t);
+                *blocks = markdown::parse(text);
             } else {
-                track.rows.push(SubagentRow::Prose(t));
+                let blocks = markdown::parse(&t);
+                track.rows.push(SubagentRow::Prose { text: t, blocks });
             }
         }
         SubagentMessage::ToolUse { id, name, input } => {
@@ -691,7 +703,10 @@ pub fn history_items_to_rows(
                 for si in sub_items {
                     match si {
                         HistoryItem::Thought(t) => rows.push(SubagentRow::Thought(t)),
-                        HistoryItem::Prose(p) => rows.push(SubagentRow::Prose(p)),
+                        HistoryItem::Prose(p) => {
+                            let blocks = markdown::parse(&p);
+                            rows.push(SubagentRow::Prose { text: p, blocks });
+                        }
                         HistoryItem::ToolUse { id, name, input, result, is_error, .. } => {
                             rows.push(SubagentRow::Tool {
                                 id,

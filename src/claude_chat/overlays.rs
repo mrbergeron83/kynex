@@ -24,9 +24,13 @@ impl ClaudeChatView {
         if self.plan_steps.is_empty() {
             return None;
         }
-        let t = theme(cx).clone();
         let total = self.plan_steps.len();
         let done = self.plan_steps.iter().filter(|s| s.status == "completed").count();
+        // A finished checklist has nothing left to track: drop it once the turn ends.
+        if done == total && !self.turn_active {
+            return None;
+        }
+        let t = theme(cx).clone();
         let current = self
             .plan_steps
             .iter()
@@ -133,29 +137,24 @@ impl ClaudeChatView {
 
     /// Quiet 1-line strip listing active or recent subagents above the composer.
     pub(super) fn render_subagent_strip(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.subagents.is_empty() {
+        // Only live subagents get the strip; finished ones stay reachable from their
+        // Agent/Task row's Peek button in the transcript.
+        let active_count = self.subagents.iter().filter(|s| s.running).count();
+        if active_count == 0 {
             return None;
         }
         let t = theme(cx).clone();
-        let active_count = self.subagents.iter().filter(|s| s.running).count();
-        let total = self.subagents.len();
-
-        // Pick the most interesting track to highlight (running first, else latest).
-        let primary = self.subagents.iter().rev().find(|s| s.running).or_else(|| self.subagents.last())?;
+        let primary = self.subagents.iter().rev().find(|s| s.running)?;
         let primary_id = primary.tool_use_id.clone();
-        let stop_task_id = primary.running.then(|| primary.task_id.clone()).flatten();
+        let stop_task_id = primary.task_id.clone();
 
-        let count_label = if active_count > 0 {
-            format!("{active_count} subagent{}", if active_count == 1 { "" } else { "s" })
-        } else {
-            format!("{total} subagent{} done", if total == 1 { "" } else { "s" })
-        };
+        let count_label = format!("{active_count} subagent{}", if active_count == 1 { "" } else { "s" });
         let detail = match &primary.last_tool {
-            Some(tool) if primary.running => format!("{} ({tool})", primary.label),
-            _ => primary.label.clone(),
+            Some(tool) => format!("{} ({tool})", primary.label),
+            None => primary.label.clone(),
         };
 
-        let lamp_state = if active_count > 0 { Lamp::Working } else { Lamp::Done };
+        let lamp_state = Lamp::Working;
 
         Some(
             div()
@@ -255,6 +254,10 @@ impl ClaudeChatView {
             Vec::new()
         };
 
+        // Long subagent runs can forward thousands of rows; the modal isn't virtualized,
+        // so show only the latest ones.
+        const PEEK_MAX_ROWS: usize = 200;
+        let hidden = track.rows.len().saturating_sub(PEEK_MAX_ROWS);
         let body_items: Vec<AnyElement> = if track.rows.is_empty() {
             vec![
                 div()
@@ -270,88 +273,95 @@ impl ClaudeChatView {
                     .into_any_element(),
             ]
         } else {
-            track
-                .rows
-                .iter()
-                .enumerate()
-                .map(|(i, row)| match row {
-                    SubagentRow::Thought(text) => div()
-                        .px_2p5()
-                        .py_1p5()
-                        .rounded_md()
-                        .bg(t.panel)
-                        .border_1()
-                        .border_color(t.border_variant)
-                        .font_family(mono())
-                        .text_size(px(11.5))
-                        .text_color(t.text_muted)
-                        .child(text.clone())
-                        .into_any_element(),
-                    SubagentRow::Prose(text) => {
-                        let blocks = kynex_core::claude::markdown::parse(text);
-                        let rendered =
-                            markdown_view::render_blocks(&blocks, 10_000 + i as u64, self.copied_key.as_deref(), cx);
-                        div().flex().flex_col().gap_1p5().children(rendered).into_any_element()
-                    }
-                    SubagentRow::Tool { name, summary, output, is_error, .. } => {
-                        let dot_color = if *is_error {
-                            t.error
-                        } else if output.is_some() {
-                            t.success
-                        } else {
-                            t.accent
-                        };
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
+            let earlier = (hidden > 0).then(|| {
+                div()
+                    .text_center()
+                    .text_xs()
+                    .text_color(t.text_placeholder)
+                    .child(format!("{hidden} earlier rows not shown"))
+                    .into_any_element()
+            });
+            earlier
+                .into_iter()
+                .chain(track.rows.iter().enumerate().skip(hidden).map(|(i, row)| {
+                    match row {
+                        SubagentRow::Thought(text) => div()
                             .px_2p5()
                             .py_1p5()
                             .rounded_md()
+                            .bg(t.panel)
                             .border_1()
                             .border_color(t.border_variant)
-                            .bg(t.element)
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(div().size(px(6.)).rounded_full().bg(dot_color).flex_none())
-                                    .child(
-                                        div()
-                                            .font_family(mono())
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_xs()
-                                            .text_color(t.text)
-                                            .child(name.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .truncate()
-                                            .font_family(mono())
-                                            .text_xs()
-                                            .text_color(t.text_muted)
-                                            .child(summary.clone()),
-                                    ),
-                            )
-                            .when_some(output.as_ref().filter(|o| !o.trim().is_empty()), |d, out| {
-                                let preview = super::state::truncate_chars(out.trim(), 800);
-                                d.child(
+                            .font_family(mono())
+                            .text_size(px(11.5))
+                            .text_color(t.text_muted)
+                            .child(text.clone())
+                            .into_any_element(),
+                        SubagentRow::Prose { blocks, .. } => {
+                            let rendered =
+                                markdown_view::render_blocks(blocks, 10_000 + i as u64, self.copied_key.as_deref(), cx);
+                            div().flex().flex_col().gap_1p5().children(rendered).into_any_element()
+                        }
+                        SubagentRow::Tool { name, summary, output, is_error, .. } => {
+                            let dot_color = if *is_error {
+                                t.error
+                            } else if output.is_some() {
+                                t.success
+                            } else {
+                                t.accent
+                            };
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .px_2p5()
+                                .py_1p5()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(t.border_variant)
+                                .bg(t.element)
+                                .child(
                                     div()
-                                        .pt_1()
-                                        .border_t_1()
-                                        .border_color(t.border_variant)
-                                        .font_family(mono())
-                                        .text_size(px(11.))
-                                        .text_color(if *is_error { t.error } else { t.text_muted })
-                                        .child(preview),
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(div().size(px(6.)).rounded_full().bg(dot_color).flex_none())
+                                        .child(
+                                            div()
+                                                .font_family(mono())
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_xs()
+                                                .text_color(t.text)
+                                                .child(name.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .truncate()
+                                                .font_family(mono())
+                                                .text_xs()
+                                                .text_color(t.text_muted)
+                                                .child(summary.clone()),
+                                        ),
                                 )
-                            })
-                            .into_any_element()
+                                .when_some(output.as_ref().filter(|o| !o.trim().is_empty()), |d, out| {
+                                    let preview = super::state::truncate_chars(out.trim(), 800);
+                                    d.child(
+                                        div()
+                                            .pt_1()
+                                            .border_t_1()
+                                            .border_color(t.border_variant)
+                                            .font_family(mono())
+                                            .text_size(px(11.))
+                                            .text_color(if *is_error { t.error } else { t.text_muted })
+                                            .child(preview),
+                                    )
+                                })
+                                .into_any_element()
+                        }
                     }
-                })
+                }))
                 .collect()
         };
 

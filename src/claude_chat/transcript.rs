@@ -13,6 +13,24 @@ use super::{ClaudeChatView, centered_column};
 use crate::theme::{Palette, mono, theme, ui_font};
 use crate::ui::{Icon, Tooltip, ghost_button, icon, px, scrollbar, spinner};
 
+/// Borrowed fields of a [`LogRow::ToolCall`] for [`ClaudeChatView::render_tool_call`].
+struct ToolCallView<'r> {
+    ix: usize,
+    id: u64,
+    tool_use_id: &'r str,
+    name: &'r str,
+    summary: &'r str,
+    command: Option<&'r str>,
+    input_preview: &'r str,
+    output: &'r str,
+    images: &'r [RowImage],
+    started_at: Option<std::time::Instant>,
+    duration_ms: Option<u64>,
+    done: bool,
+    is_error: bool,
+    expanded: bool,
+}
+
 impl ClaudeChatView {
     /// Renders the virtualized transcript area + scrollbar + floating "↓ Latest" pill.
     pub(super) fn render_transcript(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -104,28 +122,51 @@ impl ClaudeChatView {
     }
 
     fn render_row(&mut self, ix: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(row) = self.rows.get(ix).cloned() else {
+        if ix >= self.rows.len() {
             return div().into_any_element();
-        };
+        }
+        // The list re-renders every visible row on each scroll frame: borrow the row
+        // (swapped out for a cheap placeholder) instead of deep-cloning its text, blocks,
+        // diffs and tool output every frame.
+        let placeholder = LogRow::CompactionDivider { detail: String::new() };
+        let row = std::mem::replace(&mut self.rows[ix], placeholder);
+        let el = self.render_row_inner(ix, &row, cx);
+        self.rows[ix] = row;
+        el
+    }
+
+    fn render_row_inner(&mut self, ix: usize, row: &LogRow, cx: &mut Context<Self>) -> AnyElement {
         let t = theme(cx).clone();
         let is_find_hit = self.find.open && self.find.matches.contains(&ix);
         let is_current_hit = self.find.open && self.find.matches.get(self.find.current) == Some(&ix);
 
         let inner: AnyElement = match row {
             LogRow::UserPrompt { id, text, images, file_chips, paste_labels, .. } => {
-                self.render_user_prompt(id, text, images, file_chips, paste_labels, &t, cx)
+                self.render_user_prompt(*id, text, images, file_chips, paste_labels, &t, cx)
             }
             LogRow::Thought { id, text, started_at, duration_ms, expanded, streaming } => {
-                self.render_thought(ix, id, text, started_at, duration_ms, expanded, streaming, &t, cx)
+                self.render_thought(ix, *id, text, *started_at, *duration_ms, *expanded, *streaming, &t, cx)
             }
             LogRow::ReadSearchRun { id, entries, expanded } => {
-                self.render_read_search_run(ix, id, entries, expanded, &t, cx)
+                self.render_read_search_run(ix, *id, entries, *expanded, &t, cx)
             }
-            LogRow::EditRow { id, tool_name, path, diff, expanded, done, is_error, error_text, .. } => {
-                self.render_edit_row(ix, id, tool_name, path, diff, expanded, done, is_error, error_text, &t, cx)
-            }
+            LogRow::EditRow { id, tool_name, path, diff, expanded, done, is_error, error_text, .. } => self
+                .render_edit_row(
+                    ix,
+                    *id,
+                    tool_name,
+                    path,
+                    diff,
+                    *expanded,
+                    *done,
+                    *is_error,
+                    error_text.as_deref(),
+                    &t,
+                    cx,
+                ),
             LogRow::ToolCall {
                 id,
+                tool_use_id,
                 name,
                 summary,
                 command,
@@ -137,33 +178,35 @@ impl ClaudeChatView {
                 done,
                 is_error,
                 expanded,
-                ..
             } => self.render_tool_call(
-                ix,
-                id,
-                name,
-                summary,
-                command,
-                input_preview,
-                output,
-                images,
-                started_at,
-                duration_ms,
-                done,
-                is_error,
-                expanded,
+                ToolCallView {
+                    ix,
+                    id: *id,
+                    tool_use_id,
+                    name,
+                    summary,
+                    command: command.as_deref(),
+                    input_preview,
+                    output,
+                    images,
+                    started_at: *started_at,
+                    duration_ms: *duration_ms,
+                    done: *done,
+                    is_error: *is_error,
+                    expanded: *expanded,
+                },
                 &t,
                 cx,
             ),
             LogRow::Prose { id, blocks, streaming, .. } => {
-                let rendered = markdown_view::render_blocks(&blocks, id, self.copied_key.as_deref(), cx);
+                let rendered = markdown_view::render_blocks(blocks, *id, self.copied_key.as_deref(), cx);
                 div()
                     .w_full()
                     .flex()
                     .flex_col()
                     .gap_2()
                     .children(rendered)
-                    .when(streaming, |d| d.child(div().w(px(7.)).h(px(13.)).rounded_xs().bg(t.accent)))
+                    .when(*streaming, |d| d.child(div().w(px(7.)).h(px(13.)).rounded_xs().bg(t.accent)))
                     .into_any_element()
             }
             LogRow::CompactionDivider { detail } => div()
@@ -173,7 +216,7 @@ impl ClaudeChatView {
                 .items_center()
                 .gap_2()
                 .child(div().flex_1().h(px(1.)).bg(t.border_variant))
-                .child(div().text_xs().text_color(t.text_placeholder).child(detail))
+                .child(div().text_xs().text_color(t.text_placeholder).child(detail.clone()))
                 .child(div().flex_1().h(px(1.)).bg(t.border_variant))
                 .into_any_element(),
             LogRow::Notice { text, is_error } => div()
@@ -182,11 +225,11 @@ impl ClaudeChatView {
                 .py_1p5()
                 .rounded_md()
                 .border_1()
-                .border_color(if is_error { t.error } else { t.border_variant })
+                .border_color(if *is_error { t.error } else { t.border_variant })
                 .bg(t.panel)
                 .text_xs()
-                .text_color(if is_error { t.error } else { t.text_muted })
-                .child(text)
+                .text_color(if *is_error { t.error } else { t.text_muted })
+                .child(text.clone())
                 .into_any_element(),
         };
 
@@ -202,17 +245,18 @@ impl ClaudeChatView {
     fn render_user_prompt(
         &mut self,
         id: u64,
-        text: String,
-        images: Vec<RowImage>,
-        file_chips: Vec<String>,
-        paste_labels: Vec<String>,
+        text: &str,
+        images: &[RowImage],
+        file_chips: &[String],
+        paste_labels: &[String],
         t: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let thumbs = self.render_row_images(id, &images, t, cx);
+        let thumbs = self.render_row_images(id, images, t, cx);
 
         let chips: Vec<AnyElement> = file_chips
-            .into_iter()
+            .iter()
+            .cloned()
             .enumerate()
             .map(|(ci, path)| {
                 let open_path = path.clone();
@@ -240,7 +284,7 @@ impl ClaudeChatView {
                     }))
                     .into_any_element()
             })
-            .chain(paste_labels.into_iter().map(|lbl| {
+            .chain(paste_labels.iter().cloned().map(|lbl| {
                 div()
                     .px_1p5()
                     .h(px(20.))
@@ -278,7 +322,7 @@ impl ClaudeChatView {
                         .text_size(px(13.5))
                         .line_height(px(20.))
                         .text_color(t.text)
-                        .child(text),
+                        .child(text.to_string()),
                 )
             })
             .when(!chips.is_empty(), |d| d.child(div().flex().flex_wrap().gap_1().children(chips)))
@@ -290,7 +334,7 @@ impl ClaudeChatView {
         &self,
         ix: usize,
         id: u64,
-        text: String,
+        text: &str,
         started_at: Option<std::time::Instant>,
         duration_ms: Option<u64>,
         expanded: bool,
@@ -347,7 +391,7 @@ impl ClaudeChatView {
                         .text_xs()
                         .line_height(px(18.))
                         .text_color(t.text_muted)
-                        .child(StyledText::new(text.clone()).with_highlights(vec![(
+                        .child(StyledText::new(text.to_string()).with_highlights(vec![(
                             0..text.len(),
                             gpui::HighlightStyle { font_style: Some(FontStyle::Italic), ..Default::default() },
                         )])),
@@ -360,7 +404,7 @@ impl ClaudeChatView {
         &self,
         ix: usize,
         id: u64,
-        entries: Vec<ReadSearchEntry>,
+        entries: &[ReadSearchEntry],
         expanded: bool,
         t: &Palette,
         cx: &mut Context<Self>,
@@ -385,7 +429,7 @@ impl ClaudeChatView {
 
         let details: Vec<AnyElement> = if expanded {
             entries
-                .into_iter()
+                .iter()
                 .enumerate()
                 .map(|(ei, e)| {
                     let dot_col = if e.is_error {
@@ -407,7 +451,9 @@ impl ClaudeChatView {
                         .hover(|s| s.bg(t.hover))
                         .when(open_path.is_some(), |d| d.cursor_pointer())
                         .child(div().size(px(5.)).rounded_full().bg(dot_col).flex_none())
-                        .child(div().text_xs().text_color(t.text_muted).w(px(56.)).flex_none().child(e.tool_name))
+                        .child(
+                            div().text_xs().text_color(t.text_muted).w(px(56.)).flex_none().child(e.tool_name.clone()),
+                        )
                         .child(
                             div()
                                 .flex_1()
@@ -416,7 +462,7 @@ impl ClaudeChatView {
                                 .font_family(mono())
                                 .text_xs()
                                 .text_color(if open_path.is_some() { t.accent } else { t.text })
-                                .child(e.label),
+                                .child(e.label.clone()),
                         )
                         .when_some(open_path, |d, p| {
                             d.on_click(cx.listener(move |this, _, _, cx| {
@@ -470,19 +516,19 @@ impl ClaudeChatView {
         &self,
         ix: usize,
         id: u64,
-        tool_name: String,
-        path: String,
-        diff: EditDiff,
+        tool_name: &str,
+        path: &str,
+        diff: &EditDiff,
         expanded: bool,
         done: bool,
         is_error: bool,
-        error_text: Option<String>,
+        error_text: Option<&str>,
         t: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let display_path = short_path(&self.config.workspace, &path);
+        let display_path = short_path(&self.config.workspace, path);
         let verb = if tool_name == "Write" { "Wrote" } else { "Edited" };
-        let open_path = path.clone();
+        let open_path = path.to_string();
         let chev = if expanded { Icon::ChevronDown } else { Icon::ChevronRight };
         let lamp_col = if is_error {
             t.error
@@ -565,28 +611,27 @@ impl ClaudeChatView {
                         }
                     })),
             )
-            .when(expanded, |d| d.child(render_inline_diff(&path, &diff, error_text.as_deref(), id, t)))
+            .when(expanded, |d| d.child(render_inline_diff(path, diff, error_text, id, t)))
             .into_any_element()
     }
 
-    fn render_tool_call(
-        &mut self,
-        ix: usize,
-        id: u64,
-        name: String,
-        summary: String,
-        command: Option<String>,
-        input_preview: String,
-        output: String,
-        images: Vec<RowImage>,
-        started_at: Option<std::time::Instant>,
-        duration_ms: Option<u64>,
-        done: bool,
-        is_error: bool,
-        expanded: bool,
-        t: &Palette,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_tool_call(&mut self, v: ToolCallView<'_>, t: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let ToolCallView {
+            ix,
+            id,
+            tool_use_id,
+            name,
+            summary,
+            command,
+            input_preview,
+            output,
+            images,
+            started_at,
+            duration_ms,
+            done,
+            is_error,
+            expanded,
+        } = v;
         let lamp_col = if is_error {
             t.error
         } else if done {
@@ -596,8 +641,10 @@ impl ClaudeChatView {
         };
         let dur = duration_ms.or_else(|| started_at.map(|s| s.elapsed().as_millis() as u64)).map(format_duration);
         let chev = if expanded { Icon::ChevronDown } else { Icon::ChevronRight };
-        let thumbs = self.render_row_images(id, &images, t, cx);
-        let shell_cmd = is_shell_tool(&name).then_some(command.clone()).flatten();
+        let thumbs = self.render_row_images(id, images, t, cx);
+        let shell_cmd = is_shell_tool(name).then(|| command.map(str::to_string)).flatten();
+        let peek_id = (is_subagent_tool(name) && self.subagents.iter().any(|s| s.tool_use_id == tool_use_id))
+            .then(|| tool_use_id.to_string());
 
         div()
             .w_full()
@@ -630,7 +677,7 @@ impl ClaudeChatView {
                             .font_weight(FontWeight::MEDIUM)
                             .text_xs()
                             .text_color(t.text)
-                            .child(name),
+                            .child(name.to_string()),
                     )
                     .child(
                         div()
@@ -640,7 +687,7 @@ impl ClaudeChatView {
                             .font_family(mono())
                             .text_xs()
                             .text_color(t.text_muted)
-                            .child(summary),
+                            .child(summary.to_string()),
                     )
                     .when_some(dur, |d, dur_str| {
                         d.child(
@@ -667,6 +714,22 @@ impl ClaudeChatView {
                                 })),
                         )
                     })
+                    .when_some(peek_id, |d, sid| {
+                        d.child(
+                            ghost_button(SharedString::from(format!("tool-peek-{id}")), cx)
+                                .h(px(20.))
+                                .px_1p5()
+                                .text_xs()
+                                .text_color(t.accent)
+                                .tooltip(Tooltip::text("Inspect subagent output"))
+                                .child("Peek ↗")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.peek_subagent = Some(sid.clone());
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .child(icon(chev, t.text_placeholder).size(px(12.)))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(LogRow::ToolCall { expanded: exp, .. }) = this.rows.get_mut(ix) {
@@ -679,6 +742,7 @@ impl ClaudeChatView {
             .child(if expanded {
                 let scroll = scrollbar::handle(("tool-out-sb", id));
                 let cmd_opt = command.filter(|c| !c.is_empty());
+                let input_preview = input_preview.to_string();
                 let show_input = cmd_opt.is_none() && !input_preview.is_empty();
                 div()
                     .border_t_1()
@@ -713,7 +777,7 @@ impl ClaudeChatView {
                         )
                     })
                     .when(!output.is_empty(), |d| {
-                        let capped = truncate_chars(&output, 16_000);
+                        let capped = truncate_chars(output, 16_000);
                         d.child(scrollbar::vertical_over(
                             ("tool-out-sbar", id),
                             scroll.clone(),
@@ -740,6 +804,18 @@ impl ClaudeChatView {
                 div().into_any_element()
             })
             .into_any_element()
+    }
+
+    /// Marks every still-running subagent finished; `keep_background` spares tracks
+    /// with a task id, which report their own end through a task notification.
+    pub(super) fn settle_subagents(&mut self, keep_background: bool) {
+        for s in self.subagents.iter_mut().filter(|s| s.running) {
+            if keep_background && s.task_id.is_some() {
+                continue;
+            }
+            s.running = false;
+            s.status = "Stopped".into();
+        }
     }
 
     pub(super) fn finalize_streaming_rows(&mut self) {

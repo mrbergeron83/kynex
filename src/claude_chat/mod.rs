@@ -432,6 +432,7 @@ impl ClaudeChatView {
         self.exited = true;
         self.pending_card = None;
         self.queued_cards.clear();
+        self.settle_subagents(false);
         self.set_status(AgentState::Idle, "Stopped", cx);
         cx.notify();
     }
@@ -778,6 +779,12 @@ pub(super) fn centered_column(child: impl IntoElement) -> gpui::Div {
 impl Render for ClaudeChatView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.image_cache.flush_retired(cx);
+        // A peek whose track is gone would draw nothing yet still swallow Esc.
+        if let Some(id) = &self.peek_subagent
+            && !self.subagents.iter().any(|s| &s.tool_use_id == id)
+        {
+            self.peek_subagent = None;
+        }
         let t = theme(cx).clone();
 
         let find_bar = self.render_find_bar(cx);

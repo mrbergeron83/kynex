@@ -9,7 +9,7 @@ use kynex_core::claude::composer::CommandItem;
 use kynex_core::claude::diff::diff_from_tool_input;
 use kynex_core::claude::history::{HistoryMeta, LoadedChunk, TodoItem};
 use kynex_core::claude::markdown;
-use kynex_core::claude::{ClaudeEvent, InitInfo, PermissionKind, PermissionRequest, TurnResult, costs};
+use kynex_core::claude::{ClaudeEvent, InitInfo, PermissionKind, PermissionMode, PermissionRequest, TurnResult, costs};
 use serde_json::Value;
 
 use super::ClaudeChatView;
@@ -281,6 +281,7 @@ impl ClaudeChatView {
                 self.pending_card = None;
                 self.queued_cards.clear();
                 self.finalize_streaming_rows();
+                self.settle_subagents(false);
                 let msg = match code {
                     Some(0) | None if stderr.trim().is_empty() => "Claude process ended.".to_string(),
                     Some(c) if stderr.trim().is_empty() => format!("Claude exited with status {c}."),
@@ -335,6 +336,11 @@ impl ClaudeChatView {
         self.slash_commands = cmds;
         self.init_info = Some(info);
         self.ready = true;
+        // Start in Auto where the model allows it. Only from the plain default, so a
+        // `defaultMode` the user set in their Claude settings still wins.
+        if self.permission_mode == PermissionMode::Default && self.active_model_supports_auto() {
+            self.set_permission_mode(PermissionMode::Auto, cx);
+        }
         if !self.turn_active {
             self.set_status(AgentState::Idle, "Ready", cx);
         }
@@ -399,6 +405,9 @@ impl ClaudeChatView {
     fn on_turn_finished(&mut self, result: TurnResult, cx: &mut Context<Self>) {
         self.turn_active = false;
         self.finalize_streaming_rows();
+        // Foreground subagents can't outlive their turn (after an interrupt no tool
+        // result arrives); background tasks end with their own notification.
+        self.settle_subagents(true);
 
         if let Some(sid) = result.session_id.clone().filter(|s| !s.is_empty()) {
             self.adopt_session_id(sid, cx);
