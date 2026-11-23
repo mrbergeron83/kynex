@@ -469,7 +469,6 @@ impl ClaudeChatView {
         let mut files: Vec<String> = Vec::new();
         for row in &self.rows[from..] {
             match row {
-                LogRow::ReadSearchRun { entries, .. } => tools += entries.len(),
                 LogRow::ToolCall { .. } => tools += 1,
                 LogRow::EditRow { path, is_error: false, .. } => {
                     tools += 1;
@@ -532,34 +531,6 @@ impl ClaudeChatView {
                     rows: Vec::new(),
                 });
             }
-        }
-
-        // 1. Read/Search grouping
-        if let Some(kind) = is_read_search_tool(&name) {
-            let path = extract_file_path(&input);
-            let label = tool_summary(&self.config.workspace, &name, &input);
-            // Update existing entry if present.
-            for (idx, row) in self.rows.iter_mut().enumerate().rev() {
-                if let LogRow::ReadSearchRun { entries, .. } = row
-                    && let Some(e) = entries.iter_mut().find(|e| e.tool_use_id == tool_use_id)
-                {
-                    e.label = label;
-                    e.path = path;
-                    self.remeasure_row(idx);
-                    return;
-                }
-            }
-            let entry =
-                ReadSearchEntry { tool_use_id, kind, tool_name: name, label, path, done: false, is_error: false };
-            if let Some(LogRow::ReadSearchRun { entries, .. }) = self.rows.last_mut() {
-                entries.push(entry);
-                let idx = self.rows.len() - 1;
-                self.remeasure_row(idx);
-            } else {
-                let id = self.next_id();
-                self.push_row(LogRow::ReadSearchRun { id, entries: vec![entry], expanded: false });
-            }
-            return;
         }
 
         // 2. Edit / MultiEdit / Write compact 1-line rows with collapsible inline diff
@@ -676,14 +647,6 @@ impl ClaudeChatView {
 
         for (idx, row) in self.rows.iter_mut().enumerate().rev() {
             match row {
-                LogRow::ReadSearchRun { entries, .. } => {
-                    if let Some(e) = entries.iter_mut().find(|e| e.tool_use_id == tool_use_id) {
-                        e.done = true;
-                        e.is_error = is_error;
-                        self.remeasure_row(idx);
-                        return;
-                    }
-                }
                 LogRow::EditRow { tool_use_id: tid, done, is_error: err, error_text, .. } if tid == tool_use_id => {
                     *done = true;
                     *err = is_error;

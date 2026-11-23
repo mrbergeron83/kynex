@@ -84,6 +84,12 @@ pub fn selected_text(cx: &App) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
+/// A drag-selection is under way that started in block `spot` of `group`.
+pub fn dragging_from(group: u64, spot: Spot, cx: &App) -> bool {
+    cx.try_global::<Selection>()
+        .is_some_and(|s| s.dragging && s.group == group && s.anchor.is_some_and(|a| a.0 == spot))
+}
+
 /// Drops the selection, e.g. when the transcript under it changes.
 pub fn clear(cx: &mut App) {
     if let Some(sel) = cx.try_global::<Selection>()

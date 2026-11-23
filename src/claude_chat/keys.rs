@@ -4,6 +4,7 @@
 use gpui::{Context, Focusable, KeyDownEvent, Window};
 use kynex_core::claude::PermissionAnswer;
 
+use super::runs::Scroll;
 use super::*;
 
 impl ClaudeChatView {
@@ -35,6 +36,26 @@ impl ClaudeChatView {
         let m = &ev.keystroke.modifiers;
         let secondary = if cfg!(target_os = "macos") { m.platform } else { m.control };
         let key = ev.keystroke.key.as_str();
+        // Transcript keys that work even while typing: Page Up / Down, Ctrl+Home / End, Ctrl+O.
+        let plain = !secondary && !m.alt && !m.shift;
+        let scroll = match key {
+            "pageup" if plain => Some(Scroll::Page(-1.)),
+            "pagedown" if plain => Some(Scroll::Page(1.)),
+            "home" if secondary && !m.alt && !m.shift => Some(Scroll::Top),
+            "end" if secondary && !m.alt && !m.shift => Some(Scroll::Bottom),
+            _ => None,
+        };
+        if let Some(by) = scroll {
+            cx.stop_propagation();
+            self.scroll_keys(by, cx);
+            return;
+        }
+        let expand_key = if cfg!(target_os = "macos") { m.control && !m.shift } else { m.control && m.shift };
+        if expand_key && !m.alt && key == "o" {
+            cx.stop_propagation();
+            self.toggle_expand_tools(cx);
+            return;
+        }
         // Ctrl+C with text selected in the transcript copies it.
         if secondary
             && !m.alt
@@ -106,6 +127,24 @@ impl ClaudeChatView {
         let key = ev.keystroke.key.as_str();
         let m = &ev.keystroke.modifiers;
         let secondary = if cfg!(target_os = "macos") { m.platform } else { m.control };
+
+        // Home / End and ↑ / ↓ scroll the transcript when the message box doesn't have them.
+        if !secondary && !m.alt && !m.shift && !self.composer_input.read(cx).is_focused(window) {
+            let by = match key {
+                "home" => Some(Scroll::Top),
+                "end" => Some(Scroll::Bottom),
+                "up" => Some(Scroll::Line(-1.)),
+                "down" => Some(Scroll::Line(1.)),
+                _ => None,
+            };
+            if let Some(by) = by
+                && self.pending_card.is_none()
+            {
+                cx.stop_propagation();
+                self.scroll_keys(by, cx);
+                return;
+            }
+        }
 
         // Ctrl+F / Cmd+F -> Transcript find
         if secondary && !m.alt && !m.shift && key.eq_ignore_ascii_case("f") {

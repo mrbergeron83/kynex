@@ -8,13 +8,14 @@ use std::ops::Range;
 use std::path::Path;
 use std::time::Instant;
 
-use gpui::{AnyElement, Context, FollowMode, FontWeight, ListOffset, SharedString, Window, div, prelude::*};
+use gpui::{AnyElement, Context, FollowMode, ListOffset, SharedString, Window, div, prelude::*};
 use kynex_core::claude::runs::{self, ListItem, RowKind};
 
 use super::state::*;
+use super::tool_rows::{disclosure_row, stat};
 use super::{CHAT_COLUMN_MAX_WIDTH, ClaudeChatView, centered_column};
-use crate::theme::{mono, theme};
-use crate::ui::{Icon, icon, px, spinner};
+use crate::theme::theme;
+use crate::ui::{px, spinner};
 
 impl ClaudeChatView {
     /// Regroups the rows into list items and tells the list what changed: the
@@ -227,7 +228,7 @@ impl ClaudeChatView {
     /// traffic) sit tight; messages get room. Wide rows start where prose
     /// starts and may grow to the right, for tool output and diffs.
     pub(super) fn column_row(&self, body: AnyElement, compact: bool, wide: bool) -> gpui::Div {
-        let row = div().w_full().px_4().map(|d| if compact { d.py_0p5() } else { d.py_2() });
+        let row = div().w_full().px(px(ROW_PADDING)).map(|d| if compact { d.py_0p5() } else { d.py_2() });
         let avail = self.column_width.get();
         if !wide || avail <= 0. {
             return row.child(centered_column(body));
@@ -294,6 +295,64 @@ impl ClaudeChatView {
         cx.entity_id().as_u64()
     }
 
+    /// How wide code blocks, tables and tool output may grow (past the text's
+    /// width, into the right margin), once the transcript has been measured.
+    pub(super) fn wide_width(&self) -> Option<f32> {
+        let avail = self.column_width.get();
+        (avail > 0.).then(|| {
+            let prose = avail.min(CHAT_COLUMN_MAX_WIDTH);
+            let left = (avail - prose) / 2.;
+            (avail - left).min(CHAT_WIDE_MAX_WIDTH).max(prose)
+        })
+    }
+
+    /// Claude Code's Ctrl+O: every tool call in the transcript open, or all closed again.
+    pub(super) fn toggle_expand_tools(&mut self, cx: &mut Context<Self>) {
+        self.expand_tools = !self.expand_tools;
+        self.list_state.remeasure();
+        cx.notify();
+    }
+
+    /// Page Up / Page Down, Home / End, ↑ / ↓: scrolls the transcript, gliding
+    /// like the wheel. A page keeps a little of the last one in view; reaching
+    /// the end follows new output again.
+    pub(super) fn scroll_keys(&mut self, by: Scroll, cx: &mut Context<Self>) {
+        if by == Scroll::Bottom {
+            let (offset, max) = (self.scroll_offset(), self.max_scroll());
+            self.glide.stop();
+            if crate::ui::motion::reduced() || max <= offset {
+                self.scroll_to_bottom();
+            } else {
+                self.glide.push(max - offset);
+                self.follow_after = true;
+            }
+            cx.notify();
+            return;
+        }
+        let page = f32::from(self.list_state.viewport_bounds().size.height) - 2. * ARROW_STEP;
+        let distance = match by {
+            Scroll::Line(dir) => dir * ARROW_STEP,
+            Scroll::Page(dir) => dir * page.max(ARROW_STEP),
+            Scroll::Top | Scroll::Bottom => -self.scroll_offset(),
+        };
+        if distance < 0. {
+            self.list_state.pause_following_tail();
+        }
+        self.follow_after = false;
+        if crate::ui::motion::reduced() {
+            self.glide.stop();
+            if by == Scroll::Top {
+                self.list_state.scroll_to(ListOffset { item_ix: 0, offset_in_item: gpui::px(0.) });
+            } else {
+                let (offset, max) = (self.scroll_offset(), self.max_scroll());
+                self.list_state.scroll_by(gpui::px((offset + distance).clamp(0., max.max(0.)) - offset));
+            }
+        } else {
+            self.glide.push(distance);
+        }
+        cx.notify();
+    }
+
     /// Draws list item `ix`: a row, or a run under its summary.
     pub(super) fn render_item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.items.get(ix).cloned() {
@@ -316,17 +375,6 @@ impl ClaudeChatView {
         let (mut pending, mut failed, mut added, mut removed) = (false, 0usize, 0usize, 0usize);
         for row in rows {
             match row {
-                LogRow::ReadSearchRun { entries, .. } => {
-                    for e in entries {
-                        pending |= !e.done;
-                        failed += usize::from(e.is_error);
-                        let target = match e.kind {
-                            ReadKind::Read => e.path.as_deref().map(file_name).unwrap_or_default(),
-                            _ => e.label.clone(),
-                        };
-                        calls.push((e.tool_name.as_str(), target));
-                    }
-                }
                 LogRow::EditRow { tool_name, path, diff, done, is_error, .. } => {
                     pending |= !done;
                     failed += usize::from(*is_error);
@@ -334,41 +382,33 @@ impl ClaudeChatView {
                     removed += diff.removed;
                     calls.push((tool_name.as_str(), file_name(path)));
                 }
-                LogRow::ToolCall { name, done, is_error, .. } => {
+                LogRow::ToolCall { name, summary, done, is_error, .. } => {
                     pending |= !done;
                     failed += usize::from(*is_error);
-                    calls.push((name.as_str(), String::new()));
+                    let target = match name.as_str() {
+                        "Read" | "NotebookRead" => file_name(summary),
+                        "Grep" | "Glob" => summary.clone(),
+                        _ => String::new(),
+                    };
+                    calls.push((name.as_str(), target));
                 }
                 _ => {}
             }
         }
         let refs: Vec<(&str, &str)> = calls.iter().map(|(n, t)| (*n, t.as_str())).collect();
         let summary = runs::summary(&refs);
-        let open = self.open_runs.contains(&first);
-        let chev = if open { Icon::ChevronDown } else { Icon::ChevronRight };
+        let open = self.open_runs.contains(&first) || self.expand_tools;
+        let pending = pending && self.turn_active;
 
-        let head = div()
-            .id(SharedString::from(format!("run-hdr-{first}")))
-            .flex()
-            .items_center()
-            .gap_1p5()
-            .h(px(24.))
-            .cursor_pointer()
-            .text_xs()
-            .text_color(t.text_muted)
-            .hover(|s| s.text_color(t.text))
-            // Folded and not live, the summary spins for the run; live, the latest
-            // call spins in its own row under it.
+        // The live step spins in its own row, shown under the summary; folded
+        // and not live, the summary spins for the run.
+        let head = disclosure_row(SharedString::from(format!("run-{first}")), open, &t)
             .when(pending && !open && !live, |d| d.child(spinner(("run-spin", first), t.accent, px(12.))))
-            .child(icon(chev, t.text_placeholder).size(px(12.)))
-            .child(div().flex_1().min_w_0().truncate().child(summary))
-            .when(failed > 0, |d| d.child(div().flex_none().text_color(t.error).child(format!("{failed} failed"))))
-            .when(added > 0, |d| {
-                d.child(div().flex_none().font_family(mono()).text_color(t.success).child(format!("+{added}")))
+            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(t.text_muted).child(summary))
+            .when(failed > 0, |d| {
+                d.child(div().flex_none().text_xs().text_color(t.error).child(format!("{failed} failed")))
             })
-            .when(removed > 0, |d| {
-                d.child(div().flex_none().font_family(mono()).text_color(t.error).child(format!("-{removed}")))
-            })
+            .when(added + removed > 0, |d| d.child(stat(added, removed, &t)))
             .on_click(cx.listener(move |this, _, _, cx| {
                 if !this.open_runs.remove(&first) {
                     this.open_runs.insert(first);
@@ -389,28 +429,23 @@ impl ClaudeChatView {
         };
         let body: Vec<AnyElement> = shown.into_iter().map(|r| self.render_row_body(r, cx)).collect();
 
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(head)
-            .when(!body.is_empty(), |d| {
-                d.child(
-                    div()
-                        .ml(px(5.))
-                        .pl_3()
-                        .border_l_1()
-                        .border_color(t.border_variant)
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .font_weight(FontWeight::NORMAL)
-                        .children(body),
-                )
-            })
-            .into_any_element()
+        div().flex().flex_col().child(head).child(div().pl_4().flex().flex_col().children(body)).into_any_element()
     }
+}
+
+/// Room either side of a transcript row.
+pub(super) const ROW_PADDING: f32 = 24.;
+
+/// How far ↑ / ↓ scroll the transcript, as a browser's arrow keys do.
+const ARROW_STEP: f32 = 40.;
+
+/// A keyboard scroll of the transcript; signs are -1 up, 1 down.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Scroll {
+    Line(f32),
+    Page(f32),
+    Top,
+    Bottom,
 }
 
 /// How far tool output and diffs may widen the column, from prose's left edge.
@@ -419,7 +454,7 @@ const CHAT_WIDE_MAX_WIDTH: f32 = 1040.0;
 /// How row `row` groups in the list.
 pub(super) fn row_kind(row: &LogRow) -> RowKind {
     match row {
-        LogRow::ReadSearchRun { .. } | LogRow::EditRow { .. } | LogRow::ToolCall { .. } => RowKind::Tool,
+        LogRow::EditRow { .. } | LogRow::ToolCall { .. } => RowKind::Tool,
         // A permission record stays with the call it was for.
         LogRow::Thought { .. } | LogRow::PermissionNote { .. } => RowKind::Thought,
         _ => RowKind::Other,

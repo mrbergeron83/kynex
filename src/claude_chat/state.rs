@@ -83,26 +83,6 @@ pub struct ComposerAttachment {
     pub label: String,
 }
 
-/// Kind of read/search call grouped into a [`LogRow::ReadSearchRun`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReadKind {
-    Read,
-    Search,
-    Fetch,
-}
-
-/// One entry inside a collapsed/expanded [`LogRow::ReadSearchRun`].
-#[derive(Clone, Debug)]
-pub struct ReadSearchEntry {
-    pub tool_use_id: String,
-    pub kind: ReadKind,
-    pub tool_name: String,
-    pub label: String,
-    pub path: Option<String>,
-    pub done: bool,
-    pub is_error: bool,
-}
-
 /// One virtualized row inside the transcript `gpui::list`.
 #[derive(Clone, Debug)]
 pub enum LogRow {
@@ -121,11 +101,6 @@ pub enum LogRow {
         duration_ms: Option<u64>,
         expanded: bool,
         streaming: bool,
-    },
-    ReadSearchRun {
-        id: u64,
-        entries: Vec<ReadSearchEntry>,
-        expanded: bool,
     },
     EditRow {
         id: u64,
@@ -196,9 +171,6 @@ impl LogRow {
                 }
             }
             Self::Thought { text, .. } => text.clone(),
-            Self::ReadSearchRun { entries, .. } => {
-                entries.iter().map(|e| e.label.as_str()).collect::<Vec<_>>().join(" ")
-            }
             Self::EditRow { path, diff, .. } => {
                 let mut out = path.clone();
                 for h in &diff.hunks {
@@ -223,7 +195,6 @@ impl LogRow {
         match self {
             Self::UserPrompt { id, .. }
             | Self::Thought { id, .. }
-            | Self::ReadSearchRun { id, .. }
             | Self::EditRow { id, .. }
             | Self::ToolCall { id, .. }
             | Self::Prose { id, .. } => Some(*id),
@@ -384,15 +355,6 @@ pub struct LightboxImage {
 // Classification & formatting helpers
 // ---------------------------------------------------------------------------
 
-pub fn is_read_search_tool(name: &str) -> Option<ReadKind> {
-    match name {
-        "Read" | "LS" | "ListDir" | "NotebookRead" => Some(ReadKind::Read),
-        "Glob" | "Grep" | "Search" | "WebSearch" | "ToolSearch" => Some(ReadKind::Search),
-        "WebFetch" => Some(ReadKind::Fetch),
-        _ => None,
-    }
-}
-
 pub fn is_edit_tool(name: &str) -> bool {
     matches!(name, "Edit" | "MultiEdit" | "Write" | "NotebookEdit")
 }
@@ -403,10 +365,6 @@ pub fn is_todo_tool(name: &str) -> bool {
 
 pub fn is_subagent_tool(name: &str) -> bool {
     matches!(name, "Agent" | "Task")
-}
-
-pub fn is_shell_tool(name: &str) -> bool {
-    matches!(name, "Bash" | "PowerShell" | "Shell" | "Terminal")
 }
 
 pub fn extract_file_path(input: &Value) -> Option<String> {
@@ -688,22 +646,7 @@ pub fn history_items_to_rows(
                 if is_todo_tool(&name) {
                     continue;
                 }
-                if let Some(kind) = is_read_search_tool(&name) {
-                    let entry = ReadSearchEntry {
-                        tool_use_id: tid,
-                        kind,
-                        tool_name: name.clone(),
-                        label: tool_summary(workspace, &name, &input),
-                        path: extract_file_path(&input),
-                        done: true,
-                        is_error,
-                    };
-                    if let Some(LogRow::ReadSearchRun { entries, .. }) = out.last_mut() {
-                        entries.push(entry);
-                    } else {
-                        out.push(LogRow::ReadSearchRun { id: next_id(), entries: vec![entry], expanded: false });
-                    }
-                } else if is_edit_tool(&name) {
+                if is_edit_tool(&name) {
                     let path = extract_file_path(&input).unwrap_or_else(|| name.clone());
                     let diff = diff_from_tool_input(&name, &input).unwrap_or_default();
                     out.push(LogRow::EditRow {

@@ -455,9 +455,29 @@ pub fn match_commands(commands: &[CommandItem], query: &str, limit: usize) -> Ve
     ranked
 }
 
+/// A message that starts with a slash command: its name and what follows,
+/// e.g. `/compact keep the plan` → `("compact", "keep the plan")`.
+pub fn slash_command(text: &str) -> Option<(&str, &str)> {
+    let rest = text.trim_start().strip_prefix('/')?;
+    let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    let name = &rest[..end];
+    let ok = |c: char| c.is_alphanumeric() || matches!(c, '-' | '_' | ':' | '.');
+    (!name.is_empty() && name.chars().all(ok)).then(|| (name, rest[end..].trim()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slash_commands_split_name_and_arguments() {
+        assert_eq!(slash_command("/compact keep the plan"), Some(("compact", "keep the plan")));
+        assert_eq!(slash_command("  /review"), Some(("review", "")));
+        assert_eq!(slash_command("/plugin:skill a\nb"), Some(("plugin:skill", "a\nb")));
+        assert_eq!(slash_command("/ nothing"), None);
+        assert_eq!(slash_command("src/main.rs"), None);
+        assert_eq!(slash_command("/usr/bin is a path"), None);
+    }
 
     #[test]
     fn paste_fold_ingests_prunes_and_expands_without_reexpanding() {

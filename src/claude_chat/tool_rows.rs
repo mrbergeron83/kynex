@@ -1,146 +1,115 @@
-//! Tool call rows in the transcript: grouped reads and searches, compact edit
-//! rows with their inline diff, and shell / generic tool calls with their output.
+//! Tool calls in the transcript, drawn as the old chat drew them: one
+//! disclosure line per call (name, what it did, a "failed" marker, the diff
+//! stat), opening to its input and output, or an edit's diff.
 
 use gpui::{AnyElement, Context, FontWeight, SharedString, div, prelude::*};
 use kynex_core::claude::diff::EditDiff;
 
 use super::ClaudeChatView;
-use super::markdown_view::{Sel, render_inline_diff, resolve_workspace_path};
+use super::markdown_view::{Sel, render_inline_diff};
 use super::state::*;
 use crate::theme::{Palette, mono};
+use crate::ui::wash::wash;
 use crate::ui::{Icon, Tooltip, ghost_button, icon, px, scrollbar, spinner};
 
-/// Borrowed fields of a [`LogRow::ToolCall`] for [`ClaudeChatView::render_tool_call`].
+/// Borrowed fields of a [`LogRow::ToolCall`] for [`ClaudeChatView::render_tool_call_sel`].
 pub(super) struct ToolCallView<'r> {
     pub(super) ix: usize,
     pub(super) id: u64,
     pub(super) tool_use_id: &'r str,
     pub(super) name: &'r str,
     pub(super) summary: &'r str,
-    pub(super) command: Option<&'r str>,
     pub(super) input_preview: &'r str,
     pub(super) output: &'r str,
     pub(super) images: &'r [RowImage],
-    pub(super) started_at: Option<std::time::Instant>,
-    pub(super) duration_ms: Option<u64>,
     pub(super) done: bool,
     pub(super) is_error: bool,
     pub(super) expanded: bool,
 }
 
+/// The most of a tool's output put in its box (the box scrolls).
+const MAX_OUTPUT: usize = 50_000;
+
 impl ClaudeChatView {
-    pub(super) fn render_read_search_run(
-        &self,
-        ix: usize,
-        id: u64,
-        entries: &[ReadSearchEntry],
-        expanded: bool,
+    /// One tool call. Collapsed it's one line, with a marker if it failed;
+    /// open, it shows its input and output.
+    pub(super) fn render_tool_call_sel(
+        &mut self,
+        sel: &Sel,
+        v: ToolCallView<'_>,
         t: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let reads = entries.iter().filter(|e| e.kind == ReadKind::Read).count();
-        let searches = entries.iter().filter(|e| e.kind == ReadKind::Search).count();
-        let fetches = entries.iter().filter(|e| e.kind == ReadKind::Fetch).count();
-        let running = entries.iter().any(|e| !e.done);
+        let ToolCallView { ix, id, tool_use_id, name, summary, output, images, done, is_error, input_preview, .. } = v;
+        let expanded = v.expanded || self.expand_tools;
+        let running = !done && self.turn_active;
+        let peek_id = (is_subagent_tool(name) && self.subagents.iter().any(|s| s.tool_use_id == tool_use_id))
+            .then(|| tool_use_id.to_string());
 
-        let mut parts = Vec::new();
-        if reads > 0 {
-            parts.push(format!("Read {reads} file{}", if reads == 1 { "" } else { "s" }));
-        }
-        if searches > 0 {
-            parts.push(format!("Searched {searches}"));
-        }
-        if fetches > 0 {
-            parts.push(format!("Fetched {fetches}"));
-        }
-        let summary = if parts.is_empty() { format!("Explored {}", entries.len()) } else { parts.join(" · ") };
-        let chev = if expanded { Icon::ChevronDown } else { Icon::ChevronRight };
-
-        let details: Vec<AnyElement> = if expanded {
-            entries
-                .iter()
-                .enumerate()
-                .map(|(ei, e)| {
-                    let dot_col = if e.is_error {
-                        t.error
-                    } else if e.done {
-                        t.text_placeholder
-                    } else {
-                        t.accent
-                    };
-                    let open_path = e.path.clone();
-                    div()
-                        .id(SharedString::from(format!("rs-{id}-{ei}")))
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .h(px(22.))
-                        .px_2()
-                        .rounded_sm()
-                        .hover(|s| s.bg(t.hover))
-                        .when(open_path.is_some(), |d| d.cursor_pointer())
-                        .child(div().size(px(5.)).rounded_full().bg(dot_col).flex_none())
-                        .child(
-                            div().text_xs().text_color(t.text_muted).w(px(56.)).flex_none().child(e.tool_name.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .font_family(mono())
-                                .text_xs()
-                                .text_color(if open_path.is_some() { t.accent } else { t.text })
-                                .child(e.label.clone()),
-                        )
-                        .when_some(open_path, |d, p| {
-                            d.on_click(cx.listener(move |this, _, _, cx| {
-                                let full = resolve_workspace_path(&this.config.workspace, &p);
-                                cx.emit(ClaudeChatEvent::OpenFile { path: full, line: None });
-                            }))
-                        })
-                        .into_any_element()
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        div()
-            .w_full()
-            .flex()
-            .flex_col()
-            .gap_1()
+        let head = disclosure_row(SharedString::from(format!("tool-{id}")), expanded, t)
+            .when(running, |d| d.child(spinner(("tool-spin", id), t.accent, px(12.))))
             .child(
                 div()
-                    .id(SharedString::from(format!("rs-hdr-{id}")))
-                    .flex()
-                    .items_center()
-                    .gap_1p5()
-                    .h(px(24.))
-                    .cursor_pointer()
+                    .flex_none()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(t.text_muted)
+                    .child(tool_label(name)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .font_family(mono())
                     .text_xs()
                     .text_color(t.text_muted)
-                    .hover(|s| s.text_color(t.text))
-                    .when(running, |d| d.child(spinner(("rs-spin", id), t.accent, px(12.))))
-                    .child(icon(chev, t.text_placeholder).size(px(12.)))
-                    .child(summary)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(LogRow::ReadSearchRun { expanded: exp, .. }) = this.rows.get_mut(ix) {
-                            *exp = !*exp;
-                            this.remeasure_row(ix);
-                            cx.notify();
-                        }
-                    })),
+                    .child(summary.to_string()),
             )
-            .when(expanded, |d| {
+            .children(failed_mark(SharedString::from(format!("tool-err-{id}")), is_error.then_some(output), t))
+            .when_some(peek_id, |d, sid| {
                 d.child(
-                    div().ml_3().pl_2().border_l_1().border_color(t.border_variant).flex().flex_col().children(details),
+                    ghost_button(SharedString::from(format!("tool-peek-{id}")), cx)
+                        .h(px(20.))
+                        .px_1p5()
+                        .text_xs()
+                        .text_color(t.accent)
+                        .tooltip(Tooltip::text("Inspect subagent output"))
+                        .child("Peek ↗")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.peek_subagent = Some(sid.clone());
+                            cx.notify();
+                        })),
                 )
             })
-            .into_any_element()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(LogRow::ToolCall { expanded: exp, .. }) = this.rows.get_mut(ix) {
+                    *exp = !*exp;
+                    this.remeasure_row(ix);
+                    cx.notify();
+                }
+            }));
+
+        // Pictures it returned (a screenshot, a `Read` of an image) show even folded.
+        let thumbs = self.render_row_images(id, images, t, cx);
+        let mut body: Vec<AnyElement> = Vec::new();
+        if !thumbs.is_empty() {
+            body.push(div().pl_6().pt_1().flex().flex_wrap().gap_2().children(thumbs).into_any_element());
+        }
+        if expanded {
+            if !input_preview.is_empty() {
+                body.push(code_box(SharedString::from(format!("tool-in-{id}")), input_preview.to_string(), sel, t));
+            }
+            if !output.trim().is_empty() && (is_error || !is_edit_tool(name)) {
+                let text = truncate_chars(output, MAX_OUTPUT);
+                body.push(code_box(SharedString::from(format!("tool-out-{id}")), text, sel, t));
+            }
+        }
+        div().flex().flex_col().child(head).children(body).into_any_element()
     }
 
+    /// A file edit: the same line as any call, opening to its diff.
     pub(super) fn render_edit_row(
         &self,
         ix: usize,
@@ -155,289 +124,134 @@ impl ClaudeChatView {
         t: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let display_path = short_path(&self.config.workspace, path);
-        let verb = if tool_name == "Write" { "Wrote" } else { "Edited" };
-        let open_path = path.to_string();
-        let chev = if expanded { Icon::ChevronDown } else { Icon::ChevronRight };
-        let lamp_col = if is_error {
-            t.error
-        } else if done {
-            t.success
-        } else {
-            t.accent
-        };
-
-        div()
-            .w_full()
-            .rounded_md()
-            .border_1()
-            .border_color(if expanded { t.border } else { t.border_variant })
-            .bg(t.panel)
-            .overflow_hidden()
-            .flex()
-            .flex_col()
+        let expanded = expanded || self.expand_tools;
+        let running = !done && self.turn_active;
+        let head = disclosure_row(SharedString::from(format!("edit-{id}")), expanded, t)
+            .when(running, |d| d.child(spinner(("edit-spin", id), t.accent, px(12.))))
             .child(
                 div()
-                    .id(SharedString::from(format!("edit-hdr-{id}")))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .h(px(28.))
-                    .px_2p5()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(t.hover))
-                    .child(if !done {
-                        spinner(("edit-spin", id), t.accent, px(12.))
-                    } else {
-                        div().size(px(6.)).rounded_full().bg(lamp_col).flex_none().into_any_element()
-                    })
-                    .child(div().text_xs().text_color(t.text_muted).flex_none().child(verb))
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("edit-file-{id}")))
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .font_family(mono())
-                            .text_xs()
-                            .text_color(t.accent)
-                            .cursor_pointer()
-                            .hover(|s| s.underline())
-                            .tooltip(Tooltip::text(format!("Open {display_path}")))
-                            .child(display_path)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                let full = resolve_workspace_path(&this.config.workspace, &open_path);
-                                cx.emit(ClaudeChatEvent::OpenFile { path: full, line: None });
-                            })),
-                    )
-                    .when(diff.added > 0, |d| {
-                        d.child(
-                            div()
-                                .flex_none()
-                                .font_family(mono())
-                                .text_xs()
-                                .text_color(t.success)
-                                .child(format!("+{}", diff.added)),
-                        )
-                    })
-                    .when(diff.removed > 0, |d| {
-                        d.child(
-                            div()
-                                .flex_none()
-                                .font_family(mono())
-                                .text_xs()
-                                .text_color(t.error)
-                                .child(format!("-{}", diff.removed)),
-                        )
-                    })
-                    .child(icon(chev, t.text_placeholder).size(px(12.)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(LogRow::EditRow { expanded: exp, .. }) = this.rows.get_mut(ix) {
-                            *exp = !*exp;
-                            this.remeasure_row(ix);
-                            cx.notify();
-                        }
-                    })),
+                    .flex_none()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(t.text_muted)
+                    .child(tool_name.to_string()),
             )
-            .when(expanded, |d| d.child(render_inline_diff(path, diff, error_text, id, t)))
-            .into_any_element()
-    }
-
-    pub(super) fn render_tool_call_sel(
-        &mut self,
-        sel: &Sel,
-        v: ToolCallView<'_>,
-        t: &Palette,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let ToolCallView {
-            ix,
-            id,
-            tool_use_id,
-            name,
-            summary,
-            command,
-            input_preview,
-            output,
-            images,
-            started_at,
-            duration_ms,
-            done,
-            is_error,
-            expanded,
-        } = v;
-        let lamp_col = if is_error {
-            t.error
-        } else if done {
-            t.success
-        } else {
-            t.accent
-        };
-        let dur = duration_ms.or_else(|| started_at.map(|s| s.elapsed().as_millis() as u64)).map(format_duration);
-        let chev = if expanded { Icon::ChevronDown } else { Icon::ChevronRight };
-        let thumbs = self.render_row_images(id, images, t, cx);
-        let shell_cmd = is_shell_tool(name).then(|| command.map(str::to_string)).flatten();
-        let peek_id = (is_subagent_tool(name) && self.subagents.iter().any(|s| s.tool_use_id == tool_use_id))
-            .then(|| tool_use_id.to_string());
-
-        div()
-            .w_full()
-            .rounded_md()
-            .border_1()
-            .border_color(if is_error { t.error } else { t.border_variant })
-            .bg(t.panel)
-            .overflow_hidden()
-            .flex()
-            .flex_col()
             .child(
                 div()
-                    .id(SharedString::from(format!("tool-hdr-{id}")))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .h(px(28.))
-                    .px_2p5()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(t.hover))
-                    .child(if !done {
-                        spinner(("tool-spin", id), t.accent, px(12.))
-                    } else {
-                        div().size(px(6.)).rounded_full().bg(lamp_col).flex_none().into_any_element()
-                    })
-                    .child(
-                        div()
-                            .flex_none()
-                            .font_family(mono())
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_xs()
-                            .text_color(t.text)
-                            .child(name.to_string()),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .font_family(mono())
-                            .text_xs()
-                            .text_color(t.text_muted)
-                            .child(summary.to_string()),
-                    )
-                    .when_some(dur, |d, dur_str| {
-                        d.child(
-                            div()
-                                .flex_none()
-                                .font_family(mono())
-                                .text_size(px(11.))
-                                .text_color(t.text_placeholder)
-                                .child(dur_str),
-                        )
-                    })
-                    .when_some(shell_cmd, |d, cmd| {
-                        d.child(
-                            ghost_button(SharedString::from(format!("tool-run-{id}")), cx)
-                                .h(px(20.))
-                                .px_1p5()
-                                .text_xs()
-                                .text_color(t.accent)
-                                .tooltip(Tooltip::text("Run in workspace terminal"))
-                                .child("▶")
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(ClaudeChatEvent::RunInTerminal(cmd.clone()));
-                                })),
-                        )
-                    })
-                    .when_some(peek_id, |d, sid| {
-                        d.child(
-                            ghost_button(SharedString::from(format!("tool-peek-{id}")), cx)
-                                .h(px(20.))
-                                .px_1p5()
-                                .text_xs()
-                                .text_color(t.accent)
-                                .tooltip(Tooltip::text("Inspect subagent output"))
-                                .child("Peek ↗")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.peek_subagent = Some(sid.clone());
-                                    cx.notify();
-                                })),
-                        )
-                    })
-                    .child(icon(chev, t.text_placeholder).size(px(12.)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(LogRow::ToolCall { expanded: exp, .. }) = this.rows.get_mut(ix) {
-                            *exp = !*exp;
-                            this.remeasure_row(ix);
-                            cx.notify();
-                        }
-                    })),
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .font_family(mono())
+                    .text_xs()
+                    .text_color(t.text_muted)
+                    .child(short_path(&self.config.workspace, path)),
             )
-            .child(if expanded {
-                let scroll = scrollbar::handle(("tool-out-sb", id));
-                let cmd_opt = command.filter(|c| !c.is_empty());
-                let input_preview = input_preview.to_string();
-                let show_input = cmd_opt.is_none() && !input_preview.is_empty();
-                div()
-                    .border_t_1()
-                    .border_color(t.border_variant)
-                    .bg(t.element)
-                    .flex()
-                    .flex_col()
-                    .when_some(cmd_opt, |d, cmd| {
-                        d.child(
-                            div()
-                                .px_2p5()
-                                .py_1p5()
-                                .border_b_1()
-                                .border_color(t.border_variant)
-                                .font_family(mono())
-                                .text_size(px(11.5))
-                                .text_color(t.text)
-                                .child(format!("$ {cmd}")),
-                        )
-                    })
-                    .when(show_input, |d| {
-                        d.child(
-                            div()
-                                .px_2p5()
-                                .py_1p5()
-                                .border_b_1()
-                                .border_color(t.border_variant)
-                                .font_family(mono())
-                                .text_size(px(11.))
-                                .text_color(t.text_muted)
-                                .child(input_preview),
-                        )
-                    })
-                    .when(!output.is_empty(), |d| {
-                        let capped = truncate_chars(output, 16_000);
-                        d.child(scrollbar::vertical_over(
-                            ("tool-out-sbar", id),
-                            scroll.clone(),
-                            div()
-                                .id(SharedString::from(format!("tool-out-{id}")))
-                                .max_h(px(260.))
-                                .overflow_y_scroll()
-                                .track_scroll(&scroll)
-                                .px_2p5()
-                                .py_2()
-                                .font_family(mono())
-                                .text_size(px(11.5))
-                                .line_height(px(17.))
-                                .text_color(if is_error { t.error } else { t.text_muted })
-                                .child(sel.text(capped, t)),
-                            |wrap| wrap.w_full(),
-                        ))
-                    })
-                    .when(!thumbs.is_empty(), |d| d.child(div().p_2().flex().flex_wrap().gap_2().children(thumbs)))
-                    .into_any_element()
-            } else if !thumbs.is_empty() {
-                div().px_2p5().pb_2().flex().flex_wrap().gap_2().children(thumbs).into_any_element()
-            } else {
-                div().into_any_element()
+            .children(failed_mark(
+                SharedString::from(format!("edit-err-{id}")),
+                is_error.then_some(error_text.unwrap_or("")),
+                t,
+            ))
+            .when(diff.added + diff.removed > 0, |d| d.child(stat(diff.added, diff.removed, t)))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(LogRow::EditRow { expanded: exp, .. }) = this.rows.get_mut(ix) {
+                    *exp = !*exp;
+                    this.remeasure_row(ix);
+                    cx.notify();
+                }
+            }));
+        div()
+            .flex()
+            .flex_col()
+            .child(head)
+            .when(expanded, |d| {
+                d.child(
+                    div()
+                        .ml_6()
+                        .mt_1()
+                        .rounded_md()
+                        .overflow_hidden()
+                        .border_1()
+                        .border_color(t.border_variant)
+                        .bg(t.panel)
+                        .child(render_inline_diff(path, diff, error_text, id, t)),
+                )
             })
             .into_any_element()
     }
+}
+
+/// MCP tools read as their server and tool, "playwright · browser_click".
+fn tool_label(name: &str) -> String {
+    match name.strip_prefix("mcp__").and_then(|rest| rest.split_once("__")) {
+        Some((server, tool)) => format!("{server} · {tool}"),
+        None => name.to_string(),
+    }
+}
+
+/// "✗ failed", the error's first line on hover.
+fn failed_mark(id: SharedString, error: Option<&str>, t: &Palette) -> Option<AnyElement> {
+    let first: String = error?.lines().next().unwrap_or("").chars().take(160).collect();
+    Some(
+        div()
+            .id(id)
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap_1()
+            .text_xs()
+            .text_color(t.error)
+            .child(icon(Icon::Close, t.error).size(px(12.)))
+            .child("failed")
+            .when(!first.is_empty(), |d| d.tooltip(Tooltip::text(first)))
+            .into_any_element(),
+    )
+}
+
+/// A line that opens and shuts what's under it: a chevron, then its content.
+pub(super) fn disclosure_row(id: impl Into<gpui::ElementId>, expanded: bool, t: &Palette) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap_1p5()
+        .h(px(22.))
+        .px_1()
+        .rounded_md()
+        .cursor_pointer()
+        .relative()
+        .child(wash(t.hover, None))
+        .child(icon(if expanded { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_placeholder).size(px(12.)))
+}
+
+/// A tool's input or output: selectable mono text in a scrolling frame.
+pub(super) fn code_box(id: SharedString, text: String, sel: &Sel, t: &Palette) -> AnyElement {
+    let scroll = scrollbar::handle(id.clone());
+    let bar: SharedString = format!("{id}-bar").into();
+    let area = div()
+        .id(id)
+        .max_h(px(320.))
+        .overflow_y_scroll()
+        .track_scroll(&scroll)
+        .px_3()
+        .py_2()
+        .font_family(mono())
+        .text_xs()
+        .text_color(t.text_muted)
+        .child(sel.text(text, t));
+    scrollbar::vertical_over(bar, scroll, area, |d| {
+        d.ml_6().mt_1().rounded_md().overflow_hidden().border_1().border_color(t.border_variant).bg(t.panel)
+    })
+    .into_any_element()
+}
+
+/// "+12 −3".
+pub(super) fn stat(add: usize, del: usize, t: &Palette) -> impl IntoElement + use<> {
+    div()
+        .flex()
+        .flex_none()
+        .gap_1()
+        .font_family(mono())
+        .text_xs()
+        .when(add > 0, |d| d.child(div().text_color(t.success).child(format!("+{add}"))))
+        .when(del > 0, |d| d.child(div().text_color(t.error).child(format!("−{del}"))))
 }

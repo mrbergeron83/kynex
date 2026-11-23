@@ -58,6 +58,7 @@ pub enum Icon {
     Bot,
     Search,
     File,
+    Play,
     /// The arms of the mark's K: a chevron on the mark's own grid.
     MarkChevron,
 }
@@ -66,6 +67,7 @@ impl Icon {
     fn path(self) -> &'static str {
         match self {
             Icon::Close => "icons/close.svg",
+            Icon::Play => "icons/play.svg",
             Icon::Minimize => "icons/minimize.svg",
             Icon::Maximize => "icons/maximize.svg",
             Icon::Restore => "icons/restore.svg",

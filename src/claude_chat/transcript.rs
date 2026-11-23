@@ -4,14 +4,15 @@
 //! entries, compact 1-line edit rows with collapsible syntax-colored inline diffs,
 //! shell & generic tool rows, prose markdown, compaction dividers, notices).
 
-use gpui::{AnyElement, Context, FontStyle, FontWeight, SharedString, Window, div, list, prelude::*};
+use gpui::{AnyElement, Context, FontWeight, SharedString, Window, div, list, prelude::*};
 
 use super::ClaudeChatView;
-use super::markdown_view::{self, Sel, resolve_workspace_path};
+use super::markdown_view::{Sel, resolve_workspace_path};
 use super::state::*;
-use super::tool_rows::ToolCallView;
+use super::tool_rows::{ToolCallView, disclosure_row};
 use crate::theme::{Palette, mono, theme, ui_font};
-use crate::ui::{Icon, Tooltip, icon, px, scrollbar, spinner};
+use crate::ui::{Icon, Tooltip, icon, px, scrollbar};
+use kynex_core::claude::composer::slash_command;
 
 impl ClaudeChatView {
     /// Renders the virtualized transcript area + scrollbar + floating "↓ Latest" pill.
@@ -55,13 +56,13 @@ impl ClaudeChatView {
                 });
         }
 
-        // Measure the usable width (inside the rows' `px_4`) for the wide tool lane;
+        // Measure the usable width (inside the rows' padding) for the wide tool lane;
         // a change redraws once with the new width.
         let width = self.column_width.clone();
         let probe_view = cx.entity().downgrade();
         let probe = gpui::canvas(
             move |bounds, _, cx| {
-                let w = f32::from(bounds.size.width) - 32.;
+                let w = f32::from(bounds.size.width) - 2. * super::runs::ROW_PADDING;
                 if (width.get() - w).abs() > 0.5 {
                     width.set(w);
                     probe_view.update(cx, |_, cx| cx.notify()).ok();
@@ -156,9 +157,6 @@ impl ClaudeChatView {
             LogRow::Thought { id, text, started_at, duration_ms, expanded, streaming } => {
                 self.render_thought(ix, *id, text, *started_at, *duration_ms, *expanded, *streaming, &sel, &t, cx)
             }
-            LogRow::ReadSearchRun { id, entries, expanded } => {
-                self.render_read_search_run(ix, *id, entries, *expanded, &t, cx)
-            }
             LogRow::EditRow { id, tool_name, path, diff, expanded, done, is_error, error_text, .. } => self
                 .render_edit_row(
                     ix,
@@ -178,15 +176,13 @@ impl ClaudeChatView {
                 tool_use_id,
                 name,
                 summary,
-                command,
                 input_preview,
                 output,
                 images,
-                started_at,
-                duration_ms,
                 done,
                 is_error,
                 expanded,
+                ..
             } => self.render_tool_call_sel(
                 &sel,
                 ToolCallView {
@@ -195,12 +191,9 @@ impl ClaudeChatView {
                     tool_use_id,
                     name,
                     summary,
-                    command: command.as_deref(),
                     input_preview,
                     output,
                     images,
-                    started_at: *started_at,
-                    duration_ms: *duration_ms,
                     done: *done,
                     is_error: *is_error,
                     expanded: *expanded,
@@ -208,15 +201,25 @@ impl ClaudeChatView {
                 &t,
                 cx,
             ),
-            LogRow::Prose { id, blocks, streaming, .. } => {
-                let rendered = markdown_view::render_blocks(blocks, *id, &sel, self.copied_key.as_deref(), cx);
+            LogRow::Prose { id, raw, .. } => {
+                // Commands Claude suggests (```bash / ```powershell) run in the project's terminal.
+                let this = cx.entity().downgrade();
+                let run: crate::markdown::RunCommand = std::rc::Rc::new(move |_shell, command, _window, cx| {
+                    this.update(cx, |_, cx| cx.emit(ClaudeChatEvent::RunInTerminal(command))).ok();
+                });
+                let wide = self.wide_width();
                 div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .children(rendered)
-                    .when(*streaming, |d| d.child(div().w(px(7.)).h(px(13.)).rounded_xs().bg(t.accent)))
+                    .text_sm()
+                    .child(crate::markdown::render_wide(
+                        SharedString::from(format!("md-{id}")),
+                        raw,
+                        sel.group,
+                        ix,
+                        Some(run),
+                        Some(&ws),
+                        wide,
+                        cx,
+                    ))
                     .into_any_element()
             }
             LogRow::CompactionDivider { detail } => div()
@@ -272,7 +275,6 @@ impl ClaudeChatView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let thumbs = self.render_row_images(id, images, t, cx);
-
         let chips: Vec<AnyElement> = file_chips
             .iter()
             .cloned()
@@ -286,16 +288,12 @@ impl ClaudeChatView {
                     .gap_1()
                     .px_1p5()
                     .h(px(20.))
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(t.border_variant)
-                    .bg(t.element)
+                    .rounded_md()
+                    .bg(t.active)
                     .font_family(mono())
                     .text_size(px(11.))
                     .text_color(t.accent)
                     .cursor_pointer()
-                    .hover(|s| s.border_color(t.border_focused))
-                    .child(icon(Icon::File, t.accent).size(px(10.)))
                     .child(path)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         let full = resolve_workspace_path(&this.config.workspace, &open_path);
@@ -309,10 +307,8 @@ impl ClaudeChatView {
                     .h(px(20.))
                     .flex()
                     .items_center()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(t.border_variant)
-                    .bg(t.element)
+                    .rounded_md()
+                    .bg(t.active)
                     .font_family(mono())
                     .text_size(px(11.))
                     .text_color(t.text_muted)
@@ -322,33 +318,44 @@ impl ClaudeChatView {
             .collect();
 
         div()
-            .w_full()
-            .my_1()
-            .pl_3()
-            .pr_2()
-            .py_2()
-            .border_l_2()
-            .border_color(t.accent)
-            .bg(t.panel)
-            .rounded_r_md()
             .flex()
             .flex_col()
-            .gap_1p5()
-            .when(!text.is_empty(), |d| {
-                d.child(
+            .gap_2()
+            .px_3()
+            .py_2()
+            .rounded_lg()
+            .bg(t.element)
+            .when(!thumbs.is_empty(), |d| d.child(div().flex().flex_wrap().gap_2().children(thumbs)))
+            .when(!text.is_empty(), |d| match slash_command(text) {
+                // A slash command: its name as a chip, then whatever it was given.
+                Some((name, args)) => d.child(
                     div()
-                        .font_family(ui_font())
-                        .text_size(px(13.5))
-                        .line_height(px(20.))
-                        .text_color(t.text)
-                        .child(sel.text(text.to_string(), t)),
-                )
+                        .flex()
+                        .items_start()
+                        .gap_2()
+                        .text_sm()
+                        .child(
+                            div()
+                                .flex_none()
+                                .px_1p5()
+                                .rounded_md()
+                                .bg(t.active)
+                                .font_family(mono())
+                                .text_color(t.accent)
+                                .child(format!("/{name}")),
+                        )
+                        .when(!args.is_empty(), |d| {
+                            d.child(div().flex_1().min_w_0().child(sel.text(args.to_string(), t)))
+                        }),
+                ),
+                None => d.child(div().text_sm().child(sel.text(text.to_string(), t))),
             })
             .when(!chips.is_empty(), |d| d.child(div().flex().flex_wrap().gap_1().children(chips)))
-            .when(!thumbs.is_empty(), |d| d.child(div().flex().flex_wrap().gap_2().children(thumbs)))
             .into_any_element()
     }
 
+    /// "Thinking… 4s" while it streams; after, "Thought for 6s", which opens to
+    /// the text when the CLI shared it.
     fn render_thought(
         &self,
         ix: usize,
@@ -363,66 +370,37 @@ impl ClaudeChatView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let label = if streaming {
-            let secs = started_at.map_or(0, |s| s.elapsed().as_secs());
-            format!("Thinking… {secs}s")
+            format!("Thinking… {}s", started_at.map_or(0, |s| s.elapsed().as_secs()))
         } else if let Some(ms) = duration_ms {
             format!("Thought for {}", format_duration(ms))
         } else {
             "Thought".into()
         };
-        let chev = if expanded { Icon::ChevronDown } else { Icon::ChevronRight };
-
+        let label = div().text_xs().text_color(t.text_placeholder).child(label);
+        // Nothing to open: the same 22 px line, without the chevron.
+        let plain = |label: gpui::Div| div().flex().items_center().h(px(22.)).px_1().child(label).into_any_element();
+        if streaming {
+            return plain(label.italic());
+        }
+        if text.trim().is_empty() {
+            return plain(label);
+        }
+        let head = disclosure_row(SharedString::from(format!("thought-{id}")), expanded, t).child(label).on_click(
+            cx.listener(move |this, _, _, cx| {
+                if let Some(LogRow::Thought { expanded: exp, .. }) = this.rows.get_mut(ix) {
+                    *exp = !*exp;
+                    this.remeasure_row(ix);
+                    cx.notify();
+                }
+            }),
+        );
         div()
-            .w_full()
             .flex()
             .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .id(SharedString::from(format!("thought-{id}")))
-                    .flex()
-                    .items_center()
-                    .gap_1p5()
-                    .h(px(24.))
-                    .cursor_pointer()
-                    .text_xs()
-                    .text_color(t.text_muted)
-                    .hover(|s| s.text_color(t.text))
-                    .when(streaming, |d| d.child(spinner(("thought-spin", id), t.accent, px(12.))))
-                    .child(icon(chev, t.text_placeholder).size(px(12.)))
-                    .child(label)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(LogRow::Thought { expanded: exp, .. }) = this.rows.get_mut(ix) {
-                            *exp = !*exp;
-                            this.remeasure_row(ix);
-                            cx.notify();
-                        }
-                    })),
-            )
+            .child(head)
             .when(expanded, |d| {
                 d.child(
-                    div()
-                        .ml_3()
-                        .pl_2p5()
-                        .py_1()
-                        .border_l_1()
-                        .border_color(t.border_variant)
-                        .font_family(ui_font())
-                        .text_xs()
-                        .line_height(px(18.))
-                        .text_color(t.text_muted)
-                        .child(
-                            crate::ui::selectable::selectable(
-                                sel.group,
-                                sel.spot(),
-                                text.to_string(),
-                                t.text_selection,
-                            )
-                            .highlights(vec![(
-                                0..text.len(),
-                                gpui::HighlightStyle { font_style: Some(FontStyle::Italic), ..Default::default() },
-                            )]),
-                        ),
+                    div().pl_6().pr_1().pt_1().text_sm().text_color(t.text_muted).child(sel.text(text.to_string(), t)),
                 )
             })
             .into_any_element()
@@ -510,7 +488,7 @@ impl ClaudeChatView {
 /// together and may use the wider column; messages get room to breathe.
 pub(super) fn row_spacing(row: &LogRow) -> (bool, bool) {
     match row {
-        LogRow::ReadSearchRun { .. } | LogRow::EditRow { .. } | LogRow::ToolCall { .. } => (true, true),
+        LogRow::EditRow { .. } | LogRow::ToolCall { .. } => (true, true),
         LogRow::Thought { .. } | LogRow::PermissionNote { .. } | LogRow::TurnEnd { .. } => (true, false),
         _ => (false, false),
     }

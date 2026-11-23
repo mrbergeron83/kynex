@@ -548,15 +548,21 @@ pub(super) fn render_inline_diff(
         let texts: Vec<String> = hunk.lines.iter().map(|l| l.text.replace('\t', "    ")).collect();
         let mut tokens = lang
             .map(|l| {
-                let sides = hunk.lines.iter().zip(&texts).map(|(line, txt)| {
-                    let s = match line.kind {
-                        DiffLineKind::Remove => Side::Old,
-                        DiffLineKind::Add => Side::New,
-                        DiffLineKind::Context => Side::Both,
-                    };
-                    (s, txt.as_str())
-                });
-                highlight::diff(l, sides)
+                let sides: Vec<(Side, &str)> = hunk
+                    .lines
+                    .iter()
+                    .zip(&texts)
+                    .map(|(line, txt)| {
+                        let s = match line.kind {
+                            DiffLineKind::Remove => Side::Old,
+                            DiffLineKind::Add => Side::New,
+                            DiffLineKind::Context => Side::Both,
+                        };
+                        (s, txt.as_str())
+                    })
+                    .collect();
+                // Cached: each frame only maps the tokens to colours.
+                ui_code::diff_tokens(l, &sides).as_ref().clone()
             })
             .unwrap_or_default()
             .into_iter();

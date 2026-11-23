@@ -81,6 +81,8 @@ pub struct ClaudeChatView {
     pub(super) items: Vec<kynex_core::claude::runs::ListItem>,
     /// Runs opened to their calls, by their first row's id.
     pub(super) open_runs: HashSet<u64>,
+    /// Ctrl+O: every tool call shown open.
+    pub(super) expand_tools: bool,
     pub(super) list_state: ListState,
     /// The transcript's usable width last drawn, for the wide tool lane (0 before the first frame).
     pub(super) column_width: Rc<Cell<f32>>,
@@ -362,6 +364,7 @@ impl ClaudeChatView {
             rows: Vec::new(),
             items: Vec::new(),
             open_runs: HashSet::new(),
+            expand_tools: false,
             list_state,
             column_width: Rc::new(Cell::new(0.)),
             stick_to_bottom: true,
@@ -689,6 +692,8 @@ impl Render for ClaudeChatView {
         let t = theme(cx).clone();
 
         let find_bar = self.render_find_bar(cx);
+        // While a reply streams, its markdown is re-parsed a few times a second, not every frame.
+        crate::markdown::set_streaming(self.turn_active);
         self.follow_frame(window);
         let transcript = self.render_transcript(cx);
         let status_line = self.render_status_line(cx);

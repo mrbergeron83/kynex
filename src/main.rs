@@ -10,6 +10,7 @@ mod claude_chat;
 mod file_links;
 mod git;
 mod git_pane;
+mod markdown;
 mod terminal;
 mod theme;
 mod ui;
