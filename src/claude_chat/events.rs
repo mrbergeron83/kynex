@@ -404,6 +404,7 @@ impl ClaudeChatView {
 
     fn on_turn_finished(&mut self, result: TurnResult, cx: &mut Context<Self>) {
         self.turn_active = false;
+        self.turn_ended = true;
         self.finalize_streaming_rows();
         // Foreground subagents can't outlive their turn (after an interrupt no tool
         // result arrives); background tasks end with their own notification.
@@ -453,7 +454,7 @@ impl ClaudeChatView {
         cx.emit(ClaudeChatEvent::TurnFinished);
 
         // If user queued messages while Claude was busy, dispatch the next one immediately.
-        if let Some(next) = self.queued.pop_front() {
+        if let Some(next) = self.take_queue_batch() {
             self.dispatch_queued(next, cx);
         } else {
             self.set_status(AgentState::Done, "Done", cx);

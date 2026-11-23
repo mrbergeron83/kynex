@@ -16,6 +16,9 @@ const MAX_POPUP_ITEMS: usize = 10;
 impl ClaudeChatView {
     /// Refreshes the active `/` or `@` completion popup based on current composer text and cursor.
     pub(super) fn refresh_completion_popup(&mut self, cx: &mut Context<Self>) {
+        if self.refresh_history_matches(cx) {
+            return;
+        }
         let (text, cursor) = {
             let inp = self.composer_input.read(cx);
             (inp.text().to_string(), inp.cursor_offset())
@@ -50,12 +53,15 @@ impl ClaudeChatView {
         let len = match popup {
             CompletionPopup::Slash { items, .. } => items.len(),
             CompletionPopup::AtFile { items, .. } => items.len(),
+            CompletionPopup::History { items, .. } => items.len(),
         };
         if len == 0 {
             return false;
         }
         let sel = match popup {
-            CompletionPopup::Slash { selected, .. } | CompletionPopup::AtFile { selected, .. } => selected,
+            CompletionPopup::Slash { selected, .. }
+            | CompletionPopup::AtFile { selected, .. }
+            | CompletionPopup::History { selected, .. } => selected,
         };
         *sel = (*sel as isize + delta).rem_euclid(len as isize) as usize;
         cx.notify();
@@ -85,6 +91,11 @@ impl ClaudeChatView {
                 });
                 self.sync_composer_marks(cx);
                 cx.notify();
+                true
+            }
+            CompletionPopup::History { items, selected, draft } => {
+                let text = items.get(selected).cloned().unwrap_or(draft);
+                self.set_composer(text, cx);
                 true
             }
         }
@@ -217,6 +228,36 @@ impl ClaudeChatView {
                     })
                     .collect();
                 ("Workspace files", rows)
+            }
+            CompletionPopup::History { items, selected, .. } => {
+                let selected = *selected;
+                let rows = items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, text)| {
+                        let is_sel = i == selected;
+                        let pick = text.clone();
+                        let line = text.lines().next().unwrap_or("").to_string();
+                        div()
+                            .id(SharedString::from(format!("history-opt-{i}")))
+                            .flex()
+                            .items_center()
+                            .h(px(26.))
+                            .px_2()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .when(is_sel, |d| d.bg(t.selection))
+                            .when(!is_sel, |d| d.hover(|s| s.bg(t.hover)))
+                            .child(div().flex_1().min_w_0().truncate().text_xs().text_color(t.text).child(line))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.completion = None;
+                                this.set_composer(pick.clone(), cx);
+                                this.composer_input.read(cx).focus_handle(cx).focus(window, cx);
+                            }))
+                            .into_any_element()
+                    })
+                    .collect();
+                ("Earlier messages (Enter to use, Esc to cancel)", rows)
             }
         };
 

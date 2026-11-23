@@ -444,7 +444,9 @@ impl ClaudeChatView {
     ) -> AnyElement {
         let t = theme(cx).clone();
         let supports_auto = self.active_model_supports_auto();
-        let rendered = markdown_view::render_blocks(&plan_blocks, 888_000, self.copied_key.as_deref(), cx);
+        let ws = self.config.workspace.clone();
+        let sel = markdown_view::Sel::new(self.selection_group(cx) ^ (1 << 61), 0, &ws);
+        let rendered = markdown_view::render_blocks(&plan_blocks, 888_000, &sel, self.copied_key.as_deref(), cx);
         let scroll = scrollbar::handle("claude-plan-preview-sb");
 
         let id1 = req_id.clone();

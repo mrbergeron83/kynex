@@ -52,7 +52,21 @@ impl ClaudeChatView {
                     .rounded_sm()
                     .bg(t.element)
                     .child(div().flex_none().text_size(px(10.5)).text_color(t.text_placeholder).child("Queued"))
-                    .child(div().flex_1().min_w_0().truncate().text_xs().text_color(t.text).child(preview))
+                    .child(
+                        div()
+                            .id(("queued-text", i))
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(t.text)
+                            .cursor_pointer()
+                            .tooltip(Tooltip::with_meta("Take back to edit", "↑"))
+                            .child(preview)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.take_back_queued(Some(qid), cx);
+                            })),
+                    )
                     .child(
                         ghost_button(("queued-steer", i), cx)
                             .h(px(18.))
@@ -656,6 +670,7 @@ impl ClaudeChatView {
         self.completion = None;
         self.open_popover = None;
         self.prompt_suggestion = None;
+        self.remember_sent(&expanded, cx);
 
         // If a turn is running and user didn't request Steer, enqueue cleanly.
         if self.turn_active && !steer {

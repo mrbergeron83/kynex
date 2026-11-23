@@ -258,6 +258,8 @@ impl ClaudeChatView {
         // so show only the latest ones.
         const PEEK_MAX_ROWS: usize = 200;
         let hidden = track.rows.len().saturating_sub(PEEK_MAX_ROWS);
+        let peek_group = self.selection_group(cx) ^ (1 << 62);
+        let ws = self.config.workspace.clone();
         let body_items: Vec<AnyElement> = if track.rows.is_empty() {
             vec![
                 div()
@@ -298,8 +300,13 @@ impl ClaudeChatView {
                             .child(text.clone())
                             .into_any_element(),
                         SubagentRow::Prose { blocks, .. } => {
-                            let rendered =
-                                markdown_view::render_blocks(blocks, 10_000 + i as u64, self.copied_key.as_deref(), cx);
+                            let rendered = markdown_view::render_blocks(
+                                blocks,
+                                10_000 + i as u64,
+                                &markdown_view::Sel::new(peek_group, i, &ws),
+                                self.copied_key.as_deref(),
+                                cx,
+                            );
                             div().flex().flex_col().gap_1p5().children(rendered).into_any_element()
                         }
                         SubagentRow::Tool { name, summary, output, is_error, .. } => {

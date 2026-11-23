@@ -8,6 +8,7 @@ pub mod costs;
 pub mod diff;
 pub mod history;
 pub mod markdown;
+pub mod prompt_history;
 pub mod protocol;
 pub mod runs;
 pub mod types;

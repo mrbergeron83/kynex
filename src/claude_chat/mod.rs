@@ -8,11 +8,14 @@ mod cards;
 mod composer;
 mod composer_popups;
 mod events;
+mod history_keys;
+mod keys;
 mod markdown_view;
 mod media;
 mod overlays;
 mod runs;
 mod state;
+mod tool_rows;
 mod transcript;
 
 use std::cell::Cell;
@@ -22,8 +25,8 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyDownEvent, ListAlignment, ListState,
-    Window, div, prelude::*,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListAlignment, ListState, Window, div,
+    prelude::*,
 };
 use kynex_core::agent_cli;
 use kynex_core::agent_panes::AgentState;
@@ -82,6 +85,15 @@ pub struct ClaudeChatView {
     /// The transcript's usable width last drawn, for the wide tool lane (0 before the first frame).
     pub(super) column_width: Rc<Cell<f32>>,
     pub(super) stick_to_bottom: bool,
+    /// Smooth scrolling in progress, and when its last frame ran.
+    pub(super) glide: kynex_core::motion::Glide,
+    pub(super) last_frame: Option<Instant>,
+    /// Trailing a streaming reply (or gliding to the end): follow once there.
+    pub(super) follow_after: bool,
+    /// A turn just finished: go to its end on the next frame.
+    pub(super) turn_ended: bool,
+    /// The scroll offset after the last frame, to notice a scroll by hand.
+    pub(super) last_offset: f32,
     /// When the current turn started, for the status line's clock.
     pub(super) turn_started: Option<Instant>,
     /// Whether the once-a-second repaint for clocks is running.
@@ -111,6 +123,12 @@ pub struct ClaudeChatView {
     pub(super) file_index: FileIndex,
     pub(super) slash_commands: Vec<CommandItem>,
     pub(super) completion: Option<CompletionPopup>,
+    /// What's been sent in this project, the stash and per-session drafts.
+    pub(super) prompt_history: kynex_core::claude::prompt_history::History,
+    /// Bumped per keystroke, so only the last pause saves the draft.
+    pub(super) draft_gen: u64,
+    /// The last lone Esc, for Esc Esc.
+    pub(super) last_esc: Option<Instant>,
     pub(super) open_popover: Option<OpenPopover>,
 
     // Media & Lightbox (all RenderImage textures deterministically dropped via cx.drop_image)
@@ -194,6 +212,9 @@ impl ClaudeChatView {
             InputEvent::Changed => {
                 this.sync_composer_marks(cx);
                 this.refresh_completion_popup(cx);
+                this.draft_changed(cx);
+                // Typing takes over from a selection in the transcript (Ctrl+C copies the draft's).
+                crate::ui::selectable::clear(cx);
                 cx.notify();
             }
             InputEvent::Submit => {
@@ -311,6 +332,8 @@ impl ClaudeChatView {
         })
         .detach();
 
+        let list_state = ListState::new(0, ListAlignment::Bottom, gpui::px(320.));
+        list_state.set_follow_mode(gpui::FollowMode::Tail);
         let mut view = Self {
             active_model: config.model.clone(),
             session_id: resume_sid,
@@ -339,9 +362,14 @@ impl ClaudeChatView {
             rows: Vec::new(),
             items: Vec::new(),
             open_runs: HashSet::new(),
-            list_state: ListState::new(0, ListAlignment::Bottom, gpui::px(320.)),
+            list_state,
             column_width: Rc::new(Cell::new(0.)),
             stick_to_bottom: true,
+            glide: kynex_core::motion::Glide::default(),
+            last_frame: None,
+            follow_after: false,
+            turn_ended: false,
+            last_offset: 0.,
             turn_started: None,
             clock_ticking: false,
             streaming_tool_json: HashMap::new(),
@@ -363,6 +391,9 @@ impl ClaudeChatView {
             file_index: FileIndex::default(),
             slash_commands: composer_popups::default_slash_commands(),
             completion: None,
+            prompt_history: Default::default(),
+            draft_gen: 0,
+            last_esc: None,
             open_popover: None,
             attachments: Vec::new(),
             image_cache: media::ImageCache::default(),
@@ -370,6 +401,7 @@ impl ClaudeChatView {
             next_seq: 1,
         };
 
+        view.load_prompt_history(cx);
         if let Some(err) = initial_error {
             view.push_row(LogRow::Notice { text: err, is_error: true });
             view.exited = true;
@@ -560,152 +592,6 @@ impl ClaudeChatView {
         cx.notify();
     }
 
-    fn jump_user_turn(&mut self, dir: isize, cx: &mut Context<Self>) {
-        let turns: Vec<usize> =
-            self.rows.iter().enumerate().filter_map(|(i, r)| r.is_user_turn().then_some(i)).collect();
-        if turns.is_empty() {
-            return;
-        }
-        // The top item's first row: turns are compared in rows, the list scrolls in items.
-        let top_item = self.list_state.logical_scroll_top().item_ix;
-        let top = self.items.get(top_item).map_or(0, |it| it.start());
-        let target = if dir < 0 {
-            turns.iter().rev().copied().find(|&i| i < top).unwrap_or(turns[0])
-        } else {
-            turns.iter().copied().find(|&i| i > top).unwrap_or(*turns.last().unwrap())
-        };
-        self.reveal_row(target);
-        cx.notify();
-    }
-
-    // -----------------------------------------------------------------------
-    // Top-level keyboard handler
-    // -----------------------------------------------------------------------
-
-    /// Intercepts completion popup navigation (`Up`/`Down`/`Tab`) before `TextInput`
-    /// handles vertical cursor movement inside multiline text.
-    fn on_capture_key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.completion.is_none() {
-            return;
-        }
-        let m = &ev.keystroke.modifiers;
-        let secondary = if cfg!(target_os = "macos") { m.platform } else { m.control };
-        if secondary || m.alt {
-            return;
-        }
-        match ev.keystroke.key.as_str() {
-            "up" => {
-                cx.stop_propagation();
-                self.step_completion(-1, cx);
-            }
-            "down" => {
-                cx.stop_propagation();
-                self.step_completion(1, cx);
-            }
-            "tab" if !m.shift => {
-                cx.stop_propagation();
-                self.accept_completion(window, cx);
-            }
-            _ => {}
-        }
-    }
-
-    fn on_key_down(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let key = ev.keystroke.key.as_str();
-        let m = &ev.keystroke.modifiers;
-        let secondary = if cfg!(target_os = "macos") { m.platform } else { m.control };
-
-        // Ctrl+F / Cmd+F -> Transcript find
-        if secondary && !m.alt && !m.shift && key.eq_ignore_ascii_case("f") {
-            cx.stop_propagation();
-            self.toggle_find(window, cx);
-            return;
-        }
-
-        // Shift+Tab -> Cycle permission mode
-        if m.shift && !secondary && !m.alt && key == "tab" {
-            cx.stop_propagation();
-            let next = self.permission_mode.cycle_next(self.active_model_supports_auto());
-            self.set_permission_mode(next, cx);
-            return;
-        }
-
-        // Alt+Up / Alt+Down -> Jump between user turns
-        if m.alt && !secondary && !m.shift && (key == "up" || key == "down") {
-            cx.stop_propagation();
-            self.jump_user_turn(if key == "up" { -1 } else { 1 }, cx);
-            return;
-        }
-
-        // Alt+Enter -> Mid-turn steer
-        if m.alt && !secondary && key == "enter" {
-            cx.stop_propagation();
-            self.submit_composer(true, window, cx);
-            return;
-        }
-
-        // Tab -> Accept prompt suggestion when idle & composer empty
-        if !m.shift
-            && !m.alt
-            && !secondary
-            && key == "tab"
-            && !self.turn_active
-            && self.composer_input.read(cx).text().trim().is_empty()
-            && let Some(sug) = self.prompt_suggestion.take()
-        {
-            cx.stop_propagation();
-            self.composer_input.update(cx, |inp, cx| inp.set_text(sug, cx));
-            self.composer_input.read(cx).focus_handle(cx).focus(window, cx);
-            cx.notify();
-            return;
-        }
-
-        // 1 / 2 / 3 shortcuts for Permission & ExitPlanMode cards (when not typing in inputs)
-        if !secondary
-            && !m.alt
-            && !m.shift
-            && matches!(key, "1" | "2" | "3")
-            && !self.composer_input.read(cx).is_focused(window)
-            && !self.find_input.read(cx).is_focused(window)
-            && self.handle_card_digit(key, window, cx)
-        {
-            cx.stop_propagation();
-            return;
-        }
-
-        // Esc priority stack: Lightbox -> Subagent Peek -> Popover -> Completion -> Find -> Card Deny -> Interrupt
-        if key == "escape" {
-            if self.lightbox.is_some() {
-                cx.stop_propagation();
-                self.close_lightbox(cx);
-                cx.notify();
-            } else if self.peek_subagent.is_some() {
-                cx.stop_propagation();
-                self.peek_subagent = None;
-                cx.notify();
-            } else if self.open_popover.is_some() {
-                cx.stop_propagation();
-                self.open_popover = None;
-                cx.notify();
-            } else if self.completion.is_some() {
-                cx.stop_propagation();
-                self.completion = None;
-                cx.notify();
-            } else if self.find.open {
-                cx.stop_propagation();
-                self.close_find(window, cx);
-            } else if let Some(card) = self.pending_card.clone() {
-                cx.stop_propagation();
-                let note = self.take_card_input(cx);
-                let req_id = card.req_id().to_string();
-                self.answer_permission(&req_id, PermissionAnswer::Deny { message: note, interrupt: false }, window, cx);
-            } else if self.turn_active {
-                cx.stop_propagation();
-                self.cancel_turn(cx);
-            }
-        }
-    }
-
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let t = theme(cx).clone();
         let lamp_state = match self.state {
@@ -792,7 +678,7 @@ pub(super) fn centered_column(child: impl IntoElement) -> gpui::Div {
 }
 
 impl Render for ClaudeChatView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.image_cache.flush_retired(cx);
         // A peek whose track is gone would draw nothing yet still swallow Esc.
         if let Some(id) = &self.peek_subagent
@@ -803,6 +689,7 @@ impl Render for ClaudeChatView {
         let t = theme(cx).clone();
 
         let find_bar = self.render_find_bar(cx);
+        self.follow_frame(window);
         let transcript = self.render_transcript(cx);
         let status_line = self.render_status_line(cx);
         let subagent_strip = self.render_subagent_strip(cx);

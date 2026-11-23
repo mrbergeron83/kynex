@@ -349,8 +349,25 @@ pub enum OpenPopover {
 /// Active `/` command or `@` file completion popup above the composer.
 #[derive(Clone, Debug)]
 pub enum CompletionPopup {
-    Slash { start: usize, end: usize, items: Vec<CommandMatch>, selected: usize },
-    AtFile { start: usize, end: usize, items: Vec<FileMatch>, selected: usize },
+    Slash {
+        start: usize,
+        end: usize,
+        items: Vec<CommandMatch>,
+        selected: usize,
+    },
+    AtFile {
+        start: usize,
+        end: usize,
+        items: Vec<FileMatch>,
+        selected: usize,
+    },
+    /// Ctrl+R: earlier messages matching the composer's text, newest first,
+    /// and the draft to bring back on Esc.
+    History {
+        items: Vec<String>,
+        selected: usize,
+        draft: String,
+    },
 }
 
 /// Full-resolution image currently displayed in the lightbox modal.

@@ -3,8 +3,9 @@
 //! shell buttons, clickable `file:line` links, external URLs, GFM tables, lists,
 //! blockquotes, and inline images.
 
+use std::cell::Cell;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gpui::{
     AnyElement, ClipboardItem, Context, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle,
@@ -17,22 +18,57 @@ use kynex_core::highlight::{self, Lang, Side};
 use super::ClaudeChatView;
 use super::state::ClaudeChatEvent;
 use crate::theme::{Palette, mono, theme, ui_font};
+use crate::ui::selectable::{Link, Spot, selectable};
 use crate::ui::{Icon, Tooltip, code as ui_code, ghost_button, icon, px, scrollbar};
+
+/// Where a row's text sits for mouse selection: the group (one per selectable
+/// surface: the transcript, the peek, a card) and the row; each block of text
+/// in the row takes the next number. A drag selects across rows of a group.
+pub(super) struct Sel<'a> {
+    pub group: u64,
+    pub item: usize,
+    pub workspace: &'a Path,
+    next: Cell<usize>,
+}
+
+impl<'a> Sel<'a> {
+    pub fn new(group: u64, item: usize, workspace: &'a Path) -> Self {
+        Self { group, item, workspace, next: Cell::new(0) }
+    }
+
+    /// The next block's place.
+    pub fn spot(&self) -> Spot {
+        let b = self.next.get();
+        self.next.set(b + 1);
+        Spot::new(self.item, b)
+    }
+
+    /// Plain selectable text in `color` (one block).
+    pub fn text(&self, text: impl Into<SharedString>, t: &Palette) -> AnyElement {
+        selectable(self.group, self.spot(), text, t.text_selection).into_any_element()
+    }
+}
 
 /// Renders a slice of parsed Markdown blocks for row `row_id`.
 pub(super) fn render_blocks(
     blocks: &[Block],
     row_id: u64,
+    sel: &Sel,
     copied_key: Option<&str>,
     cx: &mut Context<ClaudeChatView>,
 ) -> Vec<AnyElement> {
     let t = theme(cx).clone();
-    blocks.iter().enumerate().map(|(i, b)| render_block(b, &format!("r{row_id}-b{i}"), copied_key, &t, cx)).collect()
+    blocks
+        .iter()
+        .enumerate()
+        .map(|(i, b)| render_block(b, &format!("r{row_id}-b{i}"), sel, copied_key, &t, cx))
+        .collect()
 }
 
 fn render_block(
     block: &Block,
     id_prefix: &str,
+    sel: &Sel,
     copied_key: Option<&str>,
     t: &Palette,
     cx: &mut Context<ClaudeChatView>,
@@ -51,7 +87,7 @@ fn render_block(
                 .font_weight(weight)
                 .text_size(size)
                 .text_color(t.text)
-                .child(render_inlines(inlines, id_prefix, t, cx))
+                .child(render_inlines(inlines, sel, t))
                 .into_any_element()
         }
         Block::Paragraph(inlines) => div()
@@ -59,14 +95,14 @@ fn render_block(
             .text_size(px(13.5))
             .line_height(px(21.))
             .text_color(t.text)
-            .child(render_inlines(inlines, id_prefix, t, cx))
+            .child(render_inlines(inlines, sel, t))
             .into_any_element(),
-        Block::CodeBlock { lang, code } => render_code_block(lang.as_deref(), code, id_prefix, copied_key, t, cx),
+        Block::CodeBlock { lang, code } => render_code_block(lang.as_deref(), code, id_prefix, sel, copied_key, t, cx),
         Block::BlockQuote(inner) => {
             let children: Vec<AnyElement> = inner
                 .iter()
                 .enumerate()
-                .map(|(i, b)| render_block(b, &format!("{id_prefix}-q{i}"), copied_key, t, cx))
+                .map(|(i, b)| render_block(b, &format!("{id_prefix}-q{i}"), sel, copied_key, t, cx))
                 .collect();
             div()
                 .pl_3()
@@ -124,7 +160,7 @@ fn render_block(
                         .blocks
                         .iter()
                         .enumerate()
-                        .map(|(bi, b)| render_block(b, &format!("{id_prefix}-li{idx}-{bi}"), copied_key, t, cx))
+                        .map(|(bi, b)| render_block(b, &format!("{id_prefix}-li{idx}-{bi}"), sel, copied_key, t, cx))
                         .collect();
                     div()
                         .flex()
@@ -137,7 +173,7 @@ fn render_block(
                 .collect();
             div().pl_1().flex().flex_col().gap_1().children(rows).into_any_element()
         }
-        Block::Table { headers, alignments, rows } => render_table(headers, alignments, rows, id_prefix, t, cx),
+        Block::Table { headers, alignments, rows } => render_table(headers, alignments, rows, sel, t),
         Block::Rule => div().my_1().h(px(1.)).w_full().bg(t.border_variant).into_any_element(),
         Block::Image { alt, src } => {
             let label = if alt.is_empty() { src.clone() } else { alt.clone() };
@@ -177,9 +213,8 @@ fn render_table(
     headers: &[Vec<Inline>],
     alignments: &[Alignment],
     rows: &[Vec<Vec<Inline>>],
-    id_prefix: &str,
+    sel: &Sel,
     t: &Palette,
-    cx: &mut Context<ClaudeChatView>,
 ) -> AnyElement {
     let header_cells: Vec<AnyElement> = headers
         .iter()
@@ -195,14 +230,13 @@ fn render_table(
                 .text_xs()
                 .text_color(t.text);
             d = apply_align(d, align);
-            d.child(render_inlines(cell, &format!("{id_prefix}-th{ci}"), t, cx)).into_any_element()
+            d.child(render_inlines(cell, sel, t)).into_any_element()
         })
         .collect();
 
     let body_rows: Vec<AnyElement> = rows
         .iter()
-        .enumerate()
-        .map(|(ri, row)| {
+        .map(|row| {
             let cells: Vec<AnyElement> = row
                 .iter()
                 .enumerate()
@@ -210,7 +244,7 @@ fn render_table(
                     let align = alignments.get(ci).copied().unwrap_or(Alignment::None);
                     let mut d = div().flex_1().min_w(px(64.)).px_2().py_1().text_xs().text_color(t.text);
                     d = apply_align(d, align);
-                    d.child(render_inlines(cell, &format!("{id_prefix}-td{ri}-{ci}"), t, cx)).into_any_element()
+                    d.child(render_inlines(cell, sel, t)).into_any_element()
                 })
                 .collect();
             div().flex().w_full().border_t_1().border_color(t.border_variant).children(cells).into_any_element()
@@ -242,6 +276,7 @@ fn render_code_block(
     lang: Option<&str>,
     code: &str,
     id_prefix: &str,
+    sel: &Sel,
     copied_key: Option<&str>,
     t: &Palette,
     cx: &mut Context<ClaudeChatView>,
@@ -257,13 +292,8 @@ fn render_code_block(
     let run_btn_id: SharedString = format!("{id_prefix}-run").into();
     let run_code = code.to_string();
 
-    let styled_code = if let Some(l) = hl_lang {
-        let tokens = highlight::highlight(l, code);
-        let styles = ui_code::styles(&tokens, &t.syntax);
-        StyledText::new(code.to_string()).with_highlights(styles)
-    } else {
-        StyledText::new(code.to_string())
-    };
+    let styles = hl_lang.map(|l| ui_code::styles(&highlight::highlight(l, code), &t.syntax)).unwrap_or_default();
+    let styled_code = selectable(sel.group, sel.spot(), code.to_string(), t.text_selection).highlights(styles);
 
     div()
         .w_full()
@@ -342,100 +372,16 @@ fn render_code_block(
         .into_any_element()
 }
 
-/// Renders inline Markdown nodes: uses fast `StyledText` for pure-text runs, and
-/// splits interactive `Link` / `FileRef` tokens into clickable inline elements.
-fn render_inlines(inlines: &[Inline], id_prefix: &str, t: &Palette, cx: &mut Context<ClaudeChatView>) -> AnyElement {
-    if !has_interactive_inline(inlines) {
-        let mut text = String::new();
-        let mut spans: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
-        flatten_styled(inlines, &mut text, &mut spans, StyleFlags::default(), t);
-        if spans.is_empty() {
-            return div().child(text).into_any_element();
-        }
-        return StyledText::new(text).with_highlights(spans).into_any_element();
-    }
-
-    // Mix of styled text segments and clickable links / file:line references.
-    let mut pieces: Vec<Piece> = Vec::new();
-    collect_pieces(inlines, StyleFlags::default(), &mut pieces);
-
-    let mut elements: Vec<AnyElement> = Vec::new();
-    let mut buf_text = String::new();
-    let mut buf_spans: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
-
-    let flush =
-        |buf_text: &mut String, buf_spans: &mut Vec<(Range<usize>, HighlightStyle)>, elements: &mut Vec<AnyElement>| {
-            if buf_text.is_empty() {
-                return;
-            }
-            let s = std::mem::take(buf_text);
-            let sp = std::mem::take(buf_spans);
-            if sp.is_empty() {
-                elements.push(div().child(s).into_any_element());
-            } else {
-                elements.push(StyledText::new(s).with_highlights(sp).into_any_element());
-            }
-        };
-
-    for (idx, piece) in pieces.into_iter().enumerate() {
-        match piece {
-            Piece::Run { text, flags } => {
-                let start = buf_text.len();
-                buf_text.push_str(&text);
-                let end = buf_text.len();
-                if let Some(style) = flags.to_style(t) {
-                    buf_spans.push((start..end, style));
-                }
-            }
-            Piece::Link { label, url } => {
-                flush(&mut buf_text, &mut buf_spans, &mut elements);
-                let el_id: SharedString = format!("{id_prefix}-lnk-{idx}").into();
-                let url_click = url.clone();
-                elements.push(
-                    div()
-                        .id(el_id)
-                        .text_color(t.accent)
-                        .cursor_pointer()
-                        .hover(|s| s.underline())
-                        .tooltip(Tooltip::text(url))
-                        .child(label)
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.open_url(&url_click);
-                        }))
-                        .into_any_element(),
-                );
-            }
-            Piece::FileRef { raw, path, line } => {
-                flush(&mut buf_text, &mut buf_spans, &mut elements);
-                let el_id: SharedString = format!("{id_prefix}-fref-{idx}").into();
-                let path_click = path.clone();
-                elements.push(
-                    div()
-                        .id(el_id)
-                        .flex()
-                        .items_center()
-                        .px_1()
-                        .rounded_sm()
-                        .bg(t.element)
-                        .font_family(mono())
-                        .text_size(px(12.))
-                        .text_color(t.accent)
-                        .cursor_pointer()
-                        .hover(|s| s.bg(t.hover).underline())
-                        .tooltip(Tooltip::text(format!("Open {raw}")))
-                        .child(raw)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            let full = resolve_workspace_path(&this.config.workspace, &path_click);
-                            cx.emit(ClaudeChatEvent::OpenFile { path: full, line });
-                        }))
-                        .into_any_element(),
-                );
-            }
-        }
-    }
-    flush(&mut buf_text, &mut buf_spans, &mut elements);
-
-    div().flex().flex_wrap().items_baseline().gap_x(px(2.)).children(elements).into_any_element()
+/// Renders inline Markdown nodes as one selectable block: styled runs, inline
+/// code in mono, and links and `file:line` references that open on a click.
+fn render_inlines(inlines: &[Inline], sel: &Sel, t: &Palette) -> AnyElement {
+    let mut out = Inlines::default();
+    out.flatten(inlines, StyleFlags::default(), sel.workspace, t);
+    selectable(sel.group, sel.spot(), out.text, t.text_selection)
+        .highlights(out.spans)
+        .fonts(out.fonts)
+        .links(out.links, t.accent)
+        .into_any_element()
 }
 
 #[derive(Clone, Copy, Default)]
@@ -463,93 +409,55 @@ impl StyleFlags {
     }
 }
 
-enum Piece {
-    Run { text: String, flags: StyleFlags },
-    Link { label: String, url: String },
-    FileRef { raw: String, path: String, line: Option<u32> },
+/// Inline nodes flattened into one string with its styles, fonts and links.
+#[derive(Default)]
+struct Inlines {
+    text: String,
+    spans: Vec<(Range<usize>, HighlightStyle)>,
+    fonts: Vec<(Range<usize>, SharedString)>,
+    links: Vec<(Range<usize>, Link)>,
 }
 
-fn has_interactive_inline(inlines: &[Inline]) -> bool {
-    inlines.iter().any(|inl| match inl {
-        Inline::Link { .. } | Inline::FileRef { .. } => true,
-        Inline::Bold(v) | Inline::Italic(v) | Inline::Strike(v) => has_interactive_inline(v),
-        Inline::Text(_) | Inline::Code(_) => false,
-    })
-}
-
-fn flatten_styled(
-    inlines: &[Inline],
-    out: &mut String,
-    spans: &mut Vec<(Range<usize>, HighlightStyle)>,
-    flags: StyleFlags,
-    t: &Palette,
-) {
-    for inl in inlines {
-        match inl {
-            Inline::Text(s) => {
-                let start = out.len();
-                out.push_str(s);
-                if let Some(style) = flags.to_style(t) {
-                    spans.push((start..out.len(), style));
-                }
-            }
-            Inline::Code(s) => {
-                let start = out.len();
-                out.push_str(s);
-                let mut f = flags;
-                f.code = true;
-                if let Some(style) = f.to_style(t) {
-                    spans.push((start..out.len(), style));
-                }
-            }
-            Inline::Bold(inner) => {
-                let mut f = flags;
-                f.bold = true;
-                flatten_styled(inner, out, spans, f, t);
-            }
-            Inline::Italic(inner) => {
-                let mut f = flags;
-                f.italic = true;
-                flatten_styled(inner, out, spans, f, t);
-            }
-            Inline::Strike(inner) => {
-                let mut f = flags;
-                f.strike = true;
-                flatten_styled(inner, out, spans, f, t);
-            }
-            Inline::Link { label, .. } => out.push_str(label),
-            Inline::FileRef { raw, .. } => out.push_str(raw),
+impl Inlines {
+    fn push(&mut self, s: &str, style: Option<HighlightStyle>) -> Range<usize> {
+        let start = self.text.len();
+        self.text.push_str(s);
+        let range = start..self.text.len();
+        if let Some(style) = style {
+            self.spans.push((range.clone(), style));
         }
+        range
     }
-}
 
-fn collect_pieces(inlines: &[Inline], flags: StyleFlags, out: &mut Vec<Piece>) {
-    for inl in inlines {
-        match inl {
-            Inline::Text(s) => out.push(Piece::Run { text: s.clone(), flags }),
-            Inline::Code(s) => {
-                let mut f = flags;
-                f.code = true;
-                out.push(Piece::Run { text: s.clone(), flags: f });
-            }
-            Inline::Bold(inner) => {
-                let mut f = flags;
-                f.bold = true;
-                collect_pieces(inner, f, out);
-            }
-            Inline::Italic(inner) => {
-                let mut f = flags;
-                f.italic = true;
-                collect_pieces(inner, f, out);
-            }
-            Inline::Strike(inner) => {
-                let mut f = flags;
-                f.strike = true;
-                collect_pieces(inner, f, out);
-            }
-            Inline::Link { label, url } => out.push(Piece::Link { label: label.clone(), url: url.clone() }),
-            Inline::FileRef { raw, path, line } => {
-                out.push(Piece::FileRef { raw: raw.clone(), path: path.clone(), line: *line });
+    fn flatten(&mut self, inlines: &[Inline], flags: StyleFlags, workspace: &Path, t: &Palette) {
+        for inl in inlines {
+            match inl {
+                Inline::Text(s) => {
+                    self.push(s, flags.to_style(t));
+                }
+                Inline::Code(s) => {
+                    let range = self.push(s, StyleFlags { code: true, ..flags }.to_style(t));
+                    self.fonts.push((range, mono()));
+                }
+                Inline::Bold(inner) => self.flatten(inner, StyleFlags { bold: true, ..flags }, workspace, t),
+                Inline::Italic(inner) => self.flatten(inner, StyleFlags { italic: true, ..flags }, workspace, t),
+                Inline::Strike(inner) => self.flatten(inner, StyleFlags { strike: true, ..flags }, workspace, t),
+                Inline::Link { label, url } => {
+                    let style = HighlightStyle {
+                        color: Some(t.accent),
+                        underline: Some(UnderlineStyle { thickness: gpui::px(1.), color: Some(t.accent), wavy: false }),
+                        ..flags.to_style(t).unwrap_or_default()
+                    };
+                    let range = self.push(label, Some(style));
+                    self.links.push((range, Link::Url(url.clone())));
+                }
+                Inline::FileRef { raw, path, line } => {
+                    let style = HighlightStyle { color: Some(t.accent), ..flags.to_style(t).unwrap_or_default() };
+                    let range = self.push(raw, Some(style));
+                    self.fonts.push((range.clone(), mono()));
+                    let path = resolve_workspace_path(workspace, path);
+                    self.links.push((range, Link::File { path, line: *line }));
+                }
             }
         }
     }

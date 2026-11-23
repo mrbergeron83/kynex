@@ -6,8 +6,9 @@
 
 use std::ops::Range;
 use std::path::Path;
+use std::time::Instant;
 
-use gpui::{AnyElement, Context, FontWeight, SharedString, Window, div, prelude::*};
+use gpui::{AnyElement, Context, FollowMode, FontWeight, ListOffset, SharedString, Window, div, prelude::*};
 use kynex_core::claude::runs::{self, ListItem, RowKind};
 
 use super::state::*;
@@ -59,33 +60,135 @@ impl ClaudeChatView {
         {
             self.list_state.remeasure_items(ix..ix + 1);
         }
+        self.glide.stop();
+        self.follow_after = false;
+        self.list_state.pause_following_tail();
         self.stick_to_bottom = false;
         self.list_state.scroll_to_reveal_item(ix);
     }
 
+    /// Adds a row at the end. Following the tail (or trailing a reply) keeps
+    /// the end in view; scrolled up, the view stays put.
     pub(super) fn push_row(&mut self, row: LogRow) {
-        let was_at_bottom = self.stick_to_bottom || self.list_state.is_scrolled_to_end().unwrap_or(true);
         self.rows.push(row);
         self.relayout();
-        if was_at_bottom {
-            self.stick_to_bottom = true;
-            self.list_state.scroll_to_end();
-        }
     }
 
     /// Row `idx` changed size: measure the item that draws it again.
     pub(super) fn remeasure_row(&self, idx: usize) {
         if let Some(ix) = self.item_of_row(idx) {
             self.list_state.remeasure_items(ix..ix + 1);
-            if self.stick_to_bottom {
-                self.list_state.scroll_to_end();
-            }
         }
     }
 
+    /// Jumps to the end and follows new output from there.
     pub(super) fn scroll_to_bottom(&mut self) {
+        self.glide.stop();
+        self.follow_after = false;
         self.stick_to_bottom = true;
         self.list_state.scroll_to_end();
+        self.list_state.set_follow_mode(FollowMode::Tail);
+    }
+
+    /// How far down the list is scrolled, in pixels.
+    fn scroll_offset(&self) -> f32 {
+        -f32::from(self.list_state.scroll_px_offset_for_scrollbar().y)
+    }
+
+    fn max_scroll(&self) -> f32 {
+        f32::from(self.list_state.max_offset_for_scrollbar().y)
+    }
+
+    /// Runs each frame the transcript draws: follows a streaming reply by
+    /// gliding rather than snapping, and after a turn ends goes to its end.
+    ///
+    /// gpui's tail following pins the end on every layout, so text jumps up as
+    /// the last row grows. Instead, while Claude works the view holds through
+    /// layout and glides down by what was added; when the turn is over it
+    /// glides the rest of the way and follows plainly again.
+    pub(super) fn follow_frame(&mut self, window: &mut Window) {
+        let busy = self.turn_active;
+        // Scrolled up by hand while trailing: let go.
+        if self.follow_after && self.scroll_offset() < self.last_offset - 1. {
+            self.glide.stop();
+            self.follow_after = false;
+        }
+        // A turn finished: its end is where to look, even if you'd scrolled up
+        // mid-turn to read earlier output.
+        if std::mem::take(&mut self.turn_ended) && !self.list_state.is_following_tail() && !self.follow_after {
+            self.glide.stop();
+            self.follow_after = true;
+        }
+        if (busy || self.follow_after) && !crate::ui::motion::reduced() {
+            self.trail(busy);
+        } else if self.follow_after && !self.glide.is_moving() {
+            self.follow_after = false;
+            self.list_state.scroll_to_end();
+            self.list_state.set_follow_mode(FollowMode::Tail);
+        }
+        if self.glide.is_moving() {
+            self.glide_frame();
+            window.request_animation_frame();
+        }
+        self.last_offset = self.scroll_offset();
+        self.stick_to_bottom = self.list_state.is_following_tail() || self.follow_after;
+    }
+
+    fn trail(&mut self, busy: bool) {
+        if self.list_state.is_following_tail() {
+            if !busy {
+                self.follow_after = false;
+                return;
+            }
+            // Swap the "past the end" anchor for the same spot as an offset,
+            // which layout leaves alone.
+            let max = self.list_state.max_offset_for_scrollbar().y;
+            self.list_state.scroll_to(ListOffset { item_ix: 0, offset_in_item: gpui::px(0.) });
+            self.list_state.scroll_by(max);
+            self.follow_after = true;
+        } else if !self.follow_after {
+            return;
+        }
+        let gap = self.max_scroll() - self.scroll_offset() - self.glide.remaining();
+        if gap > 0.5 {
+            self.glide.push(gap);
+        } else if !busy && !self.glide.is_moving() {
+            self.follow_after = false;
+            self.list_state.scroll_to_end();
+            self.list_state.set_follow_mode(FollowMode::Tail);
+        }
+    }
+
+    /// Moves the list this frame's share of the glide, stopping at either end.
+    fn glide_frame(&mut self) {
+        // A held scrollbar thumb has the list; any glide gives way to it.
+        if self.list_state.is_scrollbar_dragging() {
+            self.glide.stop();
+            self.follow_after = false;
+        }
+        let now = Instant::now();
+        let dt = self.last_frame.map_or(1. / 120., |t| now.duration_since(t).as_secs_f32());
+        self.last_frame = Some(now);
+        let step = self.glide.step(dt);
+        let (offset, max) = (self.scroll_offset(), self.max_scroll());
+        let moved = (offset + step).clamp(0., max.max(0.)) - offset;
+        if moved != 0. {
+            self.list_state.scroll_by(gpui::px(moved));
+        }
+        if moved != step {
+            self.glide.stop();
+        }
+        if step > 0. && offset + moved >= max - 1. {
+            self.glide.stop();
+            self.follow_after = true;
+        }
+        if !self.glide.is_moving() {
+            self.last_frame = None;
+            if !self.turn_active && std::mem::take(&mut self.follow_after) {
+                self.list_state.scroll_to_end();
+                self.list_state.set_follow_mode(FollowMode::Tail);
+            }
+        }
     }
 
     pub(super) fn finalize_streaming_rows(&mut self) {
@@ -184,6 +287,11 @@ impl ClaudeChatView {
             }
         })
         .detach();
+    }
+
+    /// The transcript's mouse-selection group: this view's entity id.
+    pub(super) fn selection_group(&self, cx: &Context<Self>) -> u64 {
+        cx.entity_id().as_u64()
     }
 
     /// Draws list item `ix`: a row, or a run under its summary.
