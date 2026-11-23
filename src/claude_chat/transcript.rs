@@ -232,6 +232,9 @@ impl ClaudeChatView {
                 .child(div().text_xs().text_color(t.text_placeholder).child(detail.clone()))
                 .child(div().flex_1().h(px(1.)).bg(t.border_variant))
                 .into_any_element(),
+            LogRow::Shell { id, command, output, sent } => {
+                self.render_shell_run(*id, command, output.as_ref(), *sent, &sel, &t)
+            }
             LogRow::PermissionNote { title, allowed, note } => {
                 let (glyph, color) = if *allowed { (Icon::Check, t.success) } else { (Icon::Close, t.error) };
                 div()

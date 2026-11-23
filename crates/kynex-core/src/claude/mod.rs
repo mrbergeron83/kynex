@@ -7,6 +7,7 @@ pub mod composer;
 pub mod costs;
 pub mod diff;
 pub mod history;
+pub mod input;
 pub mod markdown;
 pub mod prompt_history;
 pub mod protocol;

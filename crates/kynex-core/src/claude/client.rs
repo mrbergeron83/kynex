@@ -184,6 +184,13 @@ impl ClaudeClient {
         Ok(id)
     }
 
+    /// Alt+T: thinking on or off for the rest of the session.
+    pub fn set_thinking(&self, on: bool) -> Result<String, String> {
+        let id = self.next_request_id("think");
+        self.send_raw(protocol::build_set_thinking(&id, on))?;
+        Ok(id)
+    }
+
     pub fn set_fast_mode(&self, enabled: bool) -> Result<String, String> {
         let id = self.next_request_id("fast");
         self.send_raw(protocol::build_set_fast_mode(&id, enabled))?;

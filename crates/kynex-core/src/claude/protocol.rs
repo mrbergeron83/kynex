@@ -96,6 +96,11 @@ pub fn build_set_effort(request_id: &str, effort: EffortLevel) -> String {
     build_apply_flag_settings(request_id, json!({ "effortLevel": effort.as_str() }))
 }
 
+/// Thinking on (the session's default) or off: `set_max_thinking_tokens` with null or 0.
+pub fn build_set_thinking(request_id: &str, on: bool) -> String {
+    control_req(request_id, super::input::thinking::request(on))
+}
+
 pub fn build_set_fast_mode(request_id: &str, enabled: bool) -> String {
     build_apply_flag_settings(request_id, json!({ "fastMode": enabled }))
 }
@@ -505,6 +510,7 @@ fn parse_system(val: &Value, out: &mut Vec<ClaudeEvent>) {
             slash_commands: str_vec(val, &["slash_commands"]),
             cwd: str_field(val, &["cwd"]),
             claude_code_version: str_field(val, &["claude_code_version"]),
+            ultrathink_available: val.get("ultrathink_available").and_then(Value::as_bool).unwrap_or(false),
         })),
         "status" => out.push(ClaudeEvent::StatusUpdate {
             status: str_field(val, &["status"]),

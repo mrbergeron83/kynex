@@ -138,6 +138,14 @@ pub enum LogRow {
     CompactionDivider {
         detail: String,
     },
+    /// A `!` command run in the workspace, and what it printed (`None` while it runs).
+    Shell {
+        id: u64,
+        command: String,
+        output: Option<kynex_core::claude::input::shell::Output>,
+        /// Its output went to Claude with a message.
+        sent: bool,
+    },
     /// The record a permission prompt leaves once answered: "Bash cargo test ✓ allowed".
     PermissionNote {
         title: String,
@@ -185,6 +193,10 @@ impl LogRow {
             Self::Prose { plain, .. } => plain.clone(),
             Self::CompactionDivider { detail, .. } => detail.clone(),
             Self::PermissionNote { title, note, .. } => format!("{title} {note}"),
+            Self::Shell { command, output, .. } => match output {
+                Some(o) => format!("{command}\n{}\n{}", o.stdout, o.stderr),
+                None => command.clone(),
+            },
             Self::TurnEnd { files, .. } => files.join(" "),
             Self::Notice { text, .. } => text.clone(),
         }
@@ -197,7 +209,8 @@ impl LogRow {
             | Self::Thought { id, .. }
             | Self::EditRow { id, .. }
             | Self::ToolCall { id, .. }
-            | Self::Prose { id, .. } => Some(*id),
+            | Self::Prose { id, .. }
+            | Self::Shell { id, .. } => Some(*id),
             Self::CompactionDivider { .. }
             | Self::PermissionNote { .. }
             | Self::TurnEnd { .. }

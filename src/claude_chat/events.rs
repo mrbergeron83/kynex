@@ -52,6 +52,7 @@ impl ClaudeChatView {
         match ev {
             ClaudeEvent::Initialized(info) => self.on_initialized(info, cx),
             ClaudeEvent::SystemInit(sys) => {
+                self.ultrathink = sys.ultrathink_available;
                 if !sys.session_id.is_empty() {
                     self.adopt_session_id(sys.session_id, cx);
                 }

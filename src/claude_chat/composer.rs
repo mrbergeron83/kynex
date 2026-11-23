@@ -109,6 +109,9 @@ impl ClaudeChatView {
     /// (`Tab` accepts it) in place of the usual placeholder.
     pub(super) fn sync_composer_ghost(&self, cx: &mut Context<Self>) {
         let ghost: SharedString = match &self.prompt_suggestion {
+            _ if self.input_mode != kynex_core::claude::input::input_mode::InputMode::Prompt => {
+                self.input_mode.placeholder().into()
+            }
             Some(sug) if !self.turn_active && self.attachments.is_empty() => format!("{sug}   ⇥ Tab").into(),
             _ => COMPOSER_PLACEHOLDER.into(),
         };
@@ -231,6 +234,7 @@ impl ClaudeChatView {
                             .children(attach_chips),
                     )
                 })
+                .children(self.render_mode_badge(cx))
                 .child(scrollbar::vertical_over(
                     "claude-composer-sb",
                     input_scroll.clone(),
@@ -321,6 +325,7 @@ impl ClaudeChatView {
                                     })),
                             )
                         })
+                        .child(self.render_thinking_chip(cx))
                         .child(div().flex_1())
                         // Right toolbar cluster
                         .children(ctx_pill)
@@ -466,6 +471,7 @@ impl ClaudeChatView {
             }
             pos += part.len();
         }
+        marks.extend(self.ultrathink_marks(&text, &t));
         marks.sort_by_key(|m| m.range.start);
         self.composer_input.update(cx, |inp, cx| inp.set_marks(marks, cx));
     }
@@ -618,6 +624,9 @@ impl ClaudeChatView {
 
     /// Submits the current composer contents (normal send, queue when busy, or mid-turn steer).
     pub(super) fn submit_composer(&mut self, steer: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.submit_in_mode(cx) {
+            return;
+        }
         let raw_text = self.composer_input.read(cx).text().to_string();
         let trimmed = raw_text.trim();
         if trimmed.is_empty() && self.attachments.is_empty() {
@@ -659,6 +668,8 @@ impl ClaudeChatView {
             );
             row_images.push(RowImage { key: ImageKey::Inline(att.id), logged_ref: None, label: att.label });
         }
+        // `!` commands run since the last message: Claude sees them with this one.
+        blocks.extend(self.take_shell_blocks().into_iter().map(PromptBlock::Text));
         if !expanded.is_empty() {
             blocks.push(PromptBlock::Text(expanded.clone()));
         }

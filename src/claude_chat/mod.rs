@@ -9,6 +9,7 @@ mod composer;
 mod composer_popups;
 mod events;
 mod history_keys;
+mod input_modes;
 mod keys;
 mod markdown_view;
 mod media;
@@ -131,6 +132,17 @@ pub struct ClaudeChatView {
     pub(super) draft_gen: u64,
     /// The last lone Esc, for Esc Esc.
     pub(super) last_esc: Option<Instant>,
+    /// The composer's `!` / `#` / `?` mode, and its text before the last change.
+    pub(super) input_mode: kynex_core::claude::input::input_mode::InputMode,
+    pub(super) last_text: String,
+    /// The menu of where a `#` note goes is open.
+    pub(super) memory_menu: bool,
+    /// Alt+T: thinking on for this session.
+    pub(super) thinking_on: bool,
+    /// The CLI acts on `ultrathink` with this model (highlight it).
+    pub(super) ultrathink: bool,
+    /// Ctrl+G: the draft is open in an editor.
+    pub(super) editing_outside: bool,
     pub(super) open_popover: Option<OpenPopover>,
 
     // Media & Lightbox (all RenderImage textures deterministically dropped via cx.drop_image)
@@ -212,6 +224,7 @@ impl ClaudeChatView {
 
         cx.subscribe_in(&composer_input, _window, |this, _, ev: &InputEvent, window, cx| match ev {
             InputEvent::Changed => {
+                this.composer_mode_changed(cx);
                 this.sync_composer_marks(cx);
                 this.refresh_completion_popup(cx);
                 this.draft_changed(cx);
@@ -397,6 +410,12 @@ impl ClaudeChatView {
             prompt_history: Default::default(),
             draft_gen: 0,
             last_esc: None,
+            input_mode: Default::default(),
+            last_text: String::new(),
+            memory_menu: false,
+            thinking_on: true,
+            ultrathink: false,
+            editing_outside: false,
             open_popover: None,
             attachments: Vec::new(),
             image_cache: media::ImageCache::default(),
@@ -703,6 +722,7 @@ impl Render for ClaudeChatView {
         let queued_strip = self.render_queued_strip(cx);
         self.sync_composer_ghost(cx);
         let completion = self.render_completion_popup(cx);
+        let mode_popup = self.render_mode_popup(cx);
         let popover = self.render_toolbar_popover(cx);
         let composer = self.render_composer(cx);
         let peek_modal = self.render_subagent_peek_modal(cx);
@@ -729,6 +749,7 @@ impl Render for ClaudeChatView {
             .children(pending_card)
             .children(queued_strip)
             .children(completion)
+            .children(mode_popup)
             .children(popover)
             .child(composer)
             .children(peek_modal)

@@ -112,6 +112,9 @@ impl ClaudeChatView {
         match key {
             "r" if secondary && !alt && !shift => self.open_history_search(cx),
             "s" if secondary && !alt && !shift => self.toggle_stash(cx),
+            "g" if secondary && !alt && !shift => self.edit_in_editor(cx),
+            "t" if alt && !secondary && !shift => self.toggle_thinking(cx),
+            "backspace" if !secondary && !alt => return self.leave_input_mode(cx),
             "enter" if secondary && !alt && !shift => self.send_queue_now(window, cx),
             "enter" if alt && !secondary => self.steer_all(window, cx),
             "up" if !secondary && !alt && !shift && self.cursor_on_edge_line(true, cx) => return self.history_up(cx),
@@ -218,6 +221,14 @@ impl ClaudeChatView {
                 cx.stop_propagation();
                 self.open_popover = None;
                 cx.notify();
+            } else if self.memory_menu {
+                cx.stop_propagation();
+                self.memory_menu = false;
+                cx.notify();
+            } else if self.input_mode != kynex_core::claude::input::input_mode::InputMode::Prompt
+                && self.leave_input_mode(cx)
+            {
+                cx.stop_propagation();
             } else if self.completion.is_some() {
                 cx.stop_propagation();
                 if !self.cancel_history_search(cx) {
