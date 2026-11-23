@@ -263,8 +263,11 @@ jobs:
 
   release:
     needs: [verify, build, sign-windows]
-    # Signing is skipped while it's off; a failed signing publishes nothing.
-    if: ${{ !failure() && !cancelled() && needs.verify.outputs.tag != '' }}
+    # Signing is skipped while it's off; a failed signing publishes nothing. `build` must have
+    # run: a cancelled check (no runner, say) skips it, and that alone isn't a failure here.
+    if: >-
+      ${{ !cancelled() && needs.verify.outputs.tag != '' && needs.build.result == 'success'
+      && (needs.sign-windows.result == 'success' || needs.sign-windows.result == 'skipped') }}
     runs-on: ubuntu-latest
     # Holds RELEASE_TAG_KEY: the private half of a deploy key with write access. Deploy keys
     # are on the "Protect release tags" ruleset's bypass list, which the job's own token
