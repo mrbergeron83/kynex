@@ -1,10 +1,24 @@
-//! Find in the chat transcript (Ctrl+F): where a query appears in text,
-//! case-insensitively (Unicode-aware), as the old transcript's find did.
+//! Find in the transcript (Ctrl+F): every place a query appears in a session's
+//! messages, replies, thinking and tool output, case-insensitively.
+//!
+//! Text is searched block by block, the way the transcript draws it (a reply's
+//! paragraphs, list items and code blocks are separate blocks), so the matches
+//! counted here are the ones highlighted there.
 
 use std::ops::Range;
 
-/// Where `query` appears in `text`, ignoring case, as byte ranges of `text`,
-/// left to right and not overlapping.
+use crate::claude::session::Item;
+use crate::markdown::{self, Block};
+
+/// One match: the item it's in and which match it is within that item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hit {
+    pub item: usize,
+    pub nth: usize,
+}
+
+/// Where `query` appears in `text`, ignoring case (Unicode-aware), as byte
+/// ranges of `text`, left to right and not overlapping.
 pub fn occurrences(text: &str, query: &str) -> Vec<Range<usize>> {
     let q: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
     if q.is_empty() {
@@ -40,16 +54,101 @@ fn match_at(text: &str, from: usize, q: &[char]) -> Option<usize> {
     None
 }
 
+/// The blocks of text an item draws as, in order; empty for items with no
+/// searchable text (tool calls draw their result's).
+pub fn blocks(item: &Item) -> Vec<String> {
+    match item {
+        Item::User { text, .. } => vec![text.clone()],
+        Item::Assistant(text) => {
+            let mut out = Vec::new();
+            flatten(&markdown::parse(text), &mut out);
+            out
+        }
+        Item::Thinking(t) => vec![t.text.clone()],
+        Item::ToolResult { content, .. } => vec![content.clone()],
+        Item::Error(e) => vec![e.clone()],
+        // The command, then its output and errors (blocks 1 and 2, empty or not).
+        Item::Shell(run) => {
+            let out = run.output.iter().flat_map(|o| [o.stdout.clone(), o.stderr.clone()]);
+            std::iter::once(run.command.clone()).chain(out).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn flatten(doc: &[Block], out: &mut Vec<String>) {
+    for b in doc {
+        match b {
+            Block::Paragraph(i) | Block::Heading(_, i) => out.push(i.text.clone()),
+            Block::Code { code, .. } => out.push(code.clone()),
+            Block::Quote(d) => flatten(d, out),
+            Block::List(items) => items.iter().for_each(|i| flatten(&i.blocks, out)),
+            Block::Table { rows, .. } => rows.iter().flat_map(|r| &r.cells).for_each(|c| flatten(c, out)),
+            Block::Rule => {}
+        }
+    }
+}
+
+/// Every match of `query` in `items`, top to bottom. Blocks over
+/// `MAX_BLOCK` bytes (huge tool output) are searched in their first part only.
+pub fn find(items: &[Item], query: &str) -> Vec<Hit> {
+    if query.trim().is_empty() {
+        return Vec::new();
+    }
+    let mut hits = Vec::new();
+    for (ix, item) in items.iter().enumerate() {
+        let n: usize = blocks(item).iter().map(|b| occurrences(head(b), query).len()).sum();
+        hits.extend((0..n).map(|nth| Hit { item: ix, nth }));
+    }
+    hits
+}
+
+/// Bytes of one block searched at most.
+const MAX_BLOCK: usize = 512 * 1024;
+
+fn head(s: &str) -> &str {
+    if s.len() <= MAX_BLOCK {
+        return s;
+    }
+    let mut end = MAX_BLOCK;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn finds_every_match_in_any_case() {
-        assert_eq!(occurrences("Fix the build, fix lints", "FIX"), vec![0..3, 15..18]);
-        assert_eq!(occurrences("Ünïcode ÜNÏ", "ünï"), vec![0..5, 10..15]);
-        assert_eq!(occurrences("aaa", "aa"), vec![0..2], "no overlaps");
-        assert!(occurrences("text", "").is_empty());
-        assert!(occurrences("", "x").is_empty());
+    fn finds_any_case() {
+        assert_eq!(occurrences("Fix the Terminal; terminal!", "TERMINAL"), [8..16, 18..26]);
+        assert_eq!(occurrences("aaa", "aa"), vec![0..2]);
+        assert!(occurrences("abc", "").is_empty());
+        assert!(occurrences("abc", "abcd").is_empty());
+    }
+
+    #[test]
+    fn unicode_case_and_boundaries() {
+        assert_eq!(occurrences("Ärger ärger", "ÄRGER"), [0..6, 7..13]);
+        assert_eq!(occurrences("é é", "é"), [0..2, 3..5]);
+        // `İ` lowercases to two chars; it doesn't break the scan.
+        assert_eq!(occurrences("İx ix", "ix"), vec![4..6]);
+    }
+
+    #[test]
+    fn counts_per_item_in_drawn_blocks() {
+        let items = vec![
+            Item::User { text: "where is the parser?".into(), images: Vec::new() },
+            Item::Assistant("The **parser** is in `parser.rs`.\n\n- a parser list item\n\n```\nparser()\n```".into()),
+            Item::Error("no match here".into()),
+        ];
+        let hits = find(&items, "parser");
+        assert_eq!(hits.iter().filter(|h| h.item == 0).count(), 1);
+        // Bold and code markers don't count: the drawn text has 4 matches.
+        assert_eq!(hits.iter().filter(|h| h.item == 1).count(), 4);
+        assert_eq!(hits.last(), Some(&Hit { item: 1, nth: 3 }));
+        assert!(find(&items, "  ").is_empty());
     }
 }

@@ -1,30 +1,13 @@
-//! The chat's timeline: one entry per turn (the message you sent), with the
+//! A session's timeline: one entry per turn (the message you sent), with the
 //! steps worth finding again under it: files edited, commands run, subagents,
-//! plans and prompts, errors. Built from the chat's transcript rows, described
-//! to it as [`Row`]s, so resumed sessions get one too.
+//! plans and prompts, errors. Built from the same items the transcript draws,
+//! so resumed sessions get one too.
 
 use std::collections::HashMap;
 
+use crate::claude::session::{Item, PermState};
+use crate::claude::tasks::Status;
 use crate::fmt;
-
-/// What a transcript row is, as far as the timeline cares.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Row<'a> {
-    /// A message you sent: a new turn.
-    UserPrompt(&'a str),
-    /// An `Edit` / `Write` / … call on `path`.
-    Edit { path: &'a str, is_error: bool },
-    /// Any other tool call, with its one-line summary.
-    ToolCall { name: &'a str, summary: &'a str, is_error: bool },
-    /// The record a permission prompt left: "Bash cargo test", allowed or not.
-    PermissionNote { title: &'a str, allowed: bool },
-    /// A notice in the transcript; errors are steps.
-    Notice { text: &'a str, is_error: bool },
-    /// The rule that ends a turn.
-    TurnEnd { duration_ms: u64, tools: usize, files: &'a [String], cost_usd: Option<f64>, is_error: bool },
-    /// Prose, thinking, dividers: nothing to list.
-    Other,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StepKind {
@@ -33,13 +16,15 @@ pub enum StepKind {
     Agent,
     Plan,
     Prompt,
+    /// A background task ended.
+    Task,
     Error,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Step {
-    /// The row it points at in the transcript.
-    pub row: usize,
+    /// The item it points at in the transcript.
+    pub item: usize,
     pub kind: StepKind,
     /// "Edited app.rs ×3", "cargo test", "Allowed Bash".
     pub label: String,
@@ -47,11 +32,11 @@ pub struct Step {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Turn {
-    /// The `UserPrompt` row that started it.
-    pub row: usize,
+    /// The `User` item that started it.
+    pub item: usize,
     /// Its first line, as sent.
     pub prompt: String,
-    /// The whole message, to tell it apart once rows move.
+    /// The whole message, to match it with a rewind point.
     pub text: String,
     pub steps: Vec<Step>,
     /// "12.3s · 4 tool calls · edited a.rs", once the turn has ended.
@@ -60,37 +45,49 @@ pub struct Turn {
     pub failed: bool,
 }
 
-/// The turns in rows `0..len` (`row(i)` describes row `i`), oldest first.
-/// Anything before the first message is skipped. Walks every row: renders use
-/// [`Turns`], which only walks the last turn again.
-pub fn turns<'a>(len: usize, row: impl Fn(usize) -> Row<'a>) -> Vec<Turn> {
+/// The turns in `items`, oldest first. Anything before the first message (a
+/// resumed session's leftovers) is skipped. Walks every item: renders use
+/// [`Turns`], which only walks what changed.
+pub fn turns(items: &[Item]) -> Vec<Turn> {
     let mut turns = Vec::new();
-    walk(&mut turns, len, 0, &row);
+    walk(&mut turns, items, 0, &mut Vec::new());
     turns
 }
 
-/// A chat's turns kept across renders. Rows are appended (mostly to the last
-/// turn) and change in place while their call runs, so `update` keeps the
-/// turns before the last one and walks again from its message: the turns
-/// before it are settled.
+/// A session's turns kept across renders. Items only change in place in two
+/// ways that show here: they're appended to (often to the last turn), and a
+/// permission prompt gets answered. So `update` reuses the turns while the
+/// count is the same and no pending prompt was answered, and otherwise walks
+/// again from the last turn's message: the turns before it are settled.
 #[derive(Debug, Default)]
 pub struct Turns {
     turns: Vec<Turn>,
-    /// How many rows the turns were built from.
+    /// How many items the turns were built from.
     len: usize,
+    /// Permission prompts still pending when last walked, by item.
+    pending: Vec<usize>,
 }
 
 impl Turns {
-    pub fn update<'a>(&mut self, len: usize, row: impl Fn(usize) -> Row<'a>) -> &[Turn] {
-        // Start over when rows were dropped or moved (`/clear`, older history
-        // put in front): the last turn's message is no longer where it was.
-        let same_start = |t: &Turn| t.row < len && matches!(row(t.row), Row::UserPrompt(text) if text == t.text);
-        if len < self.len || !self.turns.last().is_none_or(same_start) {
+    pub fn update(&mut self, items: &[Item]) -> &[Turn] {
+        let answered = |i: &usize| !matches!(items.get(*i), Some(Item::Permission { state: PermState::Pending, .. }));
+        if items.len() == self.len && !self.pending.iter().any(answered) {
+            return &self.turns;
+        }
+        // Start over when items were dropped or replaced (a rewind, `/clear`),
+        // or a prompt was answered in a settled turn.
+        let last = self.turns.last().map_or(0, |t| t.item);
+        let same_start = |t: &Turn| matches!(items.get(t.item), Some(Item::User { text, .. }) if *text == t.text);
+        if items.len() < self.len
+            || !self.turns.last().is_none_or(same_start)
+            || self.pending.iter().any(|i| *i < last && answered(i))
+        {
             *self = Self::default();
         }
-        let from = self.turns.pop().map_or(0, |t| t.row);
-        walk(&mut self.turns, len, from, &row);
-        self.len = len;
+        let from = self.turns.pop().map_or(0, |t| t.item);
+        self.pending.retain(|i| *i < from);
+        walk(&mut self.turns, items, from, &mut self.pending);
+        self.len = items.len();
         &self.turns
     }
 
@@ -100,16 +97,18 @@ impl Turns {
     }
 }
 
-/// Adds the turns in rows `from..len` to `turns`.
-fn walk<'a>(turns: &mut Vec<Turn>, len: usize, from: usize, row: &impl Fn(usize) -> Row<'a>) {
-    for ix in from..len {
-        let r = row(ix);
-        if let Row::UserPrompt(text) = r {
+/// Adds the turns in `items[from..]` to `turns`, noting pending prompts.
+fn walk(turns: &mut Vec<Turn>, items: &[Item], from: usize, pending: &mut Vec<usize>) {
+    for (ix, item) in items.iter().enumerate().skip(from) {
+        if let Item::Permission { state: PermState::Pending, .. } = item {
+            pending.push(ix);
+        }
+        if let Item::User { text, .. } = item {
             let prompt = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("(image)").trim();
             turns.push(Turn {
-                row: ix,
+                item: ix,
                 prompt: clip(prompt, 100),
-                text: text.to_string(),
+                text: text.clone(),
                 steps: Vec::new(),
                 recap: None,
                 failed: false,
@@ -117,20 +116,11 @@ fn walk<'a>(turns: &mut Vec<Turn>, len: usize, from: usize, row: &impl Fn(usize)
             continue;
         }
         let Some(turn) = turns.last_mut() else { continue };
-        match r {
-            Row::Edit { path, is_error } => {
-                push(
-                    &mut turn.steps,
-                    Step { row: ix, kind: StepKind::Edit, label: format!("Edited {}", fmt::file_name(path)) },
-                );
-                if is_error {
-                    push(&mut turn.steps, tool_failed(ix));
-                }
-            }
-            Row::ToolCall { name, summary, is_error } => {
-                let step = match name {
+        match item {
+            Item::ToolUse { name, summary, .. } => {
+                let step = match name.as_str() {
                     "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => {
-                        Some((StepKind::Edit, format!("Edited {}", fmt::file_name(summary))))
+                        Some((StepKind::Edit, format!("Edited {}", file_name(summary))))
                     }
                     "Bash" | "PowerShell" => Some((StepKind::Command, clip(summary, 80))),
                     "Task" | "Agent" => Some((StepKind::Agent, format!("Agent: {}", clip(summary, 70)))),
@@ -138,47 +128,37 @@ fn walk<'a>(turns: &mut Vec<Turn>, len: usize, from: usize, row: &impl Fn(usize)
                     _ => None,
                 };
                 if let Some((kind, label)) = step {
-                    push(&mut turn.steps, Step { row: ix, kind, label });
-                }
-                if is_error {
-                    push(&mut turn.steps, tool_failed(ix));
+                    push(&mut turn.steps, Step { item: ix, kind, label });
                 }
             }
-            Row::PermissionNote { title, allowed } => {
-                // "Bash cargo test" → "Allowed Bash"; a plan is approved or sent back.
-                let label = match (title, allowed) {
-                    ("Plan", true) => "Approved the plan".to_string(),
-                    ("Plan", false) => "Sent the plan back".to_string(),
-                    _ => {
-                        let tool = title.split_whitespace().next().unwrap_or(title);
-                        format!("{} {tool}", if allowed { "Allowed" } else { "Denied" })
-                    }
+            Item::ToolResult { is_error: true, .. } => {
+                push(&mut turn.steps, Step { item: ix, kind: StepKind::Error, label: "A tool failed".into() })
+            }
+            Item::Permission { tool, state, .. } => {
+                let label = match state {
+                    PermState::Pending => format!("Asks to use {tool}"),
+                    PermState::Allowed(_) => format!("Allowed {tool}"),
+                    PermState::Denied(_) => format!("Denied {tool}"),
                 };
-                push(&mut turn.steps, Step { row: ix, kind: StepKind::Prompt, label });
+                push(&mut turn.steps, Step { item: ix, kind: StepKind::Prompt, label });
             }
-            Row::Notice { text, is_error: true } => {
-                push(&mut turn.steps, Step { row: ix, kind: StepKind::Error, label: clip(text, 80) });
+            Item::Task(n) if n.status != Status::Event => {
+                let (kind, label) = match n.status {
+                    Status::Failed => (StepKind::Error, format!("Task failed: {}", clip(&n.summary, 70))),
+                    _ => (StepKind::Task, clip(&n.summary, 80)),
+                };
+                push(&mut turn.steps, Step { item: ix, kind, label });
+            }
+            Item::Error(e) => {
+                push(&mut turn.steps, Step { item: ix, kind: StepKind::Error, label: clip(e, 80) });
                 turn.failed = true;
             }
-            Row::TurnEnd { duration_ms, tools, files, cost_usd, is_error } => {
-                turn.recap = Some(recap(duration_ms, tools, files, cost_usd));
-                turn.failed |= is_error;
+            Item::Result { duration_ms, tools, files, cost, is_error } => {
+                turn.recap = Some(fmt::recap(*duration_ms, *tools, files, *cost));
+                turn.failed |= *is_error;
             }
-            Row::UserPrompt(_) | Row::Notice { .. } | Row::Other => {}
+            _ => {}
         }
-    }
-}
-
-fn tool_failed(row: usize) -> Step {
-    Step { row, kind: StepKind::Error, label: "A tool failed".into() }
-}
-
-/// [`fmt::recap`], leaving the cost out when there's none (OpenRouter).
-fn recap(duration_ms: u64, tools: usize, files: &[String], cost: Option<f64>) -> String {
-    let full = fmt::recap(duration_ms, tools, files, cost.unwrap_or(0.));
-    match cost {
-        Some(_) => full,
-        None => full.rsplit_once(" · ").map_or(full.clone(), |(rest, _)| rest.to_string()),
     }
 }
 
@@ -200,11 +180,11 @@ fn push(steps: &mut Vec<Step>, step: Step) {
     steps.push(step);
 }
 
-/// The turn and step that contain row `row`: where the transcript is.
+/// The turn and step that contain item `item`: where the transcript is.
 /// `None` before the first turn.
-pub fn locate(turns: &[Turn], row: usize) -> Option<(usize, Option<usize>)> {
-    let t = turns.iter().rposition(|t| t.row <= row)?;
-    let step = turns[t].steps.iter().rposition(|s| s.row <= row);
+pub fn locate(turns: &[Turn], item: usize) -> Option<(usize, Option<usize>)> {
+    let t = turns.iter().rposition(|t| t.item <= item)?;
+    let step = turns[t].steps.iter().rposition(|s| s.item <= item);
     Some((t, step))
 }
 
@@ -215,7 +195,7 @@ pub fn locate(turns: &[Turn], row: usize) -> Option<(usize, Option<usize>)> {
 pub struct Fold {
     /// Every turn, after Collapse all (`false`) or Expand all (`true`).
     all: Option<bool>,
-    /// Turns opened or folded one at a time, by their message's row.
+    /// Turns opened or folded one at a time, by their message's item.
     set: HashMap<usize, bool>,
 }
 
@@ -223,14 +203,14 @@ impl Fold {
     /// Whether turn `n` of `turns` is open, with turn `current` in view.
     pub fn is_open(&self, turns: &[Turn], n: usize, current: Option<usize>) -> bool {
         let Some(turn) = turns.get(n) else { return false };
-        self.set.get(&turn.row).copied().or(self.all).unwrap_or(n + 1 == turns.len() || current == Some(n))
+        self.set.get(&turn.item).copied().or(self.all).unwrap_or(n + 1 == turns.len() || current == Some(n))
     }
 
     /// Opens turn `n` if it's folded, folds it if it's open.
     pub fn toggle(&mut self, turns: &[Turn], n: usize, current: Option<usize>) {
         if let Some(turn) = turns.get(n) {
             let open = self.is_open(turns, n, current);
-            self.set.insert(turn.row, !open);
+            self.set.insert(turn.item, !open);
         }
     }
 
@@ -246,6 +226,10 @@ impl Fold {
     }
 }
 
+fn file_name(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
 fn clip(s: &str, max: usize) -> String {
     let s = s.trim();
     if s.chars().count() > max { format!("{}…", s.chars().take(max).collect::<String>()) } else { s.to_string() }
@@ -254,144 +238,153 @@ fn clip(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
-    /// Owned rows, described as [`Row`]s on demand like the app's.
-    #[derive(Clone)]
-    enum R {
-        User(&'static str),
-        Edit(&'static str, bool),
-        Tool(&'static str, &'static str, bool),
-        Perm(&'static str, bool),
-        Notice(&'static str, bool),
-        End(Vec<String>, Option<f64>, bool),
-        Prose,
+    fn user(text: &str) -> Item {
+        Item::User { text: text.into(), images: Vec::new() }
     }
 
-    fn describe(rows: &[R], i: usize) -> Row<'_> {
-        match &rows[i] {
-            R::User(t) => Row::UserPrompt(t),
-            R::Edit(p, e) => Row::Edit { path: p, is_error: *e },
-            R::Tool(n, s, e) => Row::ToolCall { name: n, summary: s, is_error: *e },
-            R::Perm(t, a) => Row::PermissionNote { title: t, allowed: *a },
-            R::Notice(t, e) => Row::Notice { text: t, is_error: *e },
-            R::End(files, cost, e) => {
-                Row::TurnEnd { duration_ms: 12_300, tools: 4, files, cost_usd: *cost, is_error: *e }
-            }
-            R::Prose => Row::Other,
+    fn tool(name: &str, summary: &str) -> Item {
+        Item::ToolUse {
+            id: String::new(),
+            name: name.into(),
+            summary: summary.into(),
+            input: String::new(),
+            timing: Default::default(),
         }
     }
 
-    fn all(rows: &[R]) -> Vec<Turn> {
-        turns(rows.len(), |i| describe(rows, i))
+    fn result(is_error: bool) -> Item {
+        Item::ToolResult { id: String::new(), content: String::new(), images: Vec::new(), is_error }
     }
 
-    fn sample() -> Vec<R> {
+    fn sample() -> Vec<Item> {
         vec![
-            R::Prose,
-            R::User("Fix the parser\nand add a test"),
-            R::Prose,
-            R::Tool("Read", "src/parse.rs", false),
-            R::Edit("C:/x/src/parse.rs", false),
-            R::Edit("C:/x/src/parse.rs", false),
-            R::Tool("Bash", "cargo test", true),
-            R::End(vec!["parse.rs".into()], Some(0.05), false),
-            R::User("Now ship it"),
-            R::Perm("Bash git push", false),
-            R::Notice("Request failed", true),
+            Item::Assistant("left over from before".into()),
+            user("Fix the parser\nand add a test"),
+            Item::Assistant("Looking.".into()),
+            tool("Read", "C:/x/src/parse.rs"),
+            result(false),
+            tool("Edit", "C:/x/src/parse.rs"),
+            result(false),
+            tool("Edit", "C:/x/src/parse.rs"),
+            result(false),
+            tool("Bash", "cargo test"),
+            result(true),
+            Item::Result { cost: 0.05, duration_ms: 12_300, is_error: false, tools: 4, files: vec!["parse.rs".into()] },
+            user("Now ship it"),
+            Item::Permission {
+                request_id: String::new(),
+                tool: "Bash".into(),
+                input: Value::Null,
+                suggestions: Value::Null,
+                description: String::new(),
+                why: String::new(),
+                state: PermState::Denied("no".into()),
+            },
+            Item::Error("Request failed".into()),
         ]
     }
 
     #[test]
     fn one_turn_per_message_with_its_notable_steps() {
-        let turns = all(&sample());
+        let turns = turns(&sample());
         assert_eq!(turns.len(), 2);
         let t = &turns[0];
-        assert_eq!((t.row, t.prompt.as_str()), (1, "Fix the parser"));
+        assert_eq!((t.item, t.prompt.as_str()), (1, "Fix the parser"));
         assert_eq!(t.text, "Fix the parser\nand add a test");
-        let labels: Vec<_> = t.steps.iter().map(|s| (s.kind, s.label.as_str(), s.row)).collect();
+        let labels: Vec<_> = t.steps.iter().map(|s| (s.kind, s.label.as_str(), s.item)).collect();
         assert_eq!(
             labels,
             [
-                (StepKind::Edit, "Edited parse.rs ×2", 4),
-                (StepKind::Command, "cargo test", 6),
-                (StepKind::Error, "A tool failed", 6),
+                (StepKind::Edit, "Edited parse.rs ×2", 5),
+                (StepKind::Command, "cargo test", 9),
+                (StepKind::Error, "A tool failed", 10),
             ],
-            "reads are left out, repeats fold, and a step points at its first row"
+            "reads are left out, repeats fold, and a step points at its first item"
         );
         assert_eq!(t.recap.as_deref(), Some(fmt::recap(12_300, 4, &["parse.rs".into()], 0.05).as_str()));
         assert!(!t.failed);
 
         let t = &turns[1];
         assert_eq!(t.steps[0].label, "Denied Bash");
-        assert_eq!(t.steps[1].label, "Request failed");
         assert!(t.failed && t.recap.is_none());
     }
 
-    #[test]
-    fn subagents_plans_and_a_recap_without_cost() {
-        let rows = vec![
-            R::User("Go"),
-            R::Tool("Agent", "Explore the repo", false),
-            R::Tool("ExitPlanMode", "", false),
-            R::Perm("Plan", true),
-            R::End(Vec::new(), None, true),
-        ];
-        let t = &all(&rows)[0];
-        let labels: Vec<_> = t.steps.iter().map(|s| s.label.as_str()).collect();
-        assert_eq!(labels, ["Agent: Explore the repo", "Proposed a plan", "Approved the plan"]);
-        assert!(!t.recap.as_deref().unwrap().contains('$'));
-        assert!(t.failed);
+    fn permission(state: PermState) -> Item {
+        Item::Permission {
+            request_id: String::new(),
+            tool: "Bash".into(),
+            input: Value::Null,
+            suggestions: Value::Null,
+            description: String::new(),
+            why: String::new(),
+            state,
+        }
     }
 
     #[test]
-    fn the_cache_keeps_up_with_appends_changes_and_clears() {
+    fn the_cache_keeps_up_with_appends_answers_and_rewinds() {
         let mut cache = Turns::default();
-        let mut rows = sample();
-        let update = |c: &mut Turns, rows: &[R]| c.update(rows.len(), |i| describe(rows, i)).to_vec();
-        assert_eq!(update(&mut cache, &rows), all(&rows));
+        let mut items = sample();
+        assert_eq!(cache.update(&items), turns(&items));
 
-        rows.push(R::Edit("a.rs", false));
-        assert_eq!(update(&mut cache, &rows), all(&rows), "appended to the last turn");
-        rows.push(R::User("Third"));
-        rows.push(R::Tool("Bash", "ls", false));
-        assert_eq!(update(&mut cache, &rows), all(&rows), "a new turn");
-        // A call in the last turn failed in place.
-        *rows.last_mut().unwrap() = R::Tool("Bash", "ls", true);
-        assert_eq!(update(&mut cache, &rows), all(&rows));
+        items.extend([permission(PermState::Pending), tool("Edit", "a.rs")]);
+        assert_eq!(cache.update(&items), turns(&items), "appended to the last turn");
+        items.push(user("Third"));
+        assert_eq!(cache.update(&items), turns(&items), "a new turn");
 
-        // Older history put in front: rows move.
-        rows.insert(0, R::User("Earlier"));
-        assert_eq!(update(&mut cache, &rows), all(&rows));
-        rows.clear();
-        assert!(update(&mut cache, &rows).is_empty());
-        rows.push(R::User("Fresh"));
-        assert_eq!(update(&mut cache, &rows), all(&rows));
+        // A prompt answered in place, in a settled turn and then in the last one.
+        let pending = items.len() - 3;
+        items[pending] = permission(PermState::Allowed("ok".into()));
+        assert_eq!(cache.update(&items), turns(&items));
+        items.push(permission(PermState::Pending));
+        cache.update(&items);
+        *items.last_mut().unwrap() = permission(PermState::Denied("cancelled".into()));
+        assert_eq!(cache.update(&items)[2].steps[0].label, "Denied Bash");
+
+        // Rewound and regrown past where it was, with other messages.
+        items.truncate(12);
+        items.extend([
+            user("Instead"),
+            tool("Bash", "ls"),
+            tool("Edit", "b.rs"),
+            result(false),
+            user("More"),
+            user("x"),
+            tool("Bash", "y"),
+            result(true),
+        ]);
+        assert!(items.len() > cache.len);
+        assert_eq!(cache.update(&items), turns(&items));
+        items.clear();
+        assert!(cache.update(&items).is_empty());
     }
 
     #[test]
     fn finds_the_turn_and_step_in_view() {
-        let turns = all(&sample());
+        let turns = turns(&sample());
         assert_eq!(locate(&turns, 0), None);
         assert_eq!(locate(&turns, 2), Some((0, None)));
-        assert_eq!(locate(&turns, 5), Some((0, Some(0))));
-        assert_eq!(locate(&turns, 6), Some((0, Some(2))));
-        assert_eq!(locate(&turns, 9), Some((1, Some(0))));
+        assert_eq!(locate(&turns, 7), Some((0, Some(0))));
+        assert_eq!(locate(&turns, 9), Some((0, Some(1))));
+        assert_eq!(locate(&turns, 13), Some((1, Some(0))));
     }
 
     #[test]
     fn labels_are_short() {
-        let long: &'static str = "x".repeat(300).leak();
-        let turns = all(&[R::User(long), R::Tool("Bash", long, false)]);
+        let long = "x".repeat(300);
+        let turns = turns(&[user(&long), tool("Bash", &long)]);
         assert!(turns[0].prompt.chars().count() <= 101);
         assert!(turns[0].steps[0].label.chars().count() <= 81);
-        assert_eq!(all(&[R::User("")])[0].prompt, "(image)");
+        assert_eq!(super::turns(&[user("")])[0].prompt, "(image)");
     }
 
     #[test]
     fn folds_older_turns_until_told_otherwise() {
-        let mut rows = sample();
-        rows.extend([R::User("Third"), R::Tool("Bash", "ls", false)]);
-        let turns = all(&rows);
+        let mut items = sample();
+        items.extend([user("Third"), tool("Bash", "ls")]);
+        let turns = turns(&items);
         let mut fold = Fold::default();
         let open = |f: &Fold, current| (0..3).map(|n| f.is_open(&turns, n, current)).collect::<Vec<_>>();
         assert_eq!(open(&fold, None), [false, false, true], "only the latest at first");

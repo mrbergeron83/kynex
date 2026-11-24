@@ -10,6 +10,7 @@ use gpui::{
     prelude::*,
 };
 use kynex_core::awake::KeepAwake;
+use kynex_core::claude::sleep::SleepAfter;
 use kynex_core::cli;
 use kynex_core::motion::Motion;
 use kynex_core::open::Opener;
@@ -404,6 +405,22 @@ impl KynexApp {
                     .on_click(cx.listener(move |this, _, _, cx| this.set_keep_awake(k, cx)))
             }));
 
+        let sleep_after = self.saved.sleep_after;
+        let sleep = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(heading(
+                "Sleep idle sessions",
+                "Stops an idle Claude pane's process and its MCP servers to free memory. Its transcript stays; \
+                 it starts again when you type. Sessions working, waiting on you or using the browser stay awake.",
+                t,
+            ))
+            .children(SleepAfter::ALL.into_iter().enumerate().map(|(n, s)| {
+                choice(("sleep-after", n), sleep_after == s, s.label().into(), t)
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_sleep_after(s, cx)))
+            }));
+
         div()
             .flex()
             .flex_col()
@@ -412,8 +429,10 @@ impl KynexApp {
             .child(worktrees)
             .child(shell)
             .child(history)
+            .child(self.render_bypass_setting(t, cx))
             .child(notifications)
             .child(awake)
+            .child(sleep)
     }
 
     fn render_appearance(&self, t: &Palette, cx: &mut Context<Self>) -> gpui::Div {
@@ -577,7 +596,7 @@ impl KynexApp {
             .gap_1()
             .child(heading(
                 "Status footer",
-                "Kynex's CPU and memory, OpenRouter credit and updates, along the bottom.",
+                "Kynex's CPU and memory, OpenRouter credit, usage limits and updates, along the bottom.",
                 t,
             ))
             .children([(true, "Show"), (false, "Hide")].into_iter().map(|(on, label)| {
@@ -600,6 +619,7 @@ impl KynexApp {
             .child(themes)
             .child(zoom)
             .child(fonts)
+            .child(self.render_transcript_width(t, cx))
             .child(tiles)
             .child(corner)
             .child(footer)

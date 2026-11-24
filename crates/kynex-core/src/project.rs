@@ -3,6 +3,8 @@
 //! ```text
 //! <data dir>/projects/<name>-<hash>/
 //!     project.json        which folder this is
+//!     permissions.json    allow / deny rules Kynex hands to every Claude session
+//!     claude.json         how sessions start: permission mode, effort, extra directories
 //!     sessions.json       session groups, archive, pins, custom names, providers
 //!     workspaces.json     workspaces, saved pane layouts, layout history
 //!     appearance.json     the project's colour
@@ -15,6 +17,12 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::paths::data_dir;
+
+mod claude_settings;
+
+pub use claude_settings::{
+    ClaudeSettings, EFFORTS, Launched, Mode, Permissions, Update, bypass_allowed, set_bypass_allowed, suggested_rules,
+};
 
 /// The settings folder for a project, e.g. `projects/kynex-3f9a1c0d`.
 pub fn dir(project: &Path) -> PathBuf {

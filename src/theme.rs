@@ -336,6 +336,11 @@ impl Palette {
         ca(0x000000, 0.25)
     }
 
+    /// The window darkened behind a picture shown full size.
+    pub fn scrim_media(&self) -> Hsla {
+        ca(0x000000, 0.8)
+    }
+
     /// The window's close button on hover, and its glyph: Windows' own red.
     pub fn close_hover(&self) -> (Hsla, Hsla) {
         (c(0xc42b1c), c(0xffffff))

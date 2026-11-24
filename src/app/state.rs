@@ -87,18 +87,24 @@ pub struct Saved {
     pub tiles: kynex_core::tile_style::TileTweaks,
     /// The window corner toasts gather in.
     pub toast_corner: Corner,
+    /// How wide the Claude pane's transcript column is.
+    pub column: kynex_core::claude::column::ColumnWidth,
     /// The UI zoom, 1.0 for normal size (`kynex_core::scale`).
     pub zoom: f32,
     /// The status footer along the bottom of the window is showing.
     pub footer: bool,
     /// When to keep the computer from sleeping.
     pub keep_awake: KeepAwake,
+    /// How long an idle Claude pane keeps its `claude` process.
+    pub sleep_after: kynex_core::claude::sleep::SleepAfter,
     /// OpenRouter: My models, default model, output cap, last key check (key is in OS keychain).
     pub openrouter: kynex_core::openrouter::OpenRouterConfig,
     /// The sessions panel splits ungrouped sessions by provider, under a header each.
     pub sessions_by_provider: bool,
     /// The sessions tree shows archived sessions (dimmed, last under their workspace).
     pub sessions_show_archived: bool,
+    /// Bypass permissions joins the Claude panes' mode cycle (`--allow-dangerously-skip-permissions`).
+    pub allow_bypass: bool,
     /// The file's format version (`kynex_core::migrate`).
     pub version: u32,
     /// `state.json` was written by a newer Kynex; this session leaves the file alone.
@@ -131,12 +137,15 @@ impl Default for Saved {
             icons_shown_for: None,
             tiles: Default::default(),
             toast_corner: Corner::default(),
+            column: Default::default(),
             zoom: kynex_core::scale::NORMAL,
             footer: true,
             keep_awake: KeepAwake::default(),
+            sleep_after: Default::default(),
             openrouter: Default::default(),
             sessions_by_provider: false,
             sessions_show_archived: false,
+            allow_bypass: false,
         }
     }
 }

@@ -112,7 +112,7 @@ impl KynexApp {
     }
 
     /// Moves keyboard focus into the focused pane: `TerminalView` for running `agent_cli`
-    /// panes, `ClaudeChatView` for Claude Chat panes, `picker_focus` for pending provider
+    /// panes, `ClaudePane` for Claude panes, `picker_focus` for pending provider
     /// pickers, or the tool pane's focus handle.
     pub(super) fn focus_input(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus_tool_input(window, cx) {
@@ -134,7 +134,7 @@ impl KynexApp {
             }
             Some(Content::ClaudeChat) => {
                 if let Some(chat) = self.pane_claude_chat(focus) {
-                    chat.view.read(cx).focus_handle(cx).focus(window, cx);
+                    chat.view.focus(window, cx);
                 } else {
                     self.picker_focus.focus(window, cx);
                 }

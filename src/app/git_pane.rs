@@ -134,7 +134,6 @@ impl KynexApp {
     }
 
     /// Opens a file's whole diff in a modal.
-    #[allow(dead_code)]
     pub(super) fn open_file_changes(
         &mut self,
         cwd: PathBuf,

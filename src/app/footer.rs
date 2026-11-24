@@ -1,6 +1,7 @@
 //! The status footer along the bottom of the window: what Kynex and the
 //! processes it started cost on the left (`kynex_core::resources`), and on the
-//! right OpenRouter credit and the update pill (`status.rs`).
+//! right OpenRouter credit, the usage-limit meters (`usage_meter.rs`) and the
+//! update pill (`status.rs`).
 
 use std::time::Duration;
 
@@ -82,6 +83,7 @@ impl KynexApp {
             .children(resources)
             .child(div().flex_1())
             .children(self.render_openrouter_credit(cx))
+            .children(self.render_usage(cx))
             .children(self.render_update_pill(cx))
     }
 }

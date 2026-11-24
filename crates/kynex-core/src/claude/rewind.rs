@@ -12,9 +12,13 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
+
+/// Turns on the CLI's file checkpoints, off by default outside its own UI.
+pub(crate) const CHECKPOINTS_ENV: &str = "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING";
 
 /// A message the session can go back to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,12 +41,12 @@ pub struct Point {
 /// The entries of the conversation's current branch, oldest first: from the
 /// newest entry back through its parents. A `/compact` boundary has no parent
 /// but names the entry it follows (`logicalParentUuid`), so it's crossed too.
-fn branch(log: &str) -> Vec<Value> {
+pub(crate) fn branch(log: &str) -> Vec<Value> {
     branch_at(log, None)
 }
 
 /// The branch ending at entry `leaf`, or at the last entry if `None`.
-fn branch_at(log: &str, leaf: Option<&str>) -> Vec<Value> {
+pub(crate) fn branch_at(log: &str, leaf: Option<&str>) -> Vec<Value> {
     let mut by_uuid: HashMap<String, Value> = HashMap::new();
     let wanted = leaf;
     let mut leaf = None;
@@ -71,7 +75,7 @@ fn branch_at(log: &str, leaf: Option<&str>) -> Vec<Value> {
 }
 
 /// A log timestamp, UTC like `2026-10-27T15:57:20.276Z`; fractions are dropped.
-fn parse_time(s: &str) -> Option<SystemTime> {
+pub(crate) fn parse_time(s: &str) -> Option<SystemTime> {
     let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
     let (y, m, d) = (n(0..4)?, n(5..7)?, n(8..10)?);
     let secs = n(11..13)? * 3600 + n(14..16)? * 60 + n(17..19)?;
@@ -174,6 +178,27 @@ pub fn points(cwd: &Path, id: &str) -> Result<Vec<Point>, String> {
     let path = crate::sessions::find_claude_transcript(cwd, id).ok_or("This session's log wasn't found.")?;
     let log = std::fs::read_to_string(&path).map_err(|e| format!("Couldn't read {}: {e}", path.display()))?;
     Ok(points_in(&log))
+}
+
+/// Puts the files Claude changed since `point` back as they were before it.
+/// Blocks while a `claude` process does it (a second or two); the session's
+/// own process should be stopped first. `provider` is the session's.
+pub fn restore_files(cwd: &Path, id: &str, point: &Point, provider: &crate::provider::Launch) -> Result<(), String> {
+    let mut cmd = crate::claude::session::claude_command(cwd, provider);
+    // No MCP servers: they'd start for nothing.
+    cmd.args(["-p", "--resume", id, "--rewind-files", &point.uuid, "--strict-mcp-config"])
+        .env(CHECKPOINTS_ENV, "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let out =
+        crate::process::dies_with_parent(&mut cmd).output().map_err(|e| format!("failed to start `claude`: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let said = [&out.stderr, &out.stdout].map(|b| String::from_utf8_lossy(b).trim().to_string());
+    let said = said.into_iter().find(|s| !s.is_empty()).unwrap_or_else(|| out.status.to_string());
+    Err(format!("Couldn't restore the files: {said}"))
 }
 
 #[cfg(test)]

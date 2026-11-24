@@ -13,7 +13,7 @@ const MAX: usize = 200;
 /// How many sessions' unsent drafts a project keeps.
 const MAX_DRAFTS: usize = 50;
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct History {
     /// Oldest first; a message sent again moves to the end.
