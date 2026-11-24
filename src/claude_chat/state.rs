@@ -55,6 +55,12 @@ pub enum ClaudeChatEvent {
     },
     /// A note for the app's toasts (`crate::claude_pane`).
     Toast(kynex_core::toasts::Toast),
+    /// The progress toast titled `progress` is done: it closes, and `outcome`
+    /// goes up instead (`crate::claude_pane`).
+    ToastDone {
+        progress: String,
+        outcome: Option<kynex_core::toasts::Toast>,
+    },
     /// `/clear`: a new session in this pane (`crate::claude_pane`).
     NewSession,
     /// `/resume`: the sessions list (`crate::claude_pane`).

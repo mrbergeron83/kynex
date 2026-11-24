@@ -170,11 +170,6 @@ impl ClaudePane {
         true
     }
 
-    /// The rewind menu (Esc Esc on an empty composer); it comes with the timeline (#545).
-    pub(super) fn open_rewind(&mut self, cx: &mut Context<Self>) {
-        cx.notify();
-    }
-
     /// Ctrl+G: the draft opens in your editor and comes back when it closes.
     pub(super) fn edit_in_editor(&mut self, cx: &mut Context<Self>) {
         // Already open there.

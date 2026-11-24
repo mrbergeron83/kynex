@@ -8,6 +8,7 @@
 //! redraws, so nothing polls while it's idle.
 
 mod composer;
+mod find;
 mod handoff;
 mod history;
 mod input_modes;
@@ -17,11 +18,13 @@ mod menus;
 mod models;
 mod prompts;
 mod queue;
+mod rewind;
 mod session_header;
 mod shell_runs;
 mod slash;
 mod tasks;
 mod thinking;
+mod timeline;
 mod todos;
 mod tool_rows;
 mod transcript;
@@ -42,6 +45,7 @@ use kynex_core::claude::input::input_mode::InputMode;
 use kynex_core::claude::input::paste::Pastes;
 use kynex_core::claude::prompt_history::History;
 use kynex_core::claude::session::{self, Attachment, Item, Kind, Session};
+use kynex_core::claude::timeline::{Fold, Turns};
 use kynex_core::project::{ClaudeSettings, Permissions};
 use kynex_core::toasts::Toast;
 
@@ -131,6 +135,18 @@ pub struct ClaudePane {
     prompt_exit: Leaving<Entity<PromptView>>,
     /// The todo list folded open by hand after its turn.
     todos_open: bool,
+    /// The timeline's turns, kept up with the transcript.
+    timeline: Turns,
+    /// Which of its turns show their steps.
+    fold: Fold,
+    /// The timeline shows beside the transcript (Ctrl+Shift+T).
+    timeline_open: bool,
+    /// The row a timeline jump or a find lit up.
+    flash: Option<timeline::Flash>,
+    /// The find bar (Ctrl+F), while open.
+    find: Option<find::FindBar>,
+    /// The rewind popup (Esc Esc), while open.
+    rewind: Option<rewind::RewindMenu>,
     /// What the app was last told.
     state: AgentState,
     detail: String,
@@ -256,6 +272,12 @@ impl ClaudePane {
             prompt: None,
             prompt_exit: Leaving::new(QUICK),
             todos_open: false,
+            timeline: Turns::default(),
+            fold: Fold::default(),
+            timeline_open: false,
+            flash: None,
+            find: None,
+            rewind: None,
             state: AgentState::Idle,
             detail: "Ready".into(),
             title: None,
@@ -474,17 +496,6 @@ impl ClaudePane {
         launch.model().filter(|m| !m.is_empty()).unwrap_or("the default model").to_string()
     }
 
-    /// Row `row` lit up after a timeline jump; the timeline comes with stage 4.
-    fn flash_row(
-        &self,
-        _key: Key,
-        _row: usize,
-        el: gpui::Stateful<gpui::Div>,
-        _t: &crate::theme::Palette,
-    ) -> gpui::AnyElement {
-        el.into_any_element()
-    }
-
     fn toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
         cx.emit(ClaudeChatEvent::Toast(toast));
     }
@@ -525,7 +536,10 @@ impl Render for ClaudePane {
         let t = theme(cx).clone();
         let header = self.render_session_header(key, cx);
         let thread = self.render_thread(key, window, cx);
+        // The find bar is the focused pane's, as its matches are marked app-wide.
+        let find = self.focus.contains_focused(window, cx).then(|| self.render_find(cx)).flatten();
         let composer = self.render_composer(Some(key), window, cx);
+        let timeline = self.timeline_open.then(|| self.render_timeline(key, cx)).flatten();
         let menu = self.render_menu(cx);
         let viewer = self.render_image_viewer(window);
         div()
@@ -539,8 +553,22 @@ impl Render for ClaudePane {
             .on_drop(cx.listener(Self::on_drop))
             .map(|d| self.bind_actions(d, cx))
             .children(header)
-            .child(thread)
-            .child(composer)
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .child(div().relative().flex().flex_col().flex_1().min_h_0().child(thread).children(find))
+                            .child(composer),
+                    )
+                    .children(timeline),
+            )
             .children(menu)
             .children(viewer)
     }

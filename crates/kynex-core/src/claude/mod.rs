@@ -3,6 +3,7 @@
 //! transcript/composer helpers. Zero UI/gpui dependency.
 
 pub mod attach;
+pub mod chat_timeline;
 pub mod client;
 pub mod column;
 pub mod commands;

@@ -506,6 +506,15 @@ impl KynexApp {
                 self.toast(toast.clone());
                 cx.notify();
             }
+            ClaudeChatEvent::ToastDone { progress, outcome } => {
+                let progress = progress.clone();
+                let busy = kynex_core::toasts::Kind::Progress;
+                self.toasts.dismiss_where(|t| t.kind == busy && t.title == progress);
+                if let Some(t) = outcome {
+                    self.toast(t.clone());
+                }
+                cx.notify();
+            }
             ClaudeChatEvent::NewSession => {
                 let Some((cwd, provider)) = self
                     .claude_chats

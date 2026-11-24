@@ -1,6 +1,7 @@
 //! The chat pane's actions and their user-editable key bindings (`keymap.json`,
 //! read with the app's in `app::keys`), in the "ClaudePane" context: the
-//! composer's Claude Code keys, Ctrl+O, and scrolling the transcript.
+//! composer's Claude Code keys, Ctrl+O, find, the timeline, and scrolling the
+//! transcript.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -21,6 +22,10 @@ actions!(
         ExpandTools,
         EditInEditor,
         Rewind,
+        FindInTranscript,
+        ToggleTimeline,
+        PrevTurn,
+        NextTurn,
         PageUp,
         PageDown,
         ScrollTop,
@@ -36,7 +41,7 @@ const CONTEXT: &str = "ClaudePane";
 
 /// The pane's shortcuts and their defaults, Claude Code's where it has one;
 /// `keymap.json` overrides them by name like the app's own.
-pub(crate) const SHORTCUTS: [(&str, &str); 13] = [
+pub(crate) const SHORTCUTS: [(&str, &str); 17] = [
     ("cycle_mode", "shift-tab"),
     // Claude Code's Alt+T: extended thinking on or off.
     ("toggle_thinking", "alt-t"),
@@ -49,6 +54,11 @@ pub(crate) const SHORTCUTS: [(&str, &str); 13] = [
     // Two Esc presses on an empty composer, told apart from one by timing (see
     // `history.rs`): a key sequence would hold every single Esc back.
     ("rewind", ESC_ESC),
+    ("find", "secondary-f"),
+    ("toggle_timeline", "secondary-shift-t"),
+    // The timeline's turns, previous and next.
+    ("prev_turn", "alt-up"),
+    ("next_turn", "alt-down"),
     // Scrolling the transcript, even while typing; Home / End and ↑ / ↓ also
     // do when the message box doesn't have them (see `TRANSCRIPT_KEYS`).
     ("page_up", "pageup"),
@@ -94,6 +104,10 @@ pub(crate) fn binding(name: &str, keys: &'static str) -> Option<KeyBinding> {
         "expand_tools" => KeyBinding::new(keys, ExpandTools, c),
         "edit_in_editor" => KeyBinding::new(keys, EditInEditor, c),
         "rewind" => KeyBinding::new(keys, Rewind, c),
+        "find" => KeyBinding::new(keys, FindInTranscript, c),
+        "toggle_timeline" => KeyBinding::new(keys, ToggleTimeline, c),
+        "prev_turn" => KeyBinding::new(keys, PrevTurn, c),
+        "next_turn" => KeyBinding::new(keys, NextTurn, c),
         "page_up" => KeyBinding::new(keys, PageUp, c),
         "page_down" => KeyBinding::new(keys, PageDown, c),
         "scroll_top" => KeyBinding::new(keys, ScrollTop, c),
@@ -128,6 +142,10 @@ impl ClaudePane {
             .on_action(cx.listener(|this, _: &PickModel, _, cx| this.open_model_menu(cx)))
             .on_action(cx.listener(Self::edit_in_editor_action))
             .on_action(cx.listener(|this, _: &Rewind, _, cx| this.open_rewind(cx)))
+            .on_action(cx.listener(Self::open_find))
+            .on_action(cx.listener(Self::toggle_timeline))
+            .on_action(cx.listener(Self::prev_turn))
+            .on_action(cx.listener(Self::next_turn))
             .on_action(cx.listener(Self::expand_tools_action))
             .on_action(cx.listener(|this, _: &PageUp, _, cx| this.scroll_keys(Scroll::Page(-1.), cx)))
             .on_action(cx.listener(|this, _: &PageDown, _, cx| this.scroll_keys(Scroll::Page(1.), cx)))

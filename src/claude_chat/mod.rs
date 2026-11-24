@@ -156,8 +156,8 @@ pub struct ClaudeChatView {
 
     // Timeline (Ctrl+Shift+T), and the row flashed after a jump
     pub(super) timeline_open: bool,
-    pub(super) timeline: kynex_core::claude::timeline::Turns,
-    pub(super) timeline_fold: kynex_core::claude::timeline::Fold,
+    pub(super) timeline: kynex_core::claude::chat_timeline::Turns,
+    pub(super) timeline_fold: kynex_core::claude::chat_timeline::Fold,
     pub(super) flash: Option<timeline::Flash>,
 
     // Media & Lightbox (all RenderImage textures deterministically dropped via cx.drop_image)

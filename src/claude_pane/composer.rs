@@ -177,6 +177,7 @@ impl ClaudePane {
         let popup = match () {
             _ if self.prompt.is_some() => None,
             _ if self.input_mode == InputMode::Shortcuts => Some(self.render_shortcuts_card(cx)),
+            _ if self.rewinding() => self.render_rewind(cx),
             _ if self.history_searching() => self.render_history_search(cx),
             _ => self.render_slash(cx).or_else(|| self.render_mentions(cx)),
         };
@@ -296,6 +297,8 @@ impl ClaudePane {
         let input_mode = self.input_mode;
         let placeholder = if input_mode != InputMode::Prompt {
             input_mode.placeholder()
+        } else if self.rewinding() {
+            "Pick a message to go back to · Esc to cancel"
         } else if self.history_searching() {
             "Search what you've sent…"
         } else {
@@ -413,7 +416,11 @@ impl ClaudePane {
             .flex_col()
             .gap_2()
             .capture_action(cx.listener(|this, _: &input::Up, _, cx| {
-                if this.history_search_move(false, cx) || this.slash_move(false, cx) || this.mention_move(false, cx) {
+                if this.rewind_move(false, cx)
+                    || this.history_search_move(false, cx)
+                    || this.slash_move(false, cx)
+                    || this.mention_move(false, cx)
+                {
                     cx.stop_propagation();
                 }
             }))
@@ -425,7 +432,11 @@ impl ClaudePane {
                 }
             }))
             .capture_action(cx.listener(|this, _: &input::Down, _, cx| {
-                if this.history_search_move(true, cx) || this.slash_move(true, cx) || this.mention_move(true, cx) {
+                if this.rewind_move(true, cx)
+                    || this.history_search_move(true, cx)
+                    || this.slash_move(true, cx)
+                    || this.mention_move(true, cx)
+                {
                     cx.stop_propagation();
                 }
             }))
@@ -435,7 +446,9 @@ impl ClaudePane {
                 }
             }))
             .capture_action(cx.listener(|this, _: &input::Enter, window, cx| {
-                if this.history_searching() {
+                if this.rewind_accept(cx) {
+                    cx.stop_propagation();
+                } else if this.history_searching() {
                     this.take_history_match(cx);
                     cx.stop_propagation();
                 } else if this.slash_accept(true, window, cx) || this.mention_accept(window, cx) {
@@ -449,7 +462,8 @@ impl ClaudePane {
                 }
             }))
             .capture_action(cx.listener(|this, _: &Interrupt, _, cx| {
-                if this.cancel_history_search(cx)
+                if this.rewind_back(cx)
+                    || this.cancel_history_search(cx)
                     || this.slash_dismiss(cx)
                     || this.mention_dismiss(cx)
                     || this.leave_input_mode(cx)
@@ -460,6 +474,9 @@ impl ClaudePane {
             }))
             .capture_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
                 let k = &ev.keystroke;
+                if k.key == "tab" && !k.modifiers.modified() && this.rewind_accept(cx) {
+                    return cx.stop_propagation();
+                }
                 if k.key == "tab" && !k.modifiers.modified() && this.history_searching() {
                     this.take_history_match(cx);
                     return cx.stop_propagation();

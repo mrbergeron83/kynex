@@ -3,11 +3,11 @@
 //! subagents, prompts, errors). Clicking one glides the transcript there and
 //! flashes it; the part in view is marked as you scroll. Ctrl+Shift+T shows
 //! it; Alt+↑ / Alt+↓ jump between turns the same way.
-//! `kynex_core::claude::timeline` builds the entries.
+//! `kynex_core::claude::chat_timeline` builds the entries.
 
 use gpui::{Animation, AnimationExt, AnyElement, Context, FontWeight, MouseButton, div, prelude::*};
+use kynex_core::claude::chat_timeline::{self as timeline, Row, StepKind, Turn};
 use kynex_core::claude::runs::ListItem;
-use kynex_core::claude::timeline::{self, Row, StepKind, Turn};
 
 use super::ClaudeChatView;
 use super::state::LogRow;
