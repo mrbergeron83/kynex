@@ -47,6 +47,12 @@ impl<K: Hash + Eq + Clone, V> Lru<K, V> {
     pub fn used(&self) -> usize {
         self.used
     }
+
+    /// Empties it, handing back everything it held.
+    pub fn clear(&mut self) -> Vec<V> {
+        self.used = 0;
+        self.map.drain().map(|(_, (v, _, _))| v).collect()
+    }
 }
 
 #[cfg(test)]
@@ -70,5 +76,8 @@ mod tests {
         // Replacing an entry hands back the old value.
         assert_eq!(lru.insert("d", 5, 2), [4]);
         assert_eq!(lru.used(), 2);
+        // Clearing hands everything back.
+        assert_eq!(lru.clear(), [5]);
+        assert_eq!((lru.used(), lru.get(&"d")), (0, None));
     }
 }

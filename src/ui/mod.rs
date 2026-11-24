@@ -47,6 +47,7 @@ pub enum Icon {
     ChevronDown,
     ChevronRight,
     ArrowUp,
+    Stop,
     Loader,
     Check,
     Refresh,
@@ -89,6 +90,7 @@ impl Icon {
             Icon::ChevronDown => "icons/chevron-down.svg",
             Icon::ChevronRight => "icons/chevron-right.svg",
             Icon::ArrowUp => "icons/arrow-up.svg",
+            Icon::Stop => "icons/stop.svg",
             Icon::Loader => "icons/loader.svg",
             Icon::Check => "icons/check.svg",
             Icon::Refresh => "icons/refresh.svg",
@@ -108,7 +110,7 @@ impl Icon {
 }
 
 /// Line icons drawn on a 24px grid, Lucide style.
-const ICONS: [(&str, &str); 40] = [
+const ICONS: [(&str, &str); 41] = [
     // Steps on a line, for the session timeline.
     (
         "timeline",
@@ -149,6 +151,7 @@ const ICONS: [(&str, &str); 40] = [
         r#"<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>"#,
     ),
     ("arrow-up", r#"<path d="m5 12 7-7 7 7M12 19V5"/>"#),
+    ("stop", r#"<rect x="6" y="6" width="12" height="12" rx="1.5" fill="black"/>"#),
     ("stop", r#"<rect x="6" y="6" width="12" height="12" rx="1.5" fill="black"/>"#),
     ("loader", r#"<path d="M21 12a9 9 0 1 1-6.22-8.56"/>"#),
     ("check", r#"<path d="M20 6 9 17l-5-5"/>"#),

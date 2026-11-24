@@ -207,7 +207,7 @@ impl KynexApp {
     ) -> Result<Value, Option<String>> {
         if let Some(view) = self.pane_claude_chat(pane).map(|c| c.view.clone()) {
             let prompt = text.to_string();
-            view.update(cx, |v, cx| v.send_external_prompt(prompt, cx));
+            view.send_external_prompt(prompt, cx);
             if wait {
                 self.hold(Target::Agent { pane, start_within: Duration::from_secs(30) }, false, timeout, cx);
                 return Err(None);

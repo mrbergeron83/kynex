@@ -206,7 +206,7 @@ impl KynexApp {
                         if let Some(view) = this.agent_instances.get(&agent_id).and_then(|a| a.view.clone()) {
                             view.update(cx, |v, _| v.write(vec![0x03]));
                         } else if let Some(view) = this.claude_chats.get(&agent_id).map(|c| c.view.clone()) {
-                            view.update(cx, |v, cx| v.cancel_turn(cx));
+                            view.cancel_turn(cx);
                         }
                         cx.notify();
                     }))

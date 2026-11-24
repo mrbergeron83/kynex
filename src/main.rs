@@ -7,10 +7,16 @@
 mod app;
 mod chrome;
 mod claude_chat;
+// The old Claude chat, behind `KYNEX_OLD_CHAT=1` while it's ported back (#545); parts
+// of it are only used by stages still to come.
+#[allow(dead_code)]
+mod claude_pane;
 mod file_links;
 mod git;
 mod git_pane;
 mod markdown;
+#[allow(dead_code)]
+mod prompt;
 mod terminal;
 mod theme;
 mod ui;

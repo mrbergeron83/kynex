@@ -87,6 +87,8 @@ pub struct Saved {
     pub tiles: kynex_core::tile_style::TileTweaks,
     /// The window corner toasts gather in.
     pub toast_corner: Corner,
+    /// How wide the old Claude chat's transcript column is (`KYNEX_OLD_CHAT`).
+    pub column: kynex_core::claude::column::ColumnWidth,
     /// The UI zoom, 1.0 for normal size (`kynex_core::scale`).
     pub zoom: f32,
     /// The status footer along the bottom of the window is showing.
@@ -131,6 +133,7 @@ impl Default for Saved {
             icons_shown_for: None,
             tiles: Default::default(),
             toast_corner: Corner::default(),
+            column: Default::default(),
             zoom: kynex_core::scale::NORMAL,
             footer: true,
             keep_awake: KeepAwake::default(),

@@ -62,3 +62,4 @@ pub mod watch;
 #[cfg(windows)]
 pub mod win_shell;
 pub mod workspace;
+pub mod zoom;

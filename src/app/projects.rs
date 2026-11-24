@@ -134,7 +134,7 @@ impl KynexApp {
             }
             Some(Content::ClaudeChat) => {
                 if let Some(chat) = self.pane_claude_chat(focus) {
-                    chat.view.read(cx).focus_handle(cx).focus(window, cx);
+                    chat.view.focus(window, cx);
                 } else {
                     self.picker_focus.focus(window, cx);
                 }

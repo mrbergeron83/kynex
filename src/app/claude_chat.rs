@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{AnyElement, Context, Entity, Focusable, MouseButton, MouseDownEvent, Window, div, prelude::*};
+use gpui::{AnyElement, App, Context, Entity, Focusable, MouseButton, MouseDownEvent, Window, div, prelude::*};
 use kynex_core::agent_cli;
 use kynex_core::agent_panes::AgentState;
 use kynex_core::control::agent as control_agent;
@@ -23,6 +23,7 @@ use super::agent_cli::AgentId;
 use super::agent_picker::AgentPickerState;
 use super::menus::Menu;
 use crate::claude_chat::{ClaudeChatConfig, ClaudeChatEvent, ClaudeChatView};
+use crate::claude_pane::{self, ClaudePane};
 use crate::theme::{mono, theme};
 use crate::ui::pane_drag::pane_handle;
 use crate::ui::{Icon, Lamp, Tooltip, icon_button, lamp, px};
@@ -32,9 +33,55 @@ pub(super) struct LiveClaudeChat {
     pub id: AgentId,
     pub cwd: PathBuf,
     pub meta: AgentCliPane,
-    pub view: Entity<ClaudeChatView>,
+    pub view: ChatView,
     pub state: AgentState,
     pub detail: String,
+}
+
+/// The view a [`LiveClaudeChat`] draws in: today's `ClaudeChatView`, or the old chat
+/// (`ClaudePane`) when `KYNEX_OLD_CHAT=1` while it's ported back (#545).
+#[derive(Clone)]
+pub(super) enum ChatView {
+    New(Entity<ClaudeChatView>),
+    Old(Entity<ClaudePane>),
+}
+
+impl ChatView {
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        let handle = match self {
+            ChatView::New(v) => v.read(cx).focus_handle(cx),
+            ChatView::Old(v) => v.read(cx).focus_handle(cx),
+        };
+        handle.focus(window, cx);
+    }
+
+    pub fn stop(&self, cx: &mut App) {
+        match self {
+            ChatView::New(v) => v.update(cx, |v, cx| v.stop(cx)),
+            ChatView::Old(v) => v.update(cx, |v, cx| v.stop(cx)),
+        }
+    }
+
+    pub fn cancel_turn(&self, cx: &mut App) {
+        match self {
+            ChatView::New(v) => v.update(cx, |v, cx| v.cancel_turn(cx)),
+            ChatView::Old(v) => v.update(cx, |v, cx| v.cancel_turn(cx)),
+        }
+    }
+
+    pub fn send_external_prompt(&self, text: String, cx: &mut App) {
+        match self {
+            ChatView::New(v) => v.update(cx, |v, cx| v.send_external_prompt(text, cx)),
+            ChatView::Old(v) => v.update(cx, |v, cx| v.send_external_prompt(text, cx)),
+        }
+    }
+
+    fn element(&self) -> AnyElement {
+        match self {
+            ChatView::New(v) => v.clone().into_any_element(),
+            ChatView::Old(v) => v.clone().into_any_element(),
+        }
+    }
 }
 
 impl KynexApp {
@@ -54,7 +101,7 @@ impl KynexApp {
     pub(super) fn stop_pane_claude_chat(&mut self, pane: PaneId, cx: &mut Context<Self>) {
         if let Some(old_id) = self.pane_claude.remove(&pane) {
             if let Some(chat) = self.claude_chats.remove(&old_id) {
-                chat.view.update(cx, |v, cx| v.stop(cx));
+                chat.view.stop(cx);
             }
             self.clear_agent_alert(old_id, cx);
         }
@@ -101,7 +148,7 @@ impl KynexApp {
             t.focus_pane(pane);
         }
         self.mark_agent_seen(agent_id, cx);
-        view.read(cx).focus_handle(cx).focus(window, cx);
+        view.focus(window, cx);
         self.save_layouts(cx);
         cx.notify();
     }
@@ -169,11 +216,30 @@ impl KynexApp {
             openrouter_models: self.saved.openrouter.models.clone(),
             extra_env,
         };
-        let view = cx.new(|cx| ClaudeChatView::new(config, window, cx));
-        cx.subscribe_in(&view, window, move |this, _, ev: &ClaudeChatEvent, window, cx| {
-            this.on_claude_chat_event(agent_id, ev, window, cx);
-        })
-        .detach();
+        let view = if claude_pane::enabled() {
+            let settings_dir = self.tile_projects.get(&ws).cloned().filter(|p| !same_folder(p, &ws));
+            let column = self.saved.column;
+            let view = cx.new(|cx| {
+                let mut pane = ClaudePane::new(config, window, cx);
+                pane.column = column;
+                if let Some(dir) = settings_dir {
+                    pane.set_settings_dir(dir);
+                }
+                pane
+            });
+            cx.subscribe_in(&view, window, move |this, _, ev: &ClaudeChatEvent, window, cx| {
+                this.on_claude_chat_event(agent_id, ev, window, cx);
+            })
+            .detach();
+            ChatView::Old(view)
+        } else {
+            let view = cx.new(|cx| ClaudeChatView::new(config, window, cx));
+            cx.subscribe_in(&view, window, move |this, _, ev: &ClaudeChatEvent, window, cx| {
+                this.on_claude_chat_event(agent_id, ev, window, cx);
+            })
+            .detach();
+            ChatView::New(view)
+        };
 
         let meta = AgentCliPane {
             provider: Some(provider_id.clone()),
@@ -202,7 +268,7 @@ impl KynexApp {
         }
         let focused = self.tiles.get(&ws).is_some_and(|t| t.focus() == Some(pane));
         if focused {
-            view.read(cx).focus_handle(cx).focus(window, cx);
+            view.focus(window, cx);
         }
         self.save_layouts(cx);
         self.sync_awake();
@@ -249,7 +315,7 @@ impl KynexApp {
     pub(super) fn stop_claude_chat(&mut self, agent_id: AgentId, window: &mut Window, cx: &mut Context<Self>) {
         let mounted = self.pane_showing_agent(agent_id);
         let cwd = if let Some(chat) = self.claude_chats.remove(&agent_id) {
-            chat.view.update(cx, |v, cx| v.stop(cx));
+            chat.view.stop(cx);
             Some(chat.cwd)
         } else {
             None
@@ -432,6 +498,13 @@ impl KynexApp {
                 };
                 self.open_file_view(resolved, *line, window, cx);
             }
+            ClaudeChatEvent::OpenFileChanges { cwd, path } => {
+                self.open_file_changes(cwd.clone(), path.clone(), window, cx);
+            }
+            ClaudeChatEvent::Toast(toast) => {
+                self.toast(toast.clone());
+                cx.notify();
+            }
         }
     }
 
@@ -526,7 +599,7 @@ impl KynexApp {
         let header = pane_handle(header_content, Some(pane), &title);
 
         let body: AnyElement = if let Some(view) = self.pane_claude_chat(pane).map(|c| c.view.clone()) {
-            div().size_full().child(view).into_any_element()
+            div().size_full().child(view.element()).into_any_element()
         } else {
             self.render_provider_picker(pane, ws, focused, cx)
         };

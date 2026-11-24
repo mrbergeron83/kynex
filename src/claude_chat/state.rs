@@ -31,13 +31,28 @@ pub struct ClaudeChatConfig {
 /// Events emitted by [`super::ClaudeChatView`] to `KynexApp` (`src/app/claude_chat.rs`).
 #[derive(Clone, Debug)]
 pub enum ClaudeChatEvent {
-    StatusChanged { state: AgentState, detail: String },
+    StatusChanged {
+        state: AgentState,
+        detail: String,
+    },
     SessionId(String),
     TitleChanged(String),
     TurnFinished,
-    ForkRequested { from_session_id: String },
+    ForkRequested {
+        from_session_id: String,
+    },
     RunInTerminal(String),
-    OpenFile { path: PathBuf, line: Option<u32> },
+    OpenFile {
+        path: PathBuf,
+        line: Option<u32>,
+    },
+    /// A file's whole diff, from the old chat's turn recap (`crate::claude_pane`).
+    OpenFileChanges {
+        cwd: PathBuf,
+        path: PathBuf,
+    },
+    /// A note for the app's toasts (`crate::claude_pane`).
+    Toast(kynex_core::toasts::Toast),
 }
 
 /// Reference key for an image rendered inside a transcript row.
