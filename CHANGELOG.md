@@ -5,6 +5,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.42] - 2026-11-24
+
 ### Changed
 
 - Claude Code and Claude Code (OpenRouter) panes are the Claude chat of 0.0.36 again: its transcript, tool rows, composer, model and effort pickers, permission and plan prompts, question forms, timeline, find and rewind, driven by its own session engine; Settings has Bypass permissions, Transcript width and Sleep idle sessions again, the footer shows the account's usage-limit meters, background tasks that end out of sight raise a toast, and `knx pane read` / `wait` on a Claude pane include what it last said (#545).
@@ -1113,7 +1115,8 @@ First public version.
 - Kynex brand: Instrument · Petrol themes, bundled fonts, app icon.
 - Release workflow building Windows, macOS and Linux archives with third-party licenses.
 
-[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.41...HEAD
+[Unreleased]: https://github.com/mrbergeron83/kynex/compare/v0.0.42...HEAD
+[0.0.42]: https://github.com/mrbergeron83/kynex/compare/v0.0.41...v0.0.42
 [0.0.41]: https://github.com/mrbergeron83/kynex/compare/v0.0.40...v0.0.41
 [0.0.40]: https://github.com/mrbergeron83/kynex/compare/v0.0.39...v0.0.40
 [0.0.39]: https://github.com/mrbergeron83/kynex/compare/v0.0.38...v0.0.39
