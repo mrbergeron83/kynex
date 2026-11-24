@@ -20,7 +20,7 @@ image = "0.25.10"
 # Reading git state in-process (worktrees, status, ahead/behind): no `git` process to start. Writes stay on the CLI.
 gix = { version = "0.90", default-features = false, features = ["status", "revision", "sha1"] }
 # Watching a session's scratch folder for the file explorer (ReadDirectoryChangesW, inotify, FSEvents).
-jiff = "0.2.42"
+jiff = "1.0.0"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 polling = "3"
 # Markdown in Claude chat replies (kynex-core/src/markdown.rs).
