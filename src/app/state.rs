@@ -95,6 +95,8 @@ pub struct Saved {
     pub footer: bool,
     /// When to keep the computer from sleeping.
     pub keep_awake: KeepAwake,
+    /// How long an idle Claude pane keeps its `claude` process.
+    pub sleep_after: kynex_core::claude::sleep::SleepAfter,
     /// OpenRouter: My models, default model, output cap, last key check (key is in OS keychain).
     pub openrouter: kynex_core::openrouter::OpenRouterConfig,
     /// The sessions panel splits ungrouped sessions by provider, under a header each.
@@ -139,6 +141,7 @@ impl Default for Saved {
             zoom: kynex_core::scale::NORMAL,
             footer: true,
             keep_awake: KeepAwake::default(),
+            sleep_after: Default::default(),
             openrouter: Default::default(),
             sessions_by_provider: false,
             sessions_show_archived: false,

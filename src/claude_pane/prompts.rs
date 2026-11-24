@@ -70,7 +70,13 @@ impl ClaudePane {
             Some((s.uid, first, it.count()))
         });
         let Some((key, req, queued)) = pending else {
-            self.prompt = None;
+            // Gone unanswered (the CLI dropped it, the process ended): the keyboard
+            // it had goes back to the composer rather than nowhere.
+            if let Some(p) = self.prompt.take()
+                && p.view.read(cx).focus_handle(cx).contains_focused(window, cx)
+            {
+                self.composer.read(cx).focus_handle(cx).focus(window, cx);
+            }
             return;
         };
         if self.prompt.as_ref().is_none_or(|p| p.key != key || p.id != req.id) {

@@ -494,3 +494,62 @@ fn a_prompt_carries_why_the_cli_asked() {
         .collect();
     assert_eq!(whys, ["An ask rule in this project's .claude/settings.json matches this.", ""]);
 }
+
+#[test]
+fn an_unknown_control_request_is_refused() {
+    let mut s = Session::new(Kind::Code, std::env::temp_dir());
+    let (_tx, rx) = std::sync::mpsc::channel();
+    s.starting = Some(rx);
+    s.handle(json!({ "type": "control_request", "request_id": "r9", "request": { "subtype": "elicitation" } }));
+    let sent: Value = serde_json::from_str(s.outbox.last().expect("no answer")).unwrap();
+    assert_eq!(sent["type"], "control_response");
+    assert_eq!(sent["response"]["subtype"], "error");
+    assert_eq!(sent["response"]["request_id"], "r9");
+    assert!(sent["response"]["error"].as_str().unwrap().contains("elicitation"));
+    // Nothing for the user to answer.
+    assert!(!s.items.iter().any(|i| matches!(i, Item::Permission { .. })));
+}
+
+#[test]
+fn an_idle_session_sleeps_after_its_time() {
+    let after = Duration::from_secs(60);
+    let mut s = Session::new(Kind::Code, std::env::temp_dir());
+    let (_tx, rx) = std::sync::mpsc::channel();
+    s.starting = Some(rx);
+    let now = Instant::now();
+    // Not idle long enough.
+    assert!(!s.sleep_if_idle(after, now));
+    // Working: stays up however long.
+    s.busy = true;
+    assert!(!s.sleep_if_idle(after, now + after * 2));
+    s.busy = false;
+    assert!(s.sleep_if_idle(after, now + after * 2));
+    assert!(!s.is_running());
+    // Not running: nothing to stop.
+    assert!(!s.sleep_if_idle(after, now + after * 3));
+}
+
+#[test]
+fn an_unsent_fork_keeps_no_id() {
+    let mut s = Session::new(Kind::Code, std::env::temp_dir());
+    let (_tx, rx) = std::sync::mpsc::channel();
+    s.starting = Some(rx);
+    s.fork_from = Some("original".into());
+    s.reopened = true;
+    // Warmed up: its process reports the id it'll write under, but hasn't yet.
+    s.handle(json!({ "type": "system", "subtype": "status", "session_id": "forked" }));
+    assert_eq!(s.kept_id(), None);
+    s.send("go".into(), Vec::new());
+    assert_eq!(s.kept_id(), Some("forked"));
+}
+
+#[test]
+fn a_top_level_error_shows() {
+    let mut s = Session::new(Kind::Code, std::env::temp_dir());
+    s.handle(json!({ "type": "error", "error": { "type": "overloaded_error", "message": "Overloaded" } }));
+    s.handle(json!({ "type": "error", "error": "bad line" }));
+    s.handle(json!({ "type": "error", "message": "plain" }));
+    let errors: Vec<_> =
+        s.items.iter().filter_map(|i| if let Item::Error(e) = i { Some(e.as_str()) } else { None }).collect();
+    assert_eq!(errors, ["Overloaded", "bad line", "plain"]);
+}

@@ -135,6 +135,8 @@ pub struct KynexApp {
     pane_agents: HashMap<PaneId, agent_cli::AgentId>,
     /// All live native Claude Code chat instances across open workspaces (visible OR parked).
     claude_chats: HashMap<agent_cli::AgentId, claude_chat::LiveClaudeChat>,
+    /// Each folder's Claude prompt history and drafts, shared by its Claude panes.
+    claude_histories: HashMap<PathBuf, crate::claude_pane::SharedHistory>,
     /// Which [`claude_chat::LiveClaudeChat`] is currently mounted in each `ClaudeChat` pane.
     pane_claude: HashMap<PaneId, agent_cli::AgentId>,
     /// Inline provider picker state for pending `agent_cli` panes.
@@ -282,6 +284,7 @@ impl KynexApp {
         Self::watch_app_updates(cx);
         let resources_wake = Self::watch_resources(cx);
         Self::watch_usage(cx);
+        Self::watch_claude_sleep(cx);
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.probe_clis(cx))).detach();
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.load_openrouter(cx))).detach();
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.fold_worktree_tabs(cx))).detach();
@@ -384,6 +387,7 @@ impl KynexApp {
             agent_instances: HashMap::new(),
             pane_agents: HashMap::new(),
             claude_chats: HashMap::new(),
+            claude_histories: HashMap::new(),
             pane_claude: HashMap::new(),
             agent_pickers: HashMap::new(),
             agent_watch: false,

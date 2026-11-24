@@ -128,11 +128,13 @@ fn history_comes_newest_first_and_older_goes_in_front() {
     tx.send(Loaded::Recent(Replayed::of(None, unlogged([text("c"), text("d")])))).unwrap();
     assert_eq!(s.take_history(), Some(2));
     assert!(!s.loading());
+    // Shown, but older turns may still come in front: not all in yet.
+    assert!(!s.history_loaded());
     tx.send(Loaded::Older(Replayed::of(None, unlogged([text("a"), text("b")])).items)).unwrap();
     drop(tx);
     assert_eq!(s.take_history(), Some(2));
     assert_eq!(said(&s), ["a", "b", "c", "d"]);
-    assert!(s.loader.is_none());
+    assert!(s.loader.is_none() && s.history_loaded());
 
     // No log at all: the session says so, and carries on.
     let mut s = Session::new(Kind::Chat, std::env::temp_dir());

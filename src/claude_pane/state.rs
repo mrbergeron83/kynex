@@ -13,6 +13,10 @@ pub struct ClaudeChatConfig {
     pub model: Option<String>,
     pub resume_session_id: Option<String>,
     pub fork_from: Option<String>,
+    /// The title it had, kept with the pane: a resumed session keeps it.
+    pub title: Option<String>,
+    /// The history of `workspace`, shared with the other panes on it.
+    pub history: super::SharedHistory,
     pub launch: Launch,
     /// The OpenRouter settings (My models, the default, no-tools models), for the model picker.
     pub openrouter: kynex_core::openrouter::OpenRouterConfig,

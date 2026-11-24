@@ -224,6 +224,29 @@ impl Session {
                     state: PermState::Pending,
                 });
             }
+            // One this engine doesn't know: refused, so the CLI doesn't wait on it forever.
+            "control_request" => {
+                let subtype = v["request"]["subtype"].as_str().unwrap_or("unknown");
+                self.write(json!({
+                    "type": "control_response",
+                    "response": {
+                        "subtype": "error",
+                        "request_id": v["request_id"].clone(),
+                        "error": format!("Kynex doesn't handle the `{subtype}` request"),
+                    }
+                }));
+            }
+            // An error outside any turn's messages (a failed request, a bad line).
+            "error" => {
+                let error = &v["error"];
+                let text = error["message"]
+                    .as_str()
+                    .or(error.as_str())
+                    .or(v["message"].as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| v.to_string());
+                self.items.push(Item::Error(text));
+            }
             // The CLI dropped a request it sent, e.g. on an interrupt.
             "control_cancel_request" => {
                 let id = v["request_id"].as_str().unwrap_or("");

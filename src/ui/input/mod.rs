@@ -104,16 +104,13 @@ pub enum InputEvent {
     /// Enter in a field that sends (Shift+Enter adds a line instead).
     Submit,
     /// Paste with an image on the clipboard: the owner decides what to do with it.
-    #[allow(dead_code)]
     PasteImages(Vec<Image>),
     /// Paste of long text (>= 10 lines or >= 1,000 chars) when `intercept_long_paste` is enabled.
-    #[allow(dead_code)]
     PasteText(String),
     /// A paste long enough to fold ([`TextInput::fold_pastes`]): the owner puts
     /// something in its place with [`TextInput::insert`].
     PasteFolded(String),
     /// A click on an atomic [`Mark`] (these bytes of the text).
-    #[allow(dead_code)]
     MarkClicked(Range<usize>),
 }
 

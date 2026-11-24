@@ -43,7 +43,6 @@ use kynex_core::agent_panes::AgentState;
 use kynex_core::claude::column::ColumnWidth;
 use kynex_core::claude::input::input_mode::InputMode;
 use kynex_core::claude::input::paste::Pastes;
-use kynex_core::claude::prompt_history::History;
 use kynex_core::claude::session::{self, Attachment, Item, Kind, Session};
 use kynex_core::claude::timeline::{Fold, Turns};
 use kynex_core::project::{ClaudeSettings, Mode, Permissions};
@@ -56,6 +55,7 @@ use crate::ui::image_viewer::ImageViewer;
 use crate::ui::input::{InputEvent, TextInput};
 use crate::ui::motion::{Leaving, QUICK};
 use history::HistorySearch;
+pub use history::SharedHistory;
 use mentions::Mentions;
 use slash::Slash;
 use transcript::Thread;
@@ -110,7 +110,7 @@ pub struct ClaudePane {
     /// Ctrl+R over the sent messages.
     history_search: Option<HistorySearch>,
     /// What was sent in this project, for ↑ / ↓ and Ctrl+R; and unsent drafts.
-    history: History,
+    history: SharedHistory,
     /// Counts draft edits, so only the last one in a burst is saved.
     draft_gen: u64,
     /// When Esc last went to a draft, for Esc Esc.
@@ -235,6 +235,7 @@ impl ClaudePane {
         cx.on_focus(&focus, window, |this, _, _| this.warm()).detach();
 
         let reported_id = config.resume_session_id.clone();
+        let (history, title) = (config.history.clone(), config.title.clone());
         let mut pane = Self {
             config,
             focus: cx.focus_handle(),
@@ -257,7 +258,7 @@ impl ClaudePane {
             mentions: Mentions::default(),
             slash_exit: Leaving::new(QUICK),
             history_search: None,
-            history: History::default(),
+            history,
             draft_gen: 0,
             last_esc: None,
             input_mode: InputMode::Prompt,
@@ -276,7 +277,7 @@ impl ClaudePane {
             rewind: None,
             state: AgentState::Idle,
             detail: "Ready".into(),
-            title: None,
+            title,
             reported_id,
             name: None,
             was_busy: false,
@@ -399,6 +400,14 @@ impl ClaudePane {
         cx.notify();
     }
 
+    /// Stops the process if the session has been idle for `after` and can sleep
+    /// (Sleep idle sessions); the transcript stays, and the next message resumes it.
+    pub fn sleep_if_idle(&mut self, after: std::time::Duration, now: Instant, cx: &mut Context<Self>) {
+        if self.session.sleep_if_idle(after, now) {
+            cx.notify();
+        }
+    }
+
     /// The session's history or process had news: take it in and redraw.
     fn woke(&mut self, cx: &mut Context<Self>) {
         // Before `seen`: history isn't news (no toasts for old tasks).
@@ -435,8 +444,8 @@ impl ClaudePane {
 
     /// Tells the app what changed: the session's id, its title, its state, a turn's end.
     fn sync(&mut self, cx: &mut Context<Self>) {
-        if let Some(id) = self.session.session_id.clone()
-            && !self.session.is_new()
+        // Not while new, nor for an unsent fork: its reported id has no log yet.
+        if let Some(id) = self.session.kept_id().map(str::to_string)
             && self.reported_id.as_deref() != Some(id.as_str())
         {
             self.reported_id = Some(id.clone());
@@ -449,7 +458,9 @@ impl ClaudePane {
         {
             self.name = kynex_core::claude::titles::stored(id);
         }
+        // A resumed log comes newest first: its first message is known once it's all in.
         if self.title.is_none()
+            && self.session.history_loaded()
             && let Some(title) = first_line(&self.session.items)
         {
             self.title = Some(title.clone());

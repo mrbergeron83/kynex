@@ -20,6 +20,7 @@ pub mod queue;
 pub mod rewind;
 pub mod session;
 pub mod session_log;
+pub mod sleep;
 pub mod spent;
 pub mod subagents;
 pub mod tasks;

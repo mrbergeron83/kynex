@@ -4,6 +4,8 @@
 //! session's unsent draft, kept with the project so it survives a restart. The
 //! rules live in `kynex_core::claude::prompt_history`; this file only asks and draws.
 
+use std::cell::{RefCell, RefMut};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::ui::px;
@@ -14,6 +16,11 @@ use kynex_core::toasts::Toast;
 use super::ClaudePane;
 use super::keys::StashDraft;
 use crate::ui::completions::{Completion, completions};
+
+/// A project's history, one for all the panes on its folder (the app keeps them
+/// by folder), so one pane's sends and drafts don't overwrite another's.
+/// `None` until it's read from disk.
+pub type SharedHistory = Rc<RefCell<Option<History>>>;
 
 /// Two Esc presses this close together clear the draft.
 const DOUBLE_ESC: Duration = Duration::from_millis(600);
@@ -29,14 +36,18 @@ pub(crate) struct HistorySearch {
 }
 
 impl ClaudePane {
-    /// Reads the project's history off the UI thread, then brings the
-    /// session's unsent draft back into an empty composer.
+    /// Reads the project's history off the UI thread, unless another pane on
+    /// the folder has, then brings the session's unsent draft back into an empty composer.
     pub(super) fn load_history(&mut self, cx: &mut Context<Self>) {
+        if self.history.borrow().is_some() {
+            return self.restore_draft(cx);
+        }
         let cwd = self.session.cwd.clone();
         cx.spawn(async move |this, cx| {
             let loaded = cx.background_spawn(async move { History::load(&cwd) }).await;
             this.update(cx, |this, cx| {
-                this.history = loaded;
+                // Another pane's read may have come in first, and been added to since.
+                this.history.borrow_mut().get_or_insert(loaded);
                 this.restore_draft(cx);
             })
             .ok();
@@ -44,17 +55,22 @@ impl ClaudePane {
         .detach();
     }
 
+    /// The project's history, empty if it hasn't been read yet.
+    fn history(&self) -> RefMut<'_, History> {
+        RefMut::map(self.history.borrow_mut(), |h| h.get_or_insert_default())
+    }
+
     /// The session's draft, into an empty composer.
     pub(super) fn restore_draft(&mut self, cx: &mut Context<Self>) {
         let Some(id) = self.session.session_id.as_deref() else { return };
-        let Some(draft) = self.history.draft(id).map(str::to_string) else { return };
+        let Some(draft) = self.history().draft(id).map(str::to_string) else { return };
         if self.composer.read(cx).text().is_empty() {
             self.set_composer(draft, cx);
         }
     }
 
     fn save_history(&self, cx: &mut Context<Self>) {
-        let h = self.history.clone();
+        let h = self.history().clone();
         let cwd = self.session.cwd.clone();
         cx.background_spawn(async move {
             if let Err(e) = h.save(&cwd) {
@@ -79,7 +95,7 @@ impl ClaudePane {
                 let raw = this.composer.read(cx).text().to_string();
                 let text = this.input_mode.prefixed(&this.pastes.expand(&raw));
                 let text = if raw.trim().is_empty() { String::new() } else { text };
-                if this.history.set_draft(&id, &text) {
+                if this.history().set_draft(&id, &text) {
                     this.save_history(cx);
                 }
             })
@@ -90,9 +106,9 @@ impl ClaudePane {
 
     /// A message just sent (or queued): next in ↑'s list; the session's draft is gone.
     pub(super) fn remember_sent(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.history.push(text);
+        self.history().push(text);
         if let Some(id) = self.session.session_id.clone() {
-            self.history.set_draft(&id, "");
+            self.history().set_draft(&id, "");
         }
         self.save_history(cx);
     }
@@ -111,7 +127,7 @@ impl ClaudePane {
             return true;
         }
         let current = self.composer.read(cx).text().to_string();
-        let Some(text) = self.history.older(&current).map(str::to_string) else {
+        let Some(text) = self.history().older(&current).map(str::to_string) else {
             return false;
         };
         self.set_composer(text, cx);
@@ -120,7 +136,7 @@ impl ClaudePane {
 
     /// ↓ past the last line: the next message, then back to the draft.
     pub(super) fn history_down(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(text) = self.history.newer() else { return false };
+        let Some(text) = self.history().newer() else { return false };
         self.set_composer(text, cx);
         true
     }
@@ -128,7 +144,8 @@ impl ClaudePane {
     /// Ctrl+S: puts the draft aside, or brings it back into an empty composer.
     pub(super) fn toggle_stash(&mut self, cx: &mut Context<Self>) {
         let current = self.composer.read(cx).text().to_string();
-        match self.history.toggle_stash(&current) {
+        let stash = self.history().toggle_stash(&current);
+        match stash {
             Stash::Stashed => {
                 self.set_composer(String::new(), cx);
                 let toast = match crate::ui::shortcut(&StashDraft, cx) {
@@ -217,7 +234,7 @@ impl ClaudePane {
 
     fn history_matches(&self, cx: &Context<Self>) -> Vec<String> {
         let query = self.composer.read(cx).text().to_string();
-        self.history.search(&query).into_iter().map(str::to_string).collect()
+        self.history().search(&query).into_iter().map(str::to_string).collect()
     }
 
     /// ↑ / ↓ while searching; false if the search isn't open.

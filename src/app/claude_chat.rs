@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use gpui::{AnyElement, App, Context, Entity, Focusable, MouseButton, MouseDownEvent, Window, div, prelude::*};
 use kynex_core::agent_cli;
 use kynex_core::agent_panes::AgentState;
+use kynex_core::claude::sleep::SleepAfter;
 use kynex_core::claude::tasks::{Notice, Status};
 use kynex_core::control::agent as control_agent;
 use kynex_core::layout::{Axis, Direction, PaneId};
@@ -66,6 +67,33 @@ impl ChatView {
 }
 
 impl KynexApp {
+    /// Puts idle Claude panes' processes to sleep once a minute, per the Sleep idle sessions setting.
+    pub(super) fn watch_claude_sleep(cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(SleepAfter::CHECK_EVERY).await;
+                if this.update(cx, |this, cx| this.sleep_idle_claude_chats(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn sleep_idle_claude_chats(&mut self, cx: &mut Context<Self>) {
+        let Some(after) = self.saved.sleep_after.duration() else { return };
+        let now = std::time::Instant::now();
+        for chat in self.claude_chats.values() {
+            chat.view.0.update(cx, |v, cx| v.sleep_if_idle(after, now, cx));
+        }
+    }
+
+    pub(super) fn set_sleep_after(&mut self, s: SleepAfter, cx: &mut Context<Self>) {
+        self.saved.sleep_after = s;
+        self.save();
+        cx.notify();
+    }
+
     /// The [`LiveClaudeChat`] currently mounted in `pane`, if any.
     pub(super) fn pane_claude_chat(&self, pane: PaneId) -> Option<&LiveClaudeChat> {
         let id = self.pane_claude.get(&pane)?;
@@ -187,11 +215,18 @@ impl KynexApp {
             extra_env.push((control_agent::CONTROL_VAR.to_string(), addr));
         }
 
+        // A pane restored on the same session keeps the title it had.
+        let title = resume_session.as_ref().and_then(|sid| {
+            let meta = self.tiles.get(&ws)?.agent(pane)?;
+            meta.title.clone().filter(|_| meta.session_id.as_ref() == Some(sid))
+        });
         let config = ClaudeChatConfig {
             workspace: ws.clone(),
             model: default_model.clone(),
             resume_session_id: resume_session.clone(),
             fork_from,
+            title: title.clone(),
+            history: self.claude_histories.entry(ws.clone()).or_default().clone(),
             launch,
             openrouter: self.saved.openrouter.clone(),
             extra_env,
@@ -217,7 +252,7 @@ impl KynexApp {
             provider: Some(provider_id.clone()),
             session_id: resume_session.clone(),
             model: default_model,
-            title: None,
+            title,
         };
         self.claude_chats.insert(
             agent_id,

@@ -40,6 +40,13 @@ impl Session {
         !self.reopened && !self.talked && self.items.is_empty()
     }
 
+    /// The id to keep for it (to restore it, name it, list it): none while it's
+    /// new, nor for a fork that hasn't sent anything, whose process may already
+    /// have reported an id that no log on disk has yet.
+    pub fn kept_id(&self) -> Option<&str> {
+        self.session_id.as_deref().filter(|_| !self.is_new() && self.fork_from.is_none())
+    }
+
     /// Puts a reopened session back on the provider it ran on, until it has sent
     /// something here. Its conversation is the same; a process started early
     /// on another provider (before the OpenRouter key loaded) starts again on

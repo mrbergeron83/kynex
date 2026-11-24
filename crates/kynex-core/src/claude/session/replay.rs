@@ -139,6 +139,12 @@ impl Session {
         self.loader.as_ref().is_some_and(|l| !l.shown)
     }
 
+    /// The whole log is in, older turns too (or there was none to read): the
+    /// transcript's first message is the session's first.
+    pub fn history_loaded(&self) -> bool {
+        self.loader.is_none()
+    }
+
     /// Takes in the history read back since last time. Returns how many items
     /// came in front of the ones there were, which moved down by as many, or
     /// `None` if nothing came. Call it when woken, before [`Self::poll`].
