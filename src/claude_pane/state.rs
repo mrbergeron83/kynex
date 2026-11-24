@@ -36,7 +36,12 @@ pub enum ClaudeChatEvent {
     ForkRequested {
         from_session_id: String,
     },
-    RunInTerminal(String),
+    /// Run a command in the workspace's terminal, in `shell` when known
+    /// (a ```bash block in Bash, a ```powershell block in PowerShell).
+    RunInTerminal {
+        command: String,
+        shell: Option<kynex_core::terminal::ShellKind>,
+    },
     /// A file's whole diff, from the turn recap.
     OpenFileChanges {
         cwd: PathBuf,

@@ -542,8 +542,14 @@ impl ClaudePane {
         cx.emit(ClaudeChatEvent::Toast(toast));
     }
 
-    fn run_in_terminal(&mut self, command: String, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(ClaudeChatEvent::RunInTerminal(command));
+    fn run_in_terminal(
+        &mut self,
+        shell: Option<kynex_core::terminal::ShellKind>,
+        command: String,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(ClaudeChatEvent::RunInTerminal { command, shell });
     }
 
     fn open_file_changes(&mut self, cwd: PathBuf, path: PathBuf, cx: &mut Context<Self>) {

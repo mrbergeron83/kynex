@@ -29,8 +29,8 @@ impl ClaudePane {
             self.toast(Toast::error(format!("The task's output is gone: {}", path.display())), cx);
             return cx.notify();
         }
-        let (_kind, command) = tasks::output_command(path, follow);
-        self.run_in_terminal(command, window, cx);
+        let (kind, command) = tasks::output_command(path, follow);
+        self.run_in_terminal(Some(kind), command, window, cx);
     }
 
     /// The running tasks over the composer, each with Watch when its output is known.

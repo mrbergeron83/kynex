@@ -492,8 +492,8 @@ impl KynexApp {
             ClaudeChatEvent::ForkRequested { from_session_id } => {
                 self.fork_claude_chat(agent_id, from_session_id.clone(), window, cx);
             }
-            ClaudeChatEvent::RunInTerminal(command) => {
-                self.run_in_workspace_terminal(command.clone(), window, cx);
+            ClaudeChatEvent::RunInTerminal { command, shell } => {
+                self.run_in_workspace_terminal(command.clone(), *shell, window, cx);
             }
             ClaudeChatEvent::OpenFileChanges { cwd, path } => {
                 self.open_file_changes(cwd.clone(), path.clone(), window, cx);

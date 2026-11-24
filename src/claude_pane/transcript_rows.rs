@@ -137,8 +137,8 @@ impl ClaudePane {
                 // Commands Claude suggests (```bash / ```powershell) run in the project's terminal.
                 let run = (session_kind == Kind::Code).then(|| {
                     let this = cx.entity().downgrade();
-                    Rc::new(move |_shell, command, window: &mut Window, cx: &mut App| {
-                        this.update(cx, |this, cx| this.run_in_terminal(command, window, cx)).ok();
+                    Rc::new(move |shell, command, window: &mut Window, cx: &mut App| {
+                        this.update(cx, |this, cx| this.run_in_terminal(Some(shell), command, window, cx)).ok();
                     }) as markdown::RunCommand
                 });
                 // Code and tables may widen into the tool column (#138).

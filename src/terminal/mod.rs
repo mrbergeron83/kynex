@@ -44,6 +44,8 @@ impl EventEmitter<PanelEvent> for TerminalPanel {}
 
 struct Tab {
     view: Entity<TerminalView>,
+    /// The shell it runs, when opened as one (not restored or a custom command).
+    kind: Option<ShellKind>,
     _sub: Subscription,
 }
 
@@ -143,7 +145,35 @@ impl TerminalPanel {
                 return None;
             }
         };
-        Some(self.open_spec(shell, window, cx))
+        let view = self.open_spec(shell, window, cx);
+        if let Some(tab) = self.tabs.last_mut() {
+            tab.kind = Some(kind);
+        }
+        Some(view)
+    }
+
+    /// Shows a tab running `kind`'s shell (the shown one first), opening a new
+    /// one when none does, e.g. for a ```bash block's Run in a PowerShell panel.
+    pub fn show_shell(
+        &mut self,
+        kind: ShellKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<TerminalView>> {
+        let runs = |t: &Tab| t.kind.unwrap_or_else(ShellKind::default_shell) == kind;
+        let found = match self.tabs.get(self.active) {
+            Some(t) if runs(t) => Some(self.active),
+            _ => self.tabs.iter().position(runs),
+        };
+        match found {
+            Some(i) => {
+                self.active = i;
+                self.focus_active(window, cx);
+                cx.notify();
+                self.active_view()
+            }
+            None => self.open(kind, window, cx),
+        }
     }
 
     /// The shown tab's scrollback and screen as text, once its shell runs.
@@ -187,7 +217,7 @@ impl TerminalPanel {
                 cx.notify();
             }
         });
-        self.tabs.push(Tab { view: view.clone(), _sub: sub });
+        self.tabs.push(Tab { view: view.clone(), kind: None, _sub: sub });
         self.active = self.tabs.len() - 1;
         view.read(cx).focus_handle(cx).focus(window, cx);
         self.check_collapsed(cx);

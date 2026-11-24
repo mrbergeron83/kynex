@@ -164,8 +164,15 @@ impl KynexApp {
     }
 
     /// Runs `command` in an open plain shell terminal pane in the active workspace,
-    /// splitting one open below if none is currently open.
-    pub(super) fn run_in_workspace_terminal(&mut self, command: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// splitting one open below if none is currently open. With `shell`, it runs in
+    /// a tab of that shell (a new tab when the pane has none), not whichever is shown.
+    pub(super) fn run_in_workspace_terminal(
+        &mut self,
+        command: String,
+        shell: Option<ShellKind>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some((_, ws)) = self.tiling_scope() else { return };
         let existing = self.tiles.get(&ws).and_then(|t| t.shell_terminals().first().copied());
         let panel = match existing {
@@ -180,7 +187,11 @@ impl KynexApp {
                 panel
             }
         };
-        if let Some(view) = panel.read(cx).active_view() {
+        let view = match shell {
+            Some(kind) => panel.update(cx, |p, cx| p.show_shell(kind, window, cx)),
+            None => panel.read(cx).active_view(),
+        };
+        if let Some(view) = view {
             if view.read(cx).exited() {
                 view.update(cx, |v, cx| v.restart(cx));
             }
