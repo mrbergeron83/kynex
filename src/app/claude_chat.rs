@@ -1,4 +1,4 @@
-//! Live native Claude Code chat instances (`ClaudeChatView`) and pane hosting.
+//! Live native Claude Code chat instances (`ClaudePane`) and pane hosting.
 //!
 //! Mirrors `src/app/agent_cli.rs` for `claude` and `claude-openrouter`: each running session
 //! lives in `claude_chats` under a stable [`AgentId`], and mounted panes reference it via
@@ -11,19 +11,19 @@ use std::path::{Path, PathBuf};
 use gpui::{AnyElement, App, Context, Entity, Focusable, MouseButton, MouseDownEvent, Window, div, prelude::*};
 use kynex_core::agent_cli;
 use kynex_core::agent_panes::AgentState;
+use kynex_core::claude::tasks::{Notice, Status};
 use kynex_core::control::agent as control_agent;
 use kynex_core::layout::{Axis, Direction, PaneId};
 use kynex_core::provider::{Launch, OpenRouterSettings};
 use kynex_core::tiling::AgentCliPane;
-use kynex_core::toasts::Toast;
+use kynex_core::toasts::{Action, Toast};
 use kynex_core::workspace::same_folder;
 
 use super::KynexApp;
 use super::agent_cli::AgentId;
 use super::agent_picker::AgentPickerState;
 use super::menus::Menu;
-use crate::claude_chat::{ClaudeChatConfig, ClaudeChatEvent, ClaudeChatView, SettingsPage};
-use crate::claude_pane::{self, ClaudePane};
+use crate::claude_pane::{ClaudeChatConfig, ClaudeChatEvent, ClaudePane, SettingsPage};
 use crate::theme::{mono, theme};
 use crate::ui::pane_drag::pane_handle;
 use crate::ui::{Icon, Lamp, Tooltip, icon_button, lamp, px};
@@ -38,49 +38,30 @@ pub(super) struct LiveClaudeChat {
     pub detail: String,
 }
 
-/// The view a [`LiveClaudeChat`] draws in: today's `ClaudeChatView`, or the old chat
-/// (`ClaudePane`) when `KYNEX_OLD_CHAT=1` while it's ported back (#545).
+/// The pane a [`LiveClaudeChat`] draws in.
 #[derive(Clone)]
-pub(super) enum ChatView {
-    New(Entity<ClaudeChatView>),
-    Old(Entity<ClaudePane>),
-}
+pub(super) struct ChatView(pub Entity<ClaudePane>);
 
 impl ChatView {
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
-        let handle = match self {
-            ChatView::New(v) => v.read(cx).focus_handle(cx),
-            ChatView::Old(v) => v.read(cx).focus_handle(cx),
-        };
+        let handle = self.0.read(cx).focus_handle(cx);
         handle.focus(window, cx);
     }
 
     pub fn stop(&self, cx: &mut App) {
-        match self {
-            ChatView::New(v) => v.update(cx, |v, cx| v.stop(cx)),
-            ChatView::Old(v) => v.update(cx, |v, cx| v.stop(cx)),
-        }
+        self.0.update(cx, |v, cx| v.stop(cx));
     }
 
     pub fn cancel_turn(&self, cx: &mut App) {
-        match self {
-            ChatView::New(v) => v.update(cx, |v, cx| v.cancel_turn(cx)),
-            ChatView::Old(v) => v.update(cx, |v, cx| v.cancel_turn(cx)),
-        }
+        self.0.update(cx, |v, cx| v.cancel_turn(cx));
     }
 
     pub fn send_external_prompt(&self, text: String, cx: &mut App) {
-        match self {
-            ChatView::New(v) => v.update(cx, |v, cx| v.send_external_prompt(text, cx)),
-            ChatView::Old(v) => v.update(cx, |v, cx| v.send_external_prompt(text, cx)),
-        }
+        self.0.update(cx, |v, cx| v.send_external_prompt(text, cx));
     }
 
     fn element(&self) -> AnyElement {
-        match self {
-            ChatView::New(v) => v.clone().into_any_element(),
-            ChatView::Old(v) => v.clone().into_any_element(),
-        }
+        self.0.clone().into_any_element()
     }
 }
 
@@ -208,39 +189,29 @@ impl KynexApp {
 
         let config = ClaudeChatConfig {
             workspace: ws.clone(),
-            provider: provider_id.clone(),
             model: default_model.clone(),
             resume_session_id: resume_session.clone(),
             fork_from,
             launch,
-            openrouter_models: self.saved.openrouter.models.clone(),
             openrouter: self.saved.openrouter.clone(),
             extra_env,
         };
-        let view = if claude_pane::enabled() {
-            let settings_dir = self.tile_projects.get(&ws).cloned().filter(|p| !same_folder(p, &ws));
-            let column = self.saved.column;
-            let view = cx.new(|cx| {
-                let mut pane = ClaudePane::new(config, window, cx);
-                pane.column = column;
-                if let Some(dir) = settings_dir {
-                    pane.set_settings_dir(dir);
-                }
-                pane
-            });
-            cx.subscribe_in(&view, window, move |this, _, ev: &ClaudeChatEvent, window, cx| {
-                this.on_claude_chat_event(agent_id, ev, window, cx);
-            })
-            .detach();
-            ChatView::Old(view)
-        } else {
-            let view = cx.new(|cx| ClaudeChatView::new(config, window, cx));
-            cx.subscribe_in(&view, window, move |this, _, ev: &ClaudeChatEvent, window, cx| {
-                this.on_claude_chat_event(agent_id, ev, window, cx);
-            })
-            .detach();
-            ChatView::New(view)
-        };
+        // A worktree runs under its project's Kynex settings.
+        let settings_dir = self.tile_projects.get(&ws).cloned().filter(|p| !same_folder(p, &ws));
+        let column = self.saved.column;
+        let view = cx.new(|cx| {
+            let mut pane = ClaudePane::new(config, window, cx);
+            pane.column = column;
+            if let Some(dir) = settings_dir {
+                pane.set_settings_dir(dir);
+            }
+            pane
+        });
+        cx.subscribe_in(&view, window, move |this, _, ev: &ClaudeChatEvent, window, cx| {
+            this.on_claude_chat_event(agent_id, ev, window, cx);
+        })
+        .detach();
+        let view = ChatView(view);
 
         let meta = AgentCliPane {
             provider: Some(provider_id.clone()),
@@ -381,7 +352,7 @@ impl KynexApp {
     }
 
     /// Drops all live Claude Chat instances belonging to workspace `cwd` (when closing a project
-    /// or removing a worktree). Dropping the last `Entity<ClaudeChatView>` triggers its release cleanup.
+    /// or removing a worktree). Dropping the last `Entity<ClaudePane>` triggers its release cleanup.
     pub(super) fn drop_claude_chats_in(&mut self, cwd: &Path, cx: &Context<Self>) {
         let gone: Vec<AgentId> =
             self.claude_chats.values().filter(|c| same_folder(&c.cwd, cwd)).map(|c| c.id).collect();
@@ -392,7 +363,7 @@ impl KynexApp {
         }
     }
 
-    /// Handles events emitted by a live [`ClaudeChatView`].
+    /// Handles events emitted by a live [`ClaudePane`].
     pub(super) fn on_claude_chat_event(
         &mut self,
         agent_id: AgentId,
@@ -489,16 +460,6 @@ impl KynexApp {
             ClaudeChatEvent::RunInTerminal(command) => {
                 self.run_in_workspace_terminal(command.clone(), window, cx);
             }
-            ClaudeChatEvent::OpenFile { path, line } => {
-                let resolved = if path.is_absolute() {
-                    path.clone()
-                } else if let Some(cwd) = self.claude_chats.get(&agent_id).map(|c| &c.cwd) {
-                    cwd.join(path)
-                } else {
-                    path.clone()
-                };
-                self.open_file_view(resolved, *line, window, cx);
-            }
             ClaudeChatEvent::OpenFileChanges { cwd, path } => {
                 self.open_file_changes(cwd.clone(), path.clone(), window, cx);
             }
@@ -539,12 +500,22 @@ impl KynexApp {
                 };
                 self.open_settings_on(section, cx);
             }
+            ClaudeChatEvent::TaskEnded(notice) => self.claude_task_ended(agent_id, notice),
+            ClaudeChatEvent::LimitsReported(limits) => self.limits_reported(limits.clone(), cx),
+            ClaudeChatEvent::NoTools(model) => {
+                if self.saved.openrouter.mark_no_tools(model) {
+                    self.save();
+                }
+                let name = crate::claude_pane::openrouter_label(model);
+                self.toast(
+                    Toast::warning(format!("{name} can't work in Claude Code: it takes no tool calls"))
+                        .detail("Pick a model that takes tool calls for this session."),
+                );
+                cx.notify();
+            }
             ClaudeChatEvent::ProjectSettingsChanged(dir) => {
                 for chat in self.claude_chats.values().filter(|c| c.id != agent_id) {
-                    if let ChatView::Old(view) = &chat.view {
-                        let dir = dir.clone();
-                        view.update(cx, |v, cx| v.settings_changed(&dir, cx));
-                    }
+                    chat.view.0.update(cx, |v, cx| v.settings_changed(dir, cx));
                 }
             }
             ClaudeChatEvent::ModelPinned(model) => {
@@ -564,7 +535,32 @@ impl KynexApp {
         }
     }
 
-    /// Renders a `ClaudeChat` pane: 26px draggable `pane_handle` header + `ClaudeChatView`.
+    /// A background task of Claude session `agent_id` ended: a toast, unless the
+    /// session is in sight or the Agents pane shows it already.
+    fn claude_task_ended(&mut self, agent_id: AgentId, n: &Notice) {
+        if n.status == Status::Event || self.agents_pane_open() || self.is_looking_at(agent_id) {
+            return;
+        }
+        let Some((ws, meta)) = self.claude_chats.get(&agent_id).map(|c| (c.cwd.clone(), c.meta.clone())) else {
+            return;
+        };
+        let session = self.agent_title(&ws, &meta);
+        let shown = self.pane_showing_agent(agent_id);
+        let failed = n.status == Status::Failed;
+        let mut toast = if failed { Toast::error("") } else { Toast::success("") };
+        toast = toast.detail(n.summary.clone()).pane(shown.unwrap_or(agent_id));
+        if let Some(pane) = shown {
+            toast = toast.action(Action::GoToPane(pane));
+        }
+        let toast = self.toast(toast);
+        let (count, what) = (toast.count, if failed { "failed" } else { "finished" });
+        toast.title = match count {
+            1 => format!("Background task {what} in {session}"),
+            n => format!("{n} background tasks {what} in {session}"),
+        };
+    }
+
+    /// Renders a `ClaudeChat` pane: 26px draggable `pane_handle` header + `ClaudePane`.
     pub(super) fn render_claude_chat_pane(
         &mut self,
         pane: PaneId,

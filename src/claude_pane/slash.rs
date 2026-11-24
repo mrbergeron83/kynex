@@ -17,9 +17,9 @@ use kynex_core::claude::commands::{self, Action, Commands, SlashCommand};
 use kynex_core::project;
 use kynex_core::toasts::Toast;
 
+use super::ClaudeChatEvent;
 use super::menus::Menu;
 use super::{ClaudePane, models};
-use crate::claude_chat::ClaudeChatEvent;
 use crate::ui::completions::{Completion, completions};
 
 /// The popup's state, and each folder's commands.

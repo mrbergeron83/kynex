@@ -236,10 +236,6 @@ impl TextInput {
         self.placeholder = text.into();
     }
 
-    pub fn placeholder_text(&self) -> &SharedString {
-        &self.placeholder
-    }
-
     pub fn text(&self) -> &str {
         &self.content
     }

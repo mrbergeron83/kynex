@@ -9,8 +9,8 @@ use kynex_core::claude::rewind::{self, Point};
 
 use kynex_core::toasts::Toast;
 
+use super::ClaudeChatEvent;
 use super::{ClaudePane, Key};
-use crate::claude_chat::ClaudeChatEvent;
 use crate::ui::completions::{Completion, completions};
 
 /// The open rewind popup.

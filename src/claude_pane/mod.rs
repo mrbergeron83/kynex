@@ -1,8 +1,7 @@
-//! The old Claude chat as a pane (`ClaudePane`): a `claude` session driven by
-//! `kynex_core::claude::session` (its own process over stream-json), drawn as the old
-//! transcript and composer. A drop-in for `ClaudeChatView` behind `KYNEX_OLD_CHAT=1`
-//! while it's ported (#545); the app hosts it through the same `ClaudeChatConfig` and
-//! `ClaudeChatEvent`.
+//! The Claude chat as a pane (`ClaudePane`), for `claude` and `claude-openrouter`: a
+//! `claude` session driven by `kynex_core::claude::session` (its own process over
+//! stream-json), drawn as a transcript and a composer. The app hosts it through
+//! [`ClaudeChatConfig`] and [`ClaudeChatEvent`] (`src/app/claude_chat.rs`).
 //!
 //! The session's reader threads ring a waker; a task here takes what came in and
 //! redraws, so nothing polls while it's idle.
@@ -22,6 +21,7 @@ mod rewind;
 mod session_header;
 mod shell_runs;
 mod slash;
+mod state;
 mod tasks;
 mod thinking;
 mod timeline;
@@ -46,10 +46,9 @@ use kynex_core::claude::input::paste::Pastes;
 use kynex_core::claude::prompt_history::History;
 use kynex_core::claude::session::{self, Attachment, Item, Kind, Session};
 use kynex_core::claude::timeline::{Fold, Turns};
-use kynex_core::project::{ClaudeSettings, Permissions};
+use kynex_core::project::{ClaudeSettings, Mode, Permissions};
 use kynex_core::toasts::Toast;
 
-use crate::claude_chat::{ClaudeChatConfig, ClaudeChatEvent};
 use crate::prompt::PromptView;
 use crate::theme::theme;
 use crate::ui::completions::Completion;
@@ -62,15 +61,12 @@ use slash::Slash;
 use transcript::Thread;
 use viewer::LoggedImages;
 
+pub(crate) use models::openrouter_label;
+pub use state::{ClaudeChatConfig, ClaudeChatEvent, SettingsPage};
+
 /// The session's id among this run's sessions ([`Session::uid`]): it keys the
 /// transcript's selection group and the rows' open/closed state.
 pub(crate) type Key = u64;
-
-/// Whether `claude` panes use this pane instead of `ClaudeChatView` (`KYNEX_OLD_CHAT=1`).
-pub(crate) fn enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("KYNEX_OLD_CHAT").is_ok_and(|v| v.trim() == "1"))
-}
 
 /// How many characters of the first message make the pane's title.
 const TITLE_CHARS: usize = 60;
@@ -347,16 +343,33 @@ impl ClaudePane {
         }
     }
 
-    pub fn status(&self) -> AgentState {
-        self.state
+    /// The Transcript width setting changed: rows' heights change with their width.
+    pub fn set_column(&mut self, column: ColumnWidth, cx: &mut Context<Self>) {
+        self.column = column;
+        if let Some(th) = &self.thread {
+            th.list.remeasure();
+        }
+        cx.notify();
     }
 
-    pub fn session_id(&self) -> Option<&str> {
-        self.session.session_id.as_deref()
+    /// Bypass permissions was turned off in Settings: a session in it goes back to its
+    /// project's mode.
+    pub fn leave_bypass(&mut self, cx: &mut Context<Self>) {
+        if self.session.mode == Mode::Bypass {
+            let default = ClaudeSettings::load(self.session.settings_folder()).mode;
+            self.session.set_mode(if default == Mode::Bypass { Mode::Manual } else { default });
+            cx.notify();
+        }
     }
 
-    pub fn title(&self) -> Option<&str> {
-        self.title.as_deref()
+    /// What the session last said, for `knx pane read` and `wait`.
+    pub fn last_said(&self) -> &str {
+        self.session
+            .items
+            .iter()
+            .rev()
+            .find_map(|i| if let Item::Assistant(t) = i { Some(t.as_str()) } else { None })
+            .unwrap_or_default()
     }
 
     /// A message from outside (`knx pane prompt`): sent now, or queued behind the turn.
@@ -388,15 +401,33 @@ impl ClaudePane {
 
     /// The session's history or process had news: take it in and redraw.
     fn woke(&mut self, cx: &mut Context<Self>) {
+        // Before `seen`: history isn't news (no toasts for old tasks).
         if let Some(n) = self.session.take_history() {
             self.history_came(self.key(), n);
         }
+        let seen = self.session.items.len();
         self.session.poll();
-        // As its process starts, a session reports its folder's commands and the models.
+        // Background tasks that just ended, for a toast if this pane isn't in sight.
+        for item in self.session.items.get(seen..).into_iter().flatten() {
+            if let Item::Task(n) = item {
+                cx.emit(ClaudeChatEvent::TaskEnded(n.clone()));
+            }
+        }
+        // As its process starts, a session reports its folder's commands and the models:
+        // Claude's list; an OpenRouter session's models are My models.
         if let Some(init) = self.session.take_init() {
             let cwd = self.session.cwd.clone();
             self.commands_reported(cwd, init.commands, cx);
-            models::reported(init.models, cx);
+            if !self.session.provider().provider().is_openrouter() {
+                models::reported(init.models, cx);
+            }
+        }
+        // The account's limits, for the footer.
+        if let Some(limits) = self.session.take_limits() {
+            cx.emit(ClaudeChatEvent::LimitsReported(limits));
+        }
+        if let Some(model) = self.session.take_no_tools() {
+            cx.emit(ClaudeChatEvent::NoTools(model));
         }
         self.sync(cx);
         cx.notify();

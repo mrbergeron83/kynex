@@ -11,6 +11,7 @@ mod app_settings;
 mod app_update;
 mod appearance;
 mod attention;
+mod chat_settings;
 mod claude_chat;
 mod control;
 mod control_pane_layout;
@@ -59,6 +60,7 @@ mod title_bar;
 mod toasts;
 mod tool_panes;
 mod toolbar;
+mod usage_meter;
 mod workspace_binding;
 mod workspace_list;
 mod workspace_new;
@@ -238,11 +240,14 @@ pub struct KynexApp {
     /// The OpenRouter key's credit for the footer, and when it was asked.
     openrouter_credit: Option<(kynex_core::openrouter::KeyInfo, std::time::Instant)>,
     openrouter_credit_asking: bool,
+    /// The account's usage limits, as the CLI last reported them, this run or the last (`usage_meter.rs`).
+    usage: Option<kynex_core::claude::usage::Limits>,
     focus: FocusHandle,
 }
 
 impl KynexApp {
     pub fn new(saved: Saved, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        kynex_core::project::set_bypass_allowed(saved.allow_bypass);
         // The control socket: requests (including `knx hook`) ring this.
         let (control_tx, control_rx) = async_channel::bounded::<()>(1);
         let control = match kynex_core::control::server::Server::start(Arc::new(move || {
@@ -276,6 +281,7 @@ impl KynexApp {
         Self::watch_cli_updates(cx);
         Self::watch_app_updates(cx);
         let resources_wake = Self::watch_resources(cx);
+        Self::watch_usage(cx);
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.probe_clis(cx))).detach();
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.load_openrouter(cx))).detach();
         cx.spawn(async move |this, cx| this.update(cx, |this, cx| this.fold_worktree_tabs(cx))).detach();
@@ -437,6 +443,7 @@ impl KynexApp {
             openrouter_key: None,
             openrouter_credit: None,
             openrouter_credit_asking: false,
+            usage: kynex_core::claude::usage::Limits::load(),
             focus,
         }
     }

@@ -298,9 +298,8 @@ pub fn bind_keys(cx: &mut App) {
     let mut bindings = Vec::new();
     let mut close_keys = None;
     let mut in_effect = Vec::new();
-    // The old Claude chat's own keys, while it's ported back (#545).
-    let pane_keys: &[(&str, &str)] =
-        if crate::claude_pane::enabled() { &crate::claude_pane::keys::SHORTCUTS } else { &[] };
+    // The Claude pane's own keys.
+    let pane_keys: &[(&str, &str)] = &crate::claude_pane::keys::SHORTCUTS;
     for &(name, default) in SHORTCUTS.iter().chain(PREFIXED).chain(pane_keys) {
         let default = resolve(default, prefix);
         let user_keys = user.get(name).map(String::as_str).filter(|k| {
@@ -359,9 +358,7 @@ pub fn bind_keys(cx: &mut App) {
             _ => KeyBinding::new(keys, Interrupt, c),
         });
     }
-    if crate::claude_pane::enabled() {
-        bindings.extend(crate::claude_pane::keys::transcript_bindings());
-    }
+    bindings.extend(crate::claude_pane::keys::transcript_bindings());
     if let Some(keys) = close_keys {
         bindings.push(KeyBinding::new(keys, ClosePaneOrTab, Some("Pane")));
     }

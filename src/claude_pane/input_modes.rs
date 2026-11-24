@@ -9,8 +9,8 @@ use gpui::{AnyElement, Context, Hsla, div, prelude::*};
 use kynex_core::claude::input::input_mode::{InputMode, Submit};
 use kynex_core::claude::input::thinking;
 
+use super::{ClaudeChatEvent, SettingsPage};
 use super::{ClaudePane, Key};
-use crate::claude_chat::{ClaudeChatEvent, SettingsPage};
 use crate::theme::{Palette, mono, theme};
 use crate::ui::input::Mark;
 use crate::ui::{Icon, icon, popover};

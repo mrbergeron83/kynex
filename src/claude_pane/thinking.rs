@@ -4,9 +4,9 @@
 use gpui::{AnyElement, Context, prelude::*};
 use kynex_core::toasts::Toast;
 
+use super::ClaudeChatEvent;
 use super::ClaudePane;
 use super::keys::ToggleThinking;
-use crate::claude_chat::ClaudeChatEvent;
 use crate::theme::theme;
 use crate::ui::{Tooltip, ghost_button};
 

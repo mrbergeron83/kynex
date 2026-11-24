@@ -14,7 +14,7 @@ use kynex_core::provider::Provider;
 use kynex_core::toasts::Toast;
 
 use super::ClaudePane;
-use crate::claude_chat::{ClaudeChatEvent, SettingsPage};
+use super::{ClaudeChatEvent, SettingsPage};
 use crate::theme::theme;
 use crate::ui::{Icon, Tooltip, divider, icon, px};
 

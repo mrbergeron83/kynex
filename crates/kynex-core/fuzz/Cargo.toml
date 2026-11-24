@@ -136,8 +136,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "claude_stream"
-path = "fuzz_targets/claude_stream.rs"
+name = "stream_json"
+path = "fuzz_targets/stream_json.rs"
 test = false
 doc = false
 bench = false
@@ -150,15 +150,15 @@ doc = false
 bench = false
 
 [[bin]]
-name = "claude_markdown"
-path = "fuzz_targets/claude_markdown.rs"
+name = "session_log"
+path = "fuzz_targets/session_log.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
-name = "claude_history"
-path = "fuzz_targets/claude_history.rs"
+name = "transcript"
+path = "fuzz_targets/transcript.rs"
 test = false
 doc = false
 bench = false

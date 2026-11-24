@@ -412,6 +412,7 @@ impl KynexApp {
             .child(worktrees)
             .child(shell)
             .child(history)
+            .child(self.render_bypass_setting(t, cx))
             .child(notifications)
             .child(awake)
     }
@@ -577,7 +578,7 @@ impl KynexApp {
             .gap_1()
             .child(heading(
                 "Status footer",
-                "Kynex's CPU and memory, OpenRouter credit and updates, along the bottom.",
+                "Kynex's CPU and memory, OpenRouter credit, usage limits and updates, along the bottom.",
                 t,
             ))
             .children([(true, "Show"), (false, "Hide")].into_iter().map(|(on, label)| {
@@ -600,6 +601,7 @@ impl KynexApp {
             .child(themes)
             .child(zoom)
             .child(fonts)
+            .child(self.render_transcript_width(t, cx))
             .child(tiles)
             .child(corner)
             .child(footer)

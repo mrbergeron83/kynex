@@ -13,10 +13,10 @@ use kynex_core::project::{ClaudeSettings, Permissions};
 use kynex_core::toasts::Toast;
 use kynex_core::{fmt, links};
 
+use super::ClaudeChatEvent;
 use super::ClaudePane;
 use super::Key;
 use super::transcript_rows::{code_box, diff_box, disclosure_row};
-use crate::claude_chat::ClaudeChatEvent;
 use crate::prompt;
 use crate::theme::mono;
 use crate::theme::theme;

@@ -5,6 +5,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Claude Code and Claude Code (OpenRouter) panes are the Claude chat of 0.0.36 again: its transcript, tool rows, composer, model and effort pickers, permission and plan prompts, question forms, timeline, find and rewind, driven by its own session engine; Settings has Bypass permissions and Transcript width again, the footer shows the account's usage-limit meters, background tasks that end out of sight raise a toast, and `knx pane read` / `wait` on a Claude pane include what it last said (#545).
+
 ## [0.0.41] - 2026-11-23
 
 ### Changed

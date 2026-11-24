@@ -87,7 +87,7 @@ pub struct Saved {
     pub tiles: kynex_core::tile_style::TileTweaks,
     /// The window corner toasts gather in.
     pub toast_corner: Corner,
-    /// How wide the old Claude chat's transcript column is (`KYNEX_OLD_CHAT`).
+    /// How wide the Claude pane's transcript column is.
     pub column: kynex_core::claude::column::ColumnWidth,
     /// The UI zoom, 1.0 for normal size (`kynex_core::scale`).
     pub zoom: f32,
@@ -101,6 +101,8 @@ pub struct Saved {
     pub sessions_by_provider: bool,
     /// The sessions tree shows archived sessions (dimmed, last under their workspace).
     pub sessions_show_archived: bool,
+    /// Bypass permissions joins the Claude panes' mode cycle (`--allow-dangerously-skip-permissions`).
+    pub allow_bypass: bool,
     /// The file's format version (`kynex_core::migrate`).
     pub version: u32,
     /// `state.json` was written by a newer Kynex; this session leaves the file alone.
@@ -140,6 +142,7 @@ impl Default for Saved {
             openrouter: Default::default(),
             sessions_by_provider: false,
             sessions_show_archived: false,
+            allow_bypass: false,
         }
     }
 }

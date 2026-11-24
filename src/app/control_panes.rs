@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use gpui::{Context, Entity, Window};
+use gpui::{App, Context, Entity, Window};
 use kynex_core::agent_panes::AgentState;
 use kynex_core::control::protocol::Event;
 use kynex_core::layout::PaneId;
@@ -86,7 +86,7 @@ impl KynexApp {
     /// `knx pane read`: the screen, or the last `lines` of scrollback and screen.
     pub(super) fn pane_read(&self, pane: PaneId, lines: Option<usize>, cx: &Context<Self>) -> Result<Value, String> {
         if let Some(chat) = self.pane_claude_chat(pane) {
-            return Ok(claude_chat_answer(pane, chat, &format!("{:?}", chat.state).to_lowercase()));
+            return Ok(claude_chat_answer(pane, chat, &format!("{:?}", chat.state).to_lowercase(), cx));
         }
         let (view, _) = self.terminal_of(pane, cx)?;
         let view = view.read(cx);
@@ -251,8 +251,8 @@ impl KynexApp {
                     self.hold(Target::Agent { pane, start_within: Duration::ZERO }, true, timeout, cx);
                     Err(None)
                 }
-                AgentState::NeedsYou => Ok(claude_chat_answer(pane, chat, "blocked")),
-                AgentState::Idle | AgentState::Done => Ok(claude_chat_answer(pane, chat, "done")),
+                AgentState::NeedsYou => Ok(claude_chat_answer(pane, chat, "blocked", cx)),
+                AgentState::Idle | AgentState::Done => Ok(claude_chat_answer(pane, chat, "done", cx)),
             };
         }
         let (view, _) = self.agent_terminal(pane, cx).map_err(Some)?;
@@ -324,9 +324,9 @@ impl KynexApp {
                     let state = chat.state;
                     w.started |= state == AgentState::Working;
                     return if state == AgentState::NeedsYou && (w.started || w.since.elapsed() > STILL_ASKING) {
-                        Some(Ok(claude_chat_answer(pane, chat, "blocked")))
+                        Some(Ok(claude_chat_answer(pane, chat, "blocked", cx)))
                     } else if w.started && state != AgentState::Working {
-                        Some(Ok(claude_chat_answer(pane, chat, "done")))
+                        Some(Ok(claude_chat_answer(pane, chat, "done", cx)))
                     } else if !w.started && w.since.elapsed() > start_within {
                         let id = chat.meta.provider.as_deref().unwrap_or(kynex_core::agent_cli::CLAUDE);
                         let name = self.provider_display_name(id);
@@ -525,11 +525,13 @@ fn agent_answer(pane: PaneId, state: &str, view: &Entity<TerminalView>, cx: &Con
     json!({ "pane": pane, "state": state, "text": view.read(cx).screen_text().unwrap_or_default().trim_end() })
 }
 
-fn claude_chat_answer(pane: PaneId, chat: &super::claude_chat::LiveClaudeChat, state: &str) -> Value {
+/// A Claude pane's state, with what it last said.
+fn claude_chat_answer(pane: PaneId, chat: &super::claude_chat::LiveClaudeChat, state: &str, cx: &App) -> Value {
     json!({
         "pane": pane,
         "state": state,
         "session_id": chat.meta.session_id,
         "detail": (!chat.detail.is_empty()).then_some(chat.detail.as_str()),
+        "text": chat.view.0.read(cx).last_said(),
     })
 }
