@@ -95,6 +95,7 @@ fn main() {
         kynex_core::terminal::ShellKind::set_default(saved.shell);
         ui::input::bind_keys(cx);
         terminal::bind_keys(cx);
+        prompt::bind_keys(cx);
         app::bind_keys(cx);
         app::bind_command_keys(&saved.projects.iter().map(|p| p.path.clone()).collect::<Vec<_>>(), cx);
 

@@ -16,6 +16,7 @@ use kynex_core::{fmt, links};
 use super::ClaudePane;
 use super::Key;
 use super::transcript_rows::{code_box, diff_box, disclosure_row};
+use crate::claude_chat::ClaudeChatEvent;
 use crate::prompt;
 use crate::theme::mono;
 use crate::theme::theme;
@@ -333,13 +334,17 @@ impl ClaudePane {
             }
             let claude = ClaudeSettings::load(&cwd);
             self.session.apply_settings(&perms, &claude);
+            // The project's other sessions take the rule too.
+            cx.emit(ClaudeChatEvent::ProjectSettingsChanged(cwd));
         }
         self.unblocked.insert((key, ix), label.clone());
+        let model = self.active_model();
         let text = format!("I've allowed {label} in this project. Try that again.");
         if let Some(s) = self.session_for(key) {
             if s.busy {
                 s.queue.push(text, Vec::new());
             } else {
+                s.use_model(model);
                 s.send(text, Vec::new());
             }
         }

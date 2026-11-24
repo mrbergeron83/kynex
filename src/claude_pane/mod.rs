@@ -8,12 +8,14 @@
 //! redraws, so nothing polls while it's idle.
 
 mod composer;
+mod handoff;
 mod history;
 mod input_modes;
 pub(crate) mod keys;
 mod mentions;
 mod menus;
 mod models;
+mod prompts;
 mod queue;
 mod session_header;
 mod shell_runs;
@@ -44,6 +46,7 @@ use kynex_core::project::{ClaudeSettings, Permissions};
 use kynex_core::toasts::Toast;
 
 use crate::claude_chat::{ClaudeChatConfig, ClaudeChatEvent};
+use crate::prompt::PromptView;
 use crate::theme::theme;
 use crate::ui::completions::Completion;
 use crate::ui::image_viewer::ImageViewer;
@@ -122,6 +125,10 @@ pub struct ClaudePane {
     editing_outside: bool,
     /// The composer's menu (model, effort, mode, memory), while open.
     menu: Option<menus::OpenMenu>,
+    /// The permission, plan or question prompt in the composer's place, while one waits.
+    prompt: Option<prompts::ActivePrompt>,
+    /// The prompt as last drawn, fading out over the composer it hands back.
+    prompt_exit: Leaving<Entity<PromptView>>,
     /// The todo list folded open by hand after its turn.
     todos_open: bool,
     /// What the app was last told.
@@ -138,9 +145,13 @@ pub struct ClaudePane {
 impl EventEmitter<ClaudeChatEvent> for ClaudePane {}
 
 impl Focusable for ClaudePane {
-    /// The message box: mounting or focusing the pane puts the cursor there.
+    /// The prompt, when one waits, else the message box: mounting or focusing the
+    /// pane puts the keyboard there.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.composer.read(cx).focus_handle(cx)
+        match &self.prompt {
+            Some(p) => p.view.read(cx).focus_handle(cx),
+            None => self.composer.read(cx).focus_handle(cx),
+        }
     }
 }
 
@@ -242,6 +253,8 @@ impl ClaudePane {
             pastes: Pastes::default(),
             editing_outside: false,
             menu: None,
+            prompt: None,
+            prompt_exit: Leaving::new(QUICK),
             todos_open: false,
             state: AgentState::Idle,
             detail: "Ready".into(),
@@ -508,6 +521,7 @@ impl Render for ClaudePane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.zoom = f32::from(window.rem_size()) / 16.;
         let key = self.key();
+        self.sync_prompt(window, cx);
         let t = theme(cx).clone();
         let header = self.render_session_header(key, cx);
         let thread = self.render_thread(key, window, cx);

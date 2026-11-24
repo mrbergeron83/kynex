@@ -62,7 +62,9 @@ impl ClaudePane {
     fn slash_query(&self, cx: &Context<Self>) -> Option<String> {
         let text = self.composer.read(cx).text();
         let query = text.strip_prefix('/')?;
-        let open = !query.contains(char::is_whitespace) && self.slash.dismissed.as_deref() != Some(text);
+        let open = self.prompt.is_none()
+            && !query.contains(char::is_whitespace)
+            && self.slash.dismissed.as_deref() != Some(text);
         open.then(|| query.to_string())
     }
 
@@ -277,7 +279,7 @@ impl ClaudePane {
                 }
             }
             Action::Permissions => {
-                let file = self.session.settings_folder().join(".claude").join("settings.json");
+                let file = kynex_core::project::dir(self.session.settings_folder()).join("permissions.json");
                 self.toast(
                     Toast::warning(format!("/{name} isn't in Kynex yet; the project's rules are in its settings."))
                         .detail(file.display().to_string()),

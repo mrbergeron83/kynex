@@ -21,6 +21,7 @@ pub mod prices;
 pub mod prompt_history;
 pub mod protocol;
 pub mod pulse;
+pub mod questions;
 pub mod queue;
 pub mod rewind;
 pub mod runs;

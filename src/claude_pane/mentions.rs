@@ -59,7 +59,7 @@ struct Typing {
 impl ClaudePane {
     fn mention_typed(&self, cx: &Context<Self>) -> Option<Typing> {
         let input = self.composer.read(cx);
-        if self.mentions.dismissed.as_deref() == Some(input.text()) {
+        if self.prompt.is_some() || self.mentions.dismissed.as_deref() == Some(input.text()) {
             return None;
         }
         let (token, query) = mentions::at_cursor(input.text(), input.cursor()?)?;

@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use crate::ui::px;
 use gpui::{
-    AnyElement, ClickEvent, Context, ExternalPaths, Image, ImageFormat, KeyDownEvent, PathPromptOptions, SharedString,
-    Window, canvas, deferred, div, img, prelude::*,
+    AnyElement, ClickEvent, Context, ExternalPaths, Focusable, Image, ImageFormat, KeyDownEvent, PathPromptOptions,
+    SharedString, Window, canvas, deferred, div, img, prelude::*,
 };
 use kynex_core::claude::attach::{is_image, prepare_image};
 use kynex_core::claude::input::input_mode::{InputMode, Submit};
@@ -22,7 +22,7 @@ use crate::app::keys::Interrupt;
 use crate::theme::theme;
 use crate::ui::completions::completions;
 use crate::ui::ease_height::ease_height;
-use crate::ui::motion::pop;
+use crate::ui::motion::{self, fade, fade_in, pop};
 use crate::ui::{Icon, Tooltip, ghost_button, icon, icon_button, input, spinner};
 
 impl ClaudePane {
@@ -171,8 +171,11 @@ impl ClaudePane {
         let running = key.and_then(|k| self.render_running_tasks(k, cx));
         let agents = key.and_then(|k| self.render_turn_agents(k, cx));
         let todos = key.and_then(|k| self.render_todos(k, cx));
+        let handoff = key.and_then(|k| self.render_handoff(k, cx));
+        // A prompt is the one surface that needs you: it gets the amber lamp colour.
         self.slash.shown = None;
         let popup = match () {
+            _ if self.prompt.is_some() => None,
             _ if self.input_mode == InputMode::Shortcuts => Some(self.render_shortcuts_card(cx)),
             _ if self.history_searching() => self.render_history_search(cx),
             _ => self.render_slash(cx).or_else(|| self.render_mentions(cx)),
@@ -188,6 +191,12 @@ impl ClaudePane {
             }
             (None, None) => (None, None),
         };
+        // A prompt that just closed fades out over the composer it hands back.
+        let prompt = self.prompt.as_ref().map(|p| p.view.clone());
+        let prompt_out = self.prompt_exit.track(prompt.as_ref(), window, cx).map(|(view, gone)| {
+            let layer = div().absolute().inset_0().p_3().rounded_lg().overflow_hidden().bg(t.panel).child(view);
+            fade("prompt-out", layer, motion::QUICK, Some(gone))
+        });
         self.mark_composer(key, cx);
         let this = cx.entity().downgrade();
         // Bypass permissions, then the composer's mode, outrank the project's colour.
@@ -207,6 +216,7 @@ impl ClaudePane {
                     .children(todos)
                     .children(agents)
                     .children(running)
+                    .children(handoff)
                     .children(queued)
                     .child(
                         div()
@@ -246,10 +256,18 @@ impl ClaudePane {
                             .bg(t.panel)
                             .shadow_sm()
                             // Grows and shrinks with its text, a prompt's turn, attachments: eased.
-                            .child(ease_height("composer-ease", child)),
+                            .child(ease_height("composer-ease", child))
+                            .children(prompt_out),
                     ),
             )
         };
+        if let Some(p) = &self.prompt {
+            let focused = p.view.read(cx).focus_handle(cx).contains_focused(window, cx);
+            // Each prompt fades in over the composer it replaces.
+            let id = ("prompt-in", p.view.entity_id().as_u64() as usize);
+            let view = fade_in(id, div().child(p.view.clone()), motion::QUICK);
+            return shell(view.into_any_element(), focused, true);
+        }
 
         let session = key.and_then(|k| self.session_by_key(k));
         let busy = session.is_some_and(|s| s.busy);
