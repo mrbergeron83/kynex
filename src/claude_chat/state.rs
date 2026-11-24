@@ -25,6 +25,8 @@ pub struct ClaudeChatConfig {
     pub fork_from: Option<String>,
     pub launch: Launch,
     pub openrouter_models: Vec<String>,
+    /// The OpenRouter settings (My models, the default, no-tools models), for the old chat's picker.
+    pub openrouter: kynex_core::openrouter::OpenRouterConfig,
     pub extra_env: Vec<(String, String)>,
 }
 
@@ -53,6 +55,25 @@ pub enum ClaudeChatEvent {
     },
     /// A note for the app's toasts (`crate::claude_pane`).
     Toast(kynex_core::toasts::Toast),
+    /// `/clear`: a new session in this pane (`crate::claude_pane`).
+    NewSession,
+    /// `/resume`: the sessions list (`crate::claude_pane`).
+    ShowSessions,
+    /// A page of the app's settings (`crate::claude_pane`).
+    OpenSettings(SettingsPage),
+    /// The project's Claude settings changed (effort, thinking, model): the
+    /// other panes on it pick them up (`crate::claude_pane`).
+    ProjectSettingsChanged(PathBuf),
+    /// The model pinned to this session (`None`: it follows its project's),
+    /// kept with the pane so it comes back on a restart (`crate::claude_pane`).
+    ModelPinned(Option<String>),
+}
+
+/// The app settings pages a chat pane opens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsPage {
+    Providers,
+    Keyboard,
 }
 
 /// Reference key for an image rendered inside a transcript row.

@@ -12,6 +12,7 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+mod edit;
 mod element;
 
 use element::{Layout, TextElement};
@@ -108,6 +109,9 @@ pub enum InputEvent {
     /// Paste of long text (>= 10 lines or >= 1,000 chars) when `intercept_long_paste` is enabled.
     #[allow(dead_code)]
     PasteText(String),
+    /// A paste long enough to fold ([`TextInput::fold_pastes`]): the owner puts
+    /// something in its place with [`TextInput::insert`].
+    PasteFolded(String),
     /// A click on an atomic [`Mark`] (these bytes of the text).
     #[allow(dead_code)]
     MarkClicked(Range<usize>),
@@ -136,6 +140,10 @@ pub struct TextInput {
     masked: bool,
     /// Emit `InputEvent::PasteText` instead of inserting raw text when a paste is long.
     intercept_long_paste: bool,
+    /// Long pastes go to the owner ([`InputEvent::PasteFolded`]) instead of in.
+    fold_pastes: bool,
+    /// Text was pasted since the field was last set.
+    pasted: bool,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -163,6 +171,8 @@ impl TextInput {
             mono: false,
             masked: false,
             intercept_long_paste: false,
+            fold_pastes: false,
+            pasted: false,
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -234,51 +244,9 @@ impl TextInput {
         &self.content
     }
 
-    #[allow(dead_code)]
-    pub fn selected_range(&self) -> Range<usize> {
-        self.selected_range.clone()
-    }
-
-    #[allow(dead_code)]
-    pub fn set_marks(&mut self, marks: Vec<Mark>, cx: &mut Context<Self>) {
-        if self.marks != marks {
-            self.marks = marks;
-            cx.notify();
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn scroll_handle(&self) -> &ScrollHandle {
-        &self.scroll
-    }
-
-    /// Replaces UTF-8 byte `range` in the field with `new_text` and moves the cursor to its end.
-    #[allow(dead_code)]
-    pub fn replace_range(&mut self, range: Range<usize>, new_text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let len = self.content.len();
-        let mut start = range.start.min(len);
-        let mut end = range.end.min(len).max(start);
-        while start > 0 && !self.content.is_char_boundary(start) {
-            start -= 1;
-        }
-        while end < len && !self.content.is_char_boundary(end) {
-            end += 1;
-        }
-        let new_text =
-            if self.multiline { new_text.replace("\r\n", "\n") } else { new_text.replace(['\r', '\n'], " ") };
-        self.content.replace_range(start..end, &new_text);
-        let cursor = start + new_text.len();
-        self.selected_range = cursor..cursor;
-        self.selection_reversed = false;
-        self.marked_range.take();
-        self.goal_x = None;
-        window.notify_text_input_changed(&self.focus_handle);
-        cx.emit(InputEvent::Changed);
-        cx.notify();
-    }
-
     pub fn set_text(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
         self.content = text.into();
+        self.pasted = false;
         let end = self.content.len();
         self.selected_range = end..end;
         self.selection_reversed = false;
@@ -501,6 +469,11 @@ impl TextInput {
         }
         if let Some(text) = item.text() {
             let text = text.replace("\r\n", "\n");
+            self.pasted = true;
+            if self.fold_pastes && self.multiline && kynex_core::claude::input::paste::folds(&text) {
+                cx.emit(InputEvent::PasteFolded(text));
+                return;
+            }
             let text = if self.multiline { text } else { text.replace('\n', " ") };
             if self.intercept_long_paste && is_long_paste(&text) {
                 cx.emit(InputEvent::PasteText(text));
@@ -822,17 +795,4 @@ fn is_long_paste(text: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn long_paste_threshold_matches_lines_and_chars() {
-        assert!(!is_long_paste("hello\nworld"));
-        assert!(!is_long_paste(&"a\n".repeat(9)));
-        assert!(is_long_paste(&"a\n".repeat(10)));
-        assert!(!is_long_paste(&"x".repeat(999)));
-        assert!(is_long_paste(&"x".repeat(1_000)));
-        assert!(is_long_paste(&"é".repeat(1_000)));
-        assert!(!is_long_paste(&"é".repeat(999)));
-    }
-}
+mod tests;

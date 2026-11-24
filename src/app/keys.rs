@@ -298,7 +298,10 @@ pub fn bind_keys(cx: &mut App) {
     let mut bindings = Vec::new();
     let mut close_keys = None;
     let mut in_effect = Vec::new();
-    for &(name, default) in SHORTCUTS.iter().chain(PREFIXED) {
+    // The old Claude chat's own keys, while it's ported back (#545).
+    let pane_keys: &[(&str, &str)] =
+        if crate::claude_pane::enabled() { &crate::claude_pane::keys::SHORTCUTS } else { &[] };
+    for &(name, default) in SHORTCUTS.iter().chain(PREFIXED).chain(pane_keys) {
         let default = resolve(default, prefix);
         let user_keys = user.get(name).map(String::as_str).filter(|k| {
             let old = name == "toggle_sessions"
@@ -310,6 +313,10 @@ pub fn bind_keys(cx: &mut App) {
             !old && !alone
         });
         let keys = user_keys.map_or(default, |k| resolve(k, prefix));
+        if crate::claude_pane::keys::esc_esc(name, keys) {
+            in_effect.push((name, keys.to_string()));
+            continue;
+        }
         if keys.trim().is_empty() {
             in_effect.push((name, String::new()));
             continue;
@@ -322,7 +329,7 @@ pub fn bind_keys(cx: &mut App) {
         if name == "close_tab" {
             close_keys = Some(keys);
         }
-        if let Some(binding) = prefixed_binding(name, keys) {
+        if let Some(binding) = prefixed_binding(name, keys).or_else(|| crate::claude_pane::keys::binding(name, keys)) {
             bindings.push(binding);
             continue;
         }
@@ -351,6 +358,9 @@ pub fn bind_keys(cx: &mut App) {
             "zoom_reset" => KeyBinding::new(keys, ZoomReset, c),
             _ => KeyBinding::new(keys, Interrupt, c),
         });
+    }
+    if crate::claude_pane::enabled() {
+        bindings.extend(crate::claude_pane::keys::transcript_bindings());
     }
     if let Some(keys) = close_keys {
         bindings.push(KeyBinding::new(keys, ClosePaneOrTab, Some("Pane")));

@@ -22,7 +22,7 @@ use super::KynexApp;
 use super::agent_cli::AgentId;
 use super::agent_picker::AgentPickerState;
 use super::menus::Menu;
-use crate::claude_chat::{ClaudeChatConfig, ClaudeChatEvent, ClaudeChatView};
+use crate::claude_chat::{ClaudeChatConfig, ClaudeChatEvent, ClaudeChatView, SettingsPage};
 use crate::claude_pane::{self, ClaudePane};
 use crate::theme::{mono, theme};
 use crate::ui::pane_drag::pane_handle;
@@ -214,6 +214,7 @@ impl KynexApp {
             fork_from,
             launch,
             openrouter_models: self.saved.openrouter.models.clone(),
+            openrouter: self.saved.openrouter.clone(),
             extra_env,
         };
         let view = if claude_pane::enabled() {
@@ -504,6 +505,52 @@ impl KynexApp {
             ClaudeChatEvent::Toast(toast) => {
                 self.toast(toast.clone());
                 cx.notify();
+            }
+            ClaudeChatEvent::NewSession => {
+                let Some((cwd, provider)) = self
+                    .claude_chats
+                    .get(&agent_id)
+                    .map(|c| (c.cwd.clone(), c.meta.provider.clone().unwrap_or_else(|| agent_cli::CLAUDE.to_string())))
+                else {
+                    return;
+                };
+                if let Some(pane) = self.pane_showing_agent(agent_id) {
+                    self.launch_claude_chat(pane, cwd, provider, None, None, None, window, cx);
+                }
+            }
+            ClaudeChatEvent::ShowSessions => {
+                if let Some(pane) = self.pane_showing_agent(agent_id) {
+                    self.show_sessions_pane(pane, window, cx);
+                }
+            }
+            ClaudeChatEvent::OpenSettings(page) => {
+                let section = match page {
+                    SettingsPage::Providers => super::app_settings::PROVIDERS_SECTION,
+                    SettingsPage::Keyboard => super::app_settings::KEYBOARD_SECTION,
+                };
+                self.open_settings_on(section, cx);
+            }
+            ClaudeChatEvent::ProjectSettingsChanged(dir) => {
+                for chat in self.claude_chats.values().filter(|c| c.id != agent_id) {
+                    if let ChatView::Old(view) = &chat.view {
+                        let dir = dir.clone();
+                        view.update(cx, |v, cx| v.settings_changed(&dir, cx));
+                    }
+                }
+            }
+            ClaudeChatEvent::ModelPinned(model) => {
+                let Some((ws, meta)) = self.claude_chats.get_mut(&agent_id).map(|chat| {
+                    chat.meta.model = model.clone();
+                    (chat.cwd.clone(), chat.meta.clone())
+                }) else {
+                    return;
+                };
+                if let Some(pane) = self.pane_showing_agent(agent_id)
+                    && let Some(t) = self.tiles.get_mut(&ws)
+                {
+                    t.set_agent(pane, meta);
+                }
+                self.save_layouts(cx);
             }
         }
     }

@@ -41,7 +41,7 @@ use kynex_core::claude::{
 };
 
 use state::*;
-pub use state::{ClaudeChatConfig, ClaudeChatEvent};
+pub use state::{ClaudeChatConfig, ClaudeChatEvent, SettingsPage};
 
 use crate::theme::{mono, theme, ui_font};
 use crate::ui::input::{InputEvent, TextInput};
@@ -255,7 +255,7 @@ impl ClaudeChatView {
                 }
             }
             InputEvent::PasteImages(imgs) => this.on_paste_images(imgs.clone(), cx),
-            InputEvent::PasteText(text) => this.on_long_paste(text.clone(), window, cx),
+            InputEvent::PasteText(text) | InputEvent::PasteFolded(text) => this.on_long_paste(text.clone(), window, cx),
             InputEvent::MarkClicked(range) => this.on_composer_mark_clicked(range.clone(), window, cx),
         })
         .detach();

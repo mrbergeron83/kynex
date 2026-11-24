@@ -2,6 +2,7 @@
 //! `RenderOnce`-style builders over `div`, styled from the theme global.
 
 pub mod code;
+pub mod completions;
 pub mod ease_height;
 pub mod find_marks;
 pub mod image_viewer;
@@ -39,6 +40,7 @@ pub enum Icon {
     Settings,
     PanelLeft,
     GitBranch,
+    Message,
     Folder,
     FolderPlus,
     Terminal,
@@ -46,6 +48,7 @@ pub enum Icon {
     Trash,
     ChevronDown,
     ChevronRight,
+    Paperclip,
     ArrowUp,
     Stop,
     Loader,
@@ -82,6 +85,8 @@ impl Icon {
             Icon::Settings => "icons/settings.svg",
             Icon::PanelLeft => "icons/panel-left.svg",
             Icon::GitBranch => "icons/git-branch.svg",
+            Icon::Message => "icons/message.svg",
+            Icon::Paperclip => "icons/paperclip.svg",
             Icon::Folder => "icons/folder.svg",
             Icon::FolderPlus => "icons/folder-plus.svg",
             Icon::Terminal => "icons/terminal.svg",
